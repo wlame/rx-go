@@ -1,0 +1,53 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+rx
+
+# Test artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependencies
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.claude
+.serena
+
+# Logs
+*.log
+
+# Cache
+.cache/
+*.cache
+
+# Build artifacts
+dist/
+build/
+tmp/
+.temp/
+
+# Environment
+.env
+.env.local
+*.local
+
+# RX specific
+.rx-cache/
+rx-test-cache/
