@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -85,8 +86,23 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 
 	// Process regular files with worker pool and chunking
 	chunker := NewChunker(e.cfg)
-	taskCount := 0
 
+	// Start result collector goroutine (to avoid deadlock)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for result := range pool.Results() {
+			collector.AddResult(result)
+
+			// Check if we've exceeded max results
+			if maxResults > 0 && collector.GetMatchCount() >= maxResults {
+				pool.Cancel()
+			}
+		}
+	}()
+
+	// Submit tasks
 	for _, filePath := range regularFiles {
 		tasks, err := chunker.CreateTasks(filePath)
 		if err != nil {
@@ -98,22 +114,12 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 			if !pool.SubmitTask(task) {
 				break // Context cancelled or pool closed
 			}
-			taskCount++
 		}
 	}
 
-	// Close task channel
+	// Close task channel and wait for all results to be collected
 	pool.Close()
-
-	// Collect results from regular files
-	for result := range pool.Results() {
-		collector.AddResult(result)
-
-		// Check if we've exceeded max results
-		if maxResults > 0 && collector.GetMatchCount() >= maxResults {
-			pool.Cancel()
-		}
-	}
+	wg.Wait()
 
 	// Process compressed files sequentially (no chunking)
 	for _, filePath := range compressedFiles {
