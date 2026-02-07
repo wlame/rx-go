@@ -39,6 +39,7 @@ vendor/
 indexes/  # Test-generated index cache files
 
 # Build artifacts
+bin/
 dist/
 build/
 tmp/
