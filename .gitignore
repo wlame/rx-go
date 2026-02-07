@@ -36,6 +36,7 @@ vendor/
 # Cache
 .cache/
 *.cache
+indexes/  # Test-generated index cache files
 
 # Build artifacts
 dist/

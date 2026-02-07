@@ -180,3 +180,37 @@ func TestFindByteOffset_EmptyIndex(t *testing.T) {
 	result := FindByteOffset([][]int64{}, 10)
 	assert.Equal(t, int64(-1), result)
 }
+
+// ============================================================================
+// NewBuilder Tests
+// ============================================================================
+
+func TestNewBuilder_DefaultStepBytes(t *testing.T) {
+	// Test with stepBytes = 0 (should use default)
+	builder := NewBuilder(0)
+	assert.NotNil(t, builder)
+	assert.Equal(t, int64(100*1024*1024), builder.stepBytes, "Should use default 100MB step")
+}
+
+func TestNewBuilder_NegativeStepBytes(t *testing.T) {
+	// Test with negative stepBytes (should use default)
+	builder := NewBuilder(-100)
+	assert.NotNil(t, builder)
+	assert.Equal(t, int64(100*1024*1024), builder.stepBytes, "Should use default 100MB step for negative values")
+}
+
+func TestNewBuilder_CustomStepBytes(t *testing.T) {
+	// Test with custom stepBytes
+	customStep := int64(1024 * 1024) // 1MB
+	builder := NewBuilder(customStep)
+	assert.NotNil(t, builder)
+	assert.Equal(t, customStep, builder.stepBytes, "Should use custom step bytes")
+}
+
+func TestNewBuilder_VeryLargeStepBytes(t *testing.T) {
+	// Test with very large stepBytes
+	largeStep := int64(1024 * 1024 * 1024) // 1GB
+	builder := NewBuilder(largeStep)
+	assert.NotNil(t, builder)
+	assert.Equal(t, largeStep, builder.stepBytes, "Should accept very large step bytes")
+}

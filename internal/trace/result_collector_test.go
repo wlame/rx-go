@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -189,4 +190,144 @@ func TestResultCollector_GetMatchCount(t *testing.T) {
 
 	count := collector.GetMatchCount()
 	assert.Equal(t, 2, count)
+}
+
+// ============================================================================
+// Error Handling Tests (GetErrors)
+// ============================================================================
+
+func TestResultCollector_GetErrors_NoErrors(t *testing.T) {
+	collector := NewResultCollector([]string{"ERROR"})
+
+	// Add successful result
+	result := Result{
+		TaskID:   "task-1",
+		FilePath: "/var/log/app.log",
+		ChunkID:  0,
+		Matches: []MatchResult{
+			{Offset: 100, LineText: "ERROR: test", LineNumber: 1},
+		},
+		Error: nil,
+	}
+
+	collector.AddResult(result)
+
+	// GetErrors should return empty list
+	errors := collector.GetErrors()
+	assert.Empty(t, errors, "Should have no errors")
+}
+
+func TestResultCollector_GetErrors_SingleError(t *testing.T) {
+	collector := NewResultCollector([]string{"ERROR"})
+
+	// Add result with error
+	result := Result{
+		TaskID:   "task-1",
+		FilePath: "/var/log/app.log",
+		ChunkID:  0,
+		Error:    assert.AnError,
+	}
+
+	collector.AddResult(result)
+
+	// GetErrors should return the error
+	errors := collector.GetErrors()
+	assert.Len(t, errors, 1)
+	assert.Equal(t, assert.AnError, errors[0])
+}
+
+func TestResultCollector_GetErrors_MultipleErrors(t *testing.T) {
+	collector := NewResultCollector([]string{"ERROR"})
+
+	// Add multiple results with errors
+	results := []Result{
+		{
+			TaskID:   "task-1",
+			FilePath: "/var/log/app1.log",
+			ChunkID:  0,
+			Error:    assert.AnError,
+		},
+		{
+			TaskID:   "task-2",
+			FilePath: "/var/log/app2.log",
+			ChunkID:  0,
+			Matches: []MatchResult{
+				{Offset: 100, LineText: "ERROR: test", LineNumber: 1},
+			},
+			Error: nil, // No error
+		},
+		{
+			TaskID:   "task-3",
+			FilePath: "/var/log/app3.log",
+			ChunkID:  0,
+			Error:    assert.AnError,
+		},
+	}
+
+	for _, result := range results {
+		collector.AddResult(result)
+	}
+
+	// GetErrors should return 2 errors (task-1 and task-3)
+	errors := collector.GetErrors()
+	assert.Len(t, errors, 2)
+}
+
+func TestResultCollector_ErrorDoesNotAddMatches(t *testing.T) {
+	collector := NewResultCollector([]string{"ERROR"})
+
+	// Add result with error (even though it has matches)
+	result := Result{
+		TaskID:   "task-1",
+		FilePath: "/var/log/app.log",
+		ChunkID:  0,
+		Matches: []MatchResult{
+			{Offset: 100, LineText: "ERROR: test", LineNumber: 1},
+		},
+		Error: assert.AnError,
+	}
+
+	collector.AddResult(result)
+
+	resp := collector.Finalize()
+
+	// Matches should not be added when there's an error
+	assert.Empty(t, resp.Matches, "Matches should not be added when error is present")
+
+	// But the file should still be scanned (tracked)
+	assert.Len(t, resp.ScannedFiles, 1)
+	assert.Contains(t, resp.ScannedFiles, "/var/log/app.log")
+
+	// Error should be recorded
+	errors := collector.GetErrors()
+	assert.Len(t, errors, 1)
+}
+
+func TestResultCollector_GetErrors_Concurrent(t *testing.T) {
+	collector := NewResultCollector([]string{"ERROR"})
+
+	// Add errors concurrently to test thread safety
+	done := make(chan bool, 10)
+
+	for i := 0; i < 10; i++ {
+		go func(id int) {
+			result := Result{
+				TaskID:   fmt.Sprintf("task-%d", id),
+				FilePath: fmt.Sprintf("/var/log/app%d.log", id),
+				ChunkID:  0,
+				Error:    assert.AnError,
+			}
+			collector.AddResult(result)
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < 10; i++ {
+		<-done
+	}
+
+	// GetErrors should have all 10 errors
+	errors := collector.GetErrors()
+	assert.Len(t, errors, 10)
 }

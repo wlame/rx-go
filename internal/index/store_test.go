@@ -294,3 +294,79 @@ func TestStore_ClearAll(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, paths)
 }
+
+func TestStore_ClearAll_EmptyDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheDir := filepath.Join(tmpDir, "cache")
+	os.MkdirAll(cacheDir, 0755)
+	store := NewStore(cacheDir)
+
+	// ClearAll on empty directory should succeed
+	err := store.ClearAll()
+	require.NoError(t, err)
+
+	// Verify still empty
+	paths, err := store.ListCached()
+	require.NoError(t, err)
+	assert.Empty(t, paths)
+}
+
+func TestStore_ClearAll_NonexistentDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheDir := filepath.Join(tmpDir, "nonexistent")
+	store := NewStore(cacheDir)
+
+	// ClearAll on nonexistent directory should succeed (nothing to clear)
+	err := store.ClearAll()
+	require.NoError(t, err)
+}
+
+func TestStore_ClearAll_WithNonIndexFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	cacheDir := filepath.Join(tmpDir, "cache")
+	os.MkdirAll(cacheDir, 0755)
+	store := NewStore(cacheDir)
+
+	// Create some index files
+	buildTime := 1.0
+	totalLines := 1
+	index := &models.FileIndex{
+		Version:          1,
+		IndexType:        models.IndexTypeRegular,
+		SourcePath:       "/tmp/test.log",
+		SourceModifiedAt: time.Now().Format(time.RFC3339),
+		SourceSizeBytes:  100,
+		CreatedAt:        time.Now().Format(time.RFC3339),
+		BuildTimeSeconds: &buildTime,
+		LineIndex:        [][]int64{{1, 0}},
+		TotalLines:       &totalLines,
+	}
+	err := store.Save(index)
+	require.NoError(t, err)
+
+	// Create a non-JSON file (should be ignored)
+	nonJSONFile := filepath.Join(cacheDir, "README.txt")
+	err = os.WriteFile(nonJSONFile, []byte("test"), 0644)
+	require.NoError(t, err)
+
+	// Create a subdirectory (should be ignored)
+	subdir := filepath.Join(cacheDir, "subdir")
+	os.MkdirAll(subdir, 0755)
+
+	// ClearAll should only remove .json files
+	err = store.ClearAll()
+	require.NoError(t, err)
+
+	// Verify index files are gone
+	paths, err := store.ListCached()
+	require.NoError(t, err)
+	assert.Empty(t, paths)
+
+	// Verify non-JSON file still exists
+	_, err = os.Stat(nonJSONFile)
+	assert.NoError(t, err, "Non-JSON files should not be deleted")
+
+	// Verify subdirectory still exists
+	_, err = os.Stat(subdir)
+	assert.NoError(t, err, "Subdirectories should not be deleted")
+}
