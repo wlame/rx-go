@@ -8,21 +8,26 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/security"
 	"github.com/wlame/rx-go/pkg/models"
 )
 
 // Engine orchestrates the search process
 type Engine struct {
-	cfg      *config.Config
-	security *security.SearchRootsManager
+	cfg            *config.Config
+	security       *security.SearchRootsManager
+	indexStore     *index.Store
+	contextExtractor *ContextExtractor
 }
 
 // NewEngine creates a new search engine
 func NewEngine(cfg *config.Config) *Engine {
 	return &Engine{
-		cfg:      cfg,
-		security: security.NewSearchRootsManager(cfg.SearchRoots),
+		cfg:            cfg,
+		security:       security.NewSearchRootsManager(cfg.SearchRoots),
+		indexStore:     index.NewStore(cfg.GetIndexCacheDir()),
+		contextExtractor: NewContextExtractor(),
 	}
 }
 
@@ -96,6 +101,19 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 	resp.AfterContext = req.AfterContext
 	resp.Time = time.Since(startTime).Seconds()
 	resp.SearchTimeMs = time.Since(startTime).Seconds() * 1000
+
+	// Extract context lines if requested
+	if (req.BeforeContext > 0 || req.AfterContext > 0) && len(resp.Matches) > 0 {
+		if err := e.addContextLines(resp, req.BeforeContext, req.AfterContext); err != nil {
+			// Non-fatal: log error but continue
+			// TODO: Add proper logging
+		}
+	}
+
+	// Add absolute line numbers using index if available
+	if !e.cfg.NoIndex {
+		e.addAbsoluteLineNumbers(resp)
+	}
 
 	return resp, nil
 }
@@ -239,4 +257,79 @@ func (e *Engine) emptyResponse(req *models.TraceRequest, startTime time.Time) *m
 	resp.Time = time.Since(startTime).Seconds()
 	resp.SearchTimeMs = time.Since(startTime).Seconds() * 1000
 	return resp
+}
+
+// addContextLines extracts and adds context lines to the response
+func (e *Engine) addContextLines(resp *models.TraceResponse, beforeContext, afterContext int) error {
+	// Group matches by file
+	fileMatches := make(map[string][]models.Match)
+	for _, match := range resp.Matches {
+		fileID := match.File
+		fileMatches[fileID] = append(fileMatches[fileID], match)
+	}
+
+	// Extract context for each file
+	allContextLines := make(map[string][]models.ContextLine)
+
+	for fileID, matches := range fileMatches {
+		filePath := resp.Files[fileID]
+
+		// Try to load index for this file
+		var fileIndex *models.FileIndex
+		if !e.cfg.NoIndex {
+			idx, err := e.indexStore.Load(filePath)
+			if err == nil {
+				fileIndex = idx
+			}
+		}
+
+		// Extract context
+		contextLines, err := e.contextExtractor.ExtractContext(
+			filePath,
+			matches,
+			beforeContext,
+			afterContext,
+			fileIndex,
+		)
+		if err != nil {
+			continue // Skip on error
+		}
+
+		// Merge into response
+		for key, lines := range contextLines {
+			allContextLines[key] = lines
+		}
+	}
+
+	resp.ContextLines = allContextLines
+	return nil
+}
+
+// addAbsoluteLineNumbers adds absolute line numbers to matches using indexes
+func (e *Engine) addAbsoluteLineNumbers(resp *models.TraceResponse) {
+	// Group matches by file
+	fileMatches := make(map[string][]*models.Match)
+	for i := range resp.Matches {
+		fileID := resp.Matches[i].File
+		fileMatches[fileID] = append(fileMatches[fileID], &resp.Matches[i])
+	}
+
+	// Process each file
+	for fileID, matches := range fileMatches {
+		filePath := resp.Files[fileID]
+
+		// Try to load index
+		idx, err := e.indexStore.Load(filePath)
+		if err != nil {
+			continue // Skip if no index
+		}
+
+		// Update matches with absolute line numbers
+		for _, match := range matches {
+			lineNum := index.FindLineNumber(idx.LineIndex, match.Offset)
+			if lineNum > 0 {
+				match.AbsoluteLineNumber = lineNum
+			}
+		}
+	}
 }

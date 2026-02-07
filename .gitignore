@@ -51,3 +51,5 @@ tmp/
 # RX specific
 .rx-cache/
 rx-test-cache/
+playground/
+scripts/

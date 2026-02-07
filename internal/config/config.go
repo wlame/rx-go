@@ -144,8 +144,12 @@ func getDefaultCacheDir() string {
 }
 
 func getSearchRoots() []string {
-	// Priority: RX_SEARCH_ROOTS (multi) > RX_SEARCH_ROOT (single) > cwd
-	if roots := os.Getenv("RX_SEARCH_ROOTS"); roots != "" {
+	// Priority: RX_SEARCH_ROOTS (multi) > RX_SEARCH_ROOT (single) > no restriction
+	// Empty RX_SEARCH_ROOTS means "allow any path" (no restrictions)
+	if roots, exists := os.LookupEnv("RX_SEARCH_ROOTS"); exists {
+		if roots == "" {
+			return []string{} // Empty = allow any path
+		}
 		// Split by : on Unix, ; on Windows
 		separator := ":"
 		if runtime.GOOS == "windows" {
@@ -158,12 +162,8 @@ func getSearchRoots() []string {
 		return []string{root}
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return []string{"."}
-	}
-
-	return []string{cwd}
+	// Default: no restrictions (allow any path)
+	return []string{}
 }
 
 func getMaxWorkers() int {
