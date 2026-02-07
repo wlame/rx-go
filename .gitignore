@@ -53,3 +53,4 @@ tmp/
 rx-test-cache/
 playground/
 scripts/
+cmd/test-playground/

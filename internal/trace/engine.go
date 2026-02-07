@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/security"
@@ -15,19 +16,21 @@ import (
 
 // Engine orchestrates the search process
 type Engine struct {
-	cfg            *config.Config
-	security       *security.SearchRootsManager
-	indexStore     *index.Store
+	cfg              *config.Config
+	security         *security.SearchRootsManager
+	indexStore       *index.Store
 	contextExtractor *ContextExtractor
+	compDetector     *compression.Detector
 }
 
 // NewEngine creates a new search engine
 func NewEngine(cfg *config.Config) *Engine {
 	return &Engine{
-		cfg:            cfg,
-		security:       security.NewSearchRootsManager(cfg.SearchRoots),
-		indexStore:     index.NewStore(cfg.GetIndexCacheDir()),
+		cfg:              cfg,
+		security:         security.NewSearchRootsManager(cfg.SearchRoots),
+		indexStore:       index.NewStore(cfg.GetIndexCacheDir()),
 		contextExtractor: NewContextExtractor(),
+		compDetector:     compression.NewDetector(),
 	}
 }
 
@@ -62,11 +65,29 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 	pool := NewWorkerPool(e.cfg.MaxWorkers, maxResults, req.Patterns, req.CaseSensitive)
 	pool.Start()
 
-	// Create and submit tasks
+	// Separate files into regular and compressed
+	regularFiles := make([]string, 0)
+	compressedFiles := make([]string, 0)
+
+	for _, filePath := range files {
+		format, err := e.compDetector.DetectFile(filePath)
+		if err != nil {
+			collector.AddSkippedFile(filePath)
+			continue
+		}
+
+		if format.IsCompressed() {
+			compressedFiles = append(compressedFiles, filePath)
+		} else {
+			regularFiles = append(regularFiles, filePath)
+		}
+	}
+
+	// Process regular files with worker pool and chunking
 	chunker := NewChunker(e.cfg)
 	taskCount := 0
 
-	for _, filePath := range files {
+	for _, filePath := range regularFiles {
 		tasks, err := chunker.CreateTasks(filePath)
 		if err != nil {
 			collector.AddSkippedFile(filePath)
@@ -84,7 +105,7 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 	// Close task channel
 	pool.Close()
 
-	// Collect results
+	// Collect results from regular files
 	for result := range pool.Results() {
 		collector.AddResult(result)
 
@@ -92,6 +113,32 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 		if maxResults > 0 && collector.GetMatchCount() >= maxResults {
 			pool.Cancel()
 		}
+	}
+
+	// Process compressed files sequentially (no chunking)
+	for _, filePath := range compressedFiles {
+		// Check if we've already reached max results
+		if maxResults > 0 && collector.GetMatchCount() >= maxResults {
+			break
+		}
+
+		format, _ := e.compDetector.DetectFile(filePath)
+		matchResults, err := SearchCompressed(ctx, filePath, req.Patterns, req.CaseSensitive, format)
+		if err != nil {
+			collector.AddSkippedFile(filePath)
+			continue
+		}
+
+		// Wrap in Result structure for collector
+		result := Result{
+			TaskID:   fmt.Sprintf("compressed-%s", filePath),
+			FilePath: filePath,
+			Matches:  matchResults,
+			Error:    nil,
+			ChunkID:  0,
+		}
+
+		collector.AddResult(result)
 	}
 
 	// Finalize response
@@ -173,7 +220,10 @@ func (e *Engine) expandPaths(paths []string, skipBinary bool) ([]string, error) 
 			}
 		} else {
 			// Single file
-			if skipBinary && e.isBinaryFile(absPath) {
+			// Check if compressed - compressed files should not be skipped as binary
+			isCompressed := e.compDetector.IsCompressed(absPath)
+
+			if skipBinary && !isCompressed && e.isBinaryFile(absPath) {
 				continue
 			}
 			if !seen[absPath] {
@@ -207,8 +257,9 @@ func (e *Engine) expandDirectory(dirPath string, skipBinary bool) ([]string, err
 			return fmt.Errorf("directory contains more than %d files (limit: RX_MAX_FILES)", e.cfg.MaxFiles)
 		}
 
-		// Skip binary files
-		if skipBinary && e.isBinaryFile(path) {
+		// Skip binary files (but not compressed files)
+		isCompressed := e.compDetector.IsCompressed(path)
+		if skipBinary && !isCompressed && e.isBinaryFile(path) {
 			return nil
 		}
 
