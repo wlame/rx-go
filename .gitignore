@@ -1,63 +1,18 @@
-# Binaries
-bin/
+# Binary (root-level build output only)
+/rx
 *.exe
-*.dll
-*.so
-*.dylib
-rx
 
-# Test artifacts
-*.test
-*.out
+# Test/coverage
 coverage.out
-coverage.html
-*.prof
-test/*
+*.test
 
-# Go workspace
-go.work
-go.work.sum
-
-# Dependencies
-vendor/
+# Debug files
+.debug_*
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
-*.swo
-*~
+
+# OS
 .DS_Store
-.claude
-.serena
-
-# Logs
-*.log
-
-# Cache
-.cache/
-*.cache
-indexes/  # Test-generated index cache files
-
-# Build artifacts
-bin/
-dist/
-build/
-tmp/
-.temp/
-
-# Filesystem artifacts (FUSE, NFS)
-.fuse_hidden*
-.nfs*
-
-# Environment
-.env
-.env.local
-*.local
-
-# RX specific
-.rx-cache/
-rx-test-cache/
-playground/
-scripts/
-cmd/test-playground/
