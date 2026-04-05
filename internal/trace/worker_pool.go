@@ -3,36 +3,30 @@ package trace
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 )
 
 // WorkerPool manages a pool of goroutines for parallel task processing
 type WorkerPool struct {
-	maxWorkers     int
-	taskChan       chan Task
-	resultChan     chan Result
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	matchCounter   *int64 // Atomic counter for total matches
-	maxResults     int    // Maximum results to collect (0 = unlimited)
-	patterns       []string
-	caseSensitive  bool
+	maxWorkers    int
+	taskChan      chan Task
+	matchChan     chan MatchResult // Stream matches here
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	patterns      []string
+	caseSensitive bool
 }
 
-// NewWorkerPool creates a new worker pool
-func NewWorkerPool(maxWorkers, maxResults int, patterns []string, caseSensitive bool) *WorkerPool {
+// NewWorkerPool creates a new worker pool with streaming support
+func NewWorkerPool(maxWorkers int, patterns []string, caseSensitive bool, matchChan chan MatchResult) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
-	var counter int64
 
 	return &WorkerPool{
 		maxWorkers:    maxWorkers,
-		taskChan:      make(chan Task, maxWorkers*2),      // Buffered channel
-		resultChan:    make(chan Result, maxWorkers*2),    // Buffered channel
+		taskChan:      make(chan Task, maxWorkers*2), // Buffered channel
+		matchChan:     matchChan,
 		ctx:           ctx,
 		cancel:        cancel,
-		matchCounter:  &counter,
-		maxResults:    maxResults,
 		patterns:      patterns,
 		caseSensitive: caseSensitive,
 	}
@@ -60,12 +54,7 @@ func (p *WorkerPool) SubmitTask(task Task) bool {
 func (p *WorkerPool) Close() {
 	close(p.taskChan)
 	p.wg.Wait()
-	close(p.resultChan)
-}
-
-// Results returns the result channel
-func (p *WorkerPool) Results() <-chan Result {
-	return p.resultChan
+	// Note: matchChan is owned by engine, not closed here
 }
 
 // Cancel cancels all workers
@@ -87,57 +76,18 @@ func (p *WorkerPool) worker(id int) {
 				return
 			}
 
-			// Check if we've reached max results
-			if p.maxResults > 0 {
-				currentCount := atomic.LoadInt64(p.matchCounter)
-				if int(currentCount) >= p.maxResults {
-					// Send empty result and continue draining
-					p.resultChan <- Result{
-						TaskID:   task.ID,
-						FilePath: task.FilePath,
-						Matches:  nil,
-						ChunkID:  task.ChunkID,
-					}
-					continue
-				}
-			}
-
-			// Process the task
-			result := p.processTask(task)
-
-			// Update match counter
-			if len(result.Matches) > 0 {
-				atomic.AddInt64(p.matchCounter, int64(len(result.Matches)))
-			}
-
-			// Send result
-			select {
-			case <-p.ctx.Done():
-				return
-			case p.resultChan <- result:
-			}
+			// Process the task with streaming pipeline
+			p.processTask(task)
 		}
 	}
 }
 
-// processTask executes a single task
-func (p *WorkerPool) processTask(task Task) Result {
-	// Create pipeline
-	pipeline := NewPipeline(p.ctx, task, p.patterns, p.caseSensitive)
+// processTask executes a single task using streaming pipeline
+func (p *WorkerPool) processTask(task Task) {
+	// Create streaming pipeline
+	pipeline := NewStreamingPipeline(p.ctx, task, p.patterns, p.caseSensitive, p.matchChan)
 
-	// Execute pipeline
-	matches, err := pipeline.Run()
-
-	return Result{
-		TaskID:   task.ID,
-		FilePath: task.FilePath,
-		Matches:  matches,
-		Error:    err,
-		ChunkID:  task.ChunkID,
-	}
-}
-
-// GetMatchCount returns the current match count
-func (p *WorkerPool) GetMatchCount() int {
-	return int(atomic.LoadInt64(p.matchCounter))
+	// Execute pipeline - it will stream matches directly to matchChan
+	// Errors are logged but don't stop processing (consistent with batch behavior)
+	_ = pipeline.Run()
 }

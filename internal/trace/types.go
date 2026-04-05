@@ -20,6 +20,7 @@ type Result struct {
 
 // MatchResult represents a single match found during processing
 type MatchResult struct {
+	FilePath       string // File path this match belongs to
 	Offset         int64  // Absolute byte offset in file
 	LineText       string // Content of the matched line
 	LineNumber     int    // Relative line number within chunk

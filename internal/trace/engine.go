@@ -54,17 +54,16 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 		return e.emptyResponse(req, startTime), nil
 	}
 
-	// Create result collector
-	collector := NewResultCollector(req.Patterns)
+	// Create match channel for streaming results
+	// Buffer size: handle burst from all workers (50 matches/worker)
+	matchChan := make(chan MatchResult, e.cfg.MaxWorkers*50) // 1000 for 20 workers
 
-	// Create worker pool
-	maxResults := req.MaxResults
-	if maxResults == 0 {
-		maxResults = int(^uint(0) >> 1) // Max int
-	}
+	// Create worker pool with streaming support
+	pool := NewWorkerPool(e.cfg.MaxWorkers, req.Patterns, req.CaseSensitive, matchChan)
+	poolCancel := pool.Cancel // Save cancel function for collector
 
-	pool := NewWorkerPool(e.cfg.MaxWorkers, maxResults, req.Patterns, req.CaseSensitive)
-	pool.Start()
+	// Create result collector with cancel capability
+	collector := NewResultCollector(req.Patterns, req.MaxResults, poolCancel)
 
 	// Separate files into regular and compressed
 	regularFiles := make([]string, 0)
@@ -87,19 +86,15 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 	// Process regular files with worker pool and chunking
 	chunker := NewChunker(e.cfg)
 
-	// Start result collector goroutine (to avoid deadlock)
+	// Start worker pool
+	pool.Start()
+
+	// Start result collector goroutine to consume streaming matches
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for result := range pool.Results() {
-			collector.AddResult(result)
-
-			// Check if we've exceeded max results
-			if maxResults > 0 && collector.GetMatchCount() >= maxResults {
-				pool.Cancel()
-			}
-		}
+		collector.ConsumeMatches(matchChan)
 	}()
 
 	// Submit tasks
@@ -117,14 +112,20 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 		}
 	}
 
-	// Close task channel and wait for all results to be collected
-	pool.Close()
+	// Close match channel in separate goroutine after workers finish
+	// This prevents deadlock: workers can finish even with full channel
+	go func() {
+		pool.Close() // Wait for workers to finish
+		close(matchChan) // Then close match channel
+	}()
+
+	// Wait for collector to finish consuming
 	wg.Wait()
 
 	// Process compressed files sequentially (no chunking)
 	for _, filePath := range compressedFiles {
 		// Check if we've already reached max results
-		if maxResults > 0 && collector.GetMatchCount() >= maxResults {
+		if req.MaxResults > 0 && collector.GetMatchCount() >= req.MaxResults {
 			break
 		}
 
@@ -135,16 +136,14 @@ func (e *Engine) Search(ctx context.Context, req *models.TraceRequest) (*models.
 			continue
 		}
 
-		// Wrap in Result structure for collector
-		result := Result{
-			TaskID:   fmt.Sprintf("compressed-%s", filePath),
-			FilePath: filePath,
-			Matches:  matchResults,
-			Error:    nil,
-			ChunkID:  0,
+		// Add matches directly
+		for _, match := range matchResults {
+			// Check limit for each match
+			if req.MaxResults > 0 && collector.GetMatchCount() >= req.MaxResults {
+				break
+			}
+			collector.AddMatch(match)
 		}
-
-		collector.AddResult(result)
 	}
 
 	// Finalize response

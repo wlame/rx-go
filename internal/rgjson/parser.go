@@ -77,3 +77,12 @@ func (p *Parser) ParseMatches() ([]Event, error) {
 
 	return matches, nil
 }
+
+// ParseEvent parses a single line of ripgrep JSON output
+func ParseEvent(line []byte) (*Event, error) {
+	var event Event
+	if err := json.Unmarshal(line, &event); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON event: %w", err)
+	}
+	return &event, nil
+}

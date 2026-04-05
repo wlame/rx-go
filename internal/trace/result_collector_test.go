@@ -8,7 +8,7 @@ import (
 )
 
 func TestResultCollector_SingleResult(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	result := Result{
 		TaskID:   "task-1",
@@ -38,7 +38,7 @@ func TestResultCollector_SingleResult(t *testing.T) {
 }
 
 func TestResultCollector_MultipleFiles(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	results := []Result{
 		{
@@ -84,7 +84,7 @@ func TestResultCollector_MultipleFiles(t *testing.T) {
 }
 
 func TestResultCollector_Deduplication(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Simulate two chunks with overlapping match at boundary
 	result1 := Result{
@@ -120,7 +120,7 @@ func TestResultCollector_Deduplication(t *testing.T) {
 }
 
 func TestResultCollector_Sorting(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Add matches out of order
 	result := Result{
@@ -144,7 +144,7 @@ func TestResultCollector_Sorting(t *testing.T) {
 }
 
 func TestResultCollector_SkippedFiles(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	collector.AddSkippedFile("/var/log/binary.dat")
 	collector.AddSkippedFile("/var/log/large.log")
@@ -157,7 +157,7 @@ func TestResultCollector_SkippedFiles(t *testing.T) {
 }
 
 func TestResultCollector_MultiplePatterns(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR", "WARN", "CRITICAL"})
+	collector := NewResultCollector([]string{"ERROR", "WARN", "CRITICAL"}, 0, nil)
 
 	// Verify pattern IDs are created
 	assert.Len(t, collector.patternIDs, 3)
@@ -174,7 +174,7 @@ func TestResultCollector_MultiplePatterns(t *testing.T) {
 }
 
 func TestResultCollector_GetMatchCount(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	result := Result{
 		TaskID:   "task-1",
@@ -197,7 +197,7 @@ func TestResultCollector_GetMatchCount(t *testing.T) {
 // ============================================================================
 
 func TestResultCollector_GetErrors_NoErrors(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Add successful result
 	result := Result{
@@ -218,7 +218,7 @@ func TestResultCollector_GetErrors_NoErrors(t *testing.T) {
 }
 
 func TestResultCollector_GetErrors_SingleError(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Add result with error
 	result := Result{
@@ -237,7 +237,7 @@ func TestResultCollector_GetErrors_SingleError(t *testing.T) {
 }
 
 func TestResultCollector_GetErrors_MultipleErrors(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Add multiple results with errors
 	results := []Result{
@@ -274,7 +274,7 @@ func TestResultCollector_GetErrors_MultipleErrors(t *testing.T) {
 }
 
 func TestResultCollector_ErrorDoesNotAddMatches(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Add result with error (even though it has matches)
 	result := Result{
@@ -304,7 +304,7 @@ func TestResultCollector_ErrorDoesNotAddMatches(t *testing.T) {
 }
 
 func TestResultCollector_GetErrors_Concurrent(t *testing.T) {
-	collector := NewResultCollector([]string{"ERROR"})
+	collector := NewResultCollector([]string{"ERROR"}, 0, nil)
 
 	// Add errors concurrently to test thread safety
 	done := make(chan bool, 10)

@@ -10,113 +10,101 @@ import (
 	"github.com/wlame/rx-go/pkg/models"
 )
 
-// ResultCollector aggregates results from worker pool
-type ResultCollector struct {
+// ResultCollectorFixed is an improved version with better concurrency
+type ResultCollectorFixed struct {
 	patterns      []string
-	files         map[string]bool       // Track unique files
-	patternIDs    map[string]string     // Pattern text -> ID (p1, p2, ...)
-	fileIDs       map[string]string     // File path -> ID (f1, f2, ...)
+	files         map[string]bool
+	patternIDs    map[string]string
+	fileIDs       map[string]string
 	matches       []models.Match
 	scannedFiles  []string
 	skippedFiles  []string
 	fileChunks    map[string]int
 	errors        []error
 	mu            sync.Mutex
-	matchCount    int64                 // Atomic counter for streaming
-	maxResults    int                   // Maximum results (0 = unlimited)
-	cancelFunc    context.CancelFunc    // Cancel function for early exit
+	matchCount    int64
+	maxResults    int
+	cancelFunc    context.CancelFunc
+
+	// Batch processing
+	batchSize     int
+	matchBuffer   []MatchResult
+	bufferMu      sync.Mutex
 }
 
-// NewResultCollector creates a new result collector
-func NewResultCollector(patterns []string, maxResults int, cancelFunc context.CancelFunc) *ResultCollector {
+// NewResultCollectorFixed creates an improved result collector
+func NewResultCollectorFixed(patterns []string, maxResults int, cancelFunc context.CancelFunc) *ResultCollectorFixed {
 	patternIDs := make(map[string]string)
 	for i, pattern := range patterns {
 		patternIDs[pattern] = fmt.Sprintf("p%d", i+1)
 	}
 
-	return &ResultCollector{
+	return &ResultCollectorFixed{
 		patterns:     patterns,
 		files:        make(map[string]bool),
 		patternIDs:   patternIDs,
 		fileIDs:      make(map[string]string),
-		matches:      make([]models.Match, 0),
-		scannedFiles: make([]string, 0),
+		matches:      make([]models.Match, 0, 10000), // Pre-allocate
+		scannedFiles: make([]string, 0, 100),
 		skippedFiles: make([]string, 0),
 		fileChunks:   make(map[string]int),
 		errors:       make([]error, 0),
 		matchCount:   0,
 		maxResults:   maxResults,
 		cancelFunc:   cancelFunc,
+		batchSize:    100, // Process 100 matches at a time
+		matchBuffer:  make([]MatchResult, 0, 100),
 	}
 }
 
-// AddResult processes a result from the worker pool
-func (c *ResultCollector) AddResult(result Result) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Track file
-	if !c.files[result.FilePath] {
-		c.files[result.FilePath] = true
-		c.scannedFiles = append(c.scannedFiles, result.FilePath)
-	}
-
-	// Track chunk count
-	currentChunks := c.fileChunks[result.FilePath]
-	if result.ChunkID >= currentChunks {
-		c.fileChunks[result.FilePath] = result.ChunkID + 1
-	}
-
-	// Handle errors
-	if result.Error != nil {
-		c.errors = append(c.errors, result.Error)
-		return
-	}
-
-	// Get or create file ID
-	fileID, ok := c.fileIDs[result.FilePath]
-	if !ok {
-		fileID = fmt.Sprintf("f%d", len(c.fileIDs)+1)
-		c.fileIDs[result.FilePath] = fileID
-	}
-
-	// Add matches
-	for _, match := range result.Matches {
-		// Determine which pattern matched
-		// For now, use p1 (single pattern support)
-		// Multi-pattern matching requires pattern detection in MatchResult
-		patternID := "p1"
-
-		c.matches = append(c.matches, models.Match{
-			Pattern:            patternID,
-			File:               fileID,
-			Offset:             match.Offset,
-			AbsoluteLineNumber: -1, // Will be calculated later if index available
-			RelativeLineNumber: match.LineNumber,
-			ChunkID:            &result.ChunkID,
-		})
-	}
-}
-
-// ConsumeMatches consumes matches from channel until channel closes or max results reached
-// This enables true streaming with immediate cancellation
-func (c *ResultCollector) ConsumeMatches(matchChan <-chan MatchResult) {
+// ConsumeMatches consumes matches with batching for better performance
+func (c *ResultCollectorFixed) ConsumeMatches(matchChan <-chan MatchResult) {
 	for match := range matchChan {
-		// Check if we've already hit the limit
+		// Fast path: check limit with atomic read (no lock)
 		if c.maxResults > 0 {
 			currentCount := atomic.LoadInt64(&c.matchCount)
 			if int(currentCount) >= c.maxResults {
-				// Cancel all workers immediately
 				if c.cancelFunc != nil {
 					c.cancelFunc()
 				}
-				// Continue draining channel to prevent worker deadlock
+				// Drain channel to prevent worker deadlock
 				continue
 			}
 		}
 
-		c.mu.Lock()
+		// Add to buffer (minimal lock time)
+		c.bufferMu.Lock()
+		c.matchBuffer = append(c.matchBuffer, match)
+		bufferLen := len(c.matchBuffer)
+		c.bufferMu.Unlock()
 
+		// Process batch when full
+		if bufferLen >= c.batchSize {
+			c.processBatch()
+		}
+	}
+
+	// Process remaining matches in buffer
+	c.processBatch()
+}
+
+// processBatch processes accumulated matches in one go
+func (c *ResultCollectorFixed) processBatch() {
+	// Get buffer (minimal lock time)
+	c.bufferMu.Lock()
+	if len(c.matchBuffer) == 0 {
+		c.bufferMu.Unlock()
+		return
+	}
+	batch := c.matchBuffer
+	c.matchBuffer = make([]MatchResult, 0, c.batchSize)
+	c.bufferMu.Unlock()
+
+	// Process batch (main lock)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for _, match := range batch {
 		// Track file
 		if !c.files[match.FilePath] {
 			c.files[match.FilePath] = true
@@ -130,7 +118,7 @@ func (c *ResultCollector) ConsumeMatches(matchChan <-chan MatchResult) {
 			c.fileIDs[match.FilePath] = fileID
 		}
 
-		// Determine pattern ID (for now, p1 - multi-pattern needs enhancement)
+		// Pattern ID (multi-pattern needs enhancement)
 		patternID := "p1"
 
 		// Add match
@@ -140,28 +128,24 @@ func (c *ResultCollector) ConsumeMatches(matchChan <-chan MatchResult) {
 			Offset:             match.Offset,
 			AbsoluteLineNumber: -1,
 			RelativeLineNumber: match.LineNumber,
-			ChunkID:            nil, // Not tracked in streaming mode
+			ChunkID:            nil,
 		})
 
 		// Increment atomic counter
 		atomic.AddInt64(&c.matchCount, 1)
 
-		c.mu.Unlock()
-
-		// Check again after adding (in case multiple goroutines racing)
-		if c.maxResults > 0 {
-			currentCount := atomic.LoadInt64(&c.matchCount)
-			if int(currentCount) >= c.maxResults {
-				if c.cancelFunc != nil {
-					c.cancelFunc()
-				}
+		// Check limit after batch
+		if c.maxResults > 0 && len(c.matches) >= c.maxResults {
+			if c.cancelFunc != nil {
+				c.cancelFunc()
 			}
+			break
 		}
 	}
 }
 
-// AddMatch adds a single match (for compressed files processed after streaming)
-func (c *ResultCollector) AddMatch(match MatchResult) {
+// AddMatch adds a single match (for compressed files)
+func (c *ResultCollectorFixed) AddMatch(match MatchResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -178,10 +162,8 @@ func (c *ResultCollector) AddMatch(match MatchResult) {
 		c.fileIDs[match.FilePath] = fileID
 	}
 
-	// Determine pattern ID
 	patternID := "p1"
 
-	// Add match
 	c.matches = append(c.matches, models.Match{
 		Pattern:            patternID,
 		File:               fileID,
@@ -191,19 +173,18 @@ func (c *ResultCollector) AddMatch(match MatchResult) {
 		ChunkID:            nil,
 	})
 
-	// Increment atomic counter
 	atomic.AddInt64(&c.matchCount, 1)
 }
 
 // AddSkippedFile adds a file to the skipped list
-func (c *ResultCollector) AddSkippedFile(filePath string) {
+func (c *ResultCollectorFixed) AddSkippedFile(filePath string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.skippedFiles = append(c.skippedFiles, filePath)
 }
 
 // Finalize sorts matches and prepares final response
-func (c *ResultCollector) Finalize() *models.TraceResponse {
+func (c *ResultCollectorFixed) Finalize() *models.TraceResponse {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -215,16 +196,15 @@ func (c *ResultCollector) Finalize() *models.TraceResponse {
 		return c.matches[i].Offset < c.matches[j].Offset
 	})
 
-	// Deduplicate matches (in case of overlapping chunks)
+	// Deduplicate matches
 	c.matches = c.deduplicateMatches(c.matches)
 
-	// Build pattern ID map (pattern text -> ID)
+	// Build maps
 	patterns := make(map[string]string)
 	for pattern, id := range c.patternIDs {
 		patterns[id] = pattern
 	}
 
-	// Build file ID map (file path -> ID)
 	files := make(map[string]string)
 	for path, id := range c.fileIDs {
 		files[id] = path
@@ -242,9 +222,8 @@ func (c *ResultCollector) Finalize() *models.TraceResponse {
 	return resp
 }
 
-// deduplicateMatches removes duplicate matches
-// Duplicates can occur at chunk boundaries
-func (c *ResultCollector) deduplicateMatches(matches []models.Match) []models.Match {
+// deduplicateMatches removes duplicates
+func (c *ResultCollectorFixed) deduplicateMatches(matches []models.Match) []models.Match {
 	if len(matches) == 0 {
 		return matches
 	}
@@ -253,9 +232,7 @@ func (c *ResultCollector) deduplicateMatches(matches []models.Match) []models.Ma
 	unique := make([]models.Match, 0, len(matches))
 
 	for _, match := range matches {
-		// Create key: file + offset
 		key := fmt.Sprintf("%s:%d", match.File, match.Offset)
-
 		if !seen[key] {
 			seen[key] = true
 			unique = append(unique, match)
@@ -266,15 +243,13 @@ func (c *ResultCollector) deduplicateMatches(matches []models.Match) []models.Ma
 }
 
 // GetErrors returns all collected errors
-func (c *ResultCollector) GetErrors() []error {
+func (c *ResultCollectorFixed) GetErrors() []error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.errors
 }
 
 // GetMatchCount returns the current number of matches
-func (c *ResultCollector) GetMatchCount() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.matches)
+func (c *ResultCollectorFixed) GetMatchCount() int {
+	return int(atomic.LoadInt64(&c.matchCount))
 }

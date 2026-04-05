@@ -12,6 +12,7 @@ rx
 coverage.out
 coverage.html
 *.prof
+test/*
 
 # Go workspace
 go.work

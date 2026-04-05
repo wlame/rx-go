@@ -24,7 +24,9 @@ line 3: info
 `
 	require.NoError(t, os.WriteFile(testFile, []byte(content), 0644))
 
-	pool := NewWorkerPool(2, 0, []string{"ERROR"}, true)
+	// Create match channel for streaming
+	matchChan := make(chan MatchResult, 10)
+	pool := NewWorkerPool(2, []string{"ERROR"}, true, matchChan)
 	pool.Start()
 
 	task := Task{
@@ -41,15 +43,15 @@ line 3: info
 
 	// Close and collect results
 	pool.Close()
+	close(matchChan)
 
-	var results []Result
-	for result := range pool.Results() {
-		results = append(results, result)
+	var matches []MatchResult
+	for match := range matchChan {
+		matches = append(matches, match)
 	}
 
-	require.Len(t, results, 1)
-	assert.Len(t, results[0].Matches, 1)
-	assert.Contains(t, results[0].Matches[0].LineText, "ERROR")
+	require.Len(t, matches, 1)
+	assert.Contains(t, matches[0].LineText, "ERROR")
 }
 
 func TestWorkerPool_MultipleTasks(t *testing.T) {
@@ -70,7 +72,9 @@ line 3: info
 		require.NoError(t, os.WriteFile(testFile, []byte(content), 0644))
 	}
 
-	pool := NewWorkerPool(3, 0, []string{"ERROR"}, true)
+	// Create match channel for streaming
+	matchChan := make(chan MatchResult, 10)
+	pool := NewWorkerPool(3, []string{"ERROR"}, true, matchChan)
 	pool.Start()
 
 	// Submit tasks for all files
@@ -89,60 +93,26 @@ line 3: info
 	}
 
 	pool.Close()
+	close(matchChan)
 
-	// Collect results
-	var results []Result
-	for result := range pool.Results() {
-		results = append(results, result)
+	// Collect matches
+	var matches []MatchResult
+	for match := range matchChan {
+		matches = append(matches, match)
 	}
 
-	require.Len(t, results, 3)
+	require.Len(t, matches, 3)
 
-	// Each result should have 1 match
-	for _, result := range results {
-		assert.Len(t, result.Matches, 1)
+	// Each match should contain ERROR
+	for _, match := range matches {
+		assert.Contains(t, match.LineText, "ERROR")
 	}
 }
 
 func TestWorkerPool_MaxResults(t *testing.T) {
-	if !isRipgrepInstalled() {
-		t.Skip("ripgrep not installed")
-	}
-
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.log")
-
-	// Create file with many ERROR lines
-	content := ""
-	for i := 0; i < 20; i++ {
-		content += "line " + string(rune('0'+i)) + ": ERROR " + string(rune('A'+i)) + "\n"
-	}
-	require.NoError(t, os.WriteFile(testFile, []byte(content), 0644))
-
-	// Set max results to 5
-	pool := NewWorkerPool(2, 5, []string{"ERROR"}, true)
-	pool.Start()
-
-	task := Task{
-		ID:       "task-1",
-		FilePath: testFile,
-		Offset:   0,
-		Length:   int64(len(content)),
-		ChunkID:  0,
-	}
-
-	pool.SubmitTask(task)
-	pool.Close()
-
-	var totalMatches int
-	for result := range pool.Results() {
-		totalMatches += len(result.Matches)
-	}
-
-	// Should have found 20 matches but may have stopped early
-	// The actual count might be slightly higher than maxResults due to buffering
-	assert.LessOrEqual(t, totalMatches, 25, "Should not significantly exceed max results")
-	assert.GreaterOrEqual(t, totalMatches, 5, "Should find at least max results")
+	// NOTE: Max results handling is now done by ResultCollector, not WorkerPool
+	// See TestStreamingMaxResults in streaming_test.go instead
+	t.Skip("Max results is now handled by ResultCollector")
 }
 
 func TestWorkerPool_Cancel(t *testing.T) {
@@ -160,7 +130,8 @@ func TestWorkerPool_Cancel(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(testFile, []byte(content), 0644))
 
-	pool := NewWorkerPool(2, 0, []string{"info"}, true)
+	matchChan := make(chan MatchResult, 100)
+	pool := NewWorkerPool(2, []string{"info"}, true, matchChan)
 	pool.Start()
 
 	// Submit task
@@ -176,13 +147,14 @@ func TestWorkerPool_Cancel(t *testing.T) {
 	// Cancel immediately
 	pool.Cancel()
 	pool.Close()
+	close(matchChan)
 
 	// Should complete without hanging
 	timeout := time.After(2 * time.Second)
 	done := make(chan bool)
 
 	go func() {
-		for range pool.Results() {
+		for range matchChan {
 			// Drain results
 		}
 		done <- true
@@ -197,38 +169,7 @@ func TestWorkerPool_Cancel(t *testing.T) {
 }
 
 func TestWorkerPool_GetMatchCount(t *testing.T) {
-	if !isRipgrepInstalled() {
-		t.Skip("ripgrep not installed")
-	}
-
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.log")
-
-	content := `ERROR 1
-ERROR 2
-ERROR 3
-`
-	require.NoError(t, os.WriteFile(testFile, []byte(content), 0644))
-
-	pool := NewWorkerPool(2, 0, []string{"ERROR"}, true)
-	pool.Start()
-
-	task := Task{
-		ID:       "task-1",
-		FilePath: testFile,
-		Offset:   0,
-		Length:   int64(len(content)),
-		ChunkID:  0,
-	}
-
-	pool.SubmitTask(task)
-	pool.Close()
-
-	// Drain results
-	for range pool.Results() {
-	}
-
-	// Check match count
-	count := pool.GetMatchCount()
-	assert.Equal(t, 3, count)
+	// NOTE: Match counting is now handled by ResultCollector
+	// See TestStreamingMaxResults in streaming_test.go instead
+	t.Skip("Match counting is now handled by ResultCollector")
 }
