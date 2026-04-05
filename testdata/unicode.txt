@@ -1,0 +1,45 @@
+Unicode test file for rx integration tests.
+This file contains characters from multiple scripts and emoji.
+
+--- CJK Characters ---
+ERROR: 数据库连接失败 (database connection failed)
+日志分析工具 - Log analysis tool
+WARNING: 缓存已过期 (cache expired)
+2024-03-15 08:30:00 服务启动 (service started)
+ERROR: 认证失败 (authentication failed)
+这行没有错误关键字
+
+--- Japanese ---
+ERROR: データベース接続エラー (database connection error)
+WARNING: メモリ使用量が高い (high memory usage)
+2024-03-15 09:00:00 プロセス開始 (process started)
+
+--- Korean ---
+ERROR: 데이터베이스 연결 실패
+WARNING: 디스크 공간 부족
+2024-03-15 09:30:00 서비스 시작됨
+
+--- Emoji and symbols ---
+ERROR: Build failed 🔴 critical
+WARNING: Tests flaky ⚠️ needs attention
+2024-03-15 10:00:00 Deploy complete ✅
+Metrics: CPU 85% 📊 Memory 70% 💾
+
+--- Accented characters ---
+ERROR: Echec de la connexion a la base de donnees
+WARNING: Le fichier est deja en cours d'utilisation
+2024-03-15 10:30:00 Demarrage du service reussi
+Cliquez sur l'element pour afficher les details
+
+--- Mixed content ---
+ERROR: Fehler beim Verbindungsaufbau zur Datenbank
+WARNING: Speicherplatz knapp - nur noch 5% verfugbar
+2024-03-15 11:00:00 Dienst erfolgreich gestartet
+
+--- Arabic and Hebrew (RTL) ---
+ERROR: فشل الاتصال بقاعدة البيانات
+WARNING: שגיאת אימות
+
+--- Line with many unicode categories ---
+ERROR: [αβγδ] [ΑΒΓΔ] [абвг] [АБВГ] mixed script failure
+2024-03-15 12:00:00 End of unicode test data
