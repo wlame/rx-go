@@ -236,7 +236,7 @@ func TestSamples_MissingOffsetAndLine(t *testing.T) {
 	rr := doRequest(t, srv, "GET", fmt.Sprintf("/v1/samples?path=%s", testFile), nil)
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
-	assert.Contains(t, rr.Body.String(), "byte_offset")
+	assert.Contains(t, rr.Body.String(), "offsets")
 }
 
 func TestSamples_ByteOffset(t *testing.T) {
