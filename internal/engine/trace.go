@@ -229,10 +229,14 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 						"path", fc.path, "chunk", chunk.Index, "error", err)
 					continue
 				}
-				// Tag matches with file ID.
 				fid := fileIDReverse[fc.path]
 				for i := range matches {
 					matches[i].File = fid
+					// Single chunk = rg saw the entire file, so its line numbers
+					// are already absolute. Promote relative → absolute directly.
+					if matches[i].RelativeLineNumber != nil && *matches[i].RelativeLineNumber > 0 {
+						matches[i].AbsoluteLineNumber = *matches[i].RelativeLineNumber
+					}
 				}
 				allResults = append(allResults, matches)
 			}
