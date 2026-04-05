@@ -40,18 +40,59 @@ func (s *Server) handleSamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Accept both "byte_offset" (repeated) and "offsets" (comma-separated) for compatibility
+	// with the Python API. The frontend uses "offsets" (comma-separated string).
 	byteOffsets := r.URL.Query()["byte_offset"]
+	if offsets := r.URL.Query().Get("offsets"); offsets != "" {
+		for _, part := range strings.Split(offsets, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				byteOffsets = append(byteOffsets, part)
+			}
+		}
+	}
+
 	lineNumbers := r.URL.Query()["line"]
+	if lines := r.URL.Query().Get("lines"); lines != "" {
+		for _, part := range strings.Split(lines, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				lineNumbers = append(lineNumbers, part)
+			}
+		}
+	}
 
 	if len(byteOffsets) == 0 && len(lineNumbers) == 0 {
-		writeError(w, http.StatusBadRequest, "must provide either 'byte_offset' or 'line' parameter")
+		writeError(w, http.StatusBadRequest, "must provide either 'offsets' or 'lines' parameter")
 		return
 	}
 
 	beforeCtx := parseIntParam(r, "before_context", 3)
 	afterCtx := parseIntParam(r, "after_context", 3)
 
+	// Handle shared "context" param (sets both before and after).
+	if ctx := r.URL.Query().Get("context"); ctx != "" {
+		if v, err := strconv.Atoi(ctx); err == nil {
+			beforeCtx = v
+			afterCtx = v
+		}
+	}
+
 	resp := models.NewSamplesResponse(path, beforeCtx, afterCtx)
+
+	// Build CLI command for display.
+	cliParts := []string{"rx", "samples", path}
+	for _, o := range byteOffsets {
+		cliParts = append(cliParts, "-b", o)
+	}
+	for _, l := range lineNumbers {
+		cliParts = append(cliParts, "-l", l)
+	}
+	if beforeCtx > 0 || afterCtx > 0 {
+		cliParts = append(cliParts, "-c", strconv.Itoa(beforeCtx))
+	}
+	cmd := strings.Join(cliParts, " ")
+	resp.CLICommand = &cmd
 
 	// Process byte offsets.
 	for _, raw := range byteOffsets {

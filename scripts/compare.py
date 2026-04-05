@@ -24,6 +24,7 @@ def run_python(pattern, file_path, extra_args=None, cache_dir=None):
     out_path = os.path.join(RESULTS_DIR, f'py_{int(time.time()*1000)}.json')
     env = dict(os.environ)
     env['RX_NO_CACHE'] = '1'
+    env['RX_NO_INDEX'] = '1'
     if cache_dir:
         env['RX_CACHE_DIR'] = cache_dir
 
@@ -56,6 +57,7 @@ def run_go(pattern, file_path, extra_args=None, cache_dir=None):
     out_path = os.path.join(RESULTS_DIR, f'go_{int(time.time()*1000)}.json')
     env = dict(os.environ)
     env['RX_NO_CACHE'] = '1'
+    env['RX_NO_INDEX'] = '1'
     if cache_dir:
         env['RX_CACHE_DIR'] = cache_dir
 

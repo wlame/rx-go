@@ -54,6 +54,7 @@ type ComplexityResponse struct {
 // NewStubComplexityResponse returns a ComplexityResponse pre-filled with "not implemented"
 // values. Used by the stub endpoint and CLI command.
 func NewStubComplexityResponse(regex string) ComplexityResponse {
+	cmd := "rx check '" + regex + "'"
 	return ComplexityResponse{
 		Regex:              regex,
 		Score:              0,
@@ -71,5 +72,6 @@ func NewStubComplexityResponse(regex string) ComplexityResponse {
 		Risk:          "not_implemented",
 		Warnings:      []string{},
 		Details:       ComplexityDetails{},
+		CLICommand:    &cmd,
 	}
 }

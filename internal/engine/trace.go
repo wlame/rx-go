@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,7 +107,9 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	if len(allFiles) == 0 {
 		resp := models.NewTraceResponse("", req.Paths)
 		resp.Patterns = patternIDs
+		if skippedFiles != nil {
 		resp.SkippedFiles = skippedFiles
+	}
 		resp.Time = time.Since(startTime).Seconds()
 		return &resp, nil
 	}
@@ -424,7 +427,9 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 		}
 		resp.ScannedFiles = scanned
 	}
-	resp.SkippedFiles = skippedFiles
+	if skippedFiles != nil {
+		resp.SkippedFiles = skippedFiles
+	}
 
 	if req.MaxResults > 0 {
 		resp.MaxResults = &req.MaxResults
@@ -432,6 +437,10 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 
 	fc := fileChunkCounts
 	resp.FileChunks = &fc
+
+	// Build CLI command for display/debugging.
+	cliCmd := buildCLICommand(req.Patterns, req.Paths, req.RgExtraArgs)
+	resp.CLICommand = &cliCmd
 
 	// Step 13: Store results in trace cache for uncached files (when caching is enabled).
 	if useCache && req.MaxResults <= 0 {
@@ -482,4 +491,19 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	}
 
 	return &resp, nil
+}
+
+// buildCLICommand reconstructs the equivalent rx CLI command for display.
+// Matches Python's format: "rx -e pattern1 -e pattern2 /path1 /path2"
+func buildCLICommand(patterns, paths, rgExtra []string) string {
+	parts := []string{"rx"}
+	for _, p := range patterns {
+		parts = append(parts, "-e", p)
+	}
+	parts = append(parts, paths...)
+	if len(rgExtra) > 0 {
+		parts = append(parts, "--")
+		parts = append(parts, rgExtra...)
+	}
+	return strings.Join(parts, " ")
 }
