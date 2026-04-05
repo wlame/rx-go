@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,35 +20,45 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wlame/rx/internal/config"
+	"github.com/wlame/rx/internal/metrics"
 )
 
 // Server holds the chi router, configuration, and shared state for all API handlers.
 type Server struct {
-	Router    chi.Router
-	Config    *config.Config
-	TaskStore *TaskStore
-	StartTime time.Time // server start time for uptime calculation
+	Router       chi.Router
+	Config       *config.Config
+	TaskStore    *TaskStore
+	RequestStore *RequestStore
+	Metrics      *metrics.Metrics
+	FrontendDir  string    // path to frontend SPA files, empty if not installed
+	StartTime    time.Time // server start time for uptime calculation
 }
 
 // NewServer creates a fully-wired chi router with middleware and all endpoint handlers.
 func NewServer(cfg *config.Config) *Server {
+	m := metrics.New(nil)
+
 	s := &Server{
-		Config:    cfg,
-		TaskStore: NewTaskStore(),
-		StartTime: time.Now(),
+		Config:       cfg,
+		TaskStore:    NewTaskStore(),
+		RequestStore: NewRequestStore(),
+		Metrics:      m,
+		StartTime:    time.Now(),
 	}
 
 	r := chi.NewRouter()
 
 	// Middleware stack — order matters. Outermost runs first.
-	r.Use(requestIDMiddleware)    // Attach UUID v4 request ID to every request.
-	r.Use(requestTimingMiddleware) // Record and log request duration.
-	r.Use(recoveryMiddleware)      // Catch panics and return 500.
-	r.Use(loggingMiddleware)       // Structured slog logging per request.
-	r.Use(corsMiddleware())        // Permissive CORS for development.
+	r.Use(requestIDMiddleware)          // Attach UUID v4 request ID to every request.
+	r.Use(s.metricsMiddleware)          // Record Prometheus counters/histograms.
+	r.Use(requestTimingMiddleware)      // Record and log request duration.
+	r.Use(recoveryMiddleware)           // Catch panics and return 500.
+	r.Use(loggingMiddleware)            // Structured slog logging per request.
+	r.Use(corsMiddleware())             // Permissive CORS for development.
 
 	// Mount all endpoint handlers.
 	r.Get("/health", s.handleHealth)
+	r.Get("/metrics", s.handleMetrics)
 	r.Get("/v1/trace", s.handleTrace)
 	r.Get("/v1/samples", s.handleSamples)
 	r.Get("/v1/index", s.handleGetIndex)
@@ -56,9 +67,51 @@ func NewServer(cfg *config.Config) *Server {
 	r.Get("/v1/detectors", s.handleDetectors)
 	r.Get("/v1/tasks/{id}", s.handleGetTask)
 	r.Get("/v1/tree", s.handleTree)
+	r.Get("/favicon.ico", s.handleFavicon)
+
+	// Frontend SPA catch-all — must be last so API routes match first.
+	r.NotFound(s.handleFrontendCatchAll)
 
 	s.Router = r
 	return s
+}
+
+// handleMetrics serves the Prometheus metrics endpoint.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	s.Metrics.Handler().ServeHTTP(w, r)
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code
+// for use in metrics middleware.
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.statusCode = code
+	sr.ResponseWriter.WriteHeader(code)
+}
+
+// metricsMiddleware records Prometheus request counters and duration histograms.
+func (s *Server) metricsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+
+		sr := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(sr, r)
+
+		duration := time.Since(start).Seconds()
+
+		// Use the route pattern if available (chi provides this), otherwise the raw path.
+		endpoint := r.URL.Path
+		if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePattern() != "" {
+			endpoint = rctx.RoutePattern()
+		}
+
+		s.Metrics.RequestsTotal.WithLabelValues(endpoint, r.Method, strconv.Itoa(sr.statusCode)).Inc()
+		s.Metrics.RequestDurationSeconds.WithLabelValues(endpoint).Observe(duration)
+	})
 }
 
 // ListenAndServe starts the HTTP server on the given address with graceful shutdown
