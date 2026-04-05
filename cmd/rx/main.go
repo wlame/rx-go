@@ -1,32 +1,13 @@
 package main
 
-import (
-	"fmt"
-	"os"
+import "github.com/wlame/rx/internal/cli"
 
-	"github.com/spf13/cobra"
-)
-
-// version is set at build time via -ldflags.
+// version is set at build time via -ldflags:
+//
+//	go build -ldflags="-X main.version=v2.2.1" -o rx ./cmd/rx
 var version = "dev"
 
 func main() {
-	rootCmd := &cobra.Command{
-		Use:   "rx",
-		Short: "rx — fast, parallel regex search over compressed and uncompressed files",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			v, _ := cmd.Flags().GetBool("version")
-			if v {
-				fmt.Println("rx", version)
-				return nil
-			}
-			return cmd.Help()
-		},
-	}
-
-	rootCmd.Flags().Bool("version", false, "print version and exit")
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	cli.SetVersion(version)
+	cli.Execute()
 }
