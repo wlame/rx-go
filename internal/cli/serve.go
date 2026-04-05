@@ -11,14 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/spf13/cobra"
+
+	"github.com/wlame/rx/internal/api"
+	"github.com/wlame/rx/internal/config"
 )
 
 // newServeCommand creates the "serve" subcommand that starts a web API server.
-//
-// For Phase 5 this is a minimal server with only a /health endpoint. Full API
-// endpoint wiring happens in Phase 6.
 func newServeCommand() *cobra.Command {
 	var (
 		host        string
@@ -68,16 +67,20 @@ func runServe(cmd *cobra.Command, flags serveFlags) error {
 		os.Setenv("RX_SEARCH_ROOTS", joinSearchRoots(flags.searchRoots))
 	}
 
-	// Build the chi router with a basic /health endpoint.
-	// Full API wiring is deferred to Phase 6.
-	r := chi.NewRouter()
-	r.Get("/health", healthHandler)
+	// Load configuration from environment.
+	cfg := config.Load()
+
+	// Propagate version to the API package so /health reports it.
+	api.SetVersion(version)
+
+	// Create the fully-wired API server with all endpoint handlers.
+	srv := api.NewServer(&cfg)
 
 	addr := fmt.Sprintf("%s:%d", flags.host, flags.port)
 
-	srv := &http.Server{
+	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           r,
+		Handler:           srv.Router,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -91,7 +94,7 @@ func runServe(cmd *cobra.Command, flags serveFlags) error {
 	go func() {
 		slog.Info("RX server listening", "addr", addr)
 		fmt.Fprintf(cmd.ErrOrStderr(), "RX server listening on %s\n", addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 		close(errCh)
@@ -106,7 +109,7 @@ func runServe(cmd *cobra.Command, flags serveFlags) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("server shutdown: %w", err)
 		}
 		return nil
@@ -117,13 +120,6 @@ func runServe(cmd *cobra.Command, flags serveFlags) error {
 		}
 		return nil
 	}
-}
-
-// healthHandler responds with a simple JSON health check.
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, version)
 }
 
 // joinSearchRoots joins search root paths with os.PathListSeparator.
@@ -139,31 +135,32 @@ func joinSearchRoots(roots []string) string {
 	return result
 }
 
-// StartTestServer starts the serve command's HTTP handler on a random port and
-// returns the listener address and a shutdown function. Used by tests to verify
-// the server starts and responds correctly without binding to a fixed port.
+// StartTestServer starts the API server on a random port and returns the
+// listener address and a shutdown function. Used by tests to verify the
+// server starts and responds correctly without binding to a fixed port.
 func StartTestServer() (addr string, shutdown func(), err error) {
-	r := chi.NewRouter()
-	r.Get("/health", healthHandler)
+	cfg := config.Load()
+	api.SetVersion(version)
+	srv := api.NewServer(&cfg)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
 	}
 
-	srv := &http.Server{
-		Handler:           r,
+	httpSrv := &http.Server{
+		Handler:           srv.Router,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {
-		_ = srv.Serve(listener)
+		_ = httpSrv.Serve(listener)
 	}()
 
 	shutdownFn := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(ctx)
+		_ = httpSrv.Shutdown(ctx)
 	}
 
 	return listener.Addr().String(), shutdownFn, nil
