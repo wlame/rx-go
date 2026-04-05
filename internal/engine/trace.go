@@ -56,6 +56,11 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	cfg := config.Load()
 	startTime := time.Now()
 
+	slog.Info("trace started",
+		"patterns", len(req.Patterns),
+		"paths", len(req.Paths),
+		"max_results", req.MaxResults)
+
 	// Step 1: Assign pattern IDs.
 	patternIDs := make(map[string]string, len(req.Patterns))
 	for i, p := range req.Patterns {
@@ -70,14 +75,14 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	for _, path := range req.Paths {
 		stat, err := os.Stat(path)
 		if err != nil {
-			return nil, fmt.Errorf("path not found: %s", path)
+			return nil, fmt.Errorf("trace: path not found %q: %w", path, err)
 		}
 
 		if stat.IsDir() {
 			scannedDirs = append(scannedDirs, path)
 			files, skipped, err := fileutil.ScanDirectory(path, cfg)
 			if err != nil {
-				return nil, fmt.Errorf("scan directory %s: %w", path, err)
+				return nil, fmt.Errorf("trace: scan directory %s: %w", path, err)
 			}
 			allFiles = append(allFiles, files...)
 			skippedFiles = append(skippedFiles, skipped...)
@@ -112,9 +117,14 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	// Step 3: Validate all patterns via rg.
 	for _, pattern := range req.Patterns {
 		if err := ValidatePattern(pattern); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("trace: %w", err)
 		}
 	}
+
+	slog.Debug("files classified",
+		"text", len(allFiles),
+		"skipped", len(skippedFiles),
+		"dirs_scanned", len(scannedDirs))
 
 	// Step 3b: Check trace cache for each file (when caching is enabled).
 	// Files with a cache hit are collected separately and skip the search entirely.
@@ -200,10 +210,16 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 		totalChunks += len(fc.chunks)
 	}
 
+	slog.Debug("chunk planning complete",
+		"total_chunks", totalChunks,
+		"text_files", len(planned),
+		"compressed_files", len(compressedFiles))
+
 	// Step 5-7: Execute search — fast path or parallel path.
 	var allResults [][]models.Match
 
 	if totalChunks <= 1 {
+		slog.Debug("using fast path (single chunk)")
 		// Fast path: single chunk, no goroutines, no channels, no heap merge.
 		for _, fc := range planned {
 			for _, chunk := range fc.chunks {
@@ -222,6 +238,9 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 			}
 		}
 	} else {
+		slog.Debug("using parallel path",
+			"chunks", totalChunks,
+			"max_subprocesses", cfg.MaxSubprocesses)
 		// Parallel path: use errgroup with bounded concurrency.
 		searchCtx, searchCancel := context.WithCancel(ctx)
 		defer searchCancel()
@@ -449,6 +468,20 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 				slog.Debug("failed to store trace cache", "path", fi.Path, "error", err)
 			}
 		}
+	}
+
+	elapsed := time.Since(startTime)
+	slog.Info("trace completed",
+		"matches", len(merged),
+		"files", len(fileIDs),
+		"duration_ms", elapsed.Milliseconds())
+
+	// Warn on slow operations.
+	if elapsed > 5*time.Second {
+		slog.Warn("slow trace operation",
+			"duration_s", elapsed.Seconds(),
+			"files", len(fileIDs),
+			"matches", len(merged))
 	}
 
 	return &resp, nil

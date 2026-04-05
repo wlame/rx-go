@@ -10,6 +10,7 @@
 package compression
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,9 +113,11 @@ func Detect(path string) (CompressionFormat, error) {
 				// If it's zstd, check for seekable footer.
 				if format == FormatZstd {
 					if hasSeekableFooter(f) {
+						slog.Debug("compression detected", "path", path, "format", "seekable_zstd", "method", "magic+footer")
 						return FormatSeekableZstd, nil
 					}
 				}
+				slog.Debug("compression detected", "path", path, "format", format, "method", "magic")
 				return format, nil
 			}
 		}
@@ -125,8 +128,12 @@ func Detect(path string) (CompressionFormat, error) {
 	if format == FormatZstd {
 		// Extension says zstd; check footer for seekable variant.
 		if hasSeekableFooter(f) {
+			slog.Debug("compression detected", "path", path, "format", "seekable_zstd", "method", "extension+footer")
 			return FormatSeekableZstd, nil
 		}
+	}
+	if format != FormatNone {
+		slog.Debug("compression detected", "path", path, "format", format, "method", "extension")
 	}
 	return format, nil
 }

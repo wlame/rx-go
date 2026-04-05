@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -59,6 +60,12 @@ func SearchChunk(
 	args = append(args, "-")
 
 	cmd := exec.CommandContext(ctx, "rg", args...)
+
+	slog.Debug("rg command",
+		"chunk_index", chunk.Index,
+		"chunk_offset", chunk.Offset,
+		"chunk_length", chunk.Length,
+		"patterns", len(patterns))
 
 	// Pipe the chunk's byte range to rg's stdin via SectionReader.
 	// SectionReader implements io.Reader and reads exactly chunk.Length bytes
