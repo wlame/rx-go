@@ -439,12 +439,12 @@ func TestServe_HealthEndpoint(t *testing.T) {
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	var health map[string]string
+	var health map[string]interface{}
 	err = json.Unmarshal(body, &health)
 	require.NoError(t, err)
 
 	assert.Equal(t, "ok", health["status"])
-	assert.Equal(t, version, health["version"])
+	assert.Equal(t, version, health["app_version"])
 }
 
 // --------------------------------------------------------------------------
