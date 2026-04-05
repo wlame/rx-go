@@ -87,12 +87,9 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 			allFiles = append(allFiles, files...)
 			skippedFiles = append(skippedFiles, skipped...)
 		} else {
-			// Single file — create FileInfo directly.
-			allFiles = append(allFiles, fileutil.FileInfo{
-				Path:           path,
-				Size:           stat.Size(),
-				Classification: fileutil.ClassText,
-			})
+			// Single file — classify it (detect compression, binary, etc.).
+			fi := fileutil.ClassifyFile(path, stat.Size())
+			allFiles = append(allFiles, fi)
 		}
 	}
 
