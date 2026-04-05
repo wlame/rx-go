@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -56,7 +58,14 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	// requests are not blocked.
 	resp, err := engine.Trace(r.Context(), req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		// Provide a clear error message: distinguish validation errors from internal failures.
+		if strings.Contains(err.Error(), "invalid regex") {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else if strings.Contains(err.Error(), "path not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("search failed: %v", err))
+		}
 		return
 	}
 

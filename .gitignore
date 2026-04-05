@@ -2,6 +2,9 @@
 /rx
 *.exe
 
+# Release artifacts
+dist/
+
 # Test/coverage
 coverage.out
 *.test

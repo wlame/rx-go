@@ -3,6 +3,7 @@ package cache
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -243,4 +244,129 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func TestLoad_VersionMismatch(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "version.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\n"), 0o644))
+
+	patterns := []string{"ERROR"}
+	resp := makeTestResponse(srcPath)
+
+	// Store a valid entry.
+	require.NoError(t, Store(cacheDir, patterns, nil, srcPath, resp))
+
+	// Tamper with the cached file to change the version.
+	cachePath := TraceCachePath(cacheDir, patterns, nil, srcPath)
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+	// Replace "version": 2 with "version": 999.
+	tampered := []byte(strings.ReplaceAll(string(data), `"version": 2`, `"version": 999`))
+	require.NoError(t, os.WriteFile(cachePath, tampered, 0o644))
+
+	loaded, hit, err := Load(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, err)
+	assert.False(t, hit, "cache should be a miss when version doesn't match")
+	assert.Nil(t, loaded)
+}
+
+func TestLoad_CorruptedJSON(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "corrupt.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\n"), 0o644))
+
+	patterns := []string{"ERROR"}
+	resp := makeTestResponse(srcPath)
+
+	// Store a valid entry.
+	require.NoError(t, Store(cacheDir, patterns, nil, srcPath, resp))
+
+	// Corrupt the cached file.
+	cachePath := TraceCachePath(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, os.WriteFile(cachePath, []byte("{bad json!!!"), 0o644))
+
+	loaded, hit, err := Load(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, err)
+	assert.False(t, hit, "cache should be a miss on corrupted JSON")
+	assert.Nil(t, loaded)
+}
+
+func TestLoad_PatternHashMismatch(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "hash.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\n"), 0o644))
+
+	patterns := []string{"ERROR"}
+	resp := makeTestResponse(srcPath)
+
+	// Store with one set of patterns.
+	require.NoError(t, Store(cacheDir, patterns, nil, srcPath, resp))
+
+	// Tamper with the patterns_hash in the cache file to cause a mismatch.
+	cachePath := TraceCachePath(cacheDir, patterns, nil, srcPath)
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+	hash := PatternsHash(patterns, nil)
+	tampered := []byte(strings.ReplaceAll(string(data), hash, "0000000000000000"))
+	require.NoError(t, os.WriteFile(cachePath, tampered, 0o644))
+
+	loaded, hit, err := Load(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, err)
+	assert.False(t, hit, "cache should be a miss when patterns hash doesn't match")
+	assert.Nil(t, loaded)
+}
+
+func TestLoad_SourceFileDeleted(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "deleted.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\n"), 0o644))
+
+	patterns := []string{"ERROR"}
+	resp := makeTestResponse(srcPath)
+	require.NoError(t, Store(cacheDir, patterns, nil, srcPath, resp))
+
+	// Delete the source file.
+	require.NoError(t, os.Remove(srcPath))
+
+	loaded, hit, err := Load(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, err)
+	assert.False(t, hit, "cache should be a miss when source file is deleted")
+	assert.Nil(t, loaded)
+}
+
+func TestStore_CreatesDirectories(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "deep", "nested", "cache")
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "dirs.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\n"), 0o644))
+
+	resp := makeTestResponse(srcPath)
+	err := Store(cacheDir, []string{"ERROR"}, nil, srcPath, resp)
+	require.NoError(t, err, "Store should create parent directories")
+
+	// Verify the file was created.
+	cachePath := TraceCachePath(cacheDir, []string{"ERROR"}, nil, srcPath)
+	_, statErr := os.Stat(cachePath)
+	assert.NoError(t, statErr, "cached file should exist")
+}
+
+func TestBuildHashJSON_NilSlices(t *testing.T) {
+	// nil slices should be serialized as empty arrays, not null.
+	result := buildHashJSON(nil, nil)
+	assert.Contains(t, result, "[]")
+	assert.NotContains(t, result, "null")
+}
+
+func TestHashString(t *testing.T) {
+	h := hashString("/var/log/test.log")
+	assert.Len(t, h, 16)
+	// Same input should always produce same hash.
+	assert.Equal(t, h, hashString("/var/log/test.log"))
+	// Different input should produce different hash.
+	assert.NotEqual(t, h, hashString("/var/log/other.log"))
 }

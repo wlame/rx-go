@@ -16,6 +16,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -104,6 +105,11 @@ func CreateSeekableZstd(input io.Reader, output io.Writer, opts CompressOpts) (*
 	if err := writeSeekTable(output, frames); err != nil {
 		return nil, fmt.Errorf("write seek table: %w", err)
 	}
+
+	slog.Info("seekable zstd created",
+		"frames", len(frames),
+		"compressed_bytes", compressedOffset,
+		"decompressed_bytes", decompressedOffset)
 
 	return &SeekTable{Frames: frames}, nil
 }

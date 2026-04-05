@@ -220,7 +220,15 @@ func runTrace(cmd *cobra.Command, args []string, flags traceFlags) error {
 	startTime := time.Now()
 	resp, err := engine.Trace(context.Background(), req)
 	if err != nil {
-		return fmt.Errorf("trace: %w", err)
+		// Make CLI error messages actionable.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "invalid regex") {
+			return fmt.Errorf("invalid pattern %q: %w", pattern, err)
+		}
+		if strings.Contains(errMsg, "path not found") {
+			return fmt.Errorf("file or directory not found: %w", err)
+		}
+		return fmt.Errorf("search failed: %w", err)
 	}
 	elapsed := time.Since(startTime).Seconds()
 
