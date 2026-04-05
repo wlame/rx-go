@@ -170,6 +170,14 @@ func classifyFile(path string, size int64) (FileInfo, bool) {
 	return fi, false
 }
 
+// ClassifyFile determines the type of a single file (text, binary, or compressed).
+// This is the exported version of classifyFile for use outside directory scanning —
+// e.g., when the engine receives a single file path on the command line.
+func ClassifyFile(path string, size int64) FileInfo {
+	fi, _ := classifyFile(path, size)
+	return fi
+}
+
 // DetectCompression checks the first bytes of data for known compression magic bytes.
 // Exported so other packages can use it for standalone detection.
 func DetectCompression(data []byte) CompressionFormat {

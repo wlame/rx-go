@@ -91,8 +91,10 @@ func SearchChunk(
 	for {
 		msg, err := parser.Next()
 		if err != nil {
-			// Log parse errors but keep going — partial results are better than none.
-			break
+			// Parse error (e.g., line exceeds buffer). Log but keep reading —
+			// we MUST drain stdout completely to avoid deadlocking cmd.Wait().
+			slog.Debug("rg JSON parse error, continuing", "error", err)
+			continue
 		}
 		if msg == nil {
 			break // stream exhausted
