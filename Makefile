@@ -1,4 +1,4 @@
-.PHONY: build test lint cover clean compare bench
+.PHONY: build test lint cover clean compare bench integration
 
 build:
 	go build -o rx ./cmd/rx
@@ -17,7 +17,10 @@ clean:
 	rm -f *.test
 
 compare:
-	@echo "TODO: comparison tests"
+	@echo "No playground directory available for Python comparison. Run 'make integration' for Go-only tests."
 
 bench:
-	@echo "TODO: benchmarks"
+	go test -bench=. -benchmem ./internal/engine/...
+
+integration:
+	go test -race -count=1 -v ./internal/engine/ -run TestIntegration
