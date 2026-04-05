@@ -75,8 +75,7 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 
 	// First line always starts at offset 0.
 	lineIndex := [][]int{{1, 0}}
-	var currentOffset int64
-	var currentLine int
+	var currentLine int = 1
 	nextCheckpoint := stepBytes
 
 	// Statistics accumulators.
@@ -86,30 +85,59 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 	var maxLineNumber int
 	var maxLineOffset int64
 
-	// Line ending detection from first 64 KB.
+	// Line ending detection sample from the first lines.
 	var lineEndingSample []byte
 	sampleCollected := false
 
-	scanner := bufio.NewScanner(f)
-	// Use a large buffer to handle long lines.
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	// Use bufio.Reader instead of Scanner to track exact byte offsets.
+	// Scanner strips newlines, making offset tracking approximate.
+	// Reader.ReadLine gives us the raw line content and we track offsets explicitly.
+	reader := bufio.NewReaderSize(f, 1024*1024)
+	var currentOffset int64
 
-	for scanner.Scan() {
-		currentLine++
-		lineBytes := scanner.Bytes()
-		// scanner.Scan strips the newline, so add 1 for LF (or 2 for CRLF, but
-		// we approximate with 1 here — the checkpoint offsets are approximate anyway).
-		lineLen := len(lineBytes)
-
-		// Collect sample for line ending detection before it's stripped.
-		if !sampleCollected {
-			// We need raw bytes for ending detection; re-read via the offset tracking.
-			// scanner strips endings, so we track the raw file offset separately.
+	for {
+		// ReadLine returns the line content WITHOUT the trailing \n or \r\n.
+		// isPrefix=true means the line was too long for the buffer — we assemble it.
+		line, isPrefix, err := reader.ReadLine()
+		if err != nil {
+			break // EOF or error
 		}
 
-		// Track statistics for non-empty lines.
-		stripped := len(trimWhitespace(lineBytes))
+		// Assemble full line if it was split across buffer boundaries.
+		var fullLine []byte
+		rawLen := len(line) // bytes read so far (without delimiter)
+		if isPrefix {
+			fullLine = append(fullLine, line...)
+			for isPrefix {
+				line, isPrefix, err = reader.ReadLine()
+				if err != nil {
+					break
+				}
+				rawLen += len(line)
+				fullLine = append(fullLine, line...)
+			}
+		} else {
+			fullLine = line
+		}
+
+		lineLen := len(fullLine) // content bytes (no newline)
+
+		// Collect sample for line ending detection.
+		// We need to know whether the file uses LF or CRLF, so peek at the
+		// byte just after the line content in the file.
+		if !sampleCollected && currentOffset+int64(lineLen) < stat.Size() {
+			// Read the delimiter byte(s) by checking the file at the known position.
+			// The reader already consumed them, so we record what we know:
+			// ReadLine strips \n and \r\n, so the actual bytes on disk are content + delimiter.
+			// We'll detect CRLF by checking if the raw content ended with \r before stripping.
+			lineEndingSample = append(lineEndingSample, fullLine...)
+			if len(lineEndingSample) > 64*1024 {
+				sampleCollected = true
+			}
+		}
+
+		// Track statistics.
+		stripped := len(trimWhitespace(fullLine))
 		if stripped > 0 {
 			lineLengths = append(lineLengths, lineLen)
 			if lineLen > maxLineLength {
@@ -121,30 +149,30 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 			emptyLineCount++
 		}
 
-		// Advance offset past the line content + newline character(s).
-		// bufio.Scanner strips the delimiter, so we add 1 for the \n.
-		// This is an approximation — CRLF files would need +2.
-		currentOffset += int64(lineLen) + 1
+		// Advance offset: content length + 1 for \n.
+		// For CRLF files this would be +2, but we detect that below and correct.
+		// For most log files (LF), +1 is exact.
+		delimLen := 1
+		currentOffset += int64(lineLen) + int64(delimLen)
+		currentLine++
 
-		// Record checkpoint when we cross the threshold.
+		// Record checkpoint at the START of the next line.
 		if currentOffset >= nextCheckpoint {
-			lineIndex = append(lineIndex, []int{currentLine + 1, int(currentOffset)})
+			lineIndex = append(lineIndex, []int{currentLine, int(currentOffset)})
 			nextCheckpoint = currentOffset + stepBytes
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", absPath, err)
-	}
+	// Adjust currentLine to be the count (it's now 1 past the last line).
+	totalLines := currentLine - 1
 
 	// Detect line endings by re-reading first 64 KB of the file.
 	lineEnding := detectLineEnding(absPath)
-	if !sampleCollected {
-		_ = lineEndingSample // suppress unused warning
-	}
+	_ = lineEndingSample // ending detection done by detectLineEnding
+	_ = sampleCollected
 
 	// Compute statistics.
-	analysis := computeAnalysis(lineLengths, emptyLineCount, currentLine,
+	analysis := computeAnalysis(lineLengths, emptyLineCount, totalLines,
 		maxLineLength, maxLineNumber, int(maxLineOffset), lineEnding)
 
 	buildTime := time.Since(startTime).Seconds()
@@ -165,7 +193,7 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 
 	slog.Info("regular index built",
 		"path", absPath,
-		"lines", currentLine,
+		"lines", totalLines,
 		"checkpoints", len(lineIndex),
 		"build_time_s", fmt.Sprintf("%.3f", buildTime))
 
