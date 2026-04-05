@@ -132,7 +132,7 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	var cachedResults []cachedFileResult
 	var uncachedFiles []fileutil.FileInfo
 
-	useCache := !cfg.NoCache
+	useCache := req.UseCache && !cfg.NoCache
 	for _, fi := range allFiles {
 		if useCache {
 			cached, hit, err := cache.Load(cfg.CacheDir, req.Patterns, req.RgExtraArgs, fi.Path)
@@ -381,7 +381,7 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 
 	// Step 11: Resolve line numbers — use index when available.
 	getIdx := req.GetIndex
-	if getIdx == nil && !cfg.NoIndex {
+	if getIdx == nil && req.UseIndex && !cfg.NoIndex {
 		// Default: try to load or build an index for each file.
 		getIdx = func(path string) *models.FileIndex {
 			cachePath := index.IndexCachePath(cfg.CacheDir, path)
