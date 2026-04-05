@@ -347,6 +347,8 @@ func TestIntegration_Cache_StoreAndLoad(t *testing.T) {
 	resp1, err := Trace(context.Background(), TraceRequest{
 		Paths:    []string{path},
 		Patterns: patterns,
+		UseCache: true,
+		UseIndex: true,
 	})
 	require.NoError(t, err)
 
@@ -359,6 +361,8 @@ func TestIntegration_Cache_StoreAndLoad(t *testing.T) {
 	resp2, err := Trace(context.Background(), TraceRequest{
 		Paths:    []string{path},
 		Patterns: patterns,
+		UseCache: true,
+		UseIndex: true,
 	})
 	require.NoError(t, err)
 
