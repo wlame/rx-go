@@ -16,9 +16,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/wlame/rx/internal/cache"
 	"github.com/wlame/rx/internal/compression"
 	"github.com/wlame/rx/internal/config"
 	"github.com/wlame/rx/internal/fileutil"
+	"github.com/wlame/rx/internal/index"
 	"github.com/wlame/rx/internal/models"
 )
 
@@ -114,7 +116,29 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 		}
 	}
 
-	// Step 4: Plan chunks for each file.
+	// Step 3b: Check trace cache for each file (when caching is enabled).
+	// Files with a cache hit are collected separately and skip the search entirely.
+	type cachedFileResult struct {
+		path     string
+		response *models.TraceResponse
+	}
+	var cachedResults []cachedFileResult
+	var uncachedFiles []fileutil.FileInfo
+
+	useCache := !cfg.NoCache
+	for _, fi := range allFiles {
+		if useCache {
+			cached, hit, err := cache.Load(cfg.CacheDir, req.Patterns, req.RgExtraArgs, fi.Path)
+			if err == nil && hit && cached != nil {
+				slog.Debug("trace cache hit", "path", fi.Path)
+				cachedResults = append(cachedResults, cachedFileResult{path: fi.Path, response: cached})
+				continue
+			}
+		}
+		uncachedFiles = append(uncachedFiles, fi)
+	}
+
+	// Step 4: Plan chunks for each uncached file.
 	type fileChunks struct {
 		path   string
 		file   *os.File
@@ -131,7 +155,7 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	}
 	var compressedFiles []compressedFile
 
-	for _, fi := range allFiles {
+	for _, fi := range uncachedFiles {
 		// Route compressed files to the compressed search path.
 		if fi.Classification == fileutil.ClassCompressed {
 			compressedFiles = append(compressedFiles, compressedFile{path: fi.Path, info: fi})
@@ -299,6 +323,19 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 		allResults = append(allResults, matches)
 	}
 
+	// Step 7c: Include cached results in the merge.
+	for _, cr := range cachedResults {
+		if cr.response != nil && len(cr.response.Matches) > 0 {
+			fid := fileIDReverse[cr.path]
+			cachedMatches := make([]models.Match, len(cr.response.Matches))
+			copy(cachedMatches, cr.response.Matches)
+			for i := range cachedMatches {
+				cachedMatches[i].File = fid
+			}
+			allResults = append(allResults, cachedMatches)
+		}
+	}
+
 	// Step 8: Heap-merge results from all chunks.
 	merged := MergeResults(allResults)
 
@@ -326,8 +363,36 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 		merged = TruncateResults(merged, req.MaxResults)
 	}
 
-	// Step 11: Resolve line numbers.
-	merged = ResolveLineNumbers(merged, fileIDs, req.GetIndex)
+	// Step 11: Resolve line numbers — use index when available.
+	getIdx := req.GetIndex
+	if getIdx == nil && !cfg.NoIndex {
+		// Default: try to load or build an index for each file.
+		getIdx = func(path string) *models.FileIndex {
+			cachePath := index.IndexCachePath(cfg.CacheDir, path)
+			idx, err := index.Load(cachePath)
+			if err == nil && idx != nil && index.Validate(idx, path) {
+				return idx
+			}
+			// No cached index — build one for large files.
+			stat, statErr := os.Stat(path)
+			if statErr != nil {
+				return nil
+			}
+			if stat.Size() >= int64(cfg.LargeFileMB)*1024*1024 {
+				built, buildErr := index.BuildIndex(path, &cfg)
+				if buildErr != nil {
+					slog.Debug("index build failed during line resolution",
+						"path", path, "error", buildErr)
+					return nil
+				}
+				// Cache the built index for future use.
+				_ = index.Save(cachePath, built)
+				return built
+			}
+			return nil
+		}
+	}
+	merged = ResolveLineNumbers(merged, fileIDs, getIdx)
 
 	// Step 12: Build TraceResponse.
 	resp := models.NewTraceResponse("", req.Paths)
@@ -351,6 +416,40 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 
 	fc := fileChunkCounts
 	resp.FileChunks = &fc
+
+	// Step 13: Store results in trace cache for uncached files (when caching is enabled).
+	if useCache && req.MaxResults <= 0 {
+		// Only cache complete (non-truncated) scans.
+		for _, fi := range uncachedFiles {
+			stat, statErr := os.Stat(fi.Path)
+			if statErr != nil {
+				continue
+			}
+			// Only cache large files (matching Python's should_cache_file threshold).
+			if stat.Size() < int64(cfg.LargeFileMB)*1024*1024 {
+				continue
+			}
+
+			// Build a per-file response containing only this file's matches.
+			fid := fileIDReverse[fi.Path]
+			var fileMatches []models.Match
+			for _, m := range merged {
+				if m.File == fid {
+					fileMatches = append(fileMatches, m)
+				}
+			}
+
+			fileResp := models.NewTraceResponse(resp.RequestID, []string{fi.Path})
+			fileResp.Patterns = patternIDs
+			fileResp.Files = map[string]string{fid: fi.Path}
+			fileResp.Matches = fileMatches
+			fileResp.Time = resp.Time
+
+			if err := cache.Store(cfg.CacheDir, req.Patterns, req.RgExtraArgs, fi.Path, &fileResp); err != nil {
+				slog.Debug("failed to store trace cache", "path", fi.Path, "error", err)
+			}
+		}
+	}
 
 	return &resp, nil
 }
