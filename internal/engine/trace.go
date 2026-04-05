@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/wlame/rx/internal/compression"
 	"github.com/wlame/rx/internal/config"
 	"github.com/wlame/rx/internal/fileutil"
 	"github.com/wlame/rx/internal/models"
@@ -123,8 +124,20 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	var planned []fileChunks
 	fileChunkCounts := make(map[string]int) // file ID -> chunk count
 
+	// Collect compressed files separately — they use a different search strategy.
+	type compressedFile struct {
+		path string
+		info fileutil.FileInfo
+	}
+	var compressedFiles []compressedFile
+
 	for _, fi := range allFiles {
-		// Only process text files in Phase 2. Compressed files are handled in Phase 3.
+		// Route compressed files to the compressed search path.
+		if fi.Classification == fileutil.ClassCompressed {
+			compressedFiles = append(compressedFiles, compressedFile{path: fi.Path, info: fi})
+			continue
+		}
+
 		if fi.Classification != fileutil.ClassText {
 			continue
 		}
@@ -246,6 +259,44 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 
 		// Wait for all workers to finish (or be cancelled).
 		_ = g.Wait()
+	}
+
+	// Step 7b: Search compressed files.
+	for _, cf := range compressedFiles {
+		fid := fileIDReverse[cf.path]
+
+		// Detect full compression format (including seekable zstd distinction).
+		format, detectErr := compression.Detect(cf.path)
+		if detectErr != nil {
+			slog.Warn("compression detection failed, skipping",
+				"path", cf.path, "error", detectErr)
+			continue
+		}
+
+		var matches []models.Match
+		var searchErr error
+
+		if format == compression.FormatSeekableZstd {
+			matches, searchErr = SearchSeekableZstd(ctx, cf.path, req.Patterns, req.RgExtraArgs, &cfg)
+		} else {
+			matches, searchErr = SearchCompressedFile(ctx, cf.path, req.Patterns, req.RgExtraArgs, cfg.MaxLineSizeKB)
+		}
+
+		if searchErr != nil {
+			if ctx.Err() != nil {
+				break // Context cancelled — stop processing.
+			}
+			slog.Warn("compressed file search failed",
+				"path", cf.path, "error", searchErr)
+			continue
+		}
+
+		// Tag matches with file ID.
+		for i := range matches {
+			matches[i].File = fid
+		}
+
+		allResults = append(allResults, matches)
 	}
 
 	// Step 8: Heap-merge results from all chunks.
