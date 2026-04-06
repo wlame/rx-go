@@ -194,3 +194,107 @@ func TestHashPath_DifferentInputs(t *testing.T) {
 	h2 := hashPath("/var/log/other.log")
 	assert.NotEqual(t, h1, h2)
 }
+
+// TestValidate_PythonTimestampFormat verifies that Go can validate indexes
+// built by Python, which stores source_modified_at in datetime.isoformat()
+// format (local time, no timezone, microsecond precision).
+func TestValidate_PythonTimestampFormat(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "test.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("hello\n"), 0o644))
+
+	stat, err := os.Stat(srcPath)
+	require.NoError(t, err)
+
+	// Simulate a Python-built index: datetime.fromtimestamp(mtime).isoformat()
+	// produces local time without timezone, with microsecond precision.
+	pyMtime := pythonISOFormat(stat.ModTime())
+
+	idx := models.NewFileIndex(
+		UnifiedIndexVersion,
+		models.IndexTypeRegular,
+		srcPath,
+		pyMtime,
+		int(stat.Size()),
+	)
+
+	assert.True(t, Validate(&idx, srcPath),
+		"Go Validate should accept Python's isoformat() timestamp: %s", pyMtime)
+}
+
+// TestValidate_PythonTimestampNoFractionalSeconds covers the edge case where
+// Python's isoformat() omits fractional seconds entirely (microseconds == 0).
+func TestValidate_PythonTimestampNoFractionalSeconds(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "test.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("hello\n"), 0o644))
+
+	stat, err := os.Stat(srcPath)
+	require.NoError(t, err)
+
+	// Truncate to second precision — simulates a file whose mtime has no
+	// sub-second component, so Python's isoformat() omits the fractional part.
+	wholeSecond := stat.ModTime().Truncate(time.Second)
+	require.NoError(t, os.Chtimes(srcPath, wholeSecond, wholeSecond))
+
+	pyMtime := pythonISOFormat(wholeSecond)
+	assert.NotContains(t, pyMtime, ".", "sanity: no fractional seconds expected")
+
+	idx := models.NewFileIndex(
+		UnifiedIndexVersion,
+		models.IndexTypeRegular,
+		srcPath,
+		pyMtime,
+		int(stat.Size()),
+	)
+
+	assert.True(t, Validate(&idx, srcPath),
+		"Go Validate should accept Python's isoformat() without fractional seconds: %s", pyMtime)
+}
+
+func TestPythonISOFormat(t *testing.T) {
+	// With microseconds.
+	ts := time.Date(2024, 1, 15, 10, 30, 45, 123456000, time.Local)
+	assert.Equal(t, "2024-01-15T10:30:45.123456", pythonISOFormat(ts))
+
+	// Without fractional seconds.
+	ts = time.Date(2024, 1, 15, 10, 30, 45, 0, time.Local)
+	assert.Equal(t, "2024-01-15T10:30:45", pythonISOFormat(ts))
+
+	// Nanosecond precision truncated to microseconds.
+	ts = time.Date(2024, 1, 15, 10, 30, 45, 123456789, time.Local)
+	assert.Equal(t, "2024-01-15T10:30:45.123456", pythonISOFormat(ts))
+
+	// Trailing zeros in microseconds preserved (Python always shows 6 digits).
+	ts = time.Date(2024, 1, 15, 10, 30, 45, 120000000, time.Local)
+	assert.Equal(t, "2024-01-15T10:30:45.120000", pythonISOFormat(ts))
+}
+
+// TestGetLineCount verifies the unified line count accessor works for both
+// Go-built indexes (nested Analysis) and Python-built indexes (top-level).
+func TestGetLineCount(t *testing.T) {
+	lc := 5000
+
+	// Go format: line_count inside Analysis.
+	goIdx := models.FileIndex{
+		Analysis: &models.IndexAnalysis{LineCount: &lc},
+	}
+	assert.Equal(t, &lc, goIdx.GetLineCount())
+
+	// Python format: line_count at top level.
+	pyIdx := models.FileIndex{
+		PyLineCount: &lc,
+	}
+	assert.Equal(t, &lc, pyIdx.GetLineCount())
+
+	// Go format takes precedence when both present.
+	bothIdx := models.FileIndex{
+		Analysis:    &models.IndexAnalysis{LineCount: &lc},
+		PyLineCount: &lc,
+	}
+	assert.Equal(t, &lc, bothIdx.GetLineCount())
+
+	// Neither present returns nil.
+	emptyIdx := models.FileIndex{}
+	assert.Nil(t, emptyIdx.GetLineCount())
+}

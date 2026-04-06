@@ -32,9 +32,20 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
+
+// decoderPool reuses zstd.Decoder instances to avoid the expensive allocation of
+// decoding tables on every DecompressFrame call. Each decoder is created with
+// zstd.NewReader(nil) for use with DecodeAll (stateless, single-buffer decompression).
+var decoderPool = sync.Pool{
+	New: func() interface{} {
+		d, _ := zstd.NewReader(nil)
+		return d
+	},
+}
 
 // SeekableSkippableMagic is the magic number for the skippable frame that wraps
 // the seek table (0x184D2A5E little-endian).
@@ -156,10 +167,21 @@ func ReadSeekTable(f *os.File) (*SeekTable, error) {
 }
 
 // DecompressFrame reads and decompresses a single frame from a seekable zstd file.
+// It borrows a decoder from the package-level sync.Pool, avoiding the expensive
+// allocation of zstd decoding tables on every call.
+func DecompressFrame(f *os.File, frame FrameEntry) ([]byte, error) {
+	dec := decoderPool.Get().(*zstd.Decoder)
+	defer decoderPool.Put(dec)
+	return DecompressFrameWith(f, frame, dec)
+}
+
+// DecompressFrameWith reads and decompresses a single frame using the provided decoder.
+// Callers that already hold a *zstd.Decoder (e.g., tight loops that process many frames)
+// can use this to avoid pool Get/Put overhead per frame.
 //
 // It uses ReadAt to read exactly frame.CompressedSize bytes at frame.CompressedOffset,
-// then decompresses them using klauspost/compress/zstd.
-func DecompressFrame(f *os.File, frame FrameEntry) ([]byte, error) {
+// then decompresses them with decoder.DecodeAll (stateless, single-buffer decompression).
+func DecompressFrameWith(f *os.File, frame FrameEntry, decoder *zstd.Decoder) ([]byte, error) {
 	compressed := make([]byte, frame.CompressedSize)
 	n, err := f.ReadAt(compressed, frame.CompressedOffset)
 	if err != nil {
@@ -169,14 +191,7 @@ func DecompressFrame(f *os.File, frame FrameEntry) ([]byte, error) {
 		return nil, fmt.Errorf("short read: got %d bytes, want %d", n, frame.CompressedSize)
 	}
 
-	// Create a one-shot zstd decoder for this frame.
-	dec, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("create zstd decoder: %w", err)
-	}
-	defer dec.Close()
-
-	decompressed, err := dec.DecodeAll(compressed, nil)
+	decompressed, err := decoder.DecodeAll(compressed, nil)
 	if err != nil {
 		return nil, fmt.Errorf("decompress frame: %w", err)
 	}

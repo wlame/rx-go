@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,21 +22,24 @@ import (
 	"github.com/wlame/rx/internal/compression"
 	"github.com/wlame/rx/internal/config"
 	"github.com/wlame/rx/internal/fileutil"
+	"github.com/wlame/rx/internal/hooks"
 	"github.com/wlame/rx/internal/index"
 	"github.com/wlame/rx/internal/models"
 )
 
 // TraceRequest holds all parameters for a trace search operation.
 type TraceRequest struct {
-	Paths         []string          // File or directory paths to search.
-	Patterns      []string          // Regex patterns to search for.
-	MaxResults    int               // Maximum results (0 = unlimited).
-	RgExtraArgs   []string          // Extra arguments passed through to rg.
-	ContextBefore int               // Lines of context before each match.
-	ContextAfter  int               // Lines of context after each match.
-	UseCache      bool              // Whether to use trace cache (Phase 4).
-	UseIndex      bool              // Whether to use file indexes for line resolution.
-	GetIndex      GetIndex          // Optional index lookup function (Phase 4).
+	Paths         []string              // File or directory paths to search.
+	Patterns      []string              // Regex patterns to search for.
+	MaxResults    int                   // Maximum results (0 = unlimited).
+	RgExtraArgs   []string              // Extra arguments passed through to rg.
+	ContextBefore int                   // Lines of context before each match.
+	ContextAfter  int                   // Lines of context after each match.
+	UseCache      bool                  // Whether to use trace cache (Phase 4).
+	UseIndex      bool                  // Whether to use file indexes for line resolution.
+	GetIndex      GetIndex              // Optional index lookup function (Phase 4).
+	Hooks         *hooks.HookCallbacks  // Optional webhook callbacks fired during trace lifecycle.
+	RequestID     string                // Request ID included in hook payloads for correlation.
 }
 
 // Trace runs a parallel search across files and returns a TraceResponse.
@@ -222,6 +226,9 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 		slog.Debug("using fast path (single chunk)")
 		// Fast path: single chunk, no goroutines, no channels, no heap merge.
 		for _, fc := range planned {
+			fileStart := time.Now()
+			fileMatchCount := 0
+
 			for _, chunk := range fc.chunks {
 				matches, err := SearchChunk(ctx, fc.file, chunk, req.Patterns, req.RgExtraArgs, cfg.MaxLineSizeKB)
 				if err != nil && ctx.Err() == nil {
@@ -238,7 +245,36 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 						matches[i].AbsoluteLineNumber = *matches[i].RelativeLineNumber
 					}
 				}
+				fileMatchCount += len(matches)
+
+				// Fire on_match_found for each match when configured and max_results is set.
+				if req.Hooks != nil && req.Hooks.OnMatchFound != "" && req.MaxResults > 0 {
+					for _, m := range matches {
+						lineNum := 0
+						if m.RelativeLineNumber != nil {
+							lineNum = *m.RelativeLineNumber
+						}
+						hooks.CallHookAsync(ctx, req.Hooks.OnMatchFound, map[string]string{
+							"request_id":  req.RequestID,
+							"path":        fc.path,
+							"offset":      strconv.Itoa(m.Offset),
+							"line_number": strconv.Itoa(lineNum),
+							"pattern":     resolveHookPattern(m, patternIDs, req.Patterns),
+						})
+					}
+				}
+
 				allResults = append(allResults, matches)
+			}
+
+			// Fire on_file_scanned after all chunks for this file are done.
+			if req.Hooks != nil && req.Hooks.OnFileScanned != "" {
+				hooks.CallHookAsync(ctx, req.Hooks.OnFileScanned, map[string]string{
+					"request_id": req.RequestID,
+					"path":       fc.path,
+					"matches":    strconv.Itoa(fileMatchCount),
+					"duration":   strconv.FormatInt(time.Since(fileStart).Milliseconds(), 10),
+				})
 			}
 		}
 	} else {
@@ -251,6 +287,16 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 
 		var mu sync.Mutex
 		matchCount := 0
+
+		// Track per-file match counts for on_file_scanned hooks.
+		fileMatchCounts := make(map[string]int)
+		fileStartTimes := make(map[string]time.Time)
+		fileChunksDone := make(map[string]int)      // chunks completed per file
+		fileChunksTotal := make(map[string]int)      // total chunks per file
+		for _, fc := range planned {
+			fileChunksTotal[fc.path] = len(fc.chunks)
+			fileStartTimes[fc.path] = time.Now()
+		}
 
 		g, gctx := errgroup.WithContext(searchCtx)
 		g.SetLimit(cfg.MaxSubprocesses)
@@ -288,9 +334,40 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 						matches[i].File = fid
 					}
 
+					// Fire on_match_found for each match when configured and max_results is set.
+					if req.Hooks != nil && req.Hooks.OnMatchFound != "" && req.MaxResults > 0 {
+						for _, m := range matches {
+							lineNum := 0
+							if m.RelativeLineNumber != nil {
+								lineNum = *m.RelativeLineNumber
+							}
+							hooks.CallHookAsync(ctx, req.Hooks.OnMatchFound, map[string]string{
+								"request_id":  req.RequestID,
+								"path":        fc.path,
+								"offset":      strconv.Itoa(m.Offset),
+								"line_number": strconv.Itoa(lineNum),
+								"pattern":     resolveHookPattern(m, patternIDs, req.Patterns),
+							})
+						}
+					}
+
 					mu.Lock()
 					allResults = append(allResults, matches)
 					matchCount += len(matches)
+					fileMatchCounts[fc.path] += len(matches)
+					fileChunksDone[fc.path]++
+
+					// Fire on_file_scanned when all chunks for a file are done.
+					if req.Hooks != nil && req.Hooks.OnFileScanned != "" &&
+						fileChunksDone[fc.path] >= fileChunksTotal[fc.path] {
+						fileDuration := time.Since(fileStartTimes[fc.path]).Milliseconds()
+						hooks.CallHookAsync(ctx, req.Hooks.OnFileScanned, map[string]string{
+							"request_id": req.RequestID,
+							"path":       fc.path,
+							"matches":    strconv.Itoa(fileMatchCounts[fc.path]),
+							"duration":   strconv.FormatInt(fileDuration, 10),
+						})
+					}
 
 					// Eager termination: if we've collected enough matches, cancel
 					// remaining workers. We'll truncate to the exact limit after merge.
@@ -311,6 +388,7 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 	// Step 7b: Search compressed files.
 	for _, cf := range compressedFiles {
 		fid := fileIDReverse[cf.path]
+		compStart := time.Now()
 
 		// Detect full compression format (including seekable zstd distinction).
 		format, detectErr := compression.Detect(cf.path)
@@ -343,6 +421,33 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 			matches[i].File = fid
 		}
 
+		// Fire on_match_found for each compressed match when configured and max_results is set.
+		if req.Hooks != nil && req.Hooks.OnMatchFound != "" && req.MaxResults > 0 {
+			for _, m := range matches {
+				lineNum := 0
+				if m.RelativeLineNumber != nil {
+					lineNum = *m.RelativeLineNumber
+				}
+				hooks.CallHookAsync(ctx, req.Hooks.OnMatchFound, map[string]string{
+					"request_id":  req.RequestID,
+					"path":        cf.path,
+					"offset":      strconv.Itoa(m.Offset),
+					"line_number": strconv.Itoa(lineNum),
+					"pattern":     resolveHookPattern(m, patternIDs, req.Patterns),
+				})
+			}
+		}
+
+		// Fire on_file_scanned for this compressed file.
+		if req.Hooks != nil && req.Hooks.OnFileScanned != "" {
+			hooks.CallHookAsync(ctx, req.Hooks.OnFileScanned, map[string]string{
+				"request_id": req.RequestID,
+				"path":       cf.path,
+				"matches":    strconv.Itoa(len(matches)),
+				"duration":   strconv.FormatInt(time.Since(compStart).Milliseconds(), 10),
+			})
+		}
+
 		allResults = append(allResults, matches)
 	}
 
@@ -356,6 +461,43 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 				cachedMatches[i].File = fid
 			}
 			allResults = append(allResults, cachedMatches)
+		}
+
+		// Fire on_file_scanned hook for cached files.
+		if req.Hooks != nil && req.Hooks.OnFileScanned != "" {
+			matchCount := 0
+			if cr.response != nil {
+				matchCount = len(cr.response.Matches)
+			}
+			hooks.CallHookAsync(ctx, req.Hooks.OnFileScanned, map[string]string{
+				"request_id": req.RequestID,
+				"path":       cr.path,
+				"matches":    strconv.Itoa(matchCount),
+				"duration":   "0", // Cached — no scan time.
+			})
+		}
+
+		// Fire on_match_found hooks for cached matches when configured and max_results is set.
+		if req.Hooks != nil && req.Hooks.OnMatchFound != "" && req.MaxResults > 0 && cr.response != nil {
+			for _, m := range cr.response.Matches {
+				patternText := ""
+				if cr.response.Patterns != nil {
+					patternText = cr.response.Patterns[m.Pattern]
+				}
+				lineNum := 0
+				if m.RelativeLineNumber != nil {
+					lineNum = *m.RelativeLineNumber
+				} else if m.AbsoluteLineNumber > 0 {
+					lineNum = m.AbsoluteLineNumber
+				}
+				hooks.CallHookAsync(ctx, req.Hooks.OnMatchFound, map[string]string{
+					"request_id":  req.RequestID,
+					"path":        cr.path,
+					"offset":      strconv.Itoa(m.Offset),
+					"line_number": strconv.Itoa(lineNum),
+					"pattern":     patternText,
+				})
+			}
 		}
 	}
 
@@ -448,6 +590,13 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 
 	// Step 13: Store results in trace cache for uncached files (when caching is enabled).
 	if useCache && req.MaxResults <= 0 {
+		// Pre-group matches by file ID in a single pass (O(matches)) instead of
+		// scanning the full match list per file (O(files * matches)).
+		matchesByFile := make(map[string][]models.Match, len(uncachedFiles))
+		for _, m := range merged {
+			matchesByFile[m.File] = append(matchesByFile[m.File], m)
+		}
+
 		// Only cache complete (non-truncated) scans.
 		for _, fi := range uncachedFiles {
 			stat, statErr := os.Stat(fi.Path)
@@ -459,14 +608,8 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 				continue
 			}
 
-			// Build a per-file response containing only this file's matches.
 			fid := fileIDReverse[fi.Path]
-			var fileMatches []models.Match
-			for _, m := range merged {
-				if m.File == fid {
-					fileMatches = append(fileMatches, m)
-				}
-			}
+			fileMatches := matchesByFile[fid]
 
 			fileResp := models.NewTraceResponse(resp.RequestID, []string{fi.Path})
 			fileResp.Patterns = patternIDs
@@ -494,7 +637,36 @@ func Trace(ctx context.Context, req TraceRequest) (*models.TraceResponse, error)
 			"matches", len(merged))
 	}
 
+	// Fire on_complete hook with summary stats.
+	if req.Hooks != nil && req.Hooks.OnComplete != "" {
+		hooks.CallHookAsync(ctx, req.Hooks.OnComplete, map[string]string{
+			"request_id":    req.RequestID,
+			"total_matches": strconv.Itoa(len(merged)),
+			"total_files":   strconv.Itoa(len(fileIDs)),
+			"duration":      strconv.FormatInt(elapsed.Milliseconds(), 10),
+		})
+	}
+
 	return &resp, nil
+}
+
+// resolveHookPattern returns the best-effort pattern text for a hook payload.
+// Before pattern identification (Step 10), m.Pattern is empty. If the request
+// has only one pattern we can resolve it directly; otherwise we fall back to
+// the pattern ID or an empty string.
+func resolveHookPattern(m models.Match, patternIDs map[string]string, reqPatterns []string) string {
+	// If pattern identification has already run (e.g. cached results), look it up.
+	if m.Pattern != "" {
+		if text, ok := patternIDs[m.Pattern]; ok {
+			return text
+		}
+		return m.Pattern
+	}
+	// Pre-identification: single pattern means every match belongs to it.
+	if len(reqPatterns) == 1 {
+		return reqPatterns[0]
+	}
+	return ""
 }
 
 // buildCLICommand reconstructs the equivalent rx CLI command for display.

@@ -31,7 +31,7 @@ func NewParser(r io.Reader, maxLineSizeKB int) *Parser {
 	// We use 1MB as the hard limit to avoid unbounded memory usage.
 	const hardMaxBytes = 1024 * 1024
 	bufSize := maxLineSizeKB * 1024
-	if bufSize < hardMaxBytes {
+	if bufSize > hardMaxBytes {
 		bufSize = hardMaxBytes
 	}
 

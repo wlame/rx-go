@@ -8,7 +8,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/wlame/rx/internal/config"
 	"github.com/wlame/rx/internal/engine"
+	"github.com/wlame/rx/internal/hooks"
 )
 
 // handleTrace handles GET /v1/trace — the primary search endpoint.
@@ -41,6 +43,22 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 	// rg_extra_args can be repeated.
 	rgExtraArgs := r.URL.Query()["rg_extra_args"]
 
+	// Read webhook URLs from query params and merge with env-configured hooks.
+	cfg := config.Load()
+	requestHooks := hooks.HookCallbacks{
+		OnFileScanned: r.URL.Query().Get("on_file_url"),
+		OnMatchFound:  r.URL.Query().Get("on_match_url"),
+		OnComplete:    r.URL.Query().Get("on_complete_url"),
+	}
+	envHooks := hooks.HookCallbacks{
+		OnFileScanned: cfg.HookOnFileURL,
+		OnMatchFound:  cfg.HookOnMatchURL,
+		OnComplete:    cfg.HookOnCompleteURL,
+	}
+	effectiveHooks := hooks.GetEffectiveHooks(requestHooks, envHooks, cfg.DisableCustomHooks)
+
+	reqID := uuid.New().String()
+
 	// Build the engine request.
 	req := engine.TraceRequest{
 		Paths:         paths,
@@ -51,6 +69,8 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 		ContextAfter:  afterCtx,
 		UseCache:      useCache,
 		UseIndex:      useIndex,
+		Hooks:         &effectiveHooks,
+		RequestID:     reqID,
 	}
 
 	// Run the trace engine. This blocks for the duration of the search but
@@ -69,9 +89,9 @@ func (s *Server) handleTrace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set the request ID if not already set by the engine.
+	// Set the request ID to the one generated for hook correlation.
 	if resp.RequestID == "" {
-		resp.RequestID = uuid.New().String()
+		resp.RequestID = reqID
 	}
 
 	// Reflect max_results back in the response (nil when 0/unset).

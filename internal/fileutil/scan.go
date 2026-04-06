@@ -6,6 +6,7 @@
 package fileutil
 
 import (
+	"bytes"
 	"io"
 	"io/fs"
 	"os"
@@ -185,9 +186,10 @@ func DetectCompression(data []byte) CompressionFormat {
 }
 
 // detectCompression checks magic bytes against known compression formats.
+// Uses bytes.Equal from the standard library for optimized comparison.
 func detectCompression(data []byte) CompressionFormat {
 	for _, m := range compressionMagic {
-		if len(data) >= len(m.magic) && bytesEqual(data[:len(m.magic)], m.magic) {
+		if len(data) >= len(m.magic) && bytes.Equal(data[:len(m.magic)], m.magic) {
 			return m.format
 		}
 	}
@@ -221,25 +223,7 @@ func readFileHeader(path string, n int) ([]byte, error) {
 }
 
 // containsNull returns true if data contains a null (0x00) byte.
-// This is the same heuristic the Python reference uses for binary detection.
+// Uses bytes.IndexByte for optimized assembly-level search.
 func containsNull(data []byte) bool {
-	for _, b := range data {
-		if b == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// bytesEqual compares two byte slices for equality.
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return bytes.IndexByte(data, 0) != -1
 }

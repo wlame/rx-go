@@ -2,22 +2,150 @@ package index
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"log/slog"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/wlame/rx/internal/compression"
 	"github.com/wlame/rx/internal/config"
 	"github.com/wlame/rx/internal/models"
 )
 
+// reservoirSize is the number of samples kept for percentile estimation.
+// 10,000 samples give excellent accuracy for median, p95, and p99.
+const reservoirSize = 10000
+
+// lineStatsAccumulator tracks line length statistics using Welford's online algorithm
+// for mean/variance (constant memory) and reservoir sampling for percentiles.
+type lineStatsAccumulator struct {
+	// Welford's online algorithm state.
+	count    int
+	mean     float64
+	m2       float64 // sum of squared differences from the mean
+
+	// Reservoir sampling for percentile estimation.
+	reservoir []int
+	rng       *rand.Rand
+
+	// Extremes.
+	maxLength     int
+	maxLineNumber int
+	maxLineOffset int64
+	emptyCount    int
+}
+
+// newLineStatsAccumulator creates a new accumulator with a seeded RNG.
+func newLineStatsAccumulator() *lineStatsAccumulator {
+	return &lineStatsAccumulator{
+		reservoir: make([]int, 0, reservoirSize),
+		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+}
+
+// observe records a single line's length. Empty lines (stripped length == 0) are
+// counted separately and excluded from length statistics.
+func (a *lineStatsAccumulator) observe(lineLen int, isEmpty bool, lineNumber int, lineOffset int64) {
+	if isEmpty {
+		a.emptyCount++
+		return
+	}
+
+	// Welford's online update for mean and variance.
+	a.count++
+	delta := float64(lineLen) - a.mean
+	a.mean += delta / float64(a.count)
+	delta2 := float64(lineLen) - a.mean
+	a.m2 += delta * delta2
+
+	// Reservoir sampling: keep exactly reservoirSize samples uniformly at random.
+	if len(a.reservoir) < reservoirSize {
+		a.reservoir = append(a.reservoir, lineLen)
+	} else {
+		j := a.rng.Intn(a.count)
+		if j < reservoirSize {
+			a.reservoir[j] = lineLen
+		}
+	}
+
+	// Track max.
+	if lineLen > a.maxLength {
+		a.maxLength = lineLen
+		a.maxLineNumber = lineNumber
+		a.maxLineOffset = lineOffset
+	}
+}
+
+// finish computes final statistics from the accumulated data.
+func (a *lineStatsAccumulator) finish(totalLines int, lineEnding string) *models.IndexAnalysis {
+	maxOff := int(a.maxLineOffset)
+	analysis := &models.IndexAnalysis{
+		LineCount:            &totalLines,
+		EmptyLineCount:       &a.emptyCount,
+		LineLengthMax:        &a.maxLength,
+		LineLengthMaxLineNum: &a.maxLineNumber,
+		LineLengthMaxOffset:  &maxOff,
+		LineEnding:           &lineEnding,
+	}
+
+	if a.count == 0 {
+		zero := 0.0
+		analysis.LineLengthAvg = &zero
+		analysis.LineLengthMedian = &zero
+		analysis.LineLengthP95 = &zero
+		analysis.LineLengthP99 = &zero
+		analysis.LineLengthStddev = &zero
+		return analysis
+	}
+
+	avg := a.mean
+	analysis.LineLengthAvg = &avg
+
+	// Standard deviation from Welford's M2.
+	sd := 0.0
+	if a.count > 1 {
+		sd = math.Sqrt(a.m2 / float64(a.count-1))
+	}
+	analysis.LineLengthStddev = &sd
+
+	// Percentiles from the reservoir sample.
+	sorted := make([]int, len(a.reservoir))
+	copy(sorted, a.reservoir)
+	sort.Ints(sorted)
+
+	med := percentile(sorted, 50)
+	p95 := percentile(sorted, 95)
+	p99 := percentile(sorted, 99)
+	analysis.LineLengthMedian = &med
+	analysis.LineLengthP95 = &p95
+	analysis.LineLengthP99 = &p99
+
+	return analysis
+}
+
 // DefaultIndexStepDivisor controls index density: stepBytes = largeFileThreshold / divisor.
 // With 50 MB threshold and divisor 50, we get ~1 MB between checkpoints.
 const DefaultIndexStepDivisor = 50
+
+// zstdDecoderPool reuses zstd.Decoder instances in the index builder to avoid
+// repeated allocation of decoding tables when processing many frames.
+var zstdDecoderPool = sync.Pool{
+	New: func() interface{} {
+		d, _ := zstd.NewReader(nil)
+		return d
+	},
+}
+
+func decoderPoolGet() *zstd.Decoder { return zstdDecoderPool.Get().(*zstd.Decoder) }
+func decoderPoolPut(d *zstd.Decoder) { zstdDecoderPool.Put(d) }
 
 // LineSampleInterval is how often we record line index entries for compressed files.
 // Every N-th line gets a [line_number, decompressed_offset] entry.
@@ -78,16 +206,8 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 	var currentLine int = 1
 	nextCheckpoint := stepBytes
 
-	// Statistics accumulators.
-	var lineLengths []int
-	var emptyLineCount int
-	var maxLineLength int
-	var maxLineNumber int
-	var maxLineOffset int64
-
-	// Line ending detection sample from the first lines.
-	var lineEndingSample []byte
-	sampleCollected := false
+	// O(1) memory statistics via Welford's algorithm + reservoir sampling.
+	stats := newLineStatsAccumulator()
 
 	// Use bufio.Reader instead of Scanner to track exact byte offsets.
 	// Scanner strips newlines, making offset tracking approximate.
@@ -122,32 +242,10 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 
 		lineLen := len(fullLine) // content bytes (no newline)
 
-		// Collect sample for line ending detection.
-		// We need to know whether the file uses LF or CRLF, so peek at the
-		// byte just after the line content in the file.
-		if !sampleCollected && currentOffset+int64(lineLen) < stat.Size() {
-			// Read the delimiter byte(s) by checking the file at the known position.
-			// The reader already consumed them, so we record what we know:
-			// ReadLine strips \n and \r\n, so the actual bytes on disk are content + delimiter.
-			// We'll detect CRLF by checking if the raw content ended with \r before stripping.
-			lineEndingSample = append(lineEndingSample, fullLine...)
-			if len(lineEndingSample) > 64*1024 {
-				sampleCollected = true
-			}
-		}
-
-		// Track statistics.
+		// Track statistics using constant-memory accumulator.
 		stripped := len(trimWhitespace(fullLine))
-		if stripped > 0 {
-			lineLengths = append(lineLengths, lineLen)
-			if lineLen > maxLineLength {
-				maxLineLength = lineLen
-				maxLineNumber = currentLine
-				maxLineOffset = currentOffset
-			}
-		} else {
-			emptyLineCount++
-		}
+		isEmpty := stripped == 0
+		stats.observe(lineLen, isEmpty, currentLine, currentOffset)
 
 		// Advance offset: content length + 1 for \n.
 		// For CRLF files this would be +2, but we detect that below and correct.
@@ -168,12 +266,9 @@ func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, e
 
 	// Detect line endings by re-reading first 64 KB of the file.
 	lineEnding := detectLineEnding(absPath)
-	_ = lineEndingSample // ending detection done by detectLineEnding
-	_ = sampleCollected
 
-	// Compute statistics.
-	analysis := computeAnalysis(lineLengths, emptyLineCount, totalLines,
-		maxLineLength, maxLineNumber, int(maxLineOffset), lineEnding)
+	// Finalize statistics from the constant-memory accumulator.
+	analysis := stats.finish(totalLines, lineEnding)
 
 	buildTime := time.Since(startTime).Seconds()
 	stepBytesInt := int(stepBytes)
@@ -231,7 +326,7 @@ func buildCompressedIndex(absPath string, format compression.CompressionFormat) 
 			chunkPos := 0
 
 			for chunkPos < len(data) {
-				nlPos := indexOf(data[chunkPos:], '\n')
+				nlPos := bytes.IndexByte(data[chunkPos:], '\n')
 				if nlPos == -1 {
 					// No more newlines in this chunk.
 					partialLineLen += len(data) - chunkPos
@@ -319,25 +414,50 @@ func buildSeekableZstdIndex(absPath string) (*models.FileIndex, error) {
 	}
 
 	// Build frame line info by decompressing each frame.
+	// Uses a single decoder from the pool for all frames to avoid repeated allocation.
 	var frameInfos []models.FrameLineInfo
 	var lineIndex [][]int
 	currentLine := 1
 	totalLines := 0
 
+	// Borrow one decoder for the entire loop instead of one per frame.
+	dec := decoderPoolGet()
+	defer decoderPoolPut(dec)
+
 	for i, frame := range table.Frames {
-		data, err := compression.DecompressFrame(f, frame)
+		data, err := compression.DecompressFrameWith(f, frame, dec)
 		if err != nil {
 			return nil, fmt.Errorf("decompress frame %d of %s: %w", i, absPath, err)
 		}
 
-		// Count newlines in the decompressed frame.
-		linesInFrame := countNewlines(data)
+		// Single pass: count newlines AND record sample checkpoints.
+		// This replaces the previous two-pass approach (countNewlines + second iteration).
+		linesInFrame := 0
+		firstLine := currentLine
 		isLastFrame := i == len(table.Frames)-1
-		if isLastFrame && len(data) > 0 && data[len(data)-1] != '\n' {
-			linesInFrame++ // Partial line at end of file counts as a line.
+
+		// Record the first-line checkpoint for every frame.
+		lineIndex = append(lineIndex, []int{firstLine, int(frame.DecompressedOffset), i})
+
+		// Single-pass: count newlines and emit intermediate samples.
+		lineNum := firstLine
+		for j := 0; j < len(data); j++ {
+			if data[j] == '\n' {
+				linesInFrame++
+				lineNum++
+				// Emit intermediate sampled checkpoint at every SeekableLineSampleInterval lines.
+				if (lineNum-firstLine)%SeekableLineSampleInterval == 0 {
+					decompOff := int(frame.DecompressedOffset) + j + 1
+					lineIndex = append(lineIndex, []int{lineNum, decompOff, i})
+				}
+			}
 		}
 
-		firstLine := currentLine
+		// Partial line at end of file (no trailing newline) counts as a line.
+		if isLastFrame && len(data) > 0 && data[len(data)-1] != '\n' {
+			linesInFrame++
+		}
+
 		lastLine := currentLine + linesInFrame - 1
 		if linesInFrame == 0 {
 			lastLine = currentLine
@@ -353,25 +473,6 @@ func buildSeekableZstdIndex(absPath string) (*models.FileIndex, error) {
 			LastLine:           lastLine,
 			LineCount:          linesInFrame,
 		})
-
-		// Record line index entry for the first line of each frame (3-element format).
-		lineIndex = append(lineIndex, []int{firstLine, int(frame.DecompressedOffset), i})
-
-		// Add intermediate sampled entries for large frames.
-		if linesInFrame > SeekableLineSampleInterval {
-			byteOff := 0
-			lineNum := firstLine
-			for j := 0; j < len(data); j++ {
-				if data[j] == '\n' {
-					lineNum++
-					if lineNum > firstLine && (lineNum-firstLine)%SeekableLineSampleInterval == 0 {
-						decompOff := int(frame.DecompressedOffset) + j + 1
-						lineIndex = append(lineIndex, []int{lineNum, decompOff, i})
-					}
-				}
-			}
-			_ = byteOff
-		}
 
 		currentLine = lastLine + 1
 		totalLines += linesInFrame
@@ -410,6 +511,7 @@ func buildSeekableZstdIndex(absPath string) (*models.FileIndex, error) {
 }
 
 // computeAnalysis calculates line length statistics from the collected data.
+// Kept for backward compatibility with tests; new code uses lineStatsAccumulator.
 func computeAnalysis(
 	lineLengths []int,
 	emptyLineCount, lineCount, maxLineLength, maxLineNumber, maxLineOffset int,
@@ -553,23 +655,10 @@ func stddev(data []int, avg float64) float64 {
 
 // --- byte helpers ---
 
+// countNewlines returns the number of newline bytes in data.
+// Uses bytes.Count for optimized assembly implementation.
 func countNewlines(data []byte) int {
-	count := 0
-	for _, b := range data {
-		if b == '\n' {
-			count++
-		}
-	}
-	return count
-}
-
-func indexOf(data []byte, b byte) int {
-	for i, v := range data {
-		if v == b {
-			return i
-		}
-	}
-	return -1
+	return bytes.Count(data, []byte{'\n'})
 }
 
 func trimWhitespace(b []byte) []byte {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/wlame/rx/internal/api"
 	"github.com/wlame/rx/internal/config"
+	"github.com/wlame/rx/internal/frontend"
 )
 
 // newServeCommand creates the "serve" subcommand that starts a web API server.
@@ -70,11 +71,31 @@ func runServe(cmd *cobra.Command, flags serveFlags) error {
 	// Load configuration from environment.
 	cfg := config.Load()
 
+	// Default to current working directory if no search roots configured
+	// (matches Python's behavior: set_search_root(None) → cwd).
+	if len(cfg.SearchRoots) == 0 {
+		cwd, err := os.Getwd()
+		if err == nil {
+			cfg.SearchRoots = []string{cwd}
+			slog.Info("no search root configured, defaulting to current directory", "root", cwd)
+		}
+	}
+
 	// Propagate version to the API package so /health reports it.
 	api.SetVersion(version)
 
+	// Download/update frontend SPA if needed (non-blocking on failure).
+	fm := frontend.NewManager(&cfg)
+	frontendDir, err := fm.EnsureFrontend()
+	if err != nil {
+		slog.Warn("frontend: setup failed, SPA will not be available", "error", err)
+	} else if frontendDir != "" {
+		slog.Info("frontend: ready", "dir", frontendDir)
+	}
+
 	// Create the fully-wired API server with all endpoint handlers.
 	srv := api.NewServer(&cfg)
+	srv.FrontendDir = frontendDir
 
 	addr := fmt.Sprintf("%s:%d", flags.host, flags.port)
 

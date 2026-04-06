@@ -80,6 +80,20 @@ type FileIndex struct {
 	FrameCount      *int            `json:"frame_count"`
 	FrameSizeTarget *int            `json:"frame_size_target"`
 	Frames          *[]FrameLineInfo `json:"frames"` // pointer so nil serializes as null
+
+	// Python compatibility: Python stores analysis fields at the top level rather
+	// than nested inside an "analysis" object. These fields capture Python's flat
+	// layout so Go can read Python-built indexes.
+	PyLineCount *int `json:"line_count,omitempty"`
+}
+
+// GetLineCount returns the line count from whichever location it's stored:
+// Go's nested Analysis struct or Python's top-level field.
+func (f *FileIndex) GetLineCount() *int {
+	if f.Analysis != nil && f.Analysis.LineCount != nil {
+		return f.Analysis.LineCount
+	}
+	return f.PyLineCount
 }
 
 // NewFileIndex returns a FileIndex with the line_index slice initialized to a non-nil

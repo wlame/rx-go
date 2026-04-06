@@ -1,12 +1,14 @@
 package cache
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	json "github.com/goccy/go-json"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -369,4 +371,180 @@ func TestHashString(t *testing.T) {
 	assert.Equal(t, h, hashString("/var/log/test.log"))
 	// Different input should produce different hash.
 	assert.NotEqual(t, h, hashString("/var/log/other.log"))
+}
+
+// --- Edge-case tests: empty, special, unicode, long, many patterns ---
+
+func TestPatternsHash_EmptyPatterns(t *testing.T) {
+	// Empty pattern list should still produce a valid 16-char hex hash.
+	h := PatternsHash(nil, nil)
+	assert.Len(t, h, 16, "empty patterns should produce a 16-char hash")
+
+	h2 := PatternsHash([]string{}, []string{})
+	assert.Len(t, h2, 16)
+	assert.Equal(t, h, h2, "nil and empty slice should produce the same hash")
+}
+
+func TestPatternsHash_SpecialRegexChars(t *testing.T) {
+	// Patterns containing regex metacharacters should be hashed verbatim
+	// without any escaping, and produce consistent results.
+	patterns := []string{`(a+)+`, `[a-z].*`, `\d+\.\d+`, `foo|bar`}
+	h1 := PatternsHash(patterns, nil)
+	h2 := PatternsHash(patterns, nil)
+	assert.Equal(t, h1, h2, "special regex chars should hash consistently")
+	assert.Len(t, h1, 16)
+
+	// Different special-char patterns should give a different hash.
+	h3 := PatternsHash([]string{`(b+)+`}, nil)
+	assert.NotEqual(t, h1, h3)
+}
+
+func TestPatternsHash_UnicodePattern(t *testing.T) {
+	// Unicode patterns should be hashed correctly.
+	patterns := []string{"nihongo", "nono", "uber"}
+	h1 := PatternsHash(patterns, nil)
+	h2 := PatternsHash(patterns, nil)
+	assert.Equal(t, h1, h2, "unicode patterns should hash consistently")
+	assert.Len(t, h1, 16)
+
+	// Different unicode should differ.
+	h3 := PatternsHash([]string{"zhongwen"}, nil)
+	assert.NotEqual(t, h1, h3)
+}
+
+func TestPatternsHash_VeryLongPattern(t *testing.T) {
+	// A 1000+ character pattern should still produce a valid hash.
+	longPattern := strings.Repeat("a", 2000)
+	h := PatternsHash([]string{longPattern}, nil)
+	assert.Len(t, h, 16, "very long pattern should produce a 16-char hash")
+
+	// Same long pattern should be deterministic.
+	h2 := PatternsHash([]string{longPattern}, nil)
+	assert.Equal(t, h, h2)
+}
+
+func TestPatternsHash_ManyPatterns(t *testing.T) {
+	// 25 patterns -- key computation should handle ordering consistently.
+	patterns := make([]string, 25)
+	for i := range patterns {
+		patterns[i] = fmt.Sprintf("pattern_%03d", i)
+	}
+	h1 := PatternsHash(patterns, nil)
+	assert.Len(t, h1, 16)
+
+	// Reversed order should give the same hash (patterns are sorted before hashing).
+	reversed := make([]string, len(patterns))
+	copy(reversed, patterns)
+	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+		reversed[i], reversed[j] = reversed[j], reversed[i]
+	}
+	h2 := PatternsHash(reversed, nil)
+	assert.Equal(t, h1, h2, "many patterns in different order should hash the same")
+}
+
+// --- Cache deletion: store, delete file, then load returns miss ---
+
+func TestCacheDeletion_StoreDeleteLoad(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "delete_test.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\n"), 0o644))
+
+	patterns := []string{"ERROR"}
+	resp := makeTestResponse(srcPath)
+
+	// Store a cache entry.
+	require.NoError(t, Store(cacheDir, patterns, nil, srcPath, resp))
+
+	// Confirm cache hit.
+	_, hit, err := Load(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, err)
+	assert.True(t, hit, "cache should be a hit after Store")
+
+	// Delete the cache file directly (the Go package has no Delete func).
+	cachePath := TraceCachePath(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, os.Remove(cachePath))
+
+	// Load should now miss.
+	loaded, hit, err := Load(cacheDir, patterns, nil, srcPath)
+	require.NoError(t, err)
+	assert.False(t, hit, "cache should be a miss after deletion")
+	assert.Nil(t, loaded)
+}
+
+// --- Cache info retrieval: store data, verify metadata round-trips ---
+
+func TestCacheInfoRetrieval(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "info_test.log")
+	require.NoError(t, os.WriteFile(srcPath, []byte("ERROR here\nOK\n"), 0o644))
+
+	patterns := []string{"ERROR"}
+	rgFlags := []string{"-i"}
+	resp := makeTestResponse(srcPath)
+
+	require.NoError(t, Store(cacheDir, patterns, rgFlags, srcPath, resp))
+
+	// Read the raw cache file and verify metadata fields.
+	cachePath := TraceCachePath(cacheDir, patterns, rgFlags, srcPath)
+	data, err := os.ReadFile(cachePath)
+	require.NoError(t, err)
+
+	var entry traceCacheEntry
+	require.NoError(t, json.Unmarshal(data, &entry))
+
+	assert.Equal(t, TraceCacheVersion, entry.Version, "version should match")
+	assert.Equal(t, PatternsHash(patterns, rgFlags), entry.PatternsHash, "patterns hash should match")
+	assert.Equal(t, patterns, entry.Patterns, "patterns should round-trip")
+	assert.Equal(t, []string{"-i"}, entry.RgFlags, "only matching flags should be stored")
+	assert.NotEmpty(t, entry.CreatedAt, "created_at should be set")
+	assert.NotEmpty(t, entry.SourceModifiedAt, "source_modified_at should be set")
+	assert.Greater(t, entry.SourceSizeBytes, int64(0), "source_size_bytes should be positive")
+
+	absPath, _ := filepath.Abs(srcPath)
+	assert.Equal(t, absPath, entry.SourcePath, "source_path should be absolute")
+}
+
+// --- Matching flags: test each individually ---
+
+func TestMatchingFlags_EachFlagIndividually(t *testing.T) {
+	// Each matching flag should change the hash compared to no flags.
+	baseHash := PatternsHash([]string{"test"}, nil)
+
+	matchingFlagsList := []string{"-i", "-w", "-x", "-F", "-P", "--case-sensitive", "--ignore-case"}
+	for _, flag := range matchingFlagsList {
+		h := PatternsHash([]string{"test"}, []string{flag})
+		assert.NotEqual(t, baseHash, h, "matching flag %q should change the hash", flag)
+		assert.Len(t, h, 16)
+	}
+}
+
+// --- Non-matching flags: test each is excluded ---
+
+func TestNonMatchingFlags_EachExcluded(t *testing.T) {
+	// Flags that do NOT affect matching semantics should NOT change the hash.
+	baseHash := PatternsHash([]string{"test"}, nil)
+
+	nonMatchingFlagsList := []string{
+		"--color", "--color=never", "--no-heading",
+		"-A", "3", "-B", "2", "-C", "5",
+		"--context", "--line-number", "--count",
+		"--json", "--vimgrep", "--sort",
+	}
+	for _, flag := range nonMatchingFlagsList {
+		h := PatternsHash([]string{"test"}, []string{flag})
+		assert.Equal(t, baseHash, h, "non-matching flag %q should NOT change the hash", flag)
+	}
+}
+
+func TestExtractMatchingFlags_AllMatchingFlags(t *testing.T) {
+	// Pass every matching flag mixed with non-matching flags.
+	input := []string{
+		"-i", "-w", "-x", "-F", "-P", "--case-sensitive", "--ignore-case",
+		"--color=never", "-A", "3", "-B", "2", "--json",
+	}
+	got := extractMatchingFlags(input)
+	expected := []string{"--case-sensitive", "--ignore-case", "-F", "-P", "-i", "-w", "-x"}
+	assert.Equal(t, expected, got, "should extract and sort only matching flags")
 }
