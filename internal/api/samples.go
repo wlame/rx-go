@@ -8,15 +8,75 @@ import (
 	"strings"
 
 	"github.com/wlame/rx/internal/fileutil"
+	"github.com/wlame/rx/internal/index"
 	"github.com/wlame/rx/internal/models"
 	"github.com/wlame/rx/internal/security"
 )
 
+// parseValueOrRange parses a single element from a comma-separated list.
+// It distinguishes three forms:
+//   - Plain integer: "100" → (100, nil, nil)
+//   - Negative integer: "-5" → (-5, nil, nil) — starts with '-' and has no other '-'
+//   - Range: "100-200" → (100, &200, nil) — two integers separated by '-'
+//
+// The ambiguity between negative values and ranges is resolved by position of '-':
+// if the string starts with '-' and contains no further '-', it is negative.
+func parseValueOrRange(raw string) (start int, end *int, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil, fmt.Errorf("empty value")
+	}
+
+	// Check if this is a range: find '-' that is not the leading negative sign.
+	// A range looks like "100-200". A negative looks like "-5".
+	// If the string starts with '-', strip it temporarily to look for a second '-'.
+	dashIdx := -1
+	searchFrom := 0
+	if raw[0] == '-' {
+		// Could be negative single or a range starting with a negative (not supported, but handle).
+		searchFrom = 1
+	}
+	rest := raw[searchFrom:]
+	idx := strings.Index(rest, "-")
+	if idx >= 0 {
+		dashIdx = searchFrom + idx
+	}
+
+	if dashIdx < 0 {
+		// No range separator — plain or negative integer.
+		v, parseErr := strconv.Atoi(raw)
+		if parseErr != nil {
+			return 0, nil, fmt.Errorf("invalid integer: %s", raw)
+		}
+		return v, nil, nil
+	}
+
+	// Range: split on the dash.
+	leftStr := raw[:dashIdx]
+	rightStr := raw[dashIdx+1:]
+
+	left, parseErr := strconv.Atoi(strings.TrimSpace(leftStr))
+	if parseErr != nil {
+		return 0, nil, fmt.Errorf("invalid range start: %s", leftStr)
+	}
+	right, parseErr := strconv.Atoi(strings.TrimSpace(rightStr))
+	if parseErr != nil {
+		return 0, nil, fmt.Errorf("invalid range end: %s", rightStr)
+	}
+
+	return left, &right, nil
+}
+
 // handleSamples handles GET /v1/samples — context extraction around byte offsets or lines.
 //
 // Required: path.
-// One of: byte_offset (repeated) or line (repeated).
-// Optional: before_context, after_context.
+// One of: byte_offset (repeated) or line (repeated), or offsets/lines (comma-separated).
+// Optional: before_context, after_context, context.
+//
+// Each element in the comma-separated list can be:
+//   - A plain integer: "100" → single value with context
+//   - A range: "100-200" → exact range, no context applied
+//   - A negative integer: "-5" → from end of file (lines only)
 func (s *Server) handleSamples(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
 	if path == "" {
@@ -67,10 +127,20 @@ func (s *Server) handleSamples(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	beforeCtx := parseIntParam(r, "before_context", 3)
-	afterCtx := parseIntParam(r, "after_context", 3)
+	// Mutual exclusivity: cannot use both offsets and lines in the same request.
+	// This matches the Python reference implementation's behavior.
+	if len(byteOffsets) > 0 && len(lineNumbers) > 0 {
+		writeError(w, http.StatusBadRequest, "cannot use both 'offsets' and 'lines'; provide only one")
+		return
+	}
 
-	// Handle shared "context" param (sets both before and after).
+	// Context resolution priority (matches Python):
+	//   1. Explicit before_context / after_context (highest priority)
+	//   2. Shared context param (sets both)
+	//   3. Default of 3
+	beforeCtx := 3
+	afterCtx := 3
+
 	if ctx := r.URL.Query().Get("context"); ctx != "" {
 		if v, err := strconv.Atoi(ctx); err == nil {
 			beforeCtx = v
@@ -78,7 +148,31 @@ func (s *Server) handleSamples(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Specific before/after override context when present.
+	if v := r.URL.Query().Get("before_context"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			beforeCtx = parsed
+		}
+	}
+	if v := r.URL.Query().Get("after_context"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			afterCtx = parsed
+		}
+	}
+
 	resp := models.NewSamplesResponse(path, beforeCtx, afterCtx)
+
+	// Load file index once for this request. When available, GetContextByLines and
+	// GetLineRange use it to binary-search near the target line instead of scanning
+	// from byte 0 on every call (critical for multi-GB files).
+	var fileIdx *models.FileIndex
+	if s.Config.CacheDir != "" {
+		cachePath := index.IndexCachePath(s.Config.CacheDir, path)
+		idx, loadErr := index.Load(cachePath)
+		if loadErr == nil && idx != nil && index.Validate(idx, path) {
+			fileIdx = idx
+		}
+	}
 
 	// Build CLI command for display.
 	cliParts := []string{"rx", "samples", path}
@@ -94,42 +188,95 @@ func (s *Server) handleSamples(w http.ResponseWriter, r *http.Request) {
 	cmd := strings.Join(cliParts, " ")
 	resp.CLICommand = &cmd
 
+	// Resolve total line count lazily (needed for negative line numbers).
+	totalLines := -1
+	countLines := func() (int, error) {
+		if totalLines >= 0 {
+			return totalLines, nil
+		}
+		n, err := fileutil.CountLines(path)
+		if err != nil {
+			return 0, err
+		}
+		totalLines = n
+		return totalLines, nil
+	}
+
 	// Process byte offsets.
 	for _, raw := range byteOffsets {
-		offset, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+		start, end, err := parseValueOrRange(raw)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid byte_offset: %s", raw))
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid byte offset: %s", raw))
 			return
 		}
 
-		lines, ctxErr := fileutil.GetContext(path, offset, beforeCtx, afterCtx)
-		if ctxErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("error reading context: %v", ctxErr))
-			return
+		if end != nil {
+			// Range: return lines covering [start, end) bytes, no context.
+			lines, rangeErr := fileutil.GetByteRange(path, int64(start), int64(*end))
+			if rangeErr != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("error reading byte range: %v", rangeErr))
+				return
+			}
+			key := fmt.Sprintf("%d-%d", start, *end)
+			resp.Samples[key] = lines
+			resp.Offsets[key] = -1
+		} else {
+			// Single value with context.
+			lines, ctxErr := fileutil.GetContext(path, int64(start), beforeCtx, afterCtx)
+			if ctxErr != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("error reading context: %v", ctxErr))
+				return
+			}
+			key := strconv.Itoa(start)
+			resp.Samples[key] = lines
+			resp.Offsets[key] = -1
 		}
-
-		key := strconv.FormatInt(offset, 10)
-		resp.Samples[key] = lines
-		resp.Offsets[key] = -1 // line number lookup not implemented in this simplified version
 	}
 
 	// Process line numbers.
 	for _, raw := range lineNumbers {
-		lineNum, err := strconv.Atoi(strings.TrimSpace(raw))
+		start, end, err := parseValueOrRange(raw)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid line number: %s", raw))
 			return
 		}
 
-		lines, ctxErr := fileutil.GetContextByLines(path, lineNum, beforeCtx, afterCtx)
-		if ctxErr != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("error reading context: %v", ctxErr))
-			return
-		}
+		if end != nil {
+			// Range: return exact lines [start, end], no context.
+			lines, rangeErr := fileutil.GetLineRange(path, start, *end, fileIdx)
+			if rangeErr != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("error reading line range: %v", rangeErr))
+				return
+			}
+			key := fmt.Sprintf("%d-%d", start, *end)
+			resp.Samples[key] = lines
+			resp.Lines[key] = -1
+		} else {
+			// Single value — resolve negative to positive line number.
+			lineNum := start
+			if lineNum < 0 {
+				total, countErr := countLines()
+				if countErr != nil {
+					writeError(w, http.StatusInternalServerError, fmt.Sprintf("error counting lines: %v", countErr))
+					return
+				}
+				// -1 means last line, -2 means second to last, etc.
+				lineNum = total + lineNum + 1
+				if lineNum < 1 {
+					writeError(w, http.StatusBadRequest, fmt.Sprintf("negative line %d resolves to %d, out of bounds", start, lineNum))
+					return
+				}
+			}
 
-		key := strconv.Itoa(lineNum)
-		resp.Samples[key] = lines
-		resp.Lines[key] = -1 // byte offset lookup not implemented in this simplified version
+			lines, ctxErr := fileutil.GetContextByLines(path, lineNum, beforeCtx, afterCtx, fileIdx)
+			if ctxErr != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("error reading context: %v", ctxErr))
+				return
+			}
+			key := strconv.Itoa(start)
+			resp.Samples[key] = lines
+			resp.Lines[key] = -1
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

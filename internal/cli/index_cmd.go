@@ -138,8 +138,8 @@ func indexOneFile(filePath string, cfg *config.Config, flags indexFlags, errW io
 
 			if existing.TotalLines != nil {
 				result.LineCount = existing.TotalLines
-			} else if existing.Analysis != nil && existing.Analysis.LineCount != nil {
-				result.LineCount = existing.Analysis.LineCount
+			} else if lc := existing.GetLineCount(); lc != nil {
+				result.LineCount = lc
 			}
 
 			fmt.Fprintf(errW, "%s: using cached index (%d checkpoints)\n", filePath, result.Checkpoints)
@@ -172,8 +172,8 @@ func indexOneFile(filePath string, cfg *config.Config, flags indexFlags, errW io
 
 	if idx.TotalLines != nil {
 		result.LineCount = idx.TotalLines
-	} else if idx.Analysis != nil && idx.Analysis.LineCount != nil {
-		result.LineCount = idx.Analysis.LineCount
+	} else if lc := idx.GetLineCount(); lc != nil {
+		result.LineCount = lc
 	}
 
 	fmt.Fprintf(errW, "  Indexed: %d checkpoints", result.Checkpoints)

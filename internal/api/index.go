@@ -96,6 +96,12 @@ func (s *Server) handlePostIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Save the index to the cache directory so GET /v1/index can find it.
+		cachePath := index.IndexCachePath(cfg.CacheDir, normalizedPath)
+		if saveErr := index.Save(cachePath, idx); saveErr != nil {
+			slog.Error("failed to save index to cache", "task_id", taskID, "error", saveErr)
+		}
+
 		// Convert index to a generic map for the task result.
 		result := indexToMap(idx)
 		s.TaskStore.Complete(taskID, result)

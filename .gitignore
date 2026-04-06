@@ -1,4 +1,17 @@
+# OS
+.DS_Store
+
+# Claude working files
+.claude/
+
+# Serena config
+.serena/
+
+rx-python/
+.fuse_hidden*
+
 # Binary (root-level build output only)
+bin/
 /rx
 *.exe
 
@@ -8,6 +21,7 @@ dist/
 # Test/coverage
 coverage.out
 *.test
+test/comparison/
 
 # Debug files
 .debug_*
@@ -17,5 +31,3 @@ coverage.out
 .vscode/
 *.swp
 
-# OS
-.DS_Store

@@ -15,6 +15,7 @@ import (
 	"github.com/wlame/rx/internal/config"
 	"github.com/wlame/rx/internal/engine"
 	"github.com/wlame/rx/internal/fileutil"
+	"github.com/wlame/rx/internal/hooks"
 	"github.com/wlame/rx/internal/models"
 )
 
@@ -206,6 +207,21 @@ func runTrace(cmd *cobra.Command, args []string, flags traceFlags) error {
 
 	// Build and execute trace request.
 	reqID := uuid.New().String()
+
+	// Merge request-provided hook URLs with env-configured hooks.
+	// Request hooks take priority unless RX_DISABLE_CUSTOM_HOOKS is set.
+	requestHooks := hooks.HookCallbacks{
+		OnFileScanned: flags.onFileURL,
+		OnMatchFound:  flags.onMatchURL,
+		OnComplete:    flags.onCompleteURL,
+	}
+	envHooks := hooks.HookCallbacks{
+		OnFileScanned: cfg.HookOnFileURL,
+		OnMatchFound:  cfg.HookOnMatchURL,
+		OnComplete:    cfg.HookOnCompleteURL,
+	}
+	effectiveHooks := hooks.GetEffectiveHooks(requestHooks, envHooks, cfg.DisableCustomHooks)
+
 	req := engine.TraceRequest{
 		Paths:         paths,
 		Patterns:      []string{pattern},
@@ -215,6 +231,8 @@ func runTrace(cmd *cobra.Command, args []string, flags traceFlags) error {
 		ContextAfter:  afterCtx,
 		UseCache:      !flags.noCache,
 		UseIndex:      !flags.noIndex,
+		Hooks:         &effectiveHooks,
+		RequestID:     reqID,
 	}
 
 	startTime := time.Now()

@@ -70,16 +70,49 @@ func Save(cachePath string, index *models.FileIndex) error {
 }
 
 // Validate checks whether a cached index is still valid for the source file.
-// The index is valid when both the modification time (ISO 8601) and file size
-// still match the actual file on disk.
+// The index is valid when both the modification time and file size still match
+// the actual file on disk.
+//
+// Supports both Go-built indexes (RFC3339Nano timestamps) and Python-built indexes
+// (datetime.isoformat() — local time, no timezone, microsecond precision) for
+// cross-language cache compatibility.
 func Validate(index *models.FileIndex, filePath string) bool {
 	stat, err := os.Stat(filePath)
 	if err != nil {
 		return false
 	}
 
-	currentMtime := stat.ModTime().Format(time.RFC3339Nano)
-	return index.SourceModifiedAt == currentMtime && index.SourceSizeBytes == int(stat.Size())
+	if index.SourceSizeBytes != int(stat.Size()) {
+		return false
+	}
+
+	storedMtime := index.SourceModifiedAt
+	modTime := stat.ModTime()
+
+	// Go-built indexes use RFC3339Nano.
+	if storedMtime == modTime.Format(time.RFC3339Nano) {
+		return true
+	}
+
+	// Python-built indexes use datetime.fromtimestamp(mtime).isoformat():
+	// local time, no timezone suffix, microsecond precision (6 digits when non-zero,
+	// omitted when zero). Truncate to microsecond to match Python's resolution.
+	if storedMtime == pythonISOFormat(modTime) {
+		return true
+	}
+
+	return false
+}
+
+// pythonISOFormat formats a time identically to Python's datetime.isoformat():
+// local time, no timezone suffix, microsecond precision (6 digits when non-zero,
+// omitted when zero).
+func pythonISOFormat(t time.Time) string {
+	truncated := t.Truncate(time.Microsecond)
+	if truncated.Nanosecond() == 0 {
+		return truncated.Format("2006-01-02T15:04:05")
+	}
+	return truncated.Format("2006-01-02T15:04:05.000000")
 }
 
 // Invalidate removes a stale index cache file from disk.

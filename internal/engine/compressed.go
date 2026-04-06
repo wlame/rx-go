@@ -14,7 +14,6 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -313,9 +312,12 @@ func planFrameBatches(table *compression.SeekTable, targetBytes int64) []frameBa
 	return batches
 }
 
-// searchFrameBatch decompresses all frames in a batch natively, concatenates the
-// decompressed output, pipes it to rg, and adjusts match offsets to be absolute
-// within the decompressed file.
+// searchFrameBatch streams decompressed frames through an io.Pipe to rg, avoiding
+// materializing the entire batch in memory. Frames are decompressed one at a time
+// and written to the pipe while rg reads from the other end concurrently.
+//
+// Match offsets are adjusted from pipe-relative to absolute decompressed file offsets
+// using the frame metadata from the seek table.
 func searchFrameBatch(
 	ctx context.Context,
 	f *os.File,
@@ -324,52 +326,69 @@ func searchFrameBatch(
 	rgExtraArgs []string,
 	maxLineSize int,
 ) ([]models.Match, error) {
-	// Decompress all frames in the batch and concatenate.
-	var decompressed bytes.Buffer
-	// Track where each frame's data starts in our concatenated buffer,
-	// so we can map rg offsets back to absolute decompressed offsets.
+	// Track cumulative bytes written so we can map pipe offsets back to frames.
 	type frameRange struct {
-		bufStart           int   // Start offset in concatenated buffer.
+		bufStart           int   // Cumulative byte offset in the pipe stream.
 		decompressedOffset int64 // Absolute decompressed offset in the original file.
 		decompressedSize   int   // Size of this frame's decompressed data.
 	}
+
+	// Pre-compute ranges from frame metadata (sizes are known from the seek table).
 	ranges := make([]frameRange, len(batch.frames))
-
+	cumulative := 0
 	for i, frame := range batch.frames {
-		data, err := compression.DecompressFrame(f, frame)
-		if err != nil {
-			return nil, fmt.Errorf("decompress frame at offset %d: %w", frame.CompressedOffset, err)
-		}
-
 		ranges[i] = frameRange{
-			bufStart:           decompressed.Len(),
+			bufStart:           cumulative,
 			decompressedOffset: frame.DecompressedOffset,
-			decompressedSize:   len(data),
+			decompressedSize:   int(frame.DecompressedSize),
 		}
-
-		decompressed.Write(data)
+		cumulative += int(frame.DecompressedSize)
 	}
 
-	// Pipe concatenated decompressed data to rg.
-	reader := bytes.NewReader(decompressed.Bytes())
-	matches, err := searchFromReader(ctx, reader, patterns, rgExtraArgs, maxLineSize)
+	// Use io.Pipe to stream decompressed data directly to rg without buffering
+	// the entire batch in memory. The writer goroutine decompresses one frame at
+	// a time; rg processes data as it arrives on the reader end.
+	pr, pw := io.Pipe()
+
+	// Writer goroutine: decompress frames sequentially into the pipe.
+	go func() {
+		defer pw.Close()
+		for _, frame := range batch.frames {
+			data, err := compression.DecompressFrame(f, frame)
+			if err != nil {
+				pw.CloseWithError(fmt.Errorf("decompress frame at offset %d: %w", frame.CompressedOffset, err))
+				return
+			}
+			if _, err := pw.Write(data); err != nil {
+				// Pipe closed by reader (e.g., context cancelled) — stop silently.
+				return
+			}
+		}
+	}()
+
+	// rg reads from the pipe reader.
+	matches, err := searchFromReader(ctx, pr, patterns, rgExtraArgs, maxLineSize)
 	if err != nil {
 		return nil, err
 	}
 
-	// Adjust offsets: rg reports offsets relative to the concatenated buffer.
-	// We need to map them to absolute decompressed file offsets.
+	// Adjust offsets: rg reports offsets relative to the pipe stream.
+	// Map them to absolute decompressed file offsets using binary search.
 	for i := range matches {
 		batchOffset := matches[i].Offset
-
-		// Find which frame this offset falls into.
-		for _, fr := range ranges {
-			if batchOffset >= fr.bufStart && batchOffset < fr.bufStart+fr.decompressedSize {
-				offsetInFrame := batchOffset - fr.bufStart
-				matches[i].Offset = int(fr.decompressedOffset) + offsetInFrame
-				break
+		// Binary search: find the last frame whose bufStart <= batchOffset.
+		lo, hi := 0, len(ranges)-1
+		for lo < hi {
+			mid := lo + (hi-lo+1)/2
+			if ranges[mid].bufStart <= batchOffset {
+				lo = mid
+			} else {
+				hi = mid - 1
 			}
 		}
+		fr := ranges[lo]
+		offsetInFrame := batchOffset - fr.bufStart
+		matches[i].Offset = int(fr.decompressedOffset) + offsetInFrame
 	}
 
 	return matches, nil
