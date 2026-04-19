@@ -29,6 +29,10 @@ test/comparison/
 # Debug files
 .debug_*
 
+# MkDocs build output
+site/
+.cache/
+
 # IDE
 .idea/
 .vscode/

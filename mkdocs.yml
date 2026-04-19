@@ -1,0 +1,183 @@
+# MkDocs configuration for the rx documentation site.
+#
+# Theme:   Material for MkDocs (mkdocs-material)
+# Deploy:  GitHub Pages, via .github/workflows/docs.yml
+# Build:   `mkdocs build` (strict) / preview with `mkdocs serve`.
+
+site_name: rx
+site_description: >-
+  Regex search, indexing, sampling, and seekable compression
+  for very large text files.
+site_url: https://wlame.github.io/rx-go/
+site_author: wlame
+
+repo_name: wlame/rx-go
+repo_url: https://github.com/wlame/rx-go
+edit_uri: edit/main/docs/
+
+copyright: Copyright &copy; 2026 wlame
+
+docs_dir: docs
+site_dir: site
+
+# Fail the build on warnings (broken links, missing nav entries, unresolved
+# refs). Catches doc rot early; flip to false locally if you need to iterate.
+strict: true
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/magnify-expand
+  favicon: assets/favicon.svg
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+  # Dark/light mode toggle with shared accent, so brand color survives both.
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+
+  features:
+    # Navigation UX — SPA-like instant loads + scroll sync.
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes       # makes section/index.md the section landing page
+    - navigation.top
+    - navigation.prune         # render only the visible subtree (fast)
+    - toc.follow
+
+    # Search — richer results, shareable queries.
+    - search.suggest
+    - search.highlight
+    - search.share
+
+    # Content — code copy button, annotations, linked tabs across pages.
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit      # adds "Edit this page" button
+
+plugins:
+  - search:
+      # Split on whitespace, dashes, dots — better matches for flag names
+      # like `--search-root` and file paths like `docs/cli/trace.md`.
+      separator: '[\s\-\.]+'
+  - git-revision-date-localized:
+      type: timeago
+      enable_creation_date: true
+      fallback_to_build_date: true
+
+markdown_extensions:
+  # Core Markdown niceties.
+  - abbr
+  - admonition            # !!! note / !!! tip blocks (used throughout docs/)
+  - attr_list             # needed for Material grid cards in docs/index.md
+  - def_list
+  - footnotes
+  - md_in_html            # lets raw HTML host Markdown (grid cards)
+  - tables
+  - toc:
+      permalink: true
+      permalink_title: Link to this section
+      toc_depth: 3
+
+  # PyMdown extras.
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details      # collapsible admonitions
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true    # required syntax used in docs/installation.md
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/wlame/rx-go
+      name: Source on GitHub
+  version:
+    provider: mike        # harmless placeholder; swap in `mike` later for multi-version docs
+
+# Explicit navigation — gives predictable order and keeps the section
+# landing pages (docs/cli/index.md, docs/api/index.md, ...) at the top of
+# each tab. If you add a new page, add it here too (strict mode will
+# otherwise emit a warning).
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Quickstart: quickstart.md
+      - Configuration: configuration.md
+      - Performance: performance.md
+      - Troubleshooting: troubleshooting.md
+  - CLI:
+      - cli/index.md
+      - trace: cli/trace.md
+      - index: cli/line-index.md
+      - samples: cli/samples.md
+      - compress: cli/compress.md
+      - serve: cli/serve.md
+  - HTTP API:
+      - api/index.md
+      - Conventions: api/conventions.md
+      - OpenAPI & clients: api/openapi.md
+      - Webhooks: api/webhooks.md
+      - Endpoints:
+          - api/endpoints/health.md
+          - api/endpoints/trace.md
+          - api/endpoints/samples.md
+          - api/endpoints/line-index.md
+          - api/endpoints/tasks.md
+          - api/endpoints/compress.md
+          - api/endpoints/tree.md
+          - api/endpoints/metrics.md
+          - api/endpoints/detectors.md
+  - Concepts:
+      - concepts/index.md
+      - Chunking: concepts/chunking.md
+      - Caching: concepts/caching.md
+      - Line indexes: concepts/line-indexes.md
+      - Byte offsets vs line numbers: concepts/byte-offsets-vs-line-numbers.md
+      - Compression: concepts/compression.md
+      - Analyzers: concepts/analyzers.md
+      - Security: concepts/security.md
+  - History: MIGRATION.md
