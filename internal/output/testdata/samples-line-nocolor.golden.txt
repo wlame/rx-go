@@ -1,0 +1,12 @@
+File: /var/log/app.log
+Context: 1 before, 1 after
+
+=== /var/log/app.log:5:100 ===
+line 4
+line 5
+line 6
+
+=== /var/log/app.log:10:200 ===
+line 9
+line 10
+line 11

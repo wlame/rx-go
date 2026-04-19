@@ -1,180 +1,481 @@
 package index
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"github.com/wlame/rx/internal/config"
-	"github.com/wlame/rx/internal/models"
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
-func testConfig(t *testing.T) *config.Config {
+// Helper: write `content` to a temp file and return its path. Used by
+// most tests to avoid boilerplate around tmp dir setup.
+func writeTempFile(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("RX_CACHE_DIR", dir)
-	cfg := config.Load()
-	return &cfg
-}
-
-func TestBuildIndex_RegularFile(t *testing.T) {
-	cfg := testConfig(t)
-
-	dir := t.TempDir()
-	var lines []string
-	for i := 1; i <= 100; i++ {
-		lines = append(lines, "this is line number "+strings.Repeat("x", 20))
+	p := filepath.Join(dir, "fixture.log")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
 	}
-	content := strings.Join(lines, "\n") + "\n"
-	path := filepath.Join(dir, "test.log")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
-
-	idx, err := BuildIndex(path, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, idx)
-
-	assert.Equal(t, UnifiedIndexVersion, idx.Version)
-	assert.Equal(t, models.IndexTypeRegular, idx.IndexType)
-	assert.NotEmpty(t, idx.LineIndex)
-	// First entry should always be line 1 at offset 0.
-	assert.Equal(t, []int{1, 0}, idx.LineIndex[0])
-
-	// Analysis should be populated.
-	require.NotNil(t, idx.Analysis)
-	require.NotNil(t, idx.Analysis.LineCount)
-	assert.Equal(t, 100, *idx.Analysis.LineCount)
-	require.NotNil(t, idx.Analysis.LineEnding)
-	assert.Equal(t, "LF", *idx.Analysis.LineEnding)
+	return p
 }
 
-func TestBuildIndex_RegularFile_EmptyFile(t *testing.T) {
-	cfg := testConfig(t)
+// TestBuild_TinyFile verifies the basic case: 10 short lines produce a
+// single initial checkpoint and no additional ones (file is < step).
+func TestBuild_TinyFile(t *testing.T) {
+	var buf bytes.Buffer
+	for i := 1; i <= 10; i++ {
+		fmt.Fprintf(&buf, "line %d\n", i)
+	}
+	p := writeTempFile(t, buf.String())
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "empty.log")
-	require.NoError(t, os.WriteFile(path, []byte(""), 0o644))
+	idx, err := Build(p, BuildOptions{StepBytes: 1024 * 1024}) // 1 MB step — never crossed
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
 
-	idx, err := BuildIndex(path, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, idx)
-
-	assert.Equal(t, models.IndexTypeRegular, idx.IndexType)
-	assert.Equal(t, [][]int{{1, 0}}, idx.LineIndex)
+	if len(idx.LineIndex) != 1 {
+		t.Errorf("expected 1 checkpoint (initial), got %d", len(idx.LineIndex))
+	}
+	if idx.LineIndex[0].LineNumber != 1 || idx.LineIndex[0].ByteOffset != 0 {
+		t.Errorf("initial checkpoint = %+v, want {1, 0}", idx.LineIndex[0])
+	}
+	if idx.LineCount == nil || *idx.LineCount != 10 {
+		t.Errorf("LineCount: got %v, want 10", idx.LineCount)
+	}
+	if idx.SourceSizeBytes != int64(buf.Len()) {
+		t.Errorf("SourceSizeBytes: got %d, want %d", idx.SourceSizeBytes, buf.Len())
+	}
+	if idx.FileType != rxtypes.FileTypeText {
+		t.Errorf("FileType: got %v, want text", idx.FileType)
+	}
 }
 
-func TestBuildIndex_RegularFile_VerifyLineOffsets(t *testing.T) {
-	cfg := testConfig(t)
+// TestBuild_MultipleCheckpoints forces multiple checkpoints by using a
+// small step. Every line is 100 bytes; with step=500 we should see a
+// new checkpoint roughly every 5 lines.
+func TestBuild_MultipleCheckpoints(t *testing.T) {
+	var buf bytes.Buffer
+	line := strings.Repeat("x", 99) + "\n" // 100 bytes total incl. \n
+	for i := 0; i < 50; i++ {
+		buf.WriteString(line)
+	}
+	p := writeTempFile(t, buf.String())
 
-	dir := t.TempDir()
-	content := "line1\nline2\nline3\nline4\nline5\n"
-	path := filepath.Join(dir, "offsets.log")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	idx, err := Build(p, BuildOptions{StepBytes: 500})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
 
-	idx, err := BuildIndex(path, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, idx)
-
-	// First entry: line 1 at offset 0.
-	assert.Equal(t, 1, idx.LineIndex[0][0])
-	assert.Equal(t, 0, idx.LineIndex[0][1])
+	// Expect: [1, 0] then every 5 lines: (6, 500), (11, 1000), ... up to line 51
+	// Actually: after 5 lines (500 bytes), checkpoint (6, 500); after 10 lines, (11, 1000).
+	if len(idx.LineIndex) < 10 {
+		t.Errorf("expected >= 10 checkpoints, got %d", len(idx.LineIndex))
+	}
+	// Sanity: each entry's line is strictly increasing, offset is strictly increasing.
+	for i := 1; i < len(idx.LineIndex); i++ {
+		if idx.LineIndex[i].LineNumber <= idx.LineIndex[i-1].LineNumber {
+			t.Errorf("checkpoint %d: line %d <= prev %d", i,
+				idx.LineIndex[i].LineNumber, idx.LineIndex[i-1].LineNumber)
+		}
+		if idx.LineIndex[i].ByteOffset <= idx.LineIndex[i-1].ByteOffset {
+			t.Errorf("checkpoint %d: offset %d <= prev %d", i,
+				idx.LineIndex[i].ByteOffset, idx.LineIndex[i-1].ByteOffset)
+		}
+	}
+	// First real checkpoint: line 6 at offset 500.
+	if idx.LineIndex[1].LineNumber != 6 || idx.LineIndex[1].ByteOffset != 500 {
+		t.Errorf("second checkpoint = %+v, want {6, 500}", idx.LineIndex[1])
+	}
 }
 
-func TestBuildIndex_CRLF_LineEnding(t *testing.T) {
-	cfg := testConfig(t)
+// TestBuild_RoundTrip builds an index, saves it, reloads it, and asserts
+// the loaded struct is byte-for-byte equal to the built one.
+func TestBuild_RoundTrip(t *testing.T) {
+	content := strings.Repeat("hello world\n", 1000)
+	p := writeTempFile(t, content)
 
-	dir := t.TempDir()
-	content := "line1\r\nline2\r\nline3\r\n"
-	path := filepath.Join(dir, "crlf.log")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	// Isolate the cache dir so this test doesn't pollute the user's.
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
 
-	idx, err := BuildIndex(path, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, idx)
-	require.NotNil(t, idx.Analysis)
-	require.NotNil(t, idx.Analysis.LineEnding)
-	assert.Equal(t, "CRLF", *idx.Analysis.LineEnding)
+	built, err := Build(p, BuildOptions{StepBytes: 2000, Analyze: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	cachePath, err := Save(built)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := LoadFromPath(cachePath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// The on-disk form round-trips exactly except for the created_at
+	// timestamp (we just verify it's non-empty on the loaded side).
+	if loaded.LineCount == nil || built.LineCount == nil ||
+		*loaded.LineCount != *built.LineCount {
+		t.Errorf("LineCount: got %v, want %v", loaded.LineCount, built.LineCount)
+	}
+	if len(loaded.LineIndex) != len(built.LineIndex) {
+		t.Fatalf("LineIndex length: got %d, want %d",
+			len(loaded.LineIndex), len(built.LineIndex))
+	}
+	for i := range built.LineIndex {
+		if loaded.LineIndex[i] != built.LineIndex[i] {
+			t.Errorf("LineIndex[%d]: got %+v, want %+v",
+				i, loaded.LineIndex[i], built.LineIndex[i])
+		}
+	}
+	if loaded.LineLengthMax == nil || *loaded.LineLengthMax != 11 {
+		t.Errorf("LineLengthMax: got %v, want 11", loaded.LineLengthMax)
+	}
 }
 
-func TestBuildIndex_CompressedFile_Gzip(t *testing.T) {
-	cfg := testConfig(t)
+// TestBuild_AnalyzeStatistics verifies the line-length aggregates. With
+// a mix of line lengths we can sanity-check avg/median/p95 derived
+// from a deterministic input.
+func TestBuild_AnalyzeStatistics(t *testing.T) {
+	// 100 lines: lengths 1..100 bytes of content (plus \n).
+	var buf bytes.Buffer
+	for i := 1; i <= 100; i++ {
+		buf.WriteString(strings.Repeat("a", i))
+		buf.WriteByte('\n')
+	}
+	p := writeTempFile(t, buf.String())
 
-	dir := t.TempDir()
-	gzPath := filepath.Join(dir, "test.log.gz")
-	createGzipTestFile(t, gzPath, []byte("line1\nline2\nline3\n"))
+	idx, err := Build(p, BuildOptions{Analyze: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
 
-	idx, err := BuildIndex(gzPath, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, idx)
-
-	assert.Equal(t, models.IndexTypeCompressed, idx.IndexType)
-	require.NotNil(t, idx.TotalLines)
-	assert.Equal(t, 3, *idx.TotalLines)
-	require.NotNil(t, idx.CompressionFormat)
-	assert.Equal(t, "gzip", *idx.CompressionFormat)
-	assert.Equal(t, []int{1, 0}, idx.LineIndex[0])
+	if idx.LineLengthMax == nil || *idx.LineLengthMax != 100 {
+		t.Errorf("LineLengthMax: got %v, want 100", idx.LineLengthMax)
+	}
+	// Average of 1..100 = 50.5
+	if idx.LineLengthAvg == nil ||
+		*idx.LineLengthAvg < 50.4 || *idx.LineLengthAvg > 50.6 {
+		t.Errorf("LineLengthAvg: got %v, want ~50.5", idx.LineLengthAvg)
+	}
+	// Median of 1..100 = (50+51)/2 = 50.5
+	if idx.LineLengthMedian == nil ||
+		*idx.LineLengthMedian < 50.4 || *idx.LineLengthMedian > 50.6 {
+		t.Errorf("LineLengthMedian: got %v, want ~50.5", idx.LineLengthMedian)
+	}
+	// P95 of 1..100 via linear interpolation: k=(100-1)*95/100=94.05
+	// floor=94, so result = 95 + 0.05*(96-95) = 95.05
+	if idx.LineLengthP95 == nil ||
+		*idx.LineLengthP95 < 95.0 || *idx.LineLengthP95 > 95.1 {
+		t.Errorf("LineLengthP95: got %v, want ~95.05", idx.LineLengthP95)
+	}
+	// The longest line is line 100 at some positive offset.
+	if idx.LineLengthMaxLineNumber == nil || *idx.LineLengthMaxLineNumber != 100 {
+		t.Errorf("LineLengthMaxLineNumber: got %v, want 100", idx.LineLengthMaxLineNumber)
+	}
 }
 
-func TestBuildIndex_DispatchesByFormat(t *testing.T) {
-	cfg := testConfig(t)
+// TestBuild_LineLengthStats_ComputedWithoutAnalyze covers Stage 9
+// Round 2 R1-B10: Python always populates line_length stats (max/avg/
+// median/p95/p99/stddev/max_line_number/max_byte_offset) regardless of
+// the --analyze flag. The --analyze flag only gates anomaly detection
+// and prefix-pattern work, not the basic line-length scan.
+//
+// Previous Go behavior: stats were gated on Analyze=true, producing
+// null fields in POST /v1/index responses for non-analyze runs. That
+// broke rx-viewer dashboards showing line-length histograms.
+func TestBuild_LineLengthStats_ComputedWithoutAnalyze(t *testing.T) {
+	// Known deterministic mix of line lengths (1..20 bytes).
+	var buf bytes.Buffer
+	for i := 1; i <= 20; i++ {
+		buf.WriteString(strings.Repeat("a", i))
+		buf.WriteByte('\n')
+	}
+	p := writeTempFile(t, buf.String())
 
-	dir := t.TempDir()
-
-	// Plain text file should get IndexTypeRegular.
-	txtPath := filepath.Join(dir, "plain.log")
-	require.NoError(t, os.WriteFile(txtPath, []byte("hello\n"), 0o644))
-	idx, err := BuildIndex(txtPath, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, models.IndexTypeRegular, idx.IndexType)
-
-	// Gzip file should get IndexTypeCompressed.
-	gzPath := filepath.Join(dir, "compressed.log.gz")
-	createGzipTestFile(t, gzPath, []byte("hello\n"))
-	idx, err = BuildIndex(gzPath, cfg)
-	require.NoError(t, err)
-	assert.Equal(t, models.IndexTypeCompressed, idx.IndexType)
+	// Build WITHOUT --analyze. Python parity: stats must still be present.
+	idx, err := Build(p, BuildOptions{Analyze: false})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if idx.LineLengthMax == nil || *idx.LineLengthMax != 20 {
+		t.Errorf("LineLengthMax (no analyze): got %v, want 20", idx.LineLengthMax)
+	}
+	// Avg of 1..20 = 10.5
+	if idx.LineLengthAvg == nil || *idx.LineLengthAvg < 10.4 || *idx.LineLengthAvg > 10.6 {
+		t.Errorf("LineLengthAvg (no analyze): got %v, want ~10.5", idx.LineLengthAvg)
+	}
+	if idx.LineLengthMedian == nil {
+		t.Errorf("LineLengthMedian (no analyze) should be populated, got nil")
+	}
+	if idx.LineLengthP95 == nil {
+		t.Errorf("LineLengthP95 (no analyze) should be populated, got nil")
+	}
+	if idx.LineLengthStddev == nil {
+		t.Errorf("LineLengthStddev (no analyze) should be populated, got nil")
+	}
+	if idx.LineLengthMaxLineNumber == nil || *idx.LineLengthMaxLineNumber != 20 {
+		t.Errorf("LineLengthMaxLineNumber (no analyze): got %v, want 20",
+			idx.LineLengthMaxLineNumber)
+	}
+	if idx.LineLengthMaxByteOffset == nil {
+		t.Errorf("LineLengthMaxByteOffset (no analyze) should be populated, got nil")
+	}
 }
 
-func TestDetectLineEnding(t *testing.T) {
-	dir := t.TempDir()
+// TestBuild_EmptyFile handles the edge case where the source file has
+// zero bytes. Python's builder produces line_count=0, empty_line_count=0,
+// line_length_avg=0, etc. We match.
+func TestBuild_EmptyFile(t *testing.T) {
+	p := writeTempFile(t, "")
+	idx, err := Build(p, BuildOptions{Analyze: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if idx.LineCount == nil || *idx.LineCount != 0 {
+		t.Errorf("LineCount: got %v, want 0", idx.LineCount)
+	}
+	if len(idx.LineIndex) != 1 {
+		t.Errorf("LineIndex: expected just the initial [1,0], got %d entries", len(idx.LineIndex))
+	}
+	if idx.LineLengthAvg == nil || *idx.LineLengthAvg != 0 {
+		t.Errorf("LineLengthAvg: got %v, want 0", idx.LineLengthAvg)
+	}
+}
 
-	tests := []struct {
+// TestBuild_EmptyLineCount counts blank lines separately from content lines.
+func TestBuild_EmptyLineCount(t *testing.T) {
+	content := "hello\n\nworld\n\n\n"
+	p := writeTempFile(t, content)
+	idx, err := Build(p, BuildOptions{Analyze: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if idx.LineCount == nil || *idx.LineCount != 5 {
+		t.Errorf("LineCount: got %v, want 5", idx.LineCount)
+	}
+	if idx.EmptyLineCount == nil || *idx.EmptyLineCount != 3 {
+		t.Errorf("EmptyLineCount: got %v, want 3", idx.EmptyLineCount)
+	}
+}
+
+// TestBuild_LineEndingSample_OvershootsAt64K_PythonParity covers Stage 8
+// Reviewer 1 High #4: Python appends whole lines to the line-ending
+// sample until `len(sample) >= 64 KB`, potentially overshooting by up
+// to one line. Go previously truncated the last line at byte-granularity
+// to fit exactly into the 64 KB budget, which could drop trailing \r\n
+// bytes that Python would have seen.
+//
+// Concretely: build a file whose LF-only content fills the sample to
+// ~65530 bytes, then a single CRLF line of length >6. Python's sample
+// overshoots to include the full CRLF line (~65539 bytes), so it sees
+// the \r\n and classifies as "mixed". Go's pre-fix behavior: take=6,
+// appends only "abcdef" without the \r\n, so sample is pure LF → "LF".
+//
+// The fix drops the truncation; the Go sample must overshoot like
+// Python and reach the "mixed" classification.
+func TestBuild_LineEndingSample_OvershootsAt64K_PythonParity(t *testing.T) {
+	var b bytes.Buffer
+	// Fill with "x\n" (2 bytes each) until we've accumulated 65530 bytes
+	// (still below 65536 so the Python/Go loop goes one more iteration).
+	// 65530 / 2 = 32765 lines.
+	for i := 0; i < 32765; i++ {
+		b.WriteString("x\n")
+	}
+	// Now a 9-byte CRLF line. remaining = 65536 - 65530 = 6.
+	// Python: appends all 9 bytes, sample becomes 65539 bytes.
+	// Go pre-fix: take=6, appends "abcdef" only, sample becomes 65536
+	// bytes WITHOUT the \r\n terminator.
+	b.WriteString("abcdefg\r\n")
+	// More content after — Python's append loop stops once sample >= 64K,
+	// and so does Go's via sampleComplete flag.
+	for i := 0; i < 10; i++ {
+		b.WriteString("z\n")
+	}
+	p := writeTempFile(t, b.String())
+
+	idx, err := Build(p, BuildOptions{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if idx.LineEnding == nil {
+		t.Fatal("LineEnding = nil")
+	}
+	// Python's behavior: sample contains LF + CRLF → "mixed".
+	// Go's pre-fix behavior: sample truncated before \r\n → pure LF.
+	if *idx.LineEnding != "mixed" {
+		t.Errorf("LineEnding: got %q, want %q (Python samples whole lines; pre-fix Go truncated before CRLF terminator)",
+			*idx.LineEnding, "mixed")
+	}
+}
+
+// TestBuild_LineEndingDetection asserts CR/LF/CRLF/mixed classification.
+func TestBuild_LineEndingDetection(t *testing.T) {
+	cases := []struct {
 		name    string
 		content string
 		want    string
 	}{
-		{"LF_only", "line1\nline2\nline3\n", "LF"},
-		{"CRLF_only", "line1\r\nline2\r\nline3\r\n", "CRLF"},
-		{"mixed", "line1\nline2\r\nline3\n", "mixed"},
-		{"empty", "", "LF"},
+		{"lf_only", "a\nb\nc\n", "LF"},
+		{"crlf_only", "a\r\nb\r\nc\r\n", "CRLF"},
+		{"mixed", "a\nb\r\nc\n", "mixed"},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(dir, tt.name+".txt")
-			require.NoError(t, os.WriteFile(path, []byte(tt.content), 0o644))
-			got := detectLineEnding(path)
-			assert.Equal(t, tt.want, got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeTempFile(t, tc.content)
+			idx, err := Build(p, BuildOptions{})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if idx.LineEnding == nil {
+				t.Fatal("LineEnding = nil")
+			}
+			if *idx.LineEnding != tc.want {
+				t.Errorf("LineEnding: got %q, want %q", *idx.LineEnding, tc.want)
+			}
 		})
 	}
 }
 
-func TestComputeAnalysis_EmptyData(t *testing.T) {
-	a := computeAnalysis(nil, 0, 0, 0, 0, 0, "LF")
-	require.NotNil(t, a)
-	assert.Equal(t, 0, *a.LineCount)
-	assert.Equal(t, 0.0, *a.LineLengthAvg)
+// TestBuild_ReturnsDirError verifies we don't crash on directory input.
+func TestBuild_ReturnsDirError(t *testing.T) {
+	dir := t.TempDir()
+	_, err := Build(dir, BuildOptions{})
+	if err == nil {
+		t.Error("expected error for directory input")
+	}
 }
 
-func TestComputeAnalysis_WithData(t *testing.T) {
-	lengths := []int{10, 20, 30, 40, 50}
-	a := computeAnalysis(lengths, 2, 7, 50, 5, 100, "LF")
-	require.NotNil(t, a)
-	assert.Equal(t, 7, *a.LineCount)
-	assert.Equal(t, 2, *a.EmptyLineCount)
-	assert.Equal(t, 50, *a.LineLengthMax)
-	assert.InDelta(t, 30.0, *a.LineLengthAvg, 0.01)
+// TestBuild_ReturnsStatError verifies a missing path yields an error.
+func TestBuild_ReturnsStatError(t *testing.T) {
+	_, err := Build("/definitely/does/not/exist/"+fmt.Sprintf("%d", os.Getpid()),
+		BuildOptions{})
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+// TestBuild_LongLineDoesNotPanic verifies we don't hit bufio's line limit
+// on a single 10 MB line.
+func TestBuild_LongLineDoesNotPanic(t *testing.T) {
+	big := strings.Repeat("z", 10*1024*1024) + "\n"
+	p := writeTempFile(t, big)
+	idx, err := Build(p, BuildOptions{Analyze: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if idx.LineCount == nil || *idx.LineCount != 1 {
+		t.Errorf("LineCount: got %v, want 1", idx.LineCount)
+	}
+	if idx.LineLengthMax == nil || *idx.LineLengthMax != 10*1024*1024 {
+		t.Errorf("LineLengthMax: got %v, want %d", idx.LineLengthMax, 10*1024*1024)
+	}
+}
+
+// TestBuild_ValidForSource verifies the stamp can be validated.
+func TestBuild_ValidForSource(t *testing.T) {
+	content := "hello\n"
+	p := writeTempFile(t, content)
+	idx, err := Build(p, BuildOptions{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if !IsValidForSource(idx, p) {
+		t.Error("freshly-built index should validate for its source")
+	}
+	// Modify the file → stamp should now fail.
+	if err := os.WriteFile(p, []byte("longer content\n"), 0o644); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if IsValidForSource(idx, p) {
+		t.Error("after mutation, IsValidForSource should be false")
+	}
+}
+
+// TestGetIndexStepBytes verifies the default step-size is threshold/50.
+func TestGetIndexStepBytes(t *testing.T) {
+	t.Setenv("RX_LARGE_FILE_MB", "50")
+	got := GetIndexStepBytes()
+	want := int64(50) * 1024 * 1024 / 50 // 1 MB
+	if got != want {
+		t.Errorf("default step: got %d, want %d", got, want)
+	}
+
+	t.Setenv("RX_LARGE_FILE_MB", "100")
+	got = GetIndexStepBytes()
+	want = int64(100) * 1024 * 1024 / 50 // 2 MB
+	if got != want {
+		t.Errorf("step with 100 MB threshold: got %d, want %d", got, want)
+	}
+}
+
+// TestDetectLineEnding_EmptySample verifies the default for empty input.
+func TestDetectLineEnding_EmptySample(t *testing.T) {
+	if got := detectLineEnding([]byte{}); got != "LF" {
+		t.Errorf("empty sample → %q, want LF", got)
+	}
+}
+
+// TestBuild_HugeAnalyze exercises the percentile branch on a realistic
+// but not enormous sample (1000 lines of varying length).
+func TestBuild_HugeAnalyze(t *testing.T) {
+	var buf bytes.Buffer
+	for i := 0; i < 1000; i++ {
+		n := 10 + (i % 90) // 10..99
+		buf.WriteString(strings.Repeat("q", n))
+		buf.WriteByte('\n')
+	}
+	p := writeTempFile(t, buf.String())
+	idx, err := Build(p, BuildOptions{Analyze: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if idx.LineLengthStddev == nil || *idx.LineLengthStddev <= 0 {
+		t.Errorf("LineLengthStddev: got %v, want > 0", idx.LineLengthStddev)
+	}
+	if idx.LineLengthP95 == nil || *idx.LineLengthP95 < 90 {
+		t.Errorf("LineLengthP95: got %v, want >= 90", idx.LineLengthP95)
+	}
+}
+
+// TestReservoirPercentile_EdgeCases covers the small-n branches of the
+// percentile helper. Replaces the old TestPercentile_EdgeCases which
+// tested a slice-based helper that was deleted when the builder switched
+// to online Welford + reservoir sampling.
+func TestReservoirPercentile_EdgeCases(t *testing.T) {
+	if got := reservoirPercentile(nil, 95); got != 0 {
+		t.Errorf("nil slice p95: got %v, want 0", got)
+	}
+	if got := reservoirPercentile([]int{42}, 95); got != 42 {
+		t.Errorf("single-element p95: got %v, want 42", got)
+	}
+	// Caller must pre-sort the slice — reservoirPercentile assumes sorted
+	// input (the accumulator sorts its reservoir copy before calling).
+	if got := reservoirPercentile([]int{1, 2, 3, 4, 5}, 50); got < 2.9 || got > 3.1 {
+		t.Errorf("p50 of 1..5: got %v, want ~3", got)
+	}
+	if got := reservoirPercentile([]int{1, 2, 3, 4, 5}, 0); got != 1 {
+		t.Errorf("p0: got %v, want 1", got)
+	}
+	if got := reservoirPercentile([]int{1, 2, 3, 4, 5}, 100); got != 5 {
+		t.Errorf("p100: got %v, want 5", got)
+	}
+}
+
+// TestHasNonWhitespace_WhitespaceSet ensures our whitespace detection
+// matches Python's default strip() characters.
+func TestHasNonWhitespace_WhitespaceSet(t *testing.T) {
+	for _, ws := range [][]byte{{' '}, {'\t'}, {'\v'}, {'\f'}, {'\r'}, {'\n'}} {
+		if hasNonWhitespace(ws) {
+			t.Errorf("%q should be whitespace-only", ws)
+		}
+	}
+	if hasNonWhitespace([]byte(" \t \v \f \r \n ")) {
+		t.Error("mixed whitespace should return false")
+	}
+	if !hasNonWhitespace([]byte(" a ")) {
+		t.Error("content with letter should return true")
+	}
 }

@@ -1,48 +1,57 @@
-.PHONY: build test lint cover clean compare bench integration build-all release
+# rx-go — ripgrep-powered log/file search tool (Go rewrite of rx-python).
+#
+# Targets:
+#   make build      — build the `rx` binary into dist/ (default target)
+#   make build-all  — cross-compile static binaries for linux/darwin
+#   make test       — run unit tests with -race and coverage
+#   make cover      — write coverage.out + coverage.html
+#   make lint       — run golangci-lint
+#   make fmt        — run gofmt -s -w
+#   make vet        — run go vet
+#   make ci         — fmt-check + vet + lint + test (what CI runs)
+#   make clean      — remove dist/, coverage artifacts
 
-# Version is read from git tag, or falls back to the VERSION env var, or "dev".
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+VERSION ?= 0.1.0-dev
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
+.PHONY: build build-all test cover lint fmt vet ci clean
+
 build:
-	CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o rx ./cmd/rx
+	CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/rx ./cmd/rx
+
+# Cross-compile for the three distribution targets from spec §11.1.
+# Each leg produces dist/rx-<os>-<arch>. CGO disabled for fully static binaries.
+build-all:
+	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/rx-linux-amd64  ./cmd/rx
+	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/rx-linux-arm64  ./cmd/rx
+	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(LDFLAGS)' -o dist/rx-darwin-arm64 ./cmd/rx
 
 test:
-	go test -race ./...
-
-lint:
-	go vet ./...
+	go test -race -cover ./...
 
 cover:
-	go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	go tool cover -func=coverage.out | tail -20
+
+lint:
+	golangci-lint run ./...
+
+fmt:
+	gofmt -s -w .
+
+vet:
+	go vet ./...
+
+# Fail if any file is unformatted.
+fmt-check:
+	@if [ -n "$$(gofmt -s -l .)" ]; then \
+		echo "These files need formatting:"; \
+		gofmt -s -l .; \
+		exit 1; \
+	fi
+
+ci: fmt-check vet lint test
 
 clean:
-	rm -f rx coverage.out
-	rm -f *.test
-	rm -rf dist/
-
-compare:
-	@echo "No playground directory available for Python comparison. Run 'make integration' for Go-only tests."
-
-bench:
-	go test -bench=. -benchmem ./internal/engine/...
-
-integration:
-	go test -race -count=1 -v ./internal/engine/ -run TestIntegration
-
-# Cross-compilation targets for release builds.
-# Produces static binaries for linux and darwin on amd64 and arm64.
-build-all: clean
-	@mkdir -p dist
-	GOOS=linux   GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o dist/rx-linux-amd64   ./cmd/rx
-	GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o dist/rx-linux-arm64   ./cmd/rx
-	GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o dist/rx-darwin-amd64  ./cmd/rx
-	GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o dist/rx-darwin-arm64  ./cmd/rx
-	@echo "Built binaries in dist/:"
-	@ls -lh dist/
-
-# Build all targets and prepare for release.
-release: build-all
-	@echo ""
-	@echo "Release $(VERSION) ready in dist/"
-	@for f in dist/rx-*; do sha256sum "$$f"; done
+	rm -rf dist/ coverage.out coverage.html

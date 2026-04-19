@@ -1,0 +1,7 @@
+File: /var/log/app.log
+Context: 1 before, 1 after
+
+=== [96m/var/log/app.log[0m[90m:[0m[93m5[0m[90m:[0m[37m100[0m ===
+line 4
+line 5
+line 6
