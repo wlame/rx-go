@@ -509,7 +509,7 @@ Still stuck?
 1. Check `GET /health` for any anomalies (`ripgrep_available: false`,
    `search_roots: null`, etc.)
 2. Try with `RX_DEBUG=true` and capture the `.debug_*` files
-3. File an issue at <https://github.com/wlame/rx-tool/issues> with:
+3. File an issue at <https://github.com/wlame/rx-go/issues> with:
    - `rx --version` output
    - Exact command that reproduces
    - Full error output

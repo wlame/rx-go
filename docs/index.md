@@ -73,7 +73,7 @@ rx serve --search-root=/var/log
 
 - Current version: **2.2.1-go**
 - License: MIT
-- Source: <https://github.com/wlame/rx-tool>
+- Source: <https://github.com/wlame/rx-go>
 
 ## See also
 
