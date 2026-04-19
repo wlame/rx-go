@@ -69,12 +69,6 @@ rx serve --search-root=/var/log
 
 </div>
 
-!!! tip "Migrating from an earlier Python-based `rx`?"
-    If you're coming from a previous Python-based tool with a similar
-    command surface, see [MIGRATION.md](MIGRATION.md) for the short
-    list of intentional behavioural differences (Python bugs not
-    replicated, new JSON keys, identical exit codes).
-
 ## Version and license
 
 - Current version: **2.2.1-go**

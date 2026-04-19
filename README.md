@@ -113,7 +113,7 @@ make clean    # remove dist/ and coverage artifacts
 - [Configuration](docs/configuration.md) — full env var reference
 - [Performance](docs/performance.md) — tuning notes and benchmarks
 - [CLI reference](docs/cli/) · [HTTP API reference](docs/api/)
-- [Migration from Python `rx`](docs/MIGRATION.md)
+- [Project history](docs/MIGRATION.md)
 
 ## License
 
