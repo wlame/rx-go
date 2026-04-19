@@ -44,10 +44,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Use golangci-lint v2.x — the repo's .golangci.yml is in the v2
+      # config schema (`version: "2"`), and we need a binary built with
+      # Go 1.25+ to match the module's `go 1.25.0` directive. Older v1
+      # releases (e.g. v1.64.7) were built with Go 1.24 and fail with
+      # "the Go language version used to build golangci-lint is lower
+      # than the targeted Go version".
       - name: install golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v1.64.7
+          version: v2.11.4
 
       - name: golangci-lint
         run: golangci-lint run ./...

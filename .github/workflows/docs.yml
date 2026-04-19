@@ -66,9 +66,17 @@ jobs:
       - name: mkdocs build (strict)
         run: mkdocs build --strict
 
+      # `enablement: true` auto-enables GitHub Pages on the repo and sets
+      # its source to "GitHub Actions" if it isn't already configured.
+      # Without this, the first-ever run fails with
+      # "Get Pages site failed ... Not Found" until someone manually
+      # toggles Pages in repo settings. Safe to leave on — it's a no-op
+      # once Pages is enabled.
       - name: configure-pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: upload-artifact
         if: github.event_name != 'pull_request'

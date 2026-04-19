@@ -145,18 +145,18 @@ func ValidatePathWithinRoots(path string) (string, error) {
 		return "", ErrNoSearchRootsConfigured
 	}
 
-	// Resolve the user-supplied path. If it doesn't exist yet, Abs is
-	// the best we can do — EvalSymlinks errors out on ENOENT.
+	// Resolve the user-supplied path. If the full path doesn't exist,
+	// we still want symlinks in the EXISTING portion resolved — otherwise
+	// a search root stored in its canonical form (e.g. /private/var/...
+	// on macOS, where /var is a symlink to /private/var) would reject
+	// perfectly valid nonexistent children (e.g. /var/.../new.log). The
+	// fix: resolve the deepest existing ancestor, re-append the tail.
 	cleaned, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
-	if canon, err := filepath.EvalSymlinks(cleaned); err == nil {
-		cleaned = canon
-	} else if !os.IsNotExist(err) {
-		// A genuine error (permission denied, etc.) — surface it.
-		// But ENOENT is fine; the caller's subsequent Open will fail
-		// with a clean 404-style error.
+	cleaned, err = resolveExistingAncestor(cleaned)
+	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
 
@@ -177,4 +177,52 @@ func ValidatePathWithinRoots(path string) (string, error) {
 func IsPathWithinRoots(path string) bool {
 	_, err := ValidatePathWithinRoots(path)
 	return err == nil
+}
+
+// resolveExistingAncestor returns the canonical absolute form of abs
+// with symlinks in the EXISTING portion resolved. Any nonexistent
+// trailing components are preserved verbatim.
+//
+// Motivation: filepath.EvalSymlinks returns ENOENT if any component of
+// its input doesn't exist, so a path like /var/folders/.../new.log
+// (where /var → /private/var is a symlink and new.log doesn't exist
+// yet) cannot be canonicalized by EvalSymlinks directly. We walk up
+// toward the root until we find an existing ancestor, EvalSymlinks that
+// ancestor, then rejoin the tail components.
+//
+// On a genuine I/O error (permission denied, etc.) on any ancestor we
+// surface it — the caller treats that as a sandbox-internal failure
+// rather than silently letting the path through.
+func resolveExistingAncestor(abs string) (string, error) {
+	current := abs
+	var suffix []string
+	for {
+		_, err := os.Lstat(current)
+		if err == nil {
+			// Found the deepest existing ancestor. Resolve its symlinks
+			// then rejoin the tail we accumulated on the way up.
+			var canon string
+			canon, err = filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				canon = filepath.Join(canon, suffix[i])
+			}
+			return canon, nil
+		}
+		if !os.IsNotExist(err) {
+			// Permission denied or other non-ENOENT — fail closed.
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Hit the filesystem root without finding anything. On real
+			// systems "/" always exists, so this should be unreachable;
+			// returning abs unchanged is the safe fallback.
+			return abs, nil
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
 }
