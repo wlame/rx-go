@@ -73,7 +73,7 @@ move the binary into `$PATH`:
 
 ```bash
 # Example — adjust tag and arch to match your target.
-curl -LO https://github.com/wlame/rx-tool/releases/download/v2.2.1-go/rx-linux-amd64.tar.gz
+curl -LO https://github.com/wlame/rx-go/releases/download/v2.2.1-go/rx-linux-amd64.tar.gz
 tar -xzf rx-linux-amd64.tar.gz
 sudo install -m 0755 rx /usr/local/bin/rx
 
@@ -86,8 +86,8 @@ rx --version
 Requires Go 1.25 or newer. The build is fully reproducible with CGO disabled.
 
 ```bash
-git clone https://github.com/wlame/rx-tool.git
-cd rx-tool/rx-go
+git clone https://github.com/wlame/rx-go.git
+cd rx-go
 
 CGO_ENABLED=0 go build \
     -ldflags='-s -w -X main.appVersion=2.2.1-go' \
