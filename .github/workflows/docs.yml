@@ -1,0 +1,92 @@
+name: Docs
+
+# Build the MkDocs site on every push to main that touches the docs, and
+# deploy the result to GitHub Pages. Pull requests run the build (to catch
+# broken links and strict-mode warnings) but do NOT deploy.
+#
+# Security note: no untrusted event payload fields (issue/PR titles, commit
+# messages, head_ref, etc.) are interpolated into any `run:` block, so the
+# workflow-injection class documented at
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+# is not applicable here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - .github/workflows/docs.yml
+  pull_request:
+    branches: [main]
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+# Scoped permissions required by actions/deploy-pages. `id-token: write`
+# enables the OIDC handshake that proves the artifact came from this repo.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deploy at a time. We do NOT cancel an in-progress deploy —
+# per GitHub's own guidance, let it finish rather than leave Pages in a
+# half-updated state.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 is required for the git-revision-date-localized
+          # plugin to read commit history and render "last updated" dates.
+          fetch-depth: 0
+
+      - name: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r docs/requirements.txt
+
+      - name: mkdocs build (strict)
+        run: mkdocs build --strict
+
+      - name: configure-pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: upload-artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: deploy
+    # Deploy only on push/dispatch to main. PR builds validate the site
+    # (strict mode = broken links fail CI) but never publish.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: deploy-pages
+        id: deployment
+        uses: actions/deploy-pages@v4
