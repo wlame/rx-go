@@ -142,7 +142,7 @@ scan is not 5× slower than a 1-pattern scan.
 | `RX_WORKERS` | Goroutine pool size. Default: `NumCPU`. |
 | `RX_MIN_CHUNK_SIZE_MB` | Smallest chunk. Default: `20`. Below-threshold files skip parallel mode entirely. |
 | `RX_MAX_LINE_SIZE_KB` | Assumed largest line length the engine tolerates when choosing chunk overlap. Default: `8`. Genuinely long lines may benefit from a bump. The newline-search forward window is separately bounded to 256 KB. |
-| `RX_MAX_SUBPROCESSES` | Upper bound on concurrent workers (despite the name, applies to goroutines in the Go port). Default: `20`. |
+| `RX_MAX_SUBPROCESSES` | Upper bound on concurrent workers (the name is historical — it applies to goroutines). Default: `20`. |
 
 ## Implications
 

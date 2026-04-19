@@ -1,4 +1,4 @@
-# rx-go — ripgrep-powered log/file search tool (Go rewrite of rx-python).
+# rx — ripgrep-powered log/file search tool.
 #
 # Targets:
 #   make build      — build the `rx` binary into dist/ (default target)

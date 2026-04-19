@@ -18,7 +18,7 @@ any command that performs regex search.
   literal pattern on a multi-GB file typically peaks at a few hundred MB
   RSS per worker. See [performance](performance.md) for profile numbers.
 
-`rx` itself has no shared-library dependencies, no Python runtime, no
+`rx` itself has no shared-library dependencies and no bundled
 `libzstd`. The statically-linked binary is ~13 MB.
 
 ## Install `ripgrep` first
@@ -145,12 +145,6 @@ sudo rm /usr/local/bin/rx
 # Optional: remove cached indexes, trace caches, frontend SPA.
 rm -rf ~/.cache/rx/
 ```
-
-!!! note "Migrating from a previous Python-based `rx`"
-    If you're replacing an earlier Python-based tool with a similar CLI
-    surface, read [MIGRATION.md](MIGRATION.md) before running `rx` on
-    production scripts. Most invocations are identical; a few subtle
-    differences in exit codes and JSON keys are documented there.
 
 ## See also
 
