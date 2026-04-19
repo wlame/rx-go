@@ -1,12 +1,32 @@
-// Package frontend manages downloading and serving the rx-viewer SPA from GitHub releases.
+// Package frontend manages the rx-viewer SPA bundle — downloading,
+// caching, and validating static-file paths at request time.
 //
-// The manager downloads dist.tar.gz from wlame/rx-viewer releases, caches it locally,
-// and provides path validation for secure static file serving.
+// The Python implementation at rx-python/src/rx/frontend_manager.py
+// fetches dist.tar.gz from GitHub releases. rx-go keeps the same
+// behavior, the same env vars, the same on-disk layout, and the
+// same .metadata.json schema so a cache written by one toolchain
+// loads in the other.
+//
+// Behavior (matches Python exactly):
+//
+//   - RX_FRONTEND_URL set → force download from that URL (every startup).
+//   - RX_FRONTEND_VERSION set → pin to that version; use cached if
+//     present, else download.
+//   - Neither set + valid cache present → use cache, no GitHub hit.
+//   - Neither set + no cache → download latest from GitHub.
+//
+// Directory resolution: RX_FRONTEND_PATH > config.GetFrontendCacheDir().
+//
+// Security: tarball entries are path-sanitized before extraction.
+// Any entry whose resolved path would escape the destination
+// directory (`..`, absolute paths, symlink traversal) is rejected,
+// the tarball is abandoned, and an error is returned.
 package frontend
 
 import (
-	"archive/tar"
-	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,26 +36,40 @@ import (
 	"strings"
 	"time"
 
-	json "github.com/goccy/go-json"
-
-	"github.com/wlame/rx/internal/config"
+	"github.com/wlame/rx-go/internal/config"
 )
 
-const (
-	githubRepo       = "wlame/rx-viewer"
-	githubAPIBase    = "https://api.github.com"
-	requestTimeout   = 30 * time.Second
-	maxDownloadBytes = 100 * 1024 * 1024 // 100 MB safety limit
-)
+// ============================================================================
+// Configuration
+// ============================================================================
 
-// Version holds parsed version information from the frontend's version.json file.
+// GitHubRepo is the rx-viewer source repository. Constant because
+// rx-go shouldn't be reassembled against a different viewer — the
+// API contract is pinned.
+const GitHubRepo = "wlame/rx-viewer"
+
+// githubAPIBase is the REST API root. Overridden in tests via Manager.APIBase.
+const githubAPIBase = "https://api.github.com"
+
+// RequestTimeout applies to GitHub API calls and tarball downloads.
+const RequestTimeout = 30 * time.Second
+
+// ============================================================================
+// Metadata
+// ============================================================================
+
+// Version is the SPA build identifier embedded in dist/version.json.
+// Serialization keys match the Python schema for cross-toolchain
+// compat — CamelCase in Go, preserving Python's mixedCase JSON.
 type Version struct {
 	Version   string `json:"version"`
 	BuildDate string `json:"buildDate"`
 	Commit    string `json:"commit"`
 }
 
-// CacheMetadata tracks when and where the cached frontend was downloaded from.
+// CacheMetadata is the sidecar .metadata.json we write next to the
+// extracted SPA. Lets rx-viewer introspect "what version is cached"
+// without parsing the dist files.
 type CacheMetadata struct {
 	Version      Version `json:"version"`
 	DownloadedAt string  `json:"downloaded_at"`
@@ -43,362 +77,429 @@ type CacheMetadata struct {
 	ReleaseURL   string  `json:"release_url"`
 }
 
-// Manager handles downloading, caching, and validating the frontend SPA.
+// ============================================================================
+// Manager
+// ============================================================================
+
+// Manager encapsulates the download/cache/serve behavior of the
+// frontend bundle. One Manager per process is the norm (the Python
+// version uses a module-level singleton).
 type Manager struct {
-	cacheDir   string // directory where the frontend is cached
-	envVersion string // RX_FRONTEND_VERSION override
-	envURL     string // RX_FRONTEND_URL override
+	CacheDir string
+	Repo     string
+	APIBase  string
+
+	// Env var snapshots.
+	envURL     string
+	envVersion string
+
+	HTTPClient *http.Client
+	Logger     *slog.Logger
 }
 
-// NewManager creates a frontend manager from the given config.
-// The cache directory is resolved from: cfg.FrontendPath > cfg.CacheDir/frontend > ~/.cache/rx/frontend.
-func NewManager(cfg *config.Config) *Manager {
-	cacheDir := filepath.Join(cfg.CacheDir, "frontend")
-	if cfg.FrontendPath != "" {
-		cacheDir = cfg.FrontendPath
-	}
-
-	return &Manager{
-		cacheDir:   cacheDir,
-		envVersion: cfg.FrontendVersion,
-		envURL:     cfg.FrontendURL,
-	}
+// Config collects the knobs that can be overridden in tests. Nil
+// fields take env/default values via NewManager.
+type Config struct {
+	CacheDir   string
+	Repo       string
+	APIBase    string
+	HTTPClient *http.Client
+	Logger     *slog.Logger
 }
 
-// EnsureFrontend checks if the frontend is available and downloads it if needed.
-// Returns the path to the frontend dist directory, or an empty string if the frontend
-// could not be obtained (download failure should not block server startup).
-func (m *Manager) EnsureFrontend() (string, error) {
-	// Case 1: RX_FRONTEND_URL is set -- force download from that URL.
-	if m.envURL != "" {
-		slog.Info("frontend: URL override", "url", m.envURL)
-		if err := m.download(m.envURL, "custom"); err != nil {
-			slog.Warn("frontend: download from URL override failed", "error", err)
-			// Fallback to cached if available.
-			if m.IsAvailable() {
-				return m.cacheDir, nil
-			}
-			return "", nil
+// NewManager builds a Manager with env-var and default fallbacks.
+// Safe to call multiple times; each Manager has its own state.
+func NewManager(cfg Config) *Manager {
+	m := &Manager{
+		CacheDir:   cfg.CacheDir,
+		Repo:       cfg.Repo,
+		APIBase:    cfg.APIBase,
+		HTTPClient: cfg.HTTPClient,
+		Logger:     cfg.Logger,
+	}
+	if m.CacheDir == "" {
+		if v := os.Getenv("RX_FRONTEND_PATH"); v != "" {
+			m.CacheDir = expandHome(v)
+		} else {
+			m.CacheDir = config.GetFrontendCacheDir()
 		}
-		return m.cacheDir, nil
 	}
-
-	// Case 2: RX_FRONTEND_VERSION is set.
-	if m.envVersion != "" {
-		// Check if the requested version is already cached.
-		cached := m.readCacheMetadata()
-		if cached != nil {
-			reqVer := strings.TrimPrefix(m.envVersion, "v")
-			cachedVer := strings.TrimPrefix(cached.Version.Version, "v")
-			if reqVer == cachedVer && m.IsAvailable() {
-				slog.Info("frontend: requested version already cached", "version", reqVer)
-				return m.cacheDir, nil
-			}
-		}
-
-		url := m.directDownloadURL(m.envVersion)
-		if err := m.download(url, m.envVersion); err != nil {
-			slog.Warn("frontend: download of requested version failed", "version", m.envVersion, "error", err)
-			if m.IsAvailable() {
-				slog.Warn("frontend: falling back to cached version")
-				return m.cacheDir, nil
-			}
-			return "", nil
-		}
-		return m.cacheDir, nil
+	if m.Repo == "" {
+		m.Repo = GitHubRepo
 	}
-
-	// Case 3: No env vars -- use cached if available (no GitHub requests).
-	if m.IsAvailable() {
-		slog.Debug("frontend: using cached version")
-		return m.cacheDir, nil
+	if m.APIBase == "" {
+		m.APIBase = githubAPIBase
 	}
-
-	// Case 4: No cache -- download latest.
-	slog.Info("frontend: no cached version found, downloading latest")
-	url := m.directDownloadURL("latest")
-	if err := m.download(url, "latest"); err != nil {
-		slog.Warn("frontend: download of latest failed", "error", err)
-		return "", nil
+	if m.HTTPClient == nil {
+		m.HTTPClient = &http.Client{Timeout: RequestTimeout}
 	}
-	return m.cacheDir, nil
+	if m.Logger == nil {
+		m.Logger = slog.Default()
+	}
+	m.envURL = os.Getenv("RX_FRONTEND_URL")
+	m.envVersion = os.Getenv("RX_FRONTEND_VERSION")
+	return m
 }
 
-// IsAvailable returns true if the frontend is cached and has the essential files
-// (index.html and assets/ directory).
+// expandHome replaces a leading "~" with the user's home dir. Matches
+// Python's Path.expanduser().
+func expandHome(p string) string {
+	if !strings.HasPrefix(p, "~") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+// ============================================================================
+// Cache probes
+// ============================================================================
+
+// MetadataPath returns the path to .metadata.json inside the cache.
+func (m *Manager) MetadataPath() string {
+	return filepath.Join(m.CacheDir, ".metadata.json")
+}
+
+// IndexHTMLPath returns the path to the SPA's entry HTML file.
+func (m *Manager) IndexHTMLPath() string {
+	return filepath.Join(m.CacheDir, "index.html")
+}
+
+// IsAvailable reports whether the cache contains a usable SPA —
+// index.html and an assets/ directory must both be present.
 func (m *Manager) IsAvailable() bool {
-	indexPath := filepath.Join(m.cacheDir, "index.html")
-	assetsPath := filepath.Join(m.cacheDir, "assets")
-
-	indexInfo, err := os.Stat(indexPath)
-	if err != nil || indexInfo.IsDir() {
+	if fi, err := os.Stat(m.IndexHTMLPath()); err != nil || fi.IsDir() {
 		return false
 	}
-
-	assetsInfo, err := os.Stat(assetsPath)
-	if err != nil || !assetsInfo.IsDir() {
+	if fi, err := os.Stat(filepath.Join(m.CacheDir, "assets")); err != nil || !fi.IsDir() {
 		return false
 	}
-
 	return true
 }
 
-// Dir returns the path to the frontend cache directory.
-func (m *Manager) Dir() string {
-	return m.cacheDir
+// ReadMetadata parses the cache sidecar. Returns (nil, nil) if the
+// file doesn't exist. A parse failure is a real error so operators
+// can debug a corrupt cache.
+func (m *Manager) ReadMetadata() (*CacheMetadata, error) {
+	data, err := os.ReadFile(m.MetadataPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read metadata: %w", err)
+	}
+	var md CacheMetadata
+	if err := json.Unmarshal(data, &md); err != nil {
+		return nil, fmt.Errorf("parse metadata: %w", err)
+	}
+	return &md, nil
 }
 
-// ValidateStaticPath validates that a requested file path is safe (no directory traversal)
-// and exists within the cache directory. Returns the resolved absolute path, or an error.
-func (m *Manager) ValidateStaticPath(requestedPath string) (string, error) {
-	// Clean the path to remove any ../ sequences before joining.
-	cleaned := filepath.Clean("/" + requestedPath)
-	// filepath.Clean("/" + path) normalizes to an absolute-style path; strip leading "/".
-	cleaned = strings.TrimPrefix(cleaned, "/")
-
-	fullPath := filepath.Join(m.cacheDir, cleaned)
-
-	// Resolve and verify containment.
-	resolvedBase, err := filepath.Abs(m.cacheDir)
+// WriteMetadata writes .metadata.json to the cache directory, creating
+// the dir if needed.
+func (m *Manager) WriteMetadata(md *CacheMetadata) error {
+	if err := os.MkdirAll(m.CacheDir, 0o700); err != nil {
+		return fmt.Errorf("mkdir cache: %w", err)
+	}
+	b, err := json.MarshalIndent(md, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("resolve cache dir: %w", err)
+		return fmt.Errorf("marshal metadata: %w", err)
 	}
-
-	resolvedFull, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve requested path: %w", err)
-	}
-
-	// Ensure the resolved path is within the cache directory.
-	if !isWithin(resolvedFull, resolvedBase) {
-		return "", fmt.Errorf("path traversal attempt blocked: %s", requestedPath)
-	}
-
-	// Check that the file exists.
-	info, err := os.Stat(resolvedFull)
-	if err != nil {
-		return "", fmt.Errorf("file not found: %s", requestedPath)
-	}
-	if info.IsDir() {
-		return "", fmt.Errorf("path is a directory: %s", requestedPath)
-	}
-
-	return resolvedFull, nil
+	return os.WriteFile(m.MetadataPath(), b, 0o600)
 }
 
-// download fetches dist.tar.gz from the given URL and extracts it into the cache directory.
-func (m *Manager) download(downloadURL, releaseTag string) error {
-	slog.Info("frontend: downloading", "url", downloadURL)
+// ============================================================================
+// GitHub API
+// ============================================================================
 
-	client := &http.Client{Timeout: requestTimeout}
-	resp, err := client.Get(downloadURL)
-	if err != nil {
-		return fmt.Errorf("download: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download: HTTP %d", resp.StatusCode)
-	}
-
-	// Create the cache directory.
-	if err := os.MkdirAll(m.cacheDir, 0o755); err != nil {
-		return fmt.Errorf("create cache dir: %w", err)
-	}
-
-	// Write to a temp file first, then extract.
-	tmpFile := filepath.Join(m.cacheDir, "dist.tar.gz.tmp")
-	defer os.Remove(tmpFile) // Clean up on any exit path.
-
-	out, err := os.Create(tmpFile)
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-
-	// Limit download size for safety.
-	written, err := io.Copy(out, io.LimitReader(resp.Body, maxDownloadBytes))
-	out.Close()
-	if err != nil {
-		return fmt.Errorf("write download: %w", err)
-	}
-	slog.Info("frontend: download complete", "bytes", written)
-
-	// Clear existing frontend files (keep metadata and temp file).
-	if err := m.clearExisting(tmpFile); err != nil {
-		return fmt.Errorf("clear existing: %w", err)
-	}
-
-	// Extract tar.gz.
-	if err := m.extractTarGz(tmpFile); err != nil {
-		return fmt.Errorf("extract: %w", err)
-	}
-
-	// Save metadata.
-	m.saveMetadata(releaseTag, downloadURL)
-
-	slog.Info("frontend: installed successfully")
-	return nil
+// releaseInfo captures the subset of GitHub's Release JSON we need.
+type releaseInfo struct {
+	TagName string         `json:"tag_name"`
+	Assets  []releaseAsset `json:"assets"`
 }
 
-// clearExisting removes existing frontend files from the cache directory,
-// preserving the metadata file and the temp file.
-func (m *Manager) clearExisting(tmpFile string) error {
-	entries, err := os.ReadDir(m.cacheDir)
-	if err != nil {
-		return err
-	}
-
-	metadataName := ".metadata.json"
-	tmpName := filepath.Base(tmpFile)
-
-	for _, entry := range entries {
-		name := entry.Name()
-		if name == metadataName || name == tmpName {
-			continue
-		}
-		path := filepath.Join(m.cacheDir, name)
-		if err := os.RemoveAll(path); err != nil {
-			slog.Warn("frontend: failed to remove", "path", path, "error", err)
-		}
-	}
-	return nil
+type releaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-// extractTarGz extracts a .tar.gz file into the cache directory.
-// It validates that all extracted paths stay within the cache directory (security).
-func (m *Manager) extractTarGz(tarGzPath string) error {
-	f, err := os.Open(tarGzPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	gzr, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("gzip reader: %w", err)
-	}
-	defer gzr.Close()
-
-	tr := tar.NewReader(gzr)
-
-	resolvedBase, err := filepath.Abs(m.cacheDir)
-	if err != nil {
-		return fmt.Errorf("resolve cache dir: %w", err)
-	}
-
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("read tar: %w", err)
-		}
-
-		// Security: validate the extracted path stays within cache dir.
-		target := filepath.Join(m.cacheDir, filepath.Clean(header.Name))
-		resolvedTarget, err := filepath.Abs(target)
-		if err != nil {
-			return fmt.Errorf("resolve target: %w", err)
-		}
-		if !isWithin(resolvedTarget, resolvedBase) {
-			return fmt.Errorf("unsafe archive path: %s", header.Name)
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(resolvedTarget, 0o755); err != nil {
-				return fmt.Errorf("mkdir %s: %w", header.Name, err)
-			}
-
-		case tar.TypeReg:
-			// Ensure parent directory exists.
-			if err := os.MkdirAll(filepath.Dir(resolvedTarget), 0o755); err != nil {
-				return fmt.Errorf("mkdir parent %s: %w", header.Name, err)
-			}
-
-			outFile, err := os.Create(resolvedTarget)
-			if err != nil {
-				return fmt.Errorf("create %s: %w", header.Name, err)
-			}
-			if _, err := io.Copy(outFile, tr); err != nil {
-				outFile.Close()
-				return fmt.Errorf("write %s: %w", header.Name, err)
-			}
-			outFile.Close()
-		}
-	}
-
-	return nil
+// fetchLatestRelease queries /repos/{owner}/{repo}/releases/latest.
+// Returns (nil, nil) on 404 (repo has no releases), an error on
+// other failures.
+func (m *Manager) fetchLatestRelease(ctx context.Context) (*releaseInfo, error) {
+	url := fmt.Sprintf("%s/repos/%s/releases/latest", m.APIBase, m.Repo)
+	return m.fetchRelease(ctx, url)
 }
 
-// saveMetadata writes a .metadata.json file with download details.
-func (m *Manager) saveMetadata(releaseTag, downloadURL string) {
-	// Try to read version.json from the extracted frontend.
-	var ver Version
-	versionPath := filepath.Join(m.cacheDir, "version.json")
-	if data, err := os.ReadFile(versionPath); err == nil {
-		_ = json.Unmarshal(data, &ver)
-	}
-	if ver.Version == "" {
-		ver.Version = strings.TrimPrefix(releaseTag, "v")
-	}
-
-	meta := CacheMetadata{
-		Version:      ver,
-		DownloadedAt: time.Now().UTC().Format(time.RFC3339),
-		LastCheck:    time.Now().UTC().Format(time.RFC3339),
-		ReleaseURL:   downloadURL,
-	}
-
-	data, err := json.Marshal(meta)
+// fetchRelease is the shared HTTP handler for both tag/latest lookups.
+func (m *Manager) fetchRelease(ctx context.Context, url string) (*releaseInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		slog.Warn("frontend: failed to marshal metadata", "error", err)
-		return
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := m.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("github call: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil // no such release
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("github returned %d", resp.StatusCode)
 	}
 
-	metaPath := filepath.Join(m.cacheDir, ".metadata.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
-		slog.Warn("frontend: failed to write metadata", "error", err)
+	var rel releaseInfo
+	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+		return nil, fmt.Errorf("decode release: %w", err)
 	}
+	return &rel, nil
 }
 
-// readCacheMetadata reads the .metadata.json file if it exists.
-func (m *Manager) readCacheMetadata() *CacheMetadata {
-	metaPath := filepath.Join(m.cacheDir, ".metadata.json")
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		return nil
+// DistURL picks the dist.tar.gz asset from a Release. Returns "" if
+// the release doesn't have one (shouldn't happen with rx-viewer
+// releases but defensive).
+func (r *releaseInfo) DistURL() string {
+	for _, a := range r.Assets {
+		if a.Name == "dist.tar.gz" {
+			return a.BrowserDownloadURL
+		}
 	}
-
-	var meta CacheMetadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		slog.Warn("frontend: failed to parse metadata", "error", err)
-		return nil
-	}
-	return &meta
+	return ""
 }
 
-// directDownloadURL constructs a GitHub release download URL for the given version.
+// directDownloadURL constructs the conventional release-asset URL,
+// bypassing the API. Used when we know the version but don't want to
+// pay a second API call to resolve the asset URL.
 func (m *Manager) directDownloadURL(version string) string {
 	if version == "latest" {
-		return fmt.Sprintf("https://github.com/%s/releases/latest/download/dist.tar.gz", githubRepo)
+		return fmt.Sprintf("https://github.com/%s/releases/latest/download/dist.tar.gz", m.Repo)
 	}
-	// Ensure version has "v" prefix.
 	if !strings.HasPrefix(version, "v") {
 		version = "v" + version
 	}
-	return fmt.Sprintf("https://github.com/%s/releases/download/%s/dist.tar.gz", githubRepo, version)
+	return fmt.Sprintf("https://github.com/%s/releases/download/%s/dist.tar.gz", m.Repo, version)
 }
 
-// isWithin returns true if child is equal to or a subdirectory/file under parent.
-func isWithin(child, parent string) bool {
-	if child == parent {
-		return true
+// ============================================================================
+// Download + extract
+// ============================================================================
+
+// Download fetches the given URL and extracts the tar.gz contents
+// into the cache directory. On success, writes .metadata.json with
+// the supplied releaseTag and returns nil.
+//
+// Download is idempotent — re-running overwrites existing content.
+// Any existing files NOT in the new tarball are left in place; the
+// Python version (conservatively) clears everything first. rx-go
+// follows the same policy to avoid stale assets.
+func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) error {
+	if downloadURL == "" {
+		return errors.New("frontend download: empty URL")
 	}
-	prefix := parent
-	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
-		prefix += string(filepath.Separator)
+	m.Logger.Info("frontend_downloading", "url", downloadURL)
+	if err := os.MkdirAll(m.CacheDir, 0o700); err != nil {
+		return fmt.Errorf("mkdir cache: %w", err)
 	}
-	return strings.HasPrefix(child, prefix)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	// Follow redirects — GitHub asset URLs redirect to CDN.
+	resp, err := m.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download returned %d", resp.StatusCode)
+	}
+
+	// Stream the tarball to a temp file first so a partial download
+	// never overwrites a working cache. Clean up on any failure path.
+	tmpPath := filepath.Join(m.CacheDir, "dist.tar.gz.tmp")
+	if err := streamToFile(resp.Body, tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	// Clear existing content BEFORE extracting so removed files don't
+	// linger (same as Python).
+	if err := m.clearExistingContent(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	// Extract with traversal protection.
+	if err := extractTarGz(tmpPath, m.CacheDir); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	_ = os.Remove(tmpPath)
+
+	// Prefer the version inside dist/version.json when present;
+	// otherwise fall back to the release tag.
+	version := Version{Version: strings.TrimPrefix(releaseTag, "v"), BuildDate: time.Now().UTC().Format(time.RFC3339)}
+	if v, err := readDistVersion(m.CacheDir); err == nil && v != nil {
+		version = *v
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	md := &CacheMetadata{
+		Version:      version,
+		DownloadedAt: now,
+		LastCheck:    now,
+		ReleaseURL:   downloadURL,
+	}
+	if err := m.WriteMetadata(md); err != nil {
+		return err
+	}
+	m.Logger.Info("frontend_installed", "version", version.Version)
+	return nil
+}
+
+// streamToFile copies r to path. Used for the temp tarball download.
+func streamToFile(r io.Reader, path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("open temp: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := io.Copy(f, r); err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	return nil
+}
+
+// clearExistingContent removes every file in CacheDir EXCEPT the
+// metadata file and the in-flight tarball. Preserves the metadata so
+// we can recover if extraction fails mid-flight (the next startup
+// sees an "old" cache + stale metadata, fine).
+func (m *Manager) clearExistingContent() error {
+	entries, err := os.ReadDir(m.CacheDir)
+	if err != nil {
+		return fmt.Errorf("read cache dir: %w", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == ".metadata.json" || name == "dist.tar.gz.tmp" {
+			continue
+		}
+		path := filepath.Join(m.CacheDir, name)
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// readDistVersion parses dist/version.json if present.
+func readDistVersion(cacheDir string) (*Version, error) {
+	data, err := os.ReadFile(filepath.Join(cacheDir, "version.json"))
+	if err != nil {
+		return nil, err
+	}
+	var v Version
+	if err := json.Unmarshal(data, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// ============================================================================
+// High-level Ensure
+// ============================================================================
+
+// Ensure runs the "make sure a usable frontend is on disk" algorithm
+// specified in the file doc comment. Returns nil if the cache is in
+// a usable state at return time, or an error explaining why not.
+func (m *Manager) Ensure(ctx context.Context) error {
+	// Case 1: RX_FRONTEND_URL set — force download.
+	if m.envURL != "" {
+		return m.Download(ctx, m.envURL, "custom")
+	}
+
+	// Case 2: RX_FRONTEND_VERSION set.
+	if m.envVersion != "" {
+		cached, _ := m.ReadMetadata()
+		requested := strings.TrimPrefix(m.envVersion, "v")
+		if cached != nil && strings.TrimPrefix(cached.Version.Version, "v") == requested && m.IsAvailable() {
+			return nil
+		}
+		// Download the specific version.
+		url := m.directDownloadURL(m.envVersion)
+		return m.Download(ctx, url, m.envVersion)
+	}
+
+	// Case 3: No overrides + valid cache → use it, no network hit.
+	if m.IsAvailable() {
+		return nil
+	}
+
+	// Case 4: No overrides, no cache → fetch latest release.
+	rel, err := m.fetchLatestRelease(ctx)
+	if err != nil {
+		return fmt.Errorf("fetch latest release: %w", err)
+	}
+	if rel == nil {
+		return errors.New("frontend: no latest release found on github")
+	}
+	durl := rel.DistURL()
+	if durl == "" {
+		return errors.New("frontend: latest release has no dist.tar.gz asset")
+	}
+	return m.Download(ctx, durl, rel.TagName)
+}
+
+// ============================================================================
+// Static-file path validation
+// ============================================================================
+
+// ValidateStaticPath takes a request path relative to the cache dir
+// (e.g. "assets/app.js") and returns the absolute path on disk, or
+// nil if the resolved path would escape the cache directory, doesn't
+// exist, or is a directory.
+//
+// Defense-in-depth: uses filepath.Clean to normalise ".." segments,
+// then checks that the result starts with the cache root prefix.
+func (m *Manager) ValidateStaticPath(requested string) string {
+	if requested == "" {
+		return ""
+	}
+	// Eval the absolute cache root so symlinks don't defeat prefix
+	// check. If it can't be resolved we bail out — safer to 404.
+	rootAbs, err := filepath.Abs(m.CacheDir)
+	if err != nil {
+		return ""
+	}
+	clean := filepath.Clean(requested)
+	if strings.HasPrefix(clean, string(filepath.Separator)) {
+		return "" // absolute paths not allowed in a request
+	}
+	full := filepath.Join(rootAbs, clean)
+	fullAbs, err := filepath.Abs(full)
+	if err != nil {
+		return ""
+	}
+	if !strings.HasPrefix(fullAbs, rootAbs+string(filepath.Separator)) && fullAbs != rootAbs {
+		return ""
+	}
+	fi, err := os.Stat(fullAbs)
+	if err != nil || fi.IsDir() {
+		return ""
+	}
+	return fullAbs
 }

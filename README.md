@@ -4,7 +4,15 @@ RX is a high-performance file tracing and search tool built on top of [ripgrep](
 
 ## Build
 
-Requires Go 1.22+ and `rg` (ripgrep) on `PATH`.
+Requires Go 1.25+ and `rg` (ripgrep) on PATH.
+
+## Layout
+
+- `cmd/rx/` — binary entry point.
+- `internal/` — private packages.
+- `pkg/rxtypes/` — public wire types (JSON schemas shared with clients).
+- `docs/` — architecture, configuration, migration notes.
+- `testdata/` — shared test fixtures.
 
 ```bash
 make build          # Build for current platform

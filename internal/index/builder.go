@@ -1,674 +1,401 @@
+// Builder implements the construction side of the unified line-offset
+// index. It walks a file line-by-line, records byte offsets at roughly
+// every `step_bytes` interval (aligned to line starts), and collects
+// line-length statistics needed for the `--analyze` path.
+//
+// The on-disk schema is UnifiedFileIndex (pkg/rxtypes). This file writes
+// the same JSON shape as rx-python/src/rx/unified_index.py::build_index
+// so a cache produced on either side can be read by the other.
+//
+// Step-size trade-off (checkpoint density):
+//
+//	Dense checkpoints (small step)  → bigger index file on disk, but
+//	                                 faster line-to-offset lookups because
+//	                                 the linear-scan distance from the
+//	                                 nearest checkpoint to the target
+//	                                 line is bounded by step_bytes.
+//	Sparse checkpoints (large step) → smaller file, slower lookups.
+//
+// Default step is threshold/50 = 1 MB when LargeFileMB=50 (Python parity).
+// Callers who want a custom density pass `step_bytes` directly via
+// BuildWithStep.
 package index
 
 import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"log/slog"
-	"math"
-	"math/rand"
+	"io"
 	"os"
-	"path/filepath"
-	"sort"
-	"sync"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
-
-	"github.com/wlame/rx/internal/compression"
-	"github.com/wlame/rx/internal/config"
-	"github.com/wlame/rx/internal/models"
+	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/prometheus"
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
-// reservoirSize is the number of samples kept for percentile estimation.
-// 10,000 samples give excellent accuracy for median, p95, and p99.
-const reservoirSize = 10000
+// BuildOptions fine-tunes the Build call. Zero value = Python defaults.
+type BuildOptions struct {
+	// StepBytes is the approximate number of bytes between line-offset
+	// checkpoints. If 0, we take config.LargeFileMB() / 50 (matches
+	// Python's get_index_step_bytes).
+	StepBytes int64
 
-// lineStatsAccumulator tracks line length statistics using Welford's online algorithm
-// for mean/variance (constant memory) and reservoir sampling for percentiles.
-type lineStatsAccumulator struct {
-	// Welford's online algorithm state.
-	count    int
-	mean     float64
-	m2       float64 // sum of squared differences from the mean
-
-	// Reservoir sampling for percentile estimation.
-	reservoir []int
-	rng       *rand.Rand
-
-	// Extremes.
-	maxLength     int
-	maxLineNumber int
-	maxLineOffset int64
-	emptyCount    int
+	// Analyze toggles the line-length statistics and anomaly-ready
+	// fields. When false, only the line-index itself is populated;
+	// matches Python's "light" cache.
+	Analyze bool
 }
 
-// newLineStatsAccumulator creates a new accumulator with a seeded RNG.
-func newLineStatsAccumulator() *lineStatsAccumulator {
-	return &lineStatsAccumulator{
-		reservoir: make([]int, 0, reservoirSize),
-		rng:       rand.New(rand.NewSource(time.Now().UnixNano())),
-	}
+// GetIndexStepBytes returns the default checkpoint step in bytes.
+// Mirrors rx-python/src/rx/unified_index.py::get_index_step_bytes:
+//
+//	step = LargeFileMB_bytes // 50
+//
+// i.e. approximately 50 checkpoints across the threshold. For default
+// LargeFileMB=50 this is 1 MB, which gives a balanced lookup cost
+// (~1 MB linear scan worst case) without a huge index file.
+func GetIndexStepBytes() int64 {
+	threshold := int64(config.LargeFileMB()) * 1024 * 1024
+	return threshold / 50
 }
 
-// observe records a single line's length. Empty lines (stripped length == 0) are
-// counted separately and excluded from length statistics.
-func (a *lineStatsAccumulator) observe(lineLen int, isEmpty bool, lineNumber int, lineOffset int64) {
-	if isEmpty {
-		a.emptyCount++
-		return
-	}
+// Build reads sourcePath and constructs a UnifiedFileIndex. It records
+// the current mtime + size into the index so IsValidForSource can later
+// detect changes.
+//
+// On success the caller can hand the result straight to Save() or
+// inspect LineIndex in-memory; Build does not write to disk itself.
+func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, error) {
+	started := time.Now()
 
-	// Welford's online update for mean and variance.
-	a.count++
-	delta := float64(lineLen) - a.mean
-	a.mean += delta / float64(a.count)
-	delta2 := float64(lineLen) - a.mean
-	a.m2 += delta * delta2
-
-	// Reservoir sampling: keep exactly reservoirSize samples uniformly at random.
-	if len(a.reservoir) < reservoirSize {
-		a.reservoir = append(a.reservoir, lineLen)
-	} else {
-		j := a.rng.Intn(a.count)
-		if j < reservoirSize {
-			a.reservoir[j] = lineLen
-		}
-	}
-
-	// Track max.
-	if lineLen > a.maxLength {
-		a.maxLength = lineLen
-		a.maxLineNumber = lineNumber
-		a.maxLineOffset = lineOffset
-	}
-}
-
-// finish computes final statistics from the accumulated data.
-func (a *lineStatsAccumulator) finish(totalLines int, lineEnding string) *models.IndexAnalysis {
-	maxOff := int(a.maxLineOffset)
-	analysis := &models.IndexAnalysis{
-		LineCount:            &totalLines,
-		EmptyLineCount:       &a.emptyCount,
-		LineLengthMax:        &a.maxLength,
-		LineLengthMaxLineNum: &a.maxLineNumber,
-		LineLengthMaxOffset:  &maxOff,
-		LineEnding:           &lineEnding,
-	}
-
-	if a.count == 0 {
-		zero := 0.0
-		analysis.LineLengthAvg = &zero
-		analysis.LineLengthMedian = &zero
-		analysis.LineLengthP95 = &zero
-		analysis.LineLengthP99 = &zero
-		analysis.LineLengthStddev = &zero
-		return analysis
-	}
-
-	avg := a.mean
-	analysis.LineLengthAvg = &avg
-
-	// Standard deviation from Welford's M2.
-	sd := 0.0
-	if a.count > 1 {
-		sd = math.Sqrt(a.m2 / float64(a.count-1))
-	}
-	analysis.LineLengthStddev = &sd
-
-	// Percentiles from the reservoir sample.
-	sorted := make([]int, len(a.reservoir))
-	copy(sorted, a.reservoir)
-	sort.Ints(sorted)
-
-	med := percentile(sorted, 50)
-	p95 := percentile(sorted, 95)
-	p99 := percentile(sorted, 99)
-	analysis.LineLengthMedian = &med
-	analysis.LineLengthP95 = &p95
-	analysis.LineLengthP99 = &p99
-
-	return analysis
-}
-
-// DefaultIndexStepDivisor controls index density: stepBytes = largeFileThreshold / divisor.
-// With 50 MB threshold and divisor 50, we get ~1 MB between checkpoints.
-const DefaultIndexStepDivisor = 50
-
-// zstdDecoderPool reuses zstd.Decoder instances in the index builder to avoid
-// repeated allocation of decoding tables when processing many frames.
-var zstdDecoderPool = sync.Pool{
-	New: func() interface{} {
-		d, _ := zstd.NewReader(nil)
-		return d
-	},
-}
-
-func decoderPoolGet() *zstd.Decoder { return zstdDecoderPool.Get().(*zstd.Decoder) }
-func decoderPoolPut(d *zstd.Decoder) { zstdDecoderPool.Put(d) }
-
-// LineSampleInterval is how often we record line index entries for compressed files.
-// Every N-th line gets a [line_number, decompressed_offset] entry.
-const LineSampleInterval = 1000
-
-// SeekableLineSampleInterval is how often we record entries within large seekable zstd frames.
-const SeekableLineSampleInterval = 10000
-
-// BuildIndex auto-detects the file type and dispatches to the appropriate index builder.
-// Returns a fully populated FileIndex ready for caching.
-func BuildIndex(path string, cfg *config.Config) (*models.FileIndex, error) {
-	absPath, err := filepath.Abs(path)
+	info, err := os.Stat(sourcePath)
 	if err != nil {
-		return nil, fmt.Errorf("resolve absolute path %s: %w", path, err)
+		return nil, fmt.Errorf("stat %s: %w", sourcePath, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("build: %s is a directory", sourcePath)
 	}
 
-	format, err := compression.Detect(absPath)
+	step := opts.StepBytes
+	if step <= 0 {
+		step = GetIndexStepBytes()
+	}
+
+	f, err := os.Open(sourcePath)
 	if err != nil {
-		// If detection fails, try building as a regular text file.
-		slog.Debug("compression detection failed, treating as text", "path", absPath, "error", err)
-		format = compression.FormatNone
+		return nil, fmt.Errorf("open %s: %w", sourcePath, err)
+	}
+	defer func() {
+		// Close error ignored — file was opened read-only.
+		_ = f.Close()
+	}()
+
+	// Walk the file. Python uses `for line in f` which yields lines
+	// terminated by the platform's preferred newline. In Go, bufio's
+	// ReadSlice('\n') gives the same slice-including-terminator view.
+	//
+	// Stage 9 Round 2 R1-B10: the walk always collects line-length stats
+	// (Python parity — see rx-python/src/rx/unified_index.py::build_index).
+	// The `analyze` flag only gates anomaly-detection and prefix-pattern
+	// work, which are Python-only features. `true` is passed here
+	// unconditionally so basic stats are always available.
+	stats, err := walkLines(f, step, true)
+	if err != nil {
+		return nil, err
 	}
 
-	switch format {
-	case compression.FormatNone:
-		return buildRegularIndex(absPath, cfg)
-	case compression.FormatSeekableZstd:
-		return buildSeekableZstdIndex(absPath)
-	default:
-		// Gzip, XZ, BZ2, non-seekable Zstd — all use the compressed stream builder.
-		return buildCompressedIndex(absPath, format)
+	// Build the final index.
+	idx := &rxtypes.UnifiedFileIndex{
+		Version:           Version,
+		SourcePath:        sourcePath,
+		SourceModifiedAt:  formatMtime(info.ModTime()),
+		SourceSizeBytes:   info.Size(),
+		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		BuildTimeSeconds:  time.Since(started).Seconds(),
+		FileType:          rxtypes.FileTypeText, // compressed detection left to caller
+		IsText:            true,
+		LineIndex:         stats.LineIndex,
+		IndexStepBytes:    ptrInt64(step),
+		AnalysisPerformed: opts.Analyze,
 	}
+
+	// Fill stats. Python always populates line_count/empty_line_count
+	// AND the line-length aggregates, regardless of --analyze (Stage 9
+	// Round 2 R1-B10 fix). The only fields gated on --analyze are
+	// anomaly detection and prefix pattern fields (both Python-only at
+	// v1 of rx-go).
+	//
+	// Post-Welford/reservoir refactor: the accumulator always returns a
+	// zero-valued snapshot for empty input, so the previous
+	// len(LineLengths)>0 branch collapses into a single unconditional
+	// copy. Python's JSON wire shape is preserved byte-identically —
+	// every pointer field is populated with either the real value or 0,
+	// matching unified_index.py's L174-179 fallback.
+	idx.LineCount = ptrInt64(stats.LineCount)
+	idx.EmptyLineCount = ptrInt64(stats.EmptyLineCount)
+	idx.LineLengthMax = ptrInt64(int64(stats.LineStats.Max))
+	idx.LineLengthAvg = ptrFloat64(stats.LineStats.Mean)
+	idx.LineLengthMedian = ptrFloat64(stats.LineStats.Median)
+	idx.LineLengthP95 = ptrFloat64(stats.LineStats.P95)
+	idx.LineLengthP99 = ptrFloat64(stats.LineStats.P99)
+	idx.LineLengthStddev = ptrFloat64(stats.LineStats.StdDev)
+	idx.LineLengthMaxLineNumber = ptrInt64(int64(stats.LineStats.MaxLineNumber))
+	idx.LineLengthMaxByteOffset = ptrInt64(stats.LineStats.MaxLineOffset)
+
+	// Line-ending detection runs off a prefix sample (first 64 KB) so
+	// large files don't pay O(n). Python behaves the same.
+	idx.LineEnding = ptrString(stats.LineEnding)
+
+	// Stage 9 Round 2 S6: gated helper — CLI mode skips observation.
+	prometheus.ObserveIndexBuildDuration(time.Since(started))
+	return idx, nil
 }
 
-// buildRegularIndex scans a plain text file, recording line-offset checkpoints at
-// regular byte intervals and computing analysis statistics.
-func buildRegularIndex(absPath string, cfg *config.Config) (*models.FileIndex, error) {
-	startTime := time.Now()
+// ==========================================================================
+// Internals
+// ==========================================================================
 
-	stat, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", absPath, err)
+// walkStats is the aggregated output of a single walkLines pass.
+//
+// Post-refactor: line-length statistics are computed online via
+// lineStatsAccumulator and flattened to LineStats at finish-time, so we
+// no longer materialize a slice of every line length. Memory is O(1) in
+// the number of lines (bounded by the reservoir cap, ~80 KB).
+type walkStats struct {
+	LineIndex      []rxtypes.LineIndexEntry
+	LineCount      int64
+	EmptyLineCount int64
+
+	// LineStats is the finalized snapshot from the online accumulator —
+	// mean/stddev from Welford, median/p95/p99 from reservoir sampling.
+	LineStats lineStatsSnapshot
+
+	LineEnding string
+}
+
+// walkLines streams through r, emitting line-index checkpoints and
+// (when analyze) collecting line-length statistics. The algorithm
+// matches rx-python/src/rx/unified_index.py::build_index byte-for-byte:
+//
+//  1. First line is always at offset 0 (checkpoint [1, 0]).
+//  2. Track a running byte offset; each time it crosses the next
+//     `step_bytes` boundary, emit a checkpoint at the NEXT line start.
+//  3. For --analyze: collect lengths of non-empty lines (stripped of
+//     trailing CR/LF) and track the longest line + its position.
+//
+// The line-ending sample is the first 64 KB of raw bytes (including
+// terminators) — we feed it to detectLineEnding after the walk.
+func walkLines(r io.Reader, step int64, analyze bool) (*walkStats, error) {
+	stats := &walkStats{
+		// Initial checkpoint: first line is always at offset 0.
+		LineIndex:  []rxtypes.LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
+		LineEnding: "LF",
 	}
 
-	stepBytes := int64(cfg.LargeFileMB) * 1024 * 1024 / DefaultIndexStepDivisor
-	if stepBytes <= 0 {
-		stepBytes = 1024 * 1024 // fallback to 1 MB
-	}
+	// Online stats accumulator — replaces the previous []int64 of every
+	// line's length. Memory footprint is O(reservoirCap) regardless of
+	// total line count. See internal/index/linestats.go for the algorithm.
+	acc := newLineStatsAccumulator(0)
 
-	f, err := os.Open(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", absPath, err)
-	}
-	defer f.Close()
+	// bufio.Reader.ReadSlice is faster than Scanner for this purpose:
+	// we want the TERMINATOR included so the byte count matches Python's
+	// `len(line)` (which is bytes including \n / \r\n).
+	br := bufio.NewReaderSize(r, 256*1024)
 
-	// First line always starts at offset 0.
-	lineIndex := [][]int{{1, 0}}
-	var currentLine int = 1
-	nextCheckpoint := stepBytes
-
-	// O(1) memory statistics via Welford's algorithm + reservoir sampling.
-	stats := newLineStatsAccumulator()
-
-	// Use bufio.Reader instead of Scanner to track exact byte offsets.
-	// Scanner strips newlines, making offset tracking approximate.
-	// Reader.ReadLine gives us the raw line content and we track offsets explicitly.
-	reader := bufio.NewReaderSize(f, 1024*1024)
-	var currentOffset int64
-
-	for {
-		// ReadLine returns the line content WITHOUT the trailing \n or \r\n.
-		// isPrefix=true means the line was too long for the buffer — we assemble it.
-		line, isPrefix, err := reader.ReadLine()
-		if err != nil {
-			break // EOF or error
-		}
-
-		// Assemble full line if it was split across buffer boundaries.
-		var fullLine []byte
-		rawLen := len(line) // bytes read so far (without delimiter)
-		if isPrefix {
-			fullLine = append(fullLine, line...)
-			for isPrefix {
-				line, isPrefix, err = reader.ReadLine()
-				if err != nil {
-					break
-				}
-				rawLen += len(line)
-				fullLine = append(fullLine, line...)
-			}
-		} else {
-			fullLine = line
-		}
-
-		lineLen := len(fullLine) // content bytes (no newline)
-
-		// Track statistics using constant-memory accumulator.
-		stripped := len(trimWhitespace(fullLine))
-		isEmpty := stripped == 0
-		stats.observe(lineLen, isEmpty, currentLine, currentOffset)
-
-		// Advance offset: content length + 1 for \n.
-		// For CRLF files this would be +2, but we detect that below and correct.
-		// For most log files (LF), +1 is exact.
-		delimLen := 1
-		currentOffset += int64(lineLen) + int64(delimLen)
-		currentLine++
-
-		// Record checkpoint at the START of the next line.
-		if currentOffset >= nextCheckpoint {
-			lineIndex = append(lineIndex, []int{currentLine, int(currentOffset)})
-			nextCheckpoint = currentOffset + stepBytes
-		}
-	}
-
-	// Adjust currentLine to be the count (it's now 1 past the last line).
-	totalLines := currentLine - 1
-
-	// Detect line endings by re-reading first 64 KB of the file.
-	lineEnding := detectLineEnding(absPath)
-
-	// Finalize statistics from the constant-memory accumulator.
-	analysis := stats.finish(totalLines, lineEnding)
-
-	buildTime := time.Since(startTime).Seconds()
-	stepBytesInt := int(stepBytes)
-
-	idx := models.NewFileIndex(
-		UnifiedIndexVersion,
-		models.IndexTypeRegular,
-		absPath,
-		stat.ModTime().Format(time.RFC3339Nano),
-		int(stat.Size()),
+	// The Python code uses iteration `for line in f` which yields bytes
+	// including the newline. We faithfully replicate by reading up to
+	// '\n' with ReadSlice and appending when the buffer overflows.
+	var (
+		currentOffset    int64
+		currentLine      int64 // 0-based until first iteration
+		nextCheckpoint   = step
+		lineEndingSample = make([]byte, 0, 65536)
+		sampleComplete   bool
 	)
-	idx.CreatedAt = time.Now().Format(time.RFC3339Nano)
-	idx.BuildTimeSeconds = &buildTime
-	idx.IndexStepBytes = &stepBytesInt
-	idx.LineIndex = lineIndex
-	idx.Analysis = analysis
-
-	slog.Info("regular index built",
-		"path", absPath,
-		"lines", totalLines,
-		"checkpoints", len(lineIndex),
-		"build_time_s", fmt.Sprintf("%.3f", buildTime))
-
-	return &idx, nil
-}
-
-// buildCompressedIndex streams a compressed file through native decompression,
-// counting newlines in a single pass without materializing the full content.
-func buildCompressedIndex(absPath string, format compression.CompressionFormat) (*models.FileIndex, error) {
-	startTime := time.Now()
-
-	stat, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", absPath, err)
-	}
-
-	reader, _, err := compression.NewReader(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("open compressed reader %s: %w", absPath, err)
-	}
-	defer reader.Close()
-
-	// Single-pass: read decompressed stream in chunks, count newlines.
-	lineIndex := [][]int{{1, 0}}
-	var currentLine int
-	var currentOffset int64
-	var partialLineLen int
-
-	chunk := make([]byte, 64*1024) // 64 KB read buffer
 
 	for {
-		n, readErr := reader.Read(chunk)
-		if n > 0 {
-			data := chunk[:n]
-			chunkPos := 0
-
-			for chunkPos < len(data) {
-				nlPos := bytes.IndexByte(data[chunkPos:], '\n')
-				if nlPos == -1 {
-					// No more newlines in this chunk.
-					partialLineLen += len(data) - chunkPos
+		// ReadSlice may return ErrBufferFull for very long lines; join
+		// pieces into a single logical line.
+		var line []byte
+		for {
+			chunk, err := br.ReadSlice('\n')
+			if len(chunk) > 0 {
+				// We must copy — ReadSlice's buffer is reused on the
+				// next call. Appending into `line` implicitly copies.
+				line = append(line, chunk...)
+			}
+			if err == bufio.ErrBufferFull {
+				// Long line; keep reading into `line` until we hit
+				// '\n' or EOF.
+				continue
+			}
+			if err != nil {
+				// Either io.EOF or a real I/O error. If EOF and the
+				// last fragment has content, it's the trailing
+				// unterminated line. Otherwise we're done.
+				if err == io.EOF {
 					break
 				}
-
-				// Found a newline — complete this line.
-				currentLine++
-				partialLineLen = 0
-
-				// First line checkpoint.
-				if currentLine == 1 {
-					// Already recorded at init.
-				} else if currentLine%LineSampleInterval == 0 {
-					newlineAbsOffset := currentOffset + int64(chunkPos+nlPos) + 1
-					lineIndex = append(lineIndex, []int{currentLine, int(newlineAbsOffset)})
-				}
-
-				chunkPos += nlPos + 1
+				return nil, fmt.Errorf("read: %w", err)
 			}
-
-			currentOffset += int64(n)
-		}
-
-		if readErr != nil {
+			// Normal \n-terminated line.
 			break
 		}
-	}
-
-	// Handle final line without trailing newline.
-	if partialLineLen > 0 {
-		currentLine++
-	}
-
-	buildTime := time.Since(startTime).Seconds()
-	sampleInterval := LineSampleInterval
-	formatStr := format.String()
-	decompSize := int(currentOffset)
-
-	idx := models.NewFileIndex(
-		UnifiedIndexVersion,
-		models.IndexTypeCompressed,
-		absPath,
-		stat.ModTime().Format(time.RFC3339Nano),
-		int(stat.Size()),
-	)
-	idx.CreatedAt = time.Now().Format(time.RFC3339Nano)
-	idx.BuildTimeSeconds = &buildTime
-	idx.LineIndex = lineIndex
-	idx.CompressionFormat = &formatStr
-	idx.DecompressedSizeBytes = &decompSize
-	idx.TotalLines = &currentLine
-	idx.LineSampleInterval = &sampleInterval
-
-	slog.Info("compressed index built",
-		"path", absPath,
-		"format", formatStr,
-		"lines", currentLine,
-		"decompressed_bytes", currentOffset,
-		"checkpoints", len(lineIndex),
-		"build_time_s", fmt.Sprintf("%.3f", buildTime))
-
-	return &idx, nil
-}
-
-// buildSeekableZstdIndex decompresses each frame to count lines and build
-// the frame-to-line mapping required for parallel search offset adjustment.
-func buildSeekableZstdIndex(absPath string) (*models.FileIndex, error) {
-	startTime := time.Now()
-
-	stat, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", absPath, err)
-	}
-
-	f, err := os.Open(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", absPath, err)
-	}
-	defer f.Close()
-
-	table, err := compression.ReadSeekTable(f)
-	if err != nil {
-		return nil, fmt.Errorf("read seek table %s: %w", absPath, err)
-	}
-
-	// Build frame line info by decompressing each frame.
-	// Uses a single decoder from the pool for all frames to avoid repeated allocation.
-	var frameInfos []models.FrameLineInfo
-	var lineIndex [][]int
-	currentLine := 1
-	totalLines := 0
-
-	// Borrow one decoder for the entire loop instead of one per frame.
-	dec := decoderPoolGet()
-	defer decoderPoolPut(dec)
-
-	for i, frame := range table.Frames {
-		data, err := compression.DecompressFrameWith(f, frame, dec)
-		if err != nil {
-			return nil, fmt.Errorf("decompress frame %d of %s: %w", i, absPath, err)
+		if len(line) == 0 {
+			// Clean EOF.
+			break
 		}
 
-		// Single pass: count newlines AND record sample checkpoints.
-		// This replaces the previous two-pass approach (countNewlines + second iteration).
-		linesInFrame := 0
-		firstLine := currentLine
-		isLastFrame := i == len(table.Frames)-1
+		currentLine++
+		lineLenBytes := int64(len(line))
 
-		// Record the first-line checkpoint for every frame.
-		lineIndex = append(lineIndex, []int{firstLine, int(frame.DecompressedOffset), i})
-
-		// Single-pass: count newlines and emit intermediate samples.
-		lineNum := firstLine
-		for j := 0; j < len(data); j++ {
-			if data[j] == '\n' {
-				linesInFrame++
-				lineNum++
-				// Emit intermediate sampled checkpoint at every SeekableLineSampleInterval lines.
-				if (lineNum-firstLine)%SeekableLineSampleInterval == 0 {
-					decompOff := int(frame.DecompressedOffset) + j + 1
-					lineIndex = append(lineIndex, []int{lineNum, decompOff, i})
-				}
+		// Append to line-ending sample until we've collected 64 KB.
+		//
+		// Python parity (rx-python/src/rx/unified_index.py): Python's
+		// loop does `line_ending_sample += line` (whole-line append)
+		// and only checks the size threshold AFTER the append. This
+		// means Python's sample can OVERSHOOT by up to one line's
+		// worth of bytes — i.e. if the sample is at 65534 bytes and
+		// the next line is 9 bytes, the sample becomes 65543 bytes
+		// before the "we've got enough" check fires.
+		//
+		// A previous Go version truncated the last line at byte
+		// granularity (`take = min(lineLen, remaining)`), which could
+		// drop trailing CR/LF bytes that Python would have captured.
+		// That broke line-ending detection for files whose ending-
+		// style transition happened right around the 64 KB boundary
+		// (see Stage 8 Reviewer 1 High #4 / Finding 6). The fix is to
+		// append the WHOLE line and accept the overshoot.
+		if !sampleComplete {
+			lineEndingSample = append(lineEndingSample, line...)
+			if len(lineEndingSample) >= 65536 {
+				sampleComplete = true
 			}
 		}
 
-		// Partial line at end of file (no trailing newline) counts as a line.
-		if isLastFrame && len(data) > 0 && data[len(data)-1] != '\n' {
-			linesInFrame++
+		// Stats observation. Python parity (rx-python/src/rx/unified_index.py):
+		// every line is inspected, whitespace-only lines are counted as
+		// "empty", and non-empty lines' content lengths feed the aggregates.
+		//
+		// Unlike the pre-refactor code, the accumulator now handles BOTH
+		// paths (analyze / non-analyze) with the same call — Python's
+		// behavior is that line_length aggregates are populated regardless
+		// of --analyze (Stage 9 Round 2 R1-B10), so there is no reason to
+		// bypass the accumulator when analyze==false.
+		stripped := stripLineEnd(line)
+		contentLen := len(stripped)
+		isEmpty := !hasNonWhitespace(stripped)
+		acc.observe(contentLen, isEmpty, int(currentLine), currentOffset)
+		// analyze is retained as a parameter for API stability and for
+		// future gating of Python-only features (anomaly detection,
+		// prefix patterns) that rx-go doesn't yet implement.
+		_ = analyze
+
+		currentOffset += lineLenBytes
+
+		// Checkpoint check: once we've crossed `next_checkpoint`, emit
+		// a record at the START of the next line.
+		//
+		// Note the off-by-one: currentOffset is now the offset AFTER
+		// the newline we just consumed, which IS the start of the
+		// next line. `current_line + 1` is the number we'd assign
+		// to the next iteration's line.
+		if currentOffset >= nextCheckpoint {
+			stats.LineIndex = append(stats.LineIndex, rxtypes.LineIndexEntry{
+				LineNumber: currentLine + 1,
+				ByteOffset: currentOffset,
+			})
+			nextCheckpoint = currentOffset + step
 		}
-
-		lastLine := currentLine + linesInFrame - 1
-		if linesInFrame == 0 {
-			lastLine = currentLine
-		}
-
-		frameInfos = append(frameInfos, models.FrameLineInfo{
-			Index:              i,
-			CompressedOffset:   int(frame.CompressedOffset),
-			CompressedSize:     int(frame.CompressedSize),
-			DecompressedOffset: int(frame.DecompressedOffset),
-			DecompressedSize:   int(frame.DecompressedSize),
-			FirstLine:          firstLine,
-			LastLine:           lastLine,
-			LineCount:          linesInFrame,
-		})
-
-		currentLine = lastLine + 1
-		totalLines += linesInFrame
 	}
 
-	buildTime := time.Since(startTime).Seconds()
-	formatStr := "zstd"
-	decompSize := int(table.TotalDecompressedSize())
-	frameCount := len(table.Frames)
-	frames := frameInfos
+	stats.LineCount = currentLine
 
-	idx := models.NewFileIndex(
-		UnifiedIndexVersion,
-		models.IndexTypeSeekableZstd,
-		absPath,
-		stat.ModTime().Format(time.RFC3339Nano),
-		int(stat.Size()),
-	)
-	idx.CreatedAt = time.Now().Format(time.RFC3339Nano)
-	idx.BuildTimeSeconds = &buildTime
-	idx.LineIndex = lineIndex
-	idx.CompressionFormat = &formatStr
-	idx.DecompressedSizeBytes = &decompSize
-	idx.TotalLines = &totalLines
-	idx.FrameCount = &frameCount
-	idx.Frames = &frames
+	// Snapshot the accumulator. finish() copies the reservoir internally
+	// so repeated calls are safe; we call it exactly once.
+	stats.LineStats = acc.finish()
+	stats.EmptyLineCount = int64(stats.LineStats.EmptyCount)
 
-	slog.Info("seekable zstd index built",
-		"path", absPath,
-		"frames", frameCount,
-		"lines", totalLines,
-		"checkpoints", len(lineIndex),
-		"build_time_s", fmt.Sprintf("%.3f", buildTime))
-
-	return &idx, nil
+	stats.LineEnding = detectLineEnding(lineEndingSample)
+	return stats, nil
 }
 
-// computeAnalysis calculates line length statistics from the collected data.
-// Kept for backward compatibility with tests; new code uses lineStatsAccumulator.
-func computeAnalysis(
-	lineLengths []int,
-	emptyLineCount, lineCount, maxLineLength, maxLineNumber, maxLineOffset int,
-	lineEnding string,
-) *models.IndexAnalysis {
-	a := &models.IndexAnalysis{
-		LineCount:            &lineCount,
-		EmptyLineCount:       &emptyLineCount,
-		LineLengthMax:        &maxLineLength,
-		LineLengthMaxLineNum: &maxLineNumber,
-		LineLengthMaxOffset:  &maxLineOffset,
-		LineEnding:           &lineEnding,
+// ==========================================================================
+// Line-ending detection — mirrors rx-python/src/rx/unified_index.py
+// ==========================================================================
+
+// detectLineEnding classifies sample bytes as LF / CRLF / CR / mixed.
+// Same logic as Python:
+//   - crlf = count("\r\n")
+//   - cr   = count("\r") - crlf
+//   - lf   = count("\n") - crlf
+//   - 0 endings → "LF" default; 1 distinct ending → that one; else "mixed".
+func detectLineEnding(sample []byte) string {
+	crlf := bytes.Count(sample, []byte("\r\n"))
+	cr := bytes.Count(sample, []byte("\r")) - crlf
+	lf := bytes.Count(sample, []byte("\n")) - crlf
+
+	type kind struct {
+		name  string
+		count int
 	}
-
-	if len(lineLengths) == 0 {
-		zero := 0.0
-		a.LineLengthAvg = &zero
-		a.LineLengthMedian = &zero
-		a.LineLengthP95 = &zero
-		a.LineLengthP99 = &zero
-		a.LineLengthStddev = &zero
-		return a
+	var endings []kind
+	if crlf > 0 {
+		endings = append(endings, kind{"CRLF", crlf})
 	}
-
-	// Sort for percentile calculations.
-	sorted := make([]int, len(lineLengths))
-	copy(sorted, lineLengths)
-	sort.Ints(sorted)
-
-	avg := mean(lineLengths)
-	med := percentile(sorted, 50)
-	p95 := percentile(sorted, 95)
-	p99 := percentile(sorted, 99)
-	sd := stddev(lineLengths, avg)
-
-	a.LineLengthAvg = &avg
-	a.LineLengthMedian = &med
-	a.LineLengthP95 = &p95
-	a.LineLengthP99 = &p99
-	a.LineLengthStddev = &sd
-
-	return a
-}
-
-// detectLineEnding reads the first 64 KB of a file and determines the line ending style.
-func detectLineEnding(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return "LF"
+	if lf > 0 {
+		endings = append(endings, kind{"LF", lf})
 	}
-	defer f.Close()
-
-	buf := make([]byte, 64*1024)
-	n, _ := f.Read(buf)
-	if n == 0 {
-		return "LF"
-	}
-	sample := buf[:n]
-
-	crlfCount := 0
-	for i := 0; i < len(sample)-1; i++ {
-		if sample[i] == '\r' && sample[i+1] == '\n' {
-			crlfCount++
-		}
-	}
-	crCount := 0
-	for _, b := range sample {
-		if b == '\r' {
-			crCount++
-		}
-	}
-	crCount -= crlfCount // Subtract CRLFs from CR count.
-
-	lfCount := 0
-	for _, b := range sample {
-		if b == '\n' {
-			lfCount++
-		}
-	}
-	lfCount -= crlfCount // Subtract CRLFs from LF count.
-
-	var endings []string
-	if crlfCount > 0 {
-		endings = append(endings, "CRLF")
-	}
-	if lfCount > 0 {
-		endings = append(endings, "LF")
-	}
-	if crCount > 0 {
-		endings = append(endings, "CR")
+	if cr > 0 {
+		endings = append(endings, kind{"CR", cr})
 	}
 
 	switch len(endings) {
 	case 0:
 		return "LF"
 	case 1:
-		return endings[0]
+		return endings[0].name
 	default:
 		return "mixed"
 	}
 }
 
-// --- math helpers ---
+// ==========================================================================
+// Line utilities
+// ==========================================================================
 
-func mean(data []int) float64 {
-	if len(data) == 0 {
-		return 0
+// stripLineEnd returns `line` with any trailing \r\n, \n, or \r removed.
+// Python's line.rstrip(b'\r\n') strips both. We do the same.
+func stripLineEnd(line []byte) []byte {
+	n := len(line)
+	for n > 0 && (line[n-1] == '\n' || line[n-1] == '\r') {
+		n--
 	}
-	var sum float64
-	for _, v := range data {
-		sum += float64(v)
-	}
-	return sum / float64(len(data))
+	return line[:n]
 }
 
-func percentile(sorted []int, p float64) float64 {
-	if len(sorted) == 0 {
-		return 0
+// hasNonWhitespace returns true if `s` contains any non-whitespace byte.
+// Python's `stripped.strip()` is truthy iff the result is non-empty,
+// i.e. there's at least one non-whitespace character. We treat ASCII
+// whitespace (space, tab, \v, \f, \r, \n) as whitespace — same as
+// Python's bytes.strip() default set.
+func hasNonWhitespace(s []byte) bool {
+	for _, c := range s {
+		switch c {
+		case ' ', '\t', '\v', '\f', '\r', '\n':
+			continue
+		default:
+			return true
+		}
 	}
-	n := len(sorted)
-	k := float64(n-1) * p / 100.0
-	f := int(k)
-	c := f + 1
-	if c >= n {
-		c = f
-	}
-	return float64(sorted[f]) + (k-float64(f))*(float64(sorted[c])-float64(sorted[f]))
+	return false
 }
 
-func stddev(data []int, avg float64) float64 {
-	if len(data) <= 1 {
-		return 0
-	}
-	var sumSq float64
-	for _, v := range data {
-		diff := float64(v) - avg
-		sumSq += diff * diff
-	}
-	return math.Sqrt(sumSq / float64(len(data)-1))
-}
+// ==========================================================================
+// Small pointer helpers (the struct has many nullable numeric fields)
+// ==========================================================================
 
-// --- byte helpers ---
-
-// countNewlines returns the number of newline bytes in data.
-// Uses bytes.Count for optimized assembly implementation.
-func countNewlines(data []byte) int {
-	return bytes.Count(data, []byte{'\n'})
-}
-
-func trimWhitespace(b []byte) []byte {
-	start := 0
-	for start < len(b) && (b[start] == ' ' || b[start] == '\t' || b[start] == '\r' || b[start] == '\n') {
-		start++
-	}
-	end := len(b)
-	for end > start && (b[end-1] == ' ' || b[end-1] == '\t' || b[end-1] == '\r' || b[end-1] == '\n') {
-		end--
-	}
-	return b[start:end]
-}
+func ptrInt64(n int64) *int64       { return &n }
+func ptrFloat64(v float64) *float64 { return &v }
+func ptrString(s string) *string    { return &s }

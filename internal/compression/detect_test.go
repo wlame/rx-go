@@ -1,255 +1,171 @@
 package compression
 
 import (
-	"encoding/binary"
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// writeTestFile creates a temporary file with the given content and returns its path.
-func writeTestFile(t *testing.T, dir, name string, data []byte) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	require.NoError(t, os.WriteFile(path, data, 0644))
-	return path
-}
-
-// --- Magic byte detection tests ---
-
-func TestDetect_GzipMagic(t *testing.T) {
-	dir := t.TempDir()
-	// Gzip magic (1f 8b) followed by arbitrary bytes.
-	data := []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00}
-	path := writeTestFile(t, dir, "test.dat", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatGzip, format)
-}
-
-func TestDetect_XZMagic(t *testing.T) {
-	dir := t.TempDir()
-	data := []byte{0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x01, 0x02}
-	path := writeTestFile(t, dir, "test.dat", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatXZ, format)
-}
-
-func TestDetect_BZ2Magic(t *testing.T) {
-	dir := t.TempDir()
-	data := []byte{0x42, 0x5a, 0x68, 0x39, 0x01, 0x02}
-	path := writeTestFile(t, dir, "test.dat", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatBZ2, format)
-}
-
-func TestDetect_ZstdMagic(t *testing.T) {
-	dir := t.TempDir()
-	data := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00}
-	path := writeTestFile(t, dir, "test.dat", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatZstd, format)
-}
-
-func TestDetect_PlainText(t *testing.T) {
-	dir := t.TempDir()
-	data := []byte("hello world\nthis is plain text\n")
-	path := writeTestFile(t, dir, "test.txt", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format)
-}
-
-// --- Extension fallback tests ---
-
-func TestDetect_GzipExtension(t *testing.T) {
-	dir := t.TempDir()
-	// File has .gz extension but no magic bytes (empty-ish file with text).
-	data := []byte("not really gzip")
-	path := writeTestFile(t, dir, "test.gz", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	// Magic bytes don't match, so extension fallback kicks in.
-	assert.Equal(t, FormatGzip, format)
-}
-
-func TestDetect_XZExtension(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "test.xz", []byte("not xz"))
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatXZ, format)
-}
-
-func TestDetect_BZ2Extension(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "test.bz2", []byte("not bz2"))
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatBZ2, format)
-}
-
-func TestDetect_ZstExtension(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "test.zst", []byte("not zst"))
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatZstd, format)
-}
-
-func TestDetect_ZstdExtension(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "test.zstd", []byte("not zstd"))
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatZstd, format)
-}
-
-// --- Seekable zstd detection ---
-
-func TestDetect_SeekableZstd(t *testing.T) {
-	dir := t.TempDir()
-
-	// Build a minimal file with zstd magic header and seekable footer.
-	var data []byte
-	// Zstd magic at the start.
-	data = append(data, 0x28, 0xb5, 0x2f, 0xfd)
-	// Pad to make room for footer.
-	data = append(data, make([]byte, 100)...)
-	// Seekable footer (last 9 bytes): magic(4) + num_frames(4) + flags(1)
-	var footer [9]byte
-	binary.LittleEndian.PutUint32(footer[0:4], SeekTableFooterMagic)
-	binary.LittleEndian.PutUint32(footer[4:8], 1) // 1 frame
-	footer[8] = 0                                   // no checksums
-	data = append(data, footer[:]...)
-
-	path := writeTestFile(t, dir, "test.zst", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatSeekableZstd, format)
-}
-
-func TestDetect_ZstdWithoutSeekableFooter(t *testing.T) {
-	dir := t.TempDir()
-	// Zstd magic but no seekable footer.
-	data := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-	path := writeTestFile(t, dir, "test.zst", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatZstd, format)
-}
-
-// --- Compound archive exclusion ---
-
-func TestDetect_TarGzExcluded(t *testing.T) {
-	dir := t.TempDir()
-	data := []byte{0x1f, 0x8b, 0x08, 0x00} // gzip magic
-	path := writeTestFile(t, dir, "archive.tar.gz", data)
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format, "compound archives should be excluded")
-}
-
-func TestDetect_TgzExcluded(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "archive.tgz", []byte{0x1f, 0x8b})
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format)
-}
-
-func TestDetect_TarBz2Excluded(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "archive.tar.bz2", []byte{0x42, 0x5a, 0x68})
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format)
-}
-
-func TestDetect_TarXzExcluded(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "archive.tar.xz", []byte{0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00})
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format)
-}
-
-func TestDetect_TarZstExcluded(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "archive.tar.zst", []byte{0x28, 0xb5, 0x2f, 0xfd})
-
-	format, err := Detect(path)
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format)
-}
-
-// --- IsCompressed convenience ---
-
-func TestIsCompressed_True(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "test.gz", []byte{0x1f, 0x8b, 0x08})
-	assert.True(t, IsCompressed(path))
-}
-
-func TestIsCompressed_False(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTestFile(t, dir, "test.txt", []byte("plain text"))
-	assert.False(t, IsCompressed(path))
-}
-
-// --- Nonexistent file ---
-
-func TestDetect_NonexistentFile(t *testing.T) {
-	format, err := Detect("/nonexistent/path/to/file.txt")
-	require.NoError(t, err)
-	assert.Equal(t, FormatNone, format)
-}
-
-func TestDetect_NonexistentFileWithExtension(t *testing.T) {
-	// Can't open file, so magic detection fails, but extension fallback works.
-	format, err := Detect("/nonexistent/path/to/file.gz")
-	require.NoError(t, err)
-	assert.Equal(t, FormatGzip, format)
-}
-
-// --- Format.String() ---
-
-func TestCompressionFormat_String(t *testing.T) {
-	tests := []struct {
-		format CompressionFormat
-		want   string
+func TestIsCompoundArchive(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
 	}{
-		{FormatNone, "none"},
-		{FormatGzip, "gzip"},
-		{FormatXZ, "xz"},
-		{FormatBZ2, "bz2"},
-		{FormatZstd, "zstd"},
-		{FormatSeekableZstd, "seekable_zstd"},
+		{"foo.tar.gz", true},
+		{"foo.TGZ", true},
+		{"foo.tar.zst", true},
+		{"foo.tzst", true},
+		{"foo.tar.xz", true},
+		{"foo.txz", true},
+		{"foo.tar.bz2", true},
+		{"foo.tbz2", true},
+		{"foo.tbz", true},
+		{"foo.gz", false},
+		{"foo.zst", false},
+		{"foo.log", false},
+		{"foo", false},
+		{"/some/path/app.tar.gz", true},
+		{"/path/to/archive.TAR.GZ", true},
 	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			if got := IsCompoundArchive(tc.path); got != tc.want {
+				t.Errorf("IsCompoundArchive(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+		})
+	}
+}
 
-	for _, tt := range tests {
-		assert.Equal(t, tt.want, tt.format.String())
+func TestDetectByExtension(t *testing.T) {
+	cases := []struct {
+		path string
+		want Format
+	}{
+		{"foo.gz", FormatGzip},
+		{"foo.GZ", FormatGzip},
+		{"foo.gzip", FormatGzip},
+		{"foo.zst", FormatZstd},
+		{"foo.zstd", FormatZstd},
+		{"foo.xz", FormatXz},
+		{"foo.bz2", FormatBz2},
+		{"foo.bzip2", FormatBz2},
+		{"foo.log", FormatNone},
+		{"foo", FormatNone},
+		// Compound archive should ignore the extension match.
+		// NOTE: detectByExtension itself only checks the final extension;
+		// the compound-archive gate is in DetectFromPath. So at this level
+		// the .gz part of .tar.gz DOES match as gzip.
+		{"foo.tar.gz", FormatGzip}, // raw extension check
+	}
+	for _, tc := range cases {
+		t.Run(tc.path, func(t *testing.T) {
+			if got := detectByExtension(tc.path); got != tc.want {
+				t.Errorf("detectByExtension(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetectFromReader_MagicBytes(t *testing.T) {
+	cases := []struct {
+		name   string
+		header []byte
+		want   Format
+	}{
+		{"gzip", []byte{0x1f, 0x8b, 0x08, 0x00}, FormatGzip},
+		{"zstd", []byte{0x28, 0xb5, 0x2f, 0xfd, 0x00}, FormatZstd},
+		{"xz", []byte{0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00}, FormatXz},
+		{"bz2", []byte{0x42, 0x5a, 0x68, 0x39}, FormatBz2},
+		{"unknown", []byte{0x00, 0x01, 0x02, 0x03}, FormatNone},
+		{"empty", []byte{}, FormatNone},
+		{"short", []byte{0x1f}, FormatNone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DetectFromReader(bytes.NewReader(tc.header))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetectFromPath_CompoundArchiveSkipped(t *testing.T) {
+	// A real .tar.gz file has gzip magic bytes but the compound-archive
+	// guard must still return FormatNone so the engine skips it.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "foo.tar.gz")
+	if err := os.WriteFile(p, []byte{0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DetectFromPath(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != FormatNone {
+		t.Errorf("compound archive must yield FormatNone, got %q", got)
+	}
+}
+
+func TestDetectFromPath_ExtensionWins(t *testing.T) {
+	// If extension says gzip, we trust it without reading magic bytes.
+	// Write garbage content; detection should still say gzip.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "foo.gz")
+	if err := os.WriteFile(p, []byte("not actually gzip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DetectFromPath(p)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got != FormatGzip {
+		t.Errorf("got %q, want %q", got, FormatGzip)
+	}
+}
+
+func TestDetectFromPath_FallbackToMagicBytes(t *testing.T) {
+	// Extension says nothing; magic bytes say gzip.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "data.log")
+	if err := os.WriteFile(p, []byte{0x1f, 0x8b, 0x08, 0x00}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DetectFromPath(p)
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got != FormatGzip {
+		t.Errorf("expected FormatGzip from magic bytes, got %q", got)
+	}
+}
+
+func TestDetectFromPath_MissingFileIsError(t *testing.T) {
+	_, err := DetectFromPath("/nonexistent/path/foo.log")
+	if err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}
+
+func TestIsCompressed(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "plain.log")
+	gz := filepath.Join(dir, "data.gz")
+	os.WriteFile(plain, []byte("hello"), 0o644)
+	os.WriteFile(gz, []byte{0x1f, 0x8b, 0x00}, 0o644)
+
+	if IsCompressed(plain) {
+		t.Error("plain.log should not be compressed")
+	}
+	if !IsCompressed(gz) {
+		t.Error("data.gz should be compressed")
+	}
+	// Nonexistent → false (err swallowed).
+	if IsCompressed("/nonexistent") {
+		t.Error("nonexistent should yield false")
 	}
 }

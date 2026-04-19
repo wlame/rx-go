@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    # Matrix build + lint + test. No untrusted input is used in any run: block,
+    # so the "github.event.*" injection class isn't applicable here.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go-version: ['1.25']
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: install ripgrep (ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: install ripgrep (macos)
+        if: runner.os == 'macOS'
+        run: brew install ripgrep
+
+      - name: go mod download
+        run: go mod download
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.7
+
+      - name: golangci-lint
+        run: golangci-lint run ./...
+
+      - name: go test (race + cover)
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: upload coverage
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.go-version }}
+          path: coverage.out

@@ -1,128 +1,152 @@
-// reader.go provides a decompression reader factory that auto-detects the compression
-// format and returns an io.ReadCloser wrapping the appropriate native decompressor.
-//
-// All decompression is done in-process using pure Go libraries — no subprocess calls:
-//   - gzip:  github.com/klauspost/compress/gzip
-//   - zstd:  github.com/klauspost/compress/zstd
-//   - xz:    github.com/ulikunitz/xz
-//   - bzip2: compress/bzip2 (stdlib)
-//
-// The caller receives an io.ReadCloser and never needs to know which format was used.
 package compression
 
 import (
 	"compress/bzip2"
+	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 
-	kgzip "github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/ulikunitz/xz"
 )
 
-// NewReader auto-detects the compression format of the file at path and returns
-// an io.ReadCloser that yields decompressed bytes.
+// NewReader returns an io.ReadCloser that decompresses `src` according
+// to `format`. Supported formats: gzip, bzip2, zstd (including
+// seekable-zstd read linearly), and xz. FormatNone returns src wrapped
+// as a pass-through closer.
 //
-// The caller must close the returned reader when done. Closing it also closes
-// the underlying file handle.
+// SINGLE-STATIC-BINARY MANDATE (decision 5.15, Stage 8 Finding 4):
 //
-// For SeekableZstd files this returns a sequential reader that decompresses all
-// frames in order (parallel decompression is handled separately by the engine).
-func NewReader(path string) (io.ReadCloser, CompressionFormat, error) {
-	format, err := Detect(path)
-	if err != nil {
-		return nil, FormatNone, fmt.Errorf("detect compression: %w", err)
-	}
-	if format == FormatNone {
-		return nil, FormatNone, fmt.Errorf("file is not compressed: %s", path)
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, format, fmt.Errorf("open %s: %w", path, err)
-	}
-
-	rc, err := newDecompressor(f, format)
-	if err != nil {
-		f.Close()
-		return nil, format, err
-	}
-
-	return rc, format, nil
-}
-
-// newDecompressor wraps the raw file in the appropriate decompression reader.
-// The returned readCloser closes both the decompressor and the underlying file.
-func newDecompressor(f *os.File, format CompressionFormat) (io.ReadCloser, error) {
+// All decoders are pure Go — no subprocess fork for `gzip -d`,
+// `xz -d`, `bzip2 -d`, or `zstd -d`. This keeps the rx binary usable
+// on distroless / busybox containers that lack those external tools.
+// Prior to Stage 8 the webapi layer used pure-Go readers but the
+// trace engine shelled out; consolidating both through this helper
+// enforces the mandate uniformly.
+//
+// PERFORMANCE NOTE: ulikunitz/xz is noticeably slower than the C
+// xz-utils reference implementation for large files. In practice .xz
+// files are rare in log workloads (gzip dominates) so the perf gap is
+// acceptable at v1. If a user reports xz as a hot spot, we can add an
+// opt-in subprocess path behind an env flag at that time.
+//
+// CLOSE SEMANTICS (R2M2 migration, 2026-04-18):
+//
+// The source MUST be an io.ReadCloser. The returned ReadCloser OWNS
+// the source for lifetime purposes: calling Close on the returned
+// wrapper also calls Close on src. Callers that want to retain
+// ownership of the underlying reader should wrap with io.NopCloser
+// explicitly:
+//
+//	r, err := compression.NewReader(io.NopCloser(src), format)
+//
+// This replaces the pre-migration contract where the wrapper's Close
+// was a no-op for certain formats (bzip2, xz, FormatNone), forcing
+// callers to defer a separate src.Close(). That pattern was
+// error-prone and leaked file handles when the wrapper was the
+// easier-to-see thing in the call site. The new contract closes both
+// in a single deferred call, which is the Go-idiomatic composition
+// pattern (like net/http.Response.Body wrapping the underlying
+// connection).
+//
+// For formats where the decoder holds native resources (zstd's
+// internal goroutines, xz's buffers), Close releases them BEFORE
+// closing src. This ordering matters: the decoder may issue a final
+// Read from src during its own Close to validate trailers; closing
+// src first would race against that read.
+func NewReader(src io.ReadCloser, format Format) (io.ReadCloser, error) {
 	switch format {
 	case FormatGzip:
-		gr, err := kgzip.NewReader(f)
+		r, err := gzip.NewReader(src)
 		if err != nil {
+			// Caller retains src on init failure so THEY can close it.
+			// Do NOT close src here — the caller's defer handles it.
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		return &multiCloser{reader: gr, closers: []io.Closer{gr, f}}, nil
-
-	case FormatXZ:
-		xr, err := xz.NewReader(f)
-		if err != nil {
-			return nil, fmt.Errorf("xz reader: %w", err)
-		}
-		// xz.Reader does not implement io.Closer, so we only need to close the file.
-		return &multiCloser{reader: xr, closers: []io.Closer{f}}, nil
-
-	case FormatBZ2:
-		// stdlib bzip2.NewReader returns io.Reader only (no Close).
-		br := bzip2.NewReader(f)
-		return &multiCloser{reader: br, closers: []io.Closer{f}}, nil
-
+		return &chainCloser{wrapped: r, src: src}, nil
+	case FormatBz2:
+		// compress/bzip2.NewReader returns an io.Reader (no Close) and
+		// doesn't report init errors — malformed data surfaces during
+		// Read. Use closeFn to chain src-close into the wrapper.
+		return &chainCloser{wrapped: io.NopCloser(bzip2.NewReader(src)), src: src}, nil
 	case FormatZstd, FormatSeekableZstd:
-		// klauspost's zstd decoder handles both regular and seekable zstd
-		// when reading sequentially (it treats seekable frames as a normal stream).
-		zr, err := zstd.NewReader(f)
+		// klauspost/compress's zstd.NewReader decodes both standard
+		// zstd streams and seekable-zstd files — the "skippable frames"
+		// that carry the seek index are ignored on a linear read.
+		// Seekable-zstd is the same frame format; the decoder doesn't
+		// know or care about the index.
+		//
+		// POOLING NOTE: the decoder pool in decoder_pool.go does NOT
+		// apply to this call site. Pool reuse works for stateless
+		// DecodeAll calls on a single pre-buffered frame; the streaming
+		// zstd.NewReader(src) wrapper holds per-instance state (window
+		// buffers and internal goroutines tied to this specific source),
+		// so it must be constructed fresh per stream and closed when
+		// done. The per-frame path in internal/seekable/decoder.go uses
+		// the pool instead.
+		r, err := zstd.NewReader(src)
 		if err != nil {
 			return nil, fmt.Errorf("zstd reader: %w", err)
 		}
-		return &zstdReadCloser{reader: zr, file: f}, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported compression format: %s", format)
-	}
-}
-
-// multiCloser wraps an io.Reader plus one or more io.Closers so the caller
-// only needs to close a single handle.
-type multiCloser struct {
-	reader  io.Reader
-	closers []io.Closer
-}
-
-func (mc *multiCloser) Read(p []byte) (int, error) {
-	return mc.reader.Read(p)
-}
-
-func (mc *multiCloser) Close() error {
-	var firstErr error
-	for _, c := range mc.closers {
-		if err := c.Close(); err != nil && firstErr == nil {
-			firstErr = err
+		return &chainCloser{wrapped: zstdReaderCloser{r: r}, src: src}, nil
+	case FormatXz:
+		r, err := xz.NewReader(src)
+		if err != nil {
+			return nil, fmt.Errorf("xz reader: %w", err)
 		}
+		return &chainCloser{wrapped: io.NopCloser(r), src: src}, nil
+	case FormatNone:
+		// Uncompressed — pass through without decompression, but still
+		// chain-close so src is released on wrapper.Close.
+		return &chainCloser{wrapped: io.NopCloser(src), src: src}, nil
+	default:
+		return nil, fmt.Errorf("unsupported compression format: %q", format)
 	}
-	return firstErr
 }
 
-// zstdReadCloser wraps klauspost's *zstd.Decoder (which uses Close to release
-// resources but does not implement io.ReadCloser directly) and the underlying file.
-type zstdReadCloser struct {
-	reader *zstd.Decoder
-	file   *os.File
+// chainCloser composes a decoder wrapper with the underlying source
+// into a single io.ReadCloser whose Close releases BOTH. The Read
+// method delegates to the decoder; Close calls the decoder's Close
+// first (to flush / validate trailing state), then src.Close().
+//
+// The two close calls are independent: a failure on the decoder does
+// not prevent src from being closed. Errors are joined with
+// errors.Join so the caller sees both.
+type chainCloser struct {
+	wrapped io.ReadCloser
+	src     io.Closer
 }
 
-func (z *zstdReadCloser) Read(p []byte) (int, error) {
-	return z.reader.Read(p)
+// Read forwards into the decoder.
+func (c *chainCloser) Read(p []byte) (int, error) { return c.wrapped.Read(p) }
+
+// Close closes the decoder wrapper then the source, returning the
+// joined error (or nil if both succeeded). Order matters: the
+// decoder's Close may read residual bytes from src (e.g. gzip CRC
+// validation), so src must stay open through that call.
+func (c *chainCloser) Close() error {
+	wErr := c.wrapped.Close()
+	sErr := c.src.Close()
+	if wErr == nil {
+		return sErr
+	}
+	if sErr == nil {
+		return wErr
+	}
+	return errors.Join(wErr, sErr)
 }
 
-func (z *zstdReadCloser) Close() error {
-	z.reader.Close()    // zstd.Decoder.Close does not return an error.
-	return z.file.Close()
+// zstdReaderCloser adapts *zstd.Decoder's Close() signature (which
+// returns no error) to io.Closer.
+type zstdReaderCloser struct {
+	r *zstd.Decoder
+}
+
+func (z zstdReaderCloser) Read(p []byte) (int, error) { return z.r.Read(p) }
+
+// Close releases the decoder's internal buffers.
+func (z zstdReaderCloser) Close() error {
+	z.r.Close()
+	return nil
 }
