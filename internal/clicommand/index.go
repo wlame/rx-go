@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -40,13 +41,14 @@ import (
 // additional telemetry) but must not break the above keys.
 func NewIndexCommand(out io.Writer) *cobra.Command {
 	var (
-		force      bool
-		showInfo   bool
-		deleteFlag bool
-		jsonOutput bool
-		recursive  bool
-		analyze    bool
-		threshold  int
+		force              bool
+		showInfo           bool
+		deleteFlag         bool
+		jsonOutput         bool
+		recursive          bool
+		analyze            bool
+		threshold          int
+		analyzeWindowLines int
 	)
 	cmd := &cobra.Command{
 		Use:   "index PATH [PATH ...]",
@@ -54,14 +56,15 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runIndex(out, indexParams{
-				paths:      args,
-				force:      force,
-				showInfo:   showInfo,
-				delete:     deleteFlag,
-				jsonOutput: jsonOutput,
-				recursive:  recursive,
-				analyze:    analyze,
-				threshold:  threshold,
+				paths:              args,
+				force:              force,
+				showInfo:           showInfo,
+				delete:             deleteFlag,
+				jsonOutput:         jsonOutput,
+				recursive:          recursive,
+				analyze:            analyze,
+				threshold:          threshold,
+				analyzeWindowLines: analyzeWindowLines,
 			})
 		},
 	}
@@ -72,18 +75,25 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively process directories")
 	cmd.Flags().BoolVarP(&analyze, "analyze", "a", false, "Run full analysis with anomaly detection")
 	cmd.Flags().IntVar(&threshold, "threshold", 0, "Minimum file size in MB to index (0 = env default). Ignored with --analyze.")
+	// --analyze-window-lines: sliding-window size (in lines) handed to the
+	// analyzer coordinator. 0 means "not set" — we fall through to the
+	// RX_ANALYZE_WINDOW_LINES env var and then the compiled-in default
+	// via analyzer.ResolveWindowLines. Only relevant with --analyze.
+	cmd.Flags().IntVar(&analyzeWindowLines, "analyze-window-lines", 0,
+		"Sliding-window size (lines) for analyzer detectors. 0 = default. Only used with --analyze.")
 	return cmd
 }
 
 type indexParams struct {
-	paths      []string
-	force      bool
-	showInfo   bool
-	delete     bool
-	jsonOutput bool
-	recursive  bool
-	analyze    bool
-	threshold  int
+	paths              []string
+	force              bool
+	showInfo           bool
+	delete             bool
+	jsonOutput         bool
+	recursive          bool
+	analyze            bool
+	threshold          int
+	analyzeWindowLines int
 }
 
 // indexBuildResult aggregates multi-path index-build outcomes into the
@@ -306,7 +316,15 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			}
 		}
 
-		idx, err := index.Build(path, index.BuildOptions{Analyze: p.analyze})
+		// Resolve the analyzer window size here. urlParam=0 because the
+		// CLI has no URL param; the resolver applies CLI → env → default
+		// precedence. For non-analyze runs this value is ignored by the
+		// builder but still harmless to compute.
+		windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
+		idx, err := index.Build(path, index.BuildOptions{
+			Analyze:     p.analyze,
+			WindowLines: windowLines,
+		})
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
 				Path:  path,

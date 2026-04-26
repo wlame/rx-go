@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -200,7 +201,16 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 
 	// Fresh build. index.Build() opens/stats the file itself, so an
 	// open failure surfaces here.
-	idx, err := index.Build(absPath, index.BuildOptions{Analyze: req.Analyze})
+	//
+	// Window-size precedence: URL body param (req.AnalyzeWindowLines)
+	// wins; if unset (zero), the resolver falls through to the env var
+	// and then the compiled-in default. The CLI flag doesn't apply in
+	// the HTTP path, so we pass cliFlag=0.
+	windowLines := analyzer.ResolveWindowLines(0, req.AnalyzeWindowLines)
+	idx, err := index.Build(absPath, index.BuildOptions{
+		Analyze:     req.Analyze,
+		WindowLines: windowLines,
+	})
 	if err != nil {
 		mgr.Fail(taskID, fmt.Sprintf("build index: %v", err))
 		return

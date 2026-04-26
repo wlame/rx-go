@@ -299,6 +299,10 @@
           "analyze": {
             "type": "boolean"
           },
+          "analyze_window_lines": {
+            "format": "int64",
+            "type": "integer"
+          },
           "force": {
             "type": "boolean"
           },
