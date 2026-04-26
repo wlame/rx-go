@@ -29,6 +29,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -45,6 +46,26 @@ type BuildOptions struct {
 	// fields. When false, only the line-index itself is populated;
 	// matches Python's "light" cache.
 	Analyze bool
+
+	// WindowLines is the sliding-window size passed to analyzer.NewCoordinator
+	// when Analyze is true. Zero means "use the resolver default" — the
+	// builder feeds this through analyzer.ResolveWindowLines(WindowLines, 0)
+	// so the env-var and default-value branches of the resolver still apply.
+	//
+	// Ignored when Analyze is false.
+	WindowLines int
+
+	// Detectors is the list of line-oriented detectors to run during the
+	// scan. Ignored when Analyze is false. When Analyze is true and this
+	// slice is nil/empty, no detectors run but the builder still goes
+	// through the coordinator code path (the coordinator's zero-detector
+	// fast path makes that effectively free).
+	//
+	// Callers typically populate this from the analyzer registry
+	// (analyzer.Snapshot filtered down to LineDetector); passing an
+	// explicit slice here is mostly for tests that want deterministic
+	// detector sets.
+	Detectors []analyzer.LineDetector
 }
 
 // GetIndexStepBytes returns the default checkpoint step in bytes.
@@ -91,6 +112,23 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		_ = f.Close()
 	}()
 
+	// Wire up the analyzer coordinator when --analyze is on. One
+	// coordinator per scan; today the builder is sequential so that's
+	// effectively one "worker". When the builder later shards the file
+	// across K workers (plan §Solution Overview), each worker will get
+	// its own Coordinator, and the per-worker anomaly slices will be
+	// combined by analyzer.Deduplicate before storage — preserving the
+	// W-line-overlap correctness story described in the plan.
+	//
+	// When Analyze is false we pass a nil coordinator; walkLines skips
+	// all per-line dispatch so the hot loop stays byte-identical to its
+	// pre-analyzer shape (no regression for users who don't opt in).
+	var coord *analyzer.Coordinator
+	if opts.Analyze {
+		windowLines := analyzer.ResolveWindowLines(opts.WindowLines, 0)
+		coord = analyzer.NewCoordinator(windowLines, opts.Detectors)
+	}
+
 	// Walk the file. Python uses `for line in f` which yields lines
 	// terminated by the platform's preferred newline. In Go, bufio's
 	// ReadSlice('\n') gives the same slice-including-terminator view.
@@ -100,7 +138,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// The `analyze` flag only gates anomaly-detection and prefix-pattern
 	// work, which are Python-only features. `true` is passed here
 	// unconditionally so basic stats are always available.
-	stats, err := walkLines(f, step, true)
+	stats, err := walkLines(f, step, true, coord)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +185,58 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// large files don't pay O(n). Python behaves the same.
 	idx.LineEnding = ptrString(stats.LineEnding)
 
+	// Finalize analyzer output. When opts.Analyze is true, build a
+	// FlushContext from the line-stats accumulator and hand it to every
+	// detector's Finalize. The per-worker anomaly lists are then
+	// deduplicated by analyzer.Deduplicate — today there is only one
+	// "worker" (the single sequential walk) so dedup is effectively a
+	// pass-through, but writing the code through Deduplicate keeps the
+	// plumbing ready for the future chunk-parallel builder described in
+	// the plan.
+	//
+	// Empty slice vs nil: rxtypes.UnifiedFileIndex.Anomalies is
+	// *[]AnomalyRangeResult so a nil pointer serializes to JSON null
+	// (pre-analyze behavior) and a populated pointer serializes to
+	// [...]. When Analyze is on we always set a pointer — to an empty
+	// slice if the detectors emitted nothing — so the JSON shape is "[]"
+	// rather than "null" in that case. That matches Python's behavior
+	// for analysis_performed=true runs.
+	if opts.Analyze && coord != nil {
+		flush := &analyzer.FlushContext{
+			TotalLines:       stats.LineCount,
+			MedianLineLength: int64(stats.LineStats.Median),
+			P99LineLength:    int64(stats.LineStats.P99),
+		}
+		// One group today (single-worker scan). When chunk-parallel builds
+		// land, collect one group per worker and pass them all in here.
+		groups := [][]analyzer.Anomaly{coord.Finalize(flush)}
+		deduped := analyzer.Deduplicate(groups)
+
+		results := make([]rxtypes.AnomalyRangeResult, 0, len(deduped))
+		summary := make(map[string]int, 0)
+		for _, a := range deduped {
+			// Category was overwritten with detector.Name() by the
+			// coordinator — see Coordinator.Finalize. That's what the
+			// frontend's "jump to next $detector" uses as the grouping key,
+			// so we forward it into both the Detector field (explicit wire
+			// field) and Category (legacy Python field preserved for
+			// compatibility).
+			results = append(results, rxtypes.AnomalyRangeResult{
+				StartLine:   a.StartLine,
+				EndLine:     a.EndLine,
+				StartOffset: a.StartOffset,
+				EndOffset:   a.EndOffset,
+				Severity:    a.Severity,
+				Category:    a.Category,
+				Description: a.Description,
+				Detector:    a.Category,
+			})
+			summary[a.Category]++
+		}
+		idx.Anomalies = &results
+		idx.AnomalySummary = summary
+	}
+
 	// Stage 9 Round 2 S6: gated helper — CLI mode skips observation.
 	prometheus.ObserveIndexBuildDuration(time.Since(started))
 	return idx, nil
@@ -186,7 +276,14 @@ type walkStats struct {
 //
 // The line-ending sample is the first 64 KB of raw bytes (including
 // terminators) — we feed it to detectLineEnding after the walk.
-func walkLines(r io.Reader, step int64, analyze bool) (*walkStats, error) {
+//
+// coord is the analyzer coordinator for this walk, or nil when
+// analysis is disabled. When non-nil, each line (stripped of its
+// trailing CR/LF) is dispatched via coord.ProcessLine along with its
+// absolute byte-offset range. Finalize is the caller's responsibility
+// (Build invokes it after walkLines returns so the FlushContext can be
+// populated from the finalized line-stats snapshot).
+func walkLines(r io.Reader, step int64, analyze bool, coord *analyzer.Coordinator) (*walkStats, error) {
 	stats := &walkStats{
 		// Initial checkpoint: first line is always at offset 0.
 		LineIndex:  []rxtypes.LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
@@ -291,6 +388,21 @@ func walkLines(r io.Reader, step int64, analyze bool) (*walkStats, error) {
 		// future gating of Python-only features (anomaly detection,
 		// prefix patterns) that rx-go doesn't yet implement.
 		_ = analyze
+
+		// Dispatch to the analyzer coordinator if one was provided. We
+		// pass the STRIPPED line (no trailing CR/LF) to match detector
+		// expectations — the Window's LineEvent contract says Bytes is
+		// "the line content WITHOUT the trailing newline". The absolute
+		// byte range spans the raw line including its terminator so
+		// anomaly start/end offsets align with what seek-to-line needs.
+		//
+		// Zero-detector fast path: if coord has no detectors registered,
+		// ProcessLine is a no-op (single branch per line), so the cost
+		// of passing a coordinator with an empty detector slice is
+		// negligible.
+		if coord != nil {
+			coord.ProcessLine(currentLine, currentOffset, currentOffset+lineLenBytes, stripped)
+		}
 
 		currentOffset += lineLenBytes
 
