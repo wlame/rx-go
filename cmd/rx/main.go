@@ -22,6 +22,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wlame/rx-go/internal/clicommand"
+
+	// Blank-import analyzer detectors so their package init() calls
+	// register them with the global analyzer registry before main runs
+	// analyzer.Freeze(). Add one line per detector as we roll out the
+	// MVP catalog (see docs/plans/2026-04-21-analyzers.md).
+	_ "github.com/wlame/rx-go/internal/analyzer/detectors/repeatidentical"
 )
 
 // appVersion is overridden at link time via -ldflags "-X main.appVersion=..."
