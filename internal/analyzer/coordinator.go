@@ -115,6 +115,19 @@ func (c *Coordinator) ProcessLine(num, start, end int64, line []byte) {
 // detector's Finalize; detectors that don't depend on these fields
 // may ignore the argument.
 //
+// The coordinator overwrites each anomaly's Category with its
+// producing detector's Name() before returning. Rationale:
+//
+//   - Deduplicate (Task 4) keys on (Category, start_offset, end_offset)
+//     and the plan calls out "detector name" as the dedup key component.
+//     Without this attachment, two different detectors that both emit
+//     Category="log-pattern" would incorrectly collapse across workers.
+//
+//   - Detectors remain free to emit their own semantic Category internally
+//     (e.g. "log-pattern", "secrets"), but after Finalize the Category
+//     field becomes the globally-unique detector name. Callers that need
+//     the bucket name read it from the detector's Category() method.
+//
 // Returns nil when there are no detectors — avoids allocating an
 // empty slice that the caller would just discard.
 func (c *Coordinator) Finalize(flush *FlushContext) []Anomaly {
@@ -126,7 +139,11 @@ func (c *Coordinator) Finalize(flush *FlushContext) []Anomaly {
 	// anomalies will still trigger growth, which is fine.
 	out := make([]Anomaly, 0, len(c.detectors))
 	for _, d := range c.detectors {
-		out = append(out, d.Finalize(flush)...)
+		name := d.Name()
+		for _, a := range d.Finalize(flush) {
+			a.Category = name
+			out = append(out, a)
+		}
 	}
 	return out
 }

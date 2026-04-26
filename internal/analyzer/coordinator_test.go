@@ -161,7 +161,8 @@ func TestCoordinator_WindowLenTracksPushes(t *testing.T) {
 
 func TestCoordinator_FinalizeAggregatesAnomalies(t *testing.T) {
 	// Coordinator.Finalize concatenates each detector's anomaly slice
-	// in detector order.
+	// in detector order, overwriting each anomaly's Category with the
+	// producing detector's Name() so Deduplicate (Task 4) can key on it.
 	d1 := newTrackingDetector("t1")
 	d1.emit = []Anomaly{
 		{StartLine: 1, EndLine: 2, Category: "a", Severity: 0.5},
@@ -181,9 +182,22 @@ func TestCoordinator_FinalizeAggregatesAnomalies(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d anomalies, want 3", len(got))
 	}
-	if got[0].Category != "a" || got[1].Category != "a" || got[2].Category != "b" {
-		t.Errorf("category order = [%s %s %s], want [a a b]",
-			got[0].Category, got[1].Category, got[2].Category)
+	// After Finalize the Category field carries the producing detector's
+	// Name(), NOT the semantic category the detector emitted. Aggregation
+	// order remains detector-list order: t1's anomalies first, then t2's.
+	wantNames := []string{"t1", "t1", "t2"}
+	for i, want := range wantNames {
+		if got[i].Category != want {
+			t.Errorf("got[%d].Category = %q, want %q (detector name)", i, got[i].Category, want)
+		}
+	}
+	// Line-number aggregation order is a secondary check: t1's (1,2) and
+	// (5,5) come before t2's (10,11).
+	wantStartLines := []int64{1, 5, 10}
+	for i, want := range wantStartLines {
+		if got[i].StartLine != want {
+			t.Errorf("got[%d].StartLine = %d, want %d", i, got[i].StartLine, want)
+		}
 	}
 	// The flush context must be forwarded verbatim to each detector.
 	if d1.flushSeen != flush || d2.flushSeen != flush {
