@@ -101,8 +101,11 @@ func TestValidate_InsideRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
-	// Result should be the resolved form.
-	want, _ := filepath.EvalSymlinks(inside)
+	// The returned path is the absolute (but non-canonical) form —
+	// downstream consumers (cache hashers, os.Open) rely on this shape
+	// being stable, so symlink resolution happens only internally for
+	// the sandbox prefix check.
+	want, _ := filepath.Abs(inside)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -227,12 +230,13 @@ func TestValidate_PathIsRootItself(t *testing.T) {
 	if err := SetSearchRoots([]string{tmp}); err != nil {
 		t.Fatal(err)
 	}
-	// The root directory itself should validate.
+	// The root directory itself should validate. Returned path is the
+	// Abs form (see TestValidate_InsideRoot for the contract rationale).
 	got, err := ValidatePathWithinRoots(tmp)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want, _ := filepath.EvalSymlinks(tmp)
+	want, _ := filepath.Abs(tmp)
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
