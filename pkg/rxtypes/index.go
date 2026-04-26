@@ -119,11 +119,17 @@ type AnomalyRangeResult struct {
 }
 
 // IndexRequest is the body for POST /v1/index (background task).
+//
+// AnalyzeWindowLines is the optional sliding-window size used by the
+// analyzer coordinator when Analyze=true. Zero / missing means "not
+// set" — the server falls through to analyzer.ResolveWindowLines
+// precedence (CLI flag → env var → compiled-in default).
 type IndexRequest struct {
-	Path      string `json:"path"`
-	Force     bool   `json:"force,omitempty"`
-	Analyze   bool   `json:"analyze,omitempty"`
-	Threshold *int   `json:"threshold,omitempty"` // MB; nil = use env default
+	Path               string `json:"path"`
+	Force              bool   `json:"force,omitempty"`
+	Analyze            bool   `json:"analyze,omitempty"`
+	Threshold          *int   `json:"threshold,omitempty"`            // MB; nil = use env default
+	AnalyzeWindowLines int    `json:"analyze_window_lines,omitempty"` // 0 = use resolver default
 }
 
 // IndexResponse is the body returned by GET /v1/index (synchronous)
