@@ -145,28 +145,30 @@ func ValidatePathWithinRoots(path string) (string, error) {
 		return "", ErrNoSearchRootsConfigured
 	}
 
-	// Resolve the user-supplied path. If the full path doesn't exist,
-	// we still want symlinks in the EXISTING portion resolved — otherwise
-	// a search root stored in its canonical form (e.g. /private/var/...
-	// on macOS, where /var is a symlink to /private/var) would reject
-	// perfectly valid nonexistent children (e.g. /var/.../new.log). The
-	// fix: resolve the deepest existing ancestor, re-append the tail.
-	cleaned, err := filepath.Abs(path)
+	// Resolve the user-supplied path to an absolute form. This is what we
+	// return to the caller — downstream consumers (cache hashers, file
+	// open) have always worked with the non-canonical Abs form, so
+	// returning the canonical (symlink-resolved) form here would break
+	// cache lookups silently on macOS (where /var/... and /private/var/...
+	// hash to different cache keys).
+	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
-	cleaned, err = resolveExistingAncestor(cleaned)
+	// For the sandbox prefix check we need the CANONICAL form: search
+	// roots are stored canonicalized, and filepath.EvalSymlinks can't
+	// handle nonexistent paths, so we walk up to the deepest existing
+	// ancestor and re-append the tail. On macOS this collapses
+	// /var/folders/... → /private/var/folders/... before comparing.
+	canonical, err := resolveExistingAncestor(absPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
 
 	sep := string(filepath.Separator)
 	for _, root := range snapshot {
-		if cleaned == root {
-			return cleaned, nil
-		}
-		if strings.HasPrefix(cleaned, root+sep) {
-			return cleaned, nil
+		if canonical == root || strings.HasPrefix(canonical, root+sep) {
+			return absPath, nil
 		}
 	}
 	return "", &ErrPathOutsideRoots{Path: path, Roots: snapshot}
