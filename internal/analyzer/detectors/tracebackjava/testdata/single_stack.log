@@ -1,0 +1,5 @@
+service starting up
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.length()" because "s" is null
+	at com.example.app.Main.process(Main.java:42)
+	at com.example.app.Main.main(Main.java:17)
+service exiting
