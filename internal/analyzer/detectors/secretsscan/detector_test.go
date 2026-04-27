@@ -35,9 +35,7 @@ type rawLine struct {
 
 // feedFixture reads testdata/<name>, splits into lines preserving byte
 // offsets, and drives a fresh Detector through a real Coordinator.
-// Returns the anomalies emitted by the detector directly so callers can
-// assert on the semantic Category (the coordinator rewrites it to
-// Name() in the dedup stage, but these tests run below that layer).
+// Returns the anomalies emitted by the detector directly.
 func feedFixture(t *testing.T, name string) ([]analyzer.Anomaly, []rawLine) {
 	t.Helper()
 
@@ -410,11 +408,8 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	if a.Detector != detectorName {
 		t.Errorf("Detector = %q, want %q", a.Detector, detectorName)
 	}
-	if a.Category != detectorName {
-		// The coordinator rewrites Category to Name() — that's the dedup
-		// contract (see analyzer.Coordinator.Finalize).
-		t.Errorf("Category = %q, want %q (coordinator overwrites to Name())",
-			a.Category, detectorName)
+	if a.Category != detectorCategory {
+		t.Errorf("Category = %q, want %q (semantic bucket)", a.Category, detectorCategory)
 	}
 	if a.StartLine != 3 || a.EndLine != 3 {
 		t.Errorf("span: start=%d end=%d, want 3..3", a.StartLine, a.EndLine)

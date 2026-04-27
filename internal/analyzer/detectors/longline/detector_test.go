@@ -29,9 +29,8 @@ import (
 )
 
 // feed drives a fresh Detector through a real Coordinator, then calls
-// d.Finalize(flush) directly so the test can see the detector's
-// semantic Category unchanged (the coordinator would rewrite it to
-// Name()).
+// d.Finalize(flush) directly so the test sees the detector's
+// own emissions verbatim.
 //
 // lines is the ordered list of line contents (no trailing newline).
 // Each line is laid out as `content + '\n'` at consecutive offsets, so
@@ -363,9 +362,9 @@ func TestDetector_Metadata(t *testing.T) {
 
 // TestDetector_EndToEnd_ViaIndexBuild confirms the detector plugs into
 // the real index.Build pipeline and its anomalies surface in the
-// UnifiedFileIndex.Anomalies list with Detector == detectorName, and
-// that the coordinator overwrites Category with Name() (the
-// Deduplicate contract).
+// UnifiedFileIndex.Anomalies list with Detector == detectorName.
+// Category is the detector's semantic bucket; the coordinator stamps
+// DetectorName separately and leaves Category alone.
 //
 // Construct a file where one line is a ~4KB outlier and the rest are
 // short. The real index pipeline computes P99 and median — we don't
@@ -412,9 +411,8 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	if a.Detector != detectorName {
 		t.Errorf("Detector = %q, want %q", a.Detector, detectorName)
 	}
-	if a.Category != detectorName {
-		t.Errorf("Category = %q, want %q (coordinator overwrites to Name())",
-			a.Category, detectorName)
+	if a.Category != detectorCategory {
+		t.Errorf("Category = %q, want %q (semantic bucket)", a.Category, detectorCategory)
 	}
 	if a.StartLine != int64(longLineNumber) || a.EndLine != int64(longLineNumber) {
 		t.Errorf("span: start=%d end=%d, want %d..%d",

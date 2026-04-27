@@ -135,10 +135,9 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	//
 	// Stage 9 Round 2 R1-B10: the walk always collects line-length stats
 	// (Python parity — see rx-python/src/rx/unified_index.py::build_index).
-	// The `analyze` flag only gates anomaly-detection and prefix-pattern
-	// work, which are Python-only features. `true` is passed here
-	// unconditionally so basic stats are always available.
-	stats, err := walkLines(f, step, true, coord)
+	// Anomaly detection is gated at the call site (opts.Analyze controls
+	// whether coord is non-nil).
+	stats, err := walkLines(f, step, coord)
 	if err != nil {
 		return nil, err
 	}
@@ -213,14 +212,18 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		deduped := analyzer.Deduplicate(groups)
 
 		results := make([]rxtypes.AnomalyRangeResult, 0, len(deduped))
-		summary := make(map[string]int, 0)
+		summary := make(map[string]int)
 		for _, a := range deduped {
-			// Category was overwritten with detector.Name() by the
-			// coordinator — see Coordinator.Finalize. That's what the
-			// frontend's "jump to next $detector" uses as the grouping key,
-			// so we forward it into both the Detector field (explicit wire
-			// field) and Category (legacy Python field preserved for
-			// compatibility).
+			// Category is the semantic bucket the detector chose
+			// ("log-traceback", "secrets", "format", ...). DetectorName is
+			// the globally-unique detector identifier stamped by the
+			// coordinator. They are independent: two distinct detectors
+			// can share a category. The wire shape exposes both so UIs
+			// can group by category AND jump by detector.
+			//
+			// Summary is keyed by DetectorName (one counter per detector)
+			// because the frontend's "jump to next $detector" logic
+			// needs per-detector counts, not per-category.
 			results = append(results, rxtypes.AnomalyRangeResult{
 				StartLine:   a.StartLine,
 				EndLine:     a.EndLine,
@@ -229,9 +232,9 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 				Severity:    a.Severity,
 				Category:    a.Category,
 				Description: a.Description,
-				Detector:    a.Category,
+				Detector:    a.DetectorName,
 			})
-			summary[a.Category]++
+			summary[a.DetectorName]++
 		}
 		idx.Anomalies = &results
 		idx.AnomalySummary = summary
@@ -283,7 +286,7 @@ type walkStats struct {
 // absolute byte-offset range. Finalize is the caller's responsibility
 // (Build invokes it after walkLines returns so the FlushContext can be
 // populated from the finalized line-stats snapshot).
-func walkLines(r io.Reader, step int64, analyze bool, coord *analyzer.Coordinator) (*walkStats, error) {
+func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats, error) {
 	stats := &walkStats{
 		// Initial checkpoint: first line is always at offset 0.
 		LineIndex:  []rxtypes.LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
@@ -384,10 +387,6 @@ func walkLines(r io.Reader, step int64, analyze bool, coord *analyzer.Coordinato
 		contentLen := len(stripped)
 		isEmpty := !hasNonWhitespace(stripped)
 		acc.observe(contentLen, isEmpty, int(currentLine), currentOffset)
-		// analyze is retained as a parameter for API stability and for
-		// future gating of Python-only features (anomaly detection,
-		// prefix patterns) that rx-go doesn't yet implement.
-		_ = analyze
 
 		// Dispatch to the analyzer coordinator if one was provided. We
 		// pass the STRIPPED line (no trailing CR/LF) to match detector

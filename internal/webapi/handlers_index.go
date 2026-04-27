@@ -207,9 +207,18 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 	// and then the compiled-in default. The CLI flag doesn't apply in
 	// the HTTP path, so we pass cliFlag=0.
 	windowLines := analyzer.ResolveWindowLines(0, req.AnalyzeWindowLines)
+
+	// Populate detectors from the global registry when Analyze is on.
+	// LineDetectorSnapshot returns FRESH instances per call — per-build
+	// state is isolated, so concurrent HTTP-driven builds don't collide.
+	var detectors []analyzer.LineDetector
+	if req.Analyze {
+		detectors = analyzer.LineDetectorSnapshot()
+	}
 	idx, err := index.Build(absPath, index.BuildOptions{
 		Analyze:     req.Analyze,
 		WindowLines: windowLines,
+		Detectors:   detectors,
 	})
 	if err != nil {
 		mgr.Fail(taskID, fmt.Sprintf("build index: %v", err))

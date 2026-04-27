@@ -6,20 +6,22 @@ import (
 )
 
 // mkAnomaly is a terse constructor used throughout this test file to
-// keep the table-driven cases readable. Category doubles as the
-// detector name (that's what Deduplicate keys on — see dedup.go).
+// keep the table-driven cases readable. DetectorName is what Deduplicate
+// keys on (see dedup.go); Category stays as a semantic bucket and
+// happens to mirror the detector name here for readability.
 func mkAnomaly(detector string, startOffset, endOffset int64) Anomaly {
 	return Anomaly{
 		// StartLine / EndLine aren't part of the dedup key but we set
 		// them anyway so test assertions on the full Anomaly struct are
 		// realistic. Using 1-based derived values keeps fixtures simple.
-		StartLine:   startOffset/10 + 1,
-		EndLine:     endOffset/10 + 1,
-		StartOffset: startOffset,
-		EndOffset:   endOffset,
-		Severity:    0.5,
-		Category:    detector,
-		Description: "test anomaly from " + detector,
+		StartLine:    startOffset/10 + 1,
+		EndLine:      endOffset/10 + 1,
+		StartOffset:  startOffset,
+		EndOffset:    endOffset,
+		Severity:     0.5,
+		Category:     detector,
+		DetectorName: detector,
+		Description:  "test anomaly from " + detector,
 	}
 }
 
@@ -99,9 +101,9 @@ func TestDeduplicate_SameOffsetsDifferentDetectorsStaySeparate(t *testing.T) {
 		t.Fatalf("got %d anomalies, want 2 (different detectors)", len(got))
 	}
 	// Order is group-order: python first, long-line second.
-	if got[0].Category != "traceback-python" || got[1].Category != "long-line" {
+	if got[0].DetectorName != "traceback-python" || got[1].DetectorName != "long-line" {
 		t.Errorf("order mismatch: got [%s %s], want [traceback-python long-line]",
-			got[0].Category, got[1].Category)
+			got[0].DetectorName, got[1].DetectorName)
 	}
 }
 
@@ -153,11 +155,11 @@ func TestDeduplicate_FirstOccurrenceWins(t *testing.T) {
 	// the safest policy is "trust the first one".
 	first := Anomaly{
 		StartOffset: 100, EndOffset: 200,
-		Category: "detector-x", Severity: 0.5, Description: "first",
+		Category: "detector-x", DetectorName: "detector-x", Severity: 0.5, Description: "first",
 	}
 	second := Anomaly{
 		StartOffset: 100, EndOffset: 200,
-		Category: "detector-x", Severity: 0.9, Description: "second",
+		Category: "detector-x", DetectorName: "detector-x", Severity: 0.9, Description: "second",
 	}
 	got := Deduplicate([][]Anomaly{{first}, {second}})
 	if len(got) != 1 {

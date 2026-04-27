@@ -105,12 +105,26 @@ type Report struct {
 }
 
 // Anomaly is one flagged line range.
+//
+// Two name-like fields:
+//
+//   - DetectorName is the producing detector's Name() — stamped by the
+//     coordinator's Finalize before the anomaly leaves the worker.
+//     This is what cross-worker Deduplicate keys on and what the wire
+//     contract's `detector` field reports.
+//
+//   - Category is the SEMANTIC bucket the detector chose (e.g.
+//     "log-traceback", "secrets", "format"). Multiple detectors can
+//     share a category. Never overwritten by the coordinator — the
+//     category taxonomy is exposed via /v1/detectors so UIs can group
+//     findings across detectors.
 type Anomaly struct {
-	StartLine   int64   `json:"start_line"`
-	EndLine     int64   `json:"end_line"`
-	StartOffset int64   `json:"start_offset"`
-	EndOffset   int64   `json:"end_offset"`
-	Severity    float64 `json:"severity"`
-	Category    string  `json:"category"`
-	Description string  `json:"description"`
+	StartLine    int64   `json:"start_line"`
+	EndLine      int64   `json:"end_line"`
+	StartOffset  int64   `json:"start_offset"`
+	EndOffset    int64   `json:"end_offset"`
+	Severity     float64 `json:"severity"`
+	Category     string  `json:"category"`
+	Description  string  `json:"description"`
+	DetectorName string  `json:"detector_name,omitempty"`
 }

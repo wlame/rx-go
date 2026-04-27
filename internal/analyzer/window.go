@@ -34,6 +34,20 @@ package analyzer
 // resolver (Task 2) clamps the user-visible window size to this value.
 const maxWindowLines = 2048
 
+// maxSlotBufCap caps the retained capacity of a slot's byte buffer. When
+// a push receives a line longer than this cap, we drop the slot's old
+// backing array and allocate a fresh one sized exactly to the incoming
+// line. Next pushes with shorter lines will then use a small buffer
+// again.
+//
+// Without this cap, a single very-long line (e.g. a 10 MB JSON blob
+// serialized onto one line) would grow every slot's backing array to
+// ≥10 MB permanently — malformed input could balloon a Coordinator's
+// memory footprint to windowSize × 10 MB. 64 KB is large enough to
+// absorb realistic log lines without per-push allocation while keeping
+// the worst-case retained memory bounded.
+const maxSlotBufCap = 64 * 1024
+
 // lineSlot is one slot in the window. Stores the byte buffer plus the
 // per-line metadata the coordinator needs to rebuild a LineEvent when
 // a detector queries the window.
@@ -111,9 +125,21 @@ func (w *Window) push(num, start, end int64, line []byte, indent int, bin bool) 
 	slot.number = num
 	slot.startOffset = start
 	slot.endOffset = end
-	// Reslice to zero length then copy. If slot.buf's backing array is
-	// already big enough, append reuses it and we allocate nothing.
-	slot.buf = append(slot.buf[:0], line...)
+	// Buffer reuse with a retained-capacity cap. Normal case: reslice the
+	// existing backing array to zero length and append copies without
+	// allocating. Exceptional case (finding #9): if the slot's retained
+	// capacity already exceeds maxSlotBufCap, OR the incoming line is
+	// larger than maxSlotBufCap, we allocate a fresh buffer sized to the
+	// line. This prevents a single huge line from permanently inflating
+	// every slot's backing array.
+	if cap(slot.buf) > maxSlotBufCap || len(line) > maxSlotBufCap {
+		// Allocate fresh storage sized exactly to the incoming line. Any
+		// previously-retained large buffer becomes unreachable and will
+		// be reclaimed on the next GC cycle.
+		slot.buf = append([]byte(nil), line...)
+	} else {
+		slot.buf = append(slot.buf[:0], line...)
+	}
 	slot.indentPrefix = indent
 	slot.isBinary = bin
 	w.n++

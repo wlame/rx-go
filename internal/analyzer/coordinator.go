@@ -115,18 +115,18 @@ func (c *Coordinator) ProcessLine(num, start, end int64, line []byte) {
 // detector's Finalize; detectors that don't depend on these fields
 // may ignore the argument.
 //
-// The coordinator overwrites each anomaly's Category with its
-// producing detector's Name() before returning. Rationale:
+// The coordinator stamps each anomaly's DetectorName with its producing
+// detector's Name(). Rationale:
 //
-//   - Deduplicate (Task 4) keys on (Category, start_offset, end_offset)
-//     and the plan calls out "detector name" as the dedup key component.
-//     Without this attachment, two different detectors that both emit
-//     Category="log-pattern" would incorrectly collapse across workers.
+//   - Deduplicate (Task 4) keys on (DetectorName, start_offset, end_offset)
+//     so two different detectors that both emit Category="log-pattern"
+//     do not collapse across workers.
 //
-//   - Detectors remain free to emit their own semantic Category internally
-//     (e.g. "log-pattern", "secrets"), but after Finalize the Category
-//     field becomes the globally-unique detector name. Callers that need
-//     the bucket name read it from the detector's Category() method.
+//   - Anomaly.Category stays as the SEMANTIC bucket the detector chose.
+//     That's the field exposed as `category` on the wire contract and
+//     grouped by /v1/detectors. The coordinator does NOT overwrite it
+//     anymore (prior behavior contradicted the wire contract where
+//     category and detector are described as independent fields).
 //
 // Returns nil when there are no detectors — avoids allocating an
 // empty slice that the caller would just discard.
@@ -134,14 +134,15 @@ func (c *Coordinator) Finalize(flush *FlushContext) []Anomaly {
 	if len(c.detectors) == 0 {
 		return nil
 	}
-	// Pre-size to a small guess (one anomaly per detector) so typical
-	// cases avoid a grow-reallocate cycle. Detectors that emit many
-	// anomalies will still trigger growth, which is fine.
-	out := make([]Anomaly, 0, len(c.detectors))
+	// We do not know the per-detector anomaly count up front; let append
+	// grow the slice. A fixed pre-size underestimates in the common case
+	// (many anomalies per detector) and overestimates for files with
+	// zero hits, so neither cap is worth the complexity.
+	var out []Anomaly
 	for _, d := range c.detectors {
 		name := d.Name()
 		for _, a := range d.Finalize(flush) {
-			a.Category = name
+			a.DetectorName = name
 			out = append(out, a)
 		}
 	}

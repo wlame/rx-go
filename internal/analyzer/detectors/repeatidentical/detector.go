@@ -223,10 +223,9 @@ func (d *Detector) flushRunIfLongEnough() {
 			StartOffset: d.runStartOffset,
 			EndOffset:   d.runEndOffset,
 			Severity:    severity,
-			// Semantic category — overwritten with detector name by the
-			// coordinator's Finalize. Keeping a meaningful value here
-			// helps when a detector emits anomalies outside the
-			// coordinator path (tests, future direct callers).
+			// Semantic category — this is the stable wire-contract
+			// `category` field. The coordinator stamps Anomaly.DetectorName
+			// separately and leaves Category alone.
 			Category:    detectorCategory,
 			Description: fmt.Sprintf("%d consecutive identical lines", d.runLen),
 		})
@@ -243,19 +242,18 @@ var (
 	_ analyzer.LineDetector = (*Detector)(nil)
 )
 
-// init registers a fresh Detector with the global analyzer registry.
+// init registers a detector FACTORY with the global analyzer registry.
 // Callers activate the detector by blank-importing this package in
 // cmd/rx/main.go:
 //
 //	import _ "github.com/wlame/rx-go/internal/analyzer/detectors/repeatidentical"
 //
-// The registered instance is intentionally a single shared one — the
-// coordinator is currently sequential, so sharing the instance across
-// builds is safe today. When the builder becomes chunk-parallel, each
-// worker must instantiate its own Detector (via New) so per-run state
-// doesn't leak across workers; the registry entry then becomes a
-// "factory prototype" rather than a live instance. That refactor lives
-// with the chunk-parallel task, not here.
+// Why factory-based registration (not a shared instance): every index
+// build gets a fresh Detector so streaming state (runLen, runHash, out)
+// cannot leak across files in a multi-file `rx index` invocation or
+// across sequential HTTP builds. The coordinator will call this factory
+// once per worker when chunk-parallel builds land; today it's once per
+// build, which is still strictly safer than sharing.
 func init() {
-	analyzer.Register(New())
+	analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
 }

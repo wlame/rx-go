@@ -206,10 +206,9 @@ func (d *Detector) Finalize(flush *analyzer.FlushContext) []analyzer.Anomaly {
 			StartOffset: c.startOffset,
 			EndOffset:   c.endOffset,
 			Severity:    severity,
-			// Semantic category — the coordinator's Finalize overwrites
-			// this with detector Name() before returning, but keeping a
-			// meaningful value here helps when a detector is used
-			// outside the coordinator path (unit tests especially).
+			// Semantic category — this is the stable wire-contract
+			// `category` field. The coordinator stamps Anomaly.DetectorName
+			// separately and leaves Category alone.
 			Category:    detectorCategory,
 			Description: fmt.Sprintf("line is %d bytes (threshold %d)", c.length, threshold),
 		})
@@ -247,17 +246,16 @@ var (
 	_ analyzer.LineDetector = (*Detector)(nil)
 )
 
-// init registers a fresh Detector with the global analyzer registry.
+// init registers a detector FACTORY with the global analyzer registry.
 // Callers activate the detector by blank-importing this package in
 // cmd/rx/main.go:
 //
 //	import _ "github.com/wlame/rx-go/internal/analyzer/detectors/longline"
 //
-// Per the Task 7 notes in the plan: the registered instance is a single
-// shared one today because the coordinator is sequential. When index
-// build goes chunk-parallel, each worker must instantiate via New() so
-// buffered candidates don't cross worker boundaries. That refactor
-// lives with the chunk-parallel wiring, not this detector.
+// Why factory-based registration (not a shared instance): every index
+// build gets a fresh Detector so the buffered candidate slice cannot
+// leak across files in a multi-file `rx index` invocation or across
+// sequential HTTP builds.
 func init() {
-	analyzer.Register(New())
+	analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
 }

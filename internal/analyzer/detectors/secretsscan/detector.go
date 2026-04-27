@@ -207,10 +207,9 @@ func (d *Detector) OnLine(w *analyzer.Window) {
 			StartOffset: start,
 			EndOffset:   end,
 			Severity:    severity,
-			// Category is rewritten to Name() by the coordinator's
-			// Finalize (the dedup contract). Keeping the semantic value
-			// here helps direct-use code paths (tests that don't go
-			// through the coordinator).
+			// Semantic category — this is the stable wire-contract
+			// `category` field. The coordinator stamps Anomaly.DetectorName
+			// separately and leaves Category alone.
 			Category:    detectorCategory,
 			Description: "credential-shaped string",
 		})
@@ -231,16 +230,14 @@ var (
 	_ analyzer.LineDetector = (*Detector)(nil)
 )
 
-// init registers a fresh Detector with the global analyzer registry.
+// init registers a detector FACTORY with the global analyzer registry.
 // Callers activate the detector by blank-importing this package in
 // cmd/rx/main.go:
 //
 //	import _ "github.com/wlame/rx-go/internal/analyzer/detectors/secretsscan"
 //
-// When the builder runs chunk-parallel, each worker must instantiate
-// its own Detector (via New) so the accumulated `out` slice doesn't
-// leak across workers. The detector is otherwise stateless, so a shared
-// instance would produce correct matches but with a race on the slice.
+// Factory-based registration: every index build gets its own fresh
+// Detector, so the accumulated `out` slice cannot leak across builds.
 func init() {
-	analyzer.Register(New())
+	analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
 }

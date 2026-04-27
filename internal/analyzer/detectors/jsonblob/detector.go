@@ -46,27 +46,20 @@
 //     edge preserves navigation value ("the last complete or partial
 //     blob started here").
 //
-// How the per-run `truncated_at_window` signal is surfaced — design note:
+// Per-run signal (post-review, finding #7):
 //
-//   - The plan calls for this signal to live in the detector's
-//     `Report.Result` map. But the LineDetector contract today only
-//     exposes `Finalize(*FlushContext) []Anomaly` — it doesn't return a
-//     `*Report`, and the coordinator never calls `Analyze` along the
-//     streaming path. Extending the interface would cascade through the
-//     coordinator, every existing detector, and the index builder
-//     wiring — disproportionate for a one-off per-run signal.
-//
-//   - We take the documented alternative from the task notes (option
-//     "b"): emit ONE synthetic anomaly at Finalize with a sentinel
-//     Description when any blob was truncated during the scan. The
-//     sentinel span covers line 0/offset 0 so it's distinguishable from
-//     real blob anomalies and never overlaps them, and the Description
-//     carries both the flag and the truncated-count.
-//
-//   - Consumers that care about the signal can look for
-//     `strings.HasPrefix(a.Description, "truncated_at_window: true")`.
-//     The coordinator rewrites Category to the detector name, so those
-//     sentinel anomalies are grouped with the rest of json-blob output.
+//   - Prior versions emitted a synthetic "sentinel" anomaly at offset 0
+//     / line 0 to carry a `truncated_at_window: true` flag plus a
+//     truncated_count. That was removed because:
+//   - dedup keys on (detector, start_offset, end_offset) — a
+//     sentinel at (0, 0) collides with legitimate anomalies that
+//     happen to start at byte 0, and first-wins dedup would drop
+//     them.
+//   - truncated_count wasn't summable across workers; first-wins
+//     would report the wrong count.
+//   - Today each truncation produces its own real partial anomaly with
+//     a non-zero span. Consumers can count them by filtering on
+//     Description prefix "truncated:" if a per-run tally is needed.
 //
 // Registration: this package has an init() that calls analyzer.Register
 // so a blank import in cmd/rx/main.go is enough to hook it up.
@@ -90,12 +83,6 @@ const (
 
 	// severity is the plan-mandated value for this detector.
 	severity = 0.3
-
-	// truncatedSentinelPrefix is the Description prefix of the synthetic
-	// per-run anomaly that Finalize emits when at least one blob was
-	// truncated at the window edge. See the package doc for the design
-	// rationale behind this channel.
-	truncatedSentinelPrefix = "truncated_at_window: true"
 )
 
 // Detector implements both analyzer.FileAnalyzer (for registry
@@ -107,8 +94,7 @@ const (
 // indent; the string-aware scan over the body only moves the counter.
 type Detector struct {
 	// out accumulates emitted anomalies across the scan. Finalize
-	// appends the optional truncated-sentinel anomaly and returns this
-	// slice.
+	// appends the at-EOF truncated span (if any) and returns this slice.
 	out []analyzer.Anomaly
 
 	// open indicates whether a blob is currently in progress. When
@@ -143,8 +129,10 @@ type Detector struct {
 	counter int
 
 	// truncatedCount tracks how many blobs were aborted due to the
-	// window-age check during this run. Reported once by Finalize via
-	// the sentinel anomaly when > 0.
+	// window-age check during this run. No longer surfaced via a
+	// sentinel anomaly (finding #7) — each truncation produces its
+	// own real partial anomaly at emit time. Retained as state for
+	// tests and potential future telemetry.
 	truncatedCount int
 }
 
@@ -208,7 +196,7 @@ func (d *Detector) OnLine(w *analyzer.Window) {
 	trimmed := bytes.TrimSpace(ev.Bytes)
 
 	if !d.open {
-		d.tryOpen(ev, trimmed, w)
+		d.tryOpen(ev, trimmed)
 		return
 	}
 
@@ -219,9 +207,11 @@ func (d *Detector) OnLine(w *analyzer.Window) {
 // line's trimmed content is exactly `{` or `[` we transition to the
 // open state; otherwise we stay closed.
 //
-// Passing the window lets us stamp openLineIndex with a per-push
-// counter for the aging check.
-func (d *Detector) tryOpen(ev analyzer.LineEvent, trimmed []byte, w *analyzer.Window) {
+// openLineIndex is stamped with ev.Number — line numbers are
+// monotonic 1:1 with window pushes, so they work as a faithful
+// stand-in for the window's internal push counter when isAged checks
+// for a stale opener.
+func (d *Detector) tryOpen(ev analyzer.LineEvent, trimmed []byte) {
 	if len(trimmed) != 1 {
 		return
 	}
@@ -239,7 +229,10 @@ func (d *Detector) tryOpen(ev analyzer.LineEvent, trimmed []byte, w *analyzer.Wi
 	d.openLine = ev.Number
 	d.openStartOffset = ev.StartOffset
 	d.openIndent = ev.IndentPrefix
-	d.openLineIndex = windowPushCount(w)
+	// openLineIndex is the push-count proxy used for isAged. Line numbers
+	// are monotonic 1:1 with pushes, so the current line's Number is a
+	// faithful stand-in for the window's internal push counter.
+	d.openLineIndex = ev.Number
 	d.expectedCloser = closer
 	// The opener contributes +1 to the counter directly. We do NOT run
 	// the string-aware scan over the opener line — it is exactly `{` or
@@ -309,11 +302,11 @@ func (d *Detector) continueBlob(ev analyzer.LineEvent, trimmed []byte, w *analyz
 
 // isAged reports whether the window has advanced far enough since the
 // opener that we can no longer see the opener's slot. The check is
-// "distance from openLineIndex to the current head push-count is >=
-// window size". Using push-count (not line number) is resilient to any
-// future change that might skip pushes (e.g. binary-line skipping).
+// "distance from the opener's line number to the current line number
+// is >= window size". Line numbers are 1:1 with pushes, so using
+// ev.Number here is equivalent to the window's internal push counter.
 func (d *Detector) isAged(w *analyzer.Window) bool {
-	cur := windowPushCount(w)
+	cur := w.Current().Number
 	// distance is the number of pushes strictly since the opener. When
 	// it equals the window size, the opener has been overwritten.
 	return cur-d.openLineIndex >= int64(w.Size())
@@ -329,9 +322,9 @@ func (d *Detector) emitClean(ev analyzer.LineEvent) {
 		StartOffset: d.openStartOffset,
 		EndOffset:   ev.EndOffset,
 		Severity:    severity,
-		// Semantic category — the coordinator's Finalize overwrites
-		// this with the detector's Name() before returning. Keeping a
-		// meaningful value here helps for direct-use paths (tests).
+		// Semantic category — this is the stable wire-contract
+		// `category` field. The coordinator stamps Anomaly.DetectorName
+		// separately and leaves Category alone.
 		Category:    detectorCategory,
 		Description: fmt.Sprintf("multi-line JSON blob, %d lines", lineCount),
 	})
@@ -356,10 +349,20 @@ func (d *Detector) emitTruncated(ev analyzer.LineEvent) {
 	d.truncatedCount++
 }
 
-// Finalize is called once after the last OnLine. Emits a sentinel
-// per-run anomaly encoding the `truncated_at_window` signal when at
-// least one blob was aborted. See the package doc for why this lives
-// in a sentinel anomaly rather than Report.Result.
+// Finalize is called once after the last OnLine.
+//
+// If a blob is still open at EOF, emit it as a truncated partial anomaly
+// spanning just the opener line — we never saw a close, so we don't
+// over-claim coverage. That anomaly carries the same detector/category
+// as the rest and is distinguishable only by its Description.
+//
+// Previously Finalize also emitted a synthetic "per-run truncated sentinel"
+// anomaly at (StartOffset=0, EndOffset=0, StartLine=0, EndLine=0).
+// That sentinel was unsafe: its zero-offset dedup key collided with
+// legitimate anomalies that started at byte 0 (causing first-wins dedup
+// to drop real findings), and the truncated_count wasn't summable
+// across workers. Dropped deliberately — individual truncated anomalies
+// carry enough signal on their own.
 //
 // FlushContext is unused here; JSON-blob detection is purely structural
 // and does not depend on file-global stats.
@@ -368,8 +371,6 @@ func (d *Detector) Finalize(_ *analyzer.FlushContext) []analyzer.Anomaly {
 	// opener's indent couldn't be balanced with an in-window closer —
 	// this is functionally equivalent to the window-edge abort.
 	if d.open {
-		// ev.Number == openLine for an at-EOF abort — we don't have a
-		// current-line here. Use opener line as the degenerate span.
 		d.out = append(d.out, analyzer.Anomaly{
 			StartLine:   d.openLine,
 			EndLine:     d.openLine,
@@ -385,24 +386,6 @@ func (d *Detector) Finalize(_ *analyzer.FlushContext) []analyzer.Anomaly {
 		})
 		d.truncatedCount++
 		d.reset()
-	}
-
-	if d.truncatedCount > 0 {
-		// Sentinel per-run anomaly. Zero-length span at offset 0 / line
-		// 0 so it's distinguishable from real blob anomalies and never
-		// overlaps them. Dedup key is (detector, 0, 0) so it collapses
-		// across workers if multiple workers hit truncation — consumers
-		// see a single per-run signal rather than one per worker.
-		d.out = append(d.out, analyzer.Anomaly{
-			StartLine:   0,
-			EndLine:     0,
-			StartOffset: 0,
-			EndOffset:   0,
-			Severity:    severity,
-			Category:    detectorCategory,
-			Description: fmt.Sprintf("%s (truncated_count=%d)",
-				truncatedSentinelPrefix, d.truncatedCount),
-		})
 	}
 	return d.out
 }
@@ -473,31 +456,6 @@ func isEscaped(line []byte, i int) bool {
 	return count%2 == 1
 }
 
-// windowPushCount returns the Window's total push count. We read it via
-// Len()-based arithmetic: the public API exposes only Size() and Len(),
-// but the window increments an internal counter on every push. Since
-// Len() saturates at Size(), a raw push-count is not directly visible.
-// We therefore keep our own counter implicitly via the opener's
-// line-number delta in isAged — but tests and the opener need a
-// monotonic "pushes-so-far" reading. The workaround: use Len() while
-// the window is still filling (it matches the push count), and use
-// Size() plus a synthetic offset once saturated.
-//
-// Implementation: we approximate push-count using the current line's
-// Number (absolute 1-based line number in the source). Line numbers
-// are monotonic and increase by one per line, exactly like the push
-// counter. That makes them interchangeable for our aging check. We
-// read the current line from the window and return its Number.
-//
-// Rationale for this approach over a custom internal window field: the
-// Window type is shared infrastructure (Task 1). Adding a new method
-// for this single detector would widen the public API just for us. The
-// line-number proxy is sufficient because every ProcessLine call is 1:1
-// with one push.
-func windowPushCount(w *analyzer.Window) int64 {
-	return w.Current().Number
-}
-
 // Compile-time interface conformance checks. If either contract drifts
 // we want the build to fail here rather than somewhere deep in wiring.
 var (
@@ -505,16 +463,14 @@ var (
 	_ analyzer.LineDetector = (*Detector)(nil)
 )
 
-// init registers a fresh Detector with the global analyzer registry.
+// init registers a detector FACTORY with the global analyzer registry.
 // Callers activate the detector by blank-importing this package in
 // cmd/rx/main.go:
 //
 //	import _ "github.com/wlame/rx-go/internal/analyzer/detectors/jsonblob"
 //
-// The registered instance is a single shared one today because the
-// coordinator is sequential. When the builder becomes chunk-parallel,
-// each worker must instantiate its own Detector (via New) so blob
-// state doesn't leak across workers.
+// Factory-based registration: every index build gets its own fresh
+// Detector so blob state cannot leak across builds.
 func init() {
-	analyzer.Register(New())
+	analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
 }
