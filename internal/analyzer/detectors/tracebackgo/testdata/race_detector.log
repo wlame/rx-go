@@ -1,0 +1,22 @@
+starting batch job
+fatal error: concurrent map writes
+
+goroutine 8 [running]:
+main.writer(0xc000010060)
+	/app/race.go:19 +0x5b
+created by main.main
+	/app/race.go:11 +0x6f
+
+goroutine 1 [sleep]:
+time.Sleep(0x3b9aca00)
+	/usr/local/go/src/runtime/time.go:195 +0x135
+main.main()
+	/app/race.go:14 +0x7c
+
+goroutine 9 [runnable]:
+main.writer(0xc000010060)
+	/app/race.go:19 +0x5b
+created by main.main
+	/app/race.go:11 +0x6f
+exit status 2
+job finished

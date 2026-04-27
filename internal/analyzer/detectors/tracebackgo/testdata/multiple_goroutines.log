@@ -1,0 +1,20 @@
+worker pool ready
+panic: send on closed channel
+
+goroutine 7 [running]:
+main.producer(0xc0000140a0)
+	/app/producer.go:31 +0x85
+created by main.main
+	/app/main.go:12 +0x6f
+
+goroutine 1 [chan receive]:
+main.main()
+	/app/main.go:15 +0x8a
+
+goroutine 5 [chan receive]:
+main.consumer(0xc0000140a0)
+	/app/consumer.go:22 +0x4c
+created by main.main
+	/app/main.go:13 +0x90
+exit status 2
+shutdown complete
