@@ -1,0 +1,9 @@
+[  123.456789] systemd[1]: Started rsyslog.service.
+[  124.000000] kernel BUG at fs/ext4/inode.c:5678!
+[  124.001234] Call Trace:
+[  124.001235]  [<ffffffff810a1234>] do_sync_write+0x56/0x78
+[  124.001236]  [<ffffffff810a1300>] vfs_write+0x90/0xa0
+[  124.001237]  [<ffffffff810a1400>] sys_write+0x45/0x67
+[  124.001238]  [<ffffffff81001234>] system_call_fastpath+0x1c/0x21
+[  124.002000] ---[ end trace 1234abcd5678ef90 ]---
+[  125.000000] systemd[1]: Reached target Graphical Interface.

@@ -1,0 +1,10 @@
+running tests with AddressSanitizer
+==12345==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000018 at pc 0x55a7d8f2a1c0 bp 0x7ffc2b4f6ca0 sp 0x7ffc2b4f6c98
+READ of size 4 at 0x602000000018 thread T0
+    #0 0x55a7d8f2a1bf in main /app/src/main.c:12:11
+    #1 0x7f2e9c829082 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x24082)
+    #2 0x55a7d8f2a0ad in _start (/app/bin/test+0x10ad)
+0x602000000018 is located 0 bytes to the right of 8-byte region [0x602000000010,0x602000000018)
+SUMMARY: AddressSanitizer: heap-buffer-overflow /app/src/main.c:12:11 in main
+==12345==ABORTING
+test runner exiting with code 1
