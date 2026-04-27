@@ -72,15 +72,15 @@ func (c *cueDetector) OnLine(w *analyzer.Window) {
 		return
 	}
 	// Emit immediately during OnLine so Finalize has work to return.
-	// We set the semantic Category so we can verify the coordinator
-	// overwrites it with Name() before storage.
+	// We set a semantic Category the coordinator must leave untouched —
+	// the coordinator only stamps DetectorName, not Category (finding #8).
 	c.emitted = append(c.emitted, analyzer.Anomaly{
 		StartLine:   ev.Number,
 		EndLine:     ev.Number,
 		StartOffset: ev.StartOffset,
 		EndOffset:   ev.EndOffset,
 		Severity:    0.5,
-		Category:    "semantic-category", // will be overwritten with Name()
+		Category:    "semantic-category",
 		Description: fmt.Sprintf("%s match at line %d", c.name, ev.Number),
 	})
 }
@@ -88,8 +88,8 @@ func (c *cueDetector) OnLine(w *analyzer.Window) {
 func (c *cueDetector) Finalize(flush *analyzer.FlushContext) []analyzer.Anomaly {
 	c.finalizeHit.Add(1)
 	c.flushSeen = flush
-	// Return a defensive copy — prevents the coordinator's Category
-	// overwrite from stomping on the test's captured `emitted` view.
+	// Return a defensive copy so the coordinator's DetectorName stamp
+	// doesn't leak into the test's captured `emitted` view.
 	out := make([]analyzer.Anomaly, len(c.emitted))
 	copy(out, c.emitted)
 	return out
@@ -137,9 +137,10 @@ func TestBuild_Analyze_WithDetector_EmitsAnomalies(t *testing.T) {
 		t.Fatalf("got %d anomalies, want 3", len(anomalies))
 	}
 
-	// Verify each anomaly points at the detector (Detector field set) AND
-	// the legacy Category field was rewritten to the detector's Name()
-	// (see coordinator.Finalize rationale).
+	// Verify each anomaly points at the detector (Detector field = name)
+	// AND the Category field stays as the SEMANTIC bucket the detector
+	// emitted. The coordinator stamps DetectorName separately and does
+	// NOT overwrite Category any more.
 	wantLines := []int64{2, 4, 6}
 	for i, a := range anomalies {
 		if a.StartLine != wantLines[i] || a.EndLine != wantLines[i] {
@@ -149,11 +150,9 @@ func TestBuild_Analyze_WithDetector_EmitsAnomalies(t *testing.T) {
 		if a.Detector != "mock-cue" {
 			t.Errorf("anomaly[%d].Detector = %q, want %q", i, a.Detector, "mock-cue")
 		}
-		// Post-coordinator Category is the detector name, NOT the
-		// detector's semantic Category(). This matches the dedup
-		// contract (Task 4 keys on Category).
-		if a.Category != "mock-cue" {
-			t.Errorf("anomaly[%d].Category = %q, want %q (detector name)", i, a.Category, "mock-cue")
+		if a.Category != "semantic-category" {
+			t.Errorf("anomaly[%d].Category = %q, want %q (semantic bucket preserved)",
+				i, a.Category, "semantic-category")
 		}
 	}
 

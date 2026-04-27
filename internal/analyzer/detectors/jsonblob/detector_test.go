@@ -30,10 +30,8 @@ import (
 )
 
 // feedFixture reads testdata/<name>, splits into lines, and drives a
-// fresh Detector through a real Coordinator. Returns anomalies from the
-// detector directly (so tests see the semantic Category, not the
-// coordinator's Name() rewrite — matches the pattern used by other
-// detectors' tests).
+// fresh Detector through a real Coordinator. Returns the anomalies
+// emitted by the detector directly.
 //
 // windowLines lets each test pick a window size; the unterminated test
 // uses a small window to force a truncated emission.
@@ -177,45 +175,28 @@ func TestDetector_StringsWithBraces(t *testing.T) {
 // TestDetector_Unterminated_TruncatedAtWindow is the window-edge abort:
 // the fixture opens a blob but never closes it. We use a tiny window
 // (4 lines) so the age guard fires on the 4th line inside the blob,
-// emitting a truncated anomaly + the per-run sentinel.
+// emitting a truncated partial anomaly.
 //
 // Window arithmetic: opener is line 2 of the fixture. With window
 // size W, isAged fires when (current_line - opener_line) >= W. We
 // want the fixture to have at least W+1 body lines so aging occurs.
 // The unterminated.log fixture has 7 lines total (opener on line 2,
 // body to line 7), so with W=4 the abort triggers on line 6.
+//
+// Prior versions of this detector also emitted a synthetic "sentinel"
+// anomaly at (0,0) carrying the per-run truncated count. That sentinel
+// was dropped (review finding #7): its zero-offset dedup key could
+// collide with legitimate anomalies at byte 0, and truncated_count
+// wasn't summable across workers. Only the real partial anomaly is
+// emitted now.
 func TestDetector_Unterminated_TruncatedAtWindow(t *testing.T) {
 	got := feedFixture(t, "unterminated.log", 4)
 
-	// We expect two anomalies:
-	//   1. the truncated-span anomaly emitted mid-scan when the window aged,
-	//   2. the per-run sentinel emitted by Finalize with the
-	//      "truncated_at_window: true" prefix.
-	if len(got) != 2 {
-		t.Fatalf("got %d anomalies, want 2 (truncated span + sentinel); %+v",
+	if len(got) != 1 {
+		t.Fatalf("got %d anomalies, want 1 (truncated partial span); %+v",
 			len(got), got)
 	}
-
-	// Find the sentinel (span is line 0..0 with zero offsets).
-	var sentinel, partial analyzer.Anomaly
-	for _, a := range got {
-		if a.StartLine == 0 && a.EndLine == 0 {
-			sentinel = a
-		} else {
-			partial = a
-		}
-	}
-	if sentinel.Description == "" {
-		t.Fatalf("no sentinel anomaly found: %+v", got)
-	}
-	if !strings.HasPrefix(sentinel.Description, truncatedSentinelPrefix) {
-		t.Errorf("sentinel description = %q, want prefix %q",
-			sentinel.Description, truncatedSentinelPrefix)
-	}
-	if !strings.Contains(sentinel.Description, "truncated_count=") {
-		t.Errorf("sentinel description = %q, want a 'truncated_count=' tag",
-			sentinel.Description)
-	}
+	partial := got[0]
 
 	// Partial anomaly must start at the opener line (line 2 in fixture).
 	if partial.StartLine != 2 {
@@ -318,7 +299,7 @@ func TestDetector_CloserIndentMismatch(t *testing.T) {
 
 // TestDetector_UnclosedAtEOF covers the EOF case: a blob opens but the
 // file ends while the blob is still open. Finalize must emit the
-// truncated span + sentinel.
+// truncated span (no sentinel, per review finding #7).
 func TestDetector_UnclosedAtEOF(t *testing.T) {
 	lines := linesFromStrings([]string{
 		"{",
@@ -326,20 +307,16 @@ func TestDetector_UnclosedAtEOF(t *testing.T) {
 		// no closer, EOF
 	})
 	got := feedLines(t, lines, 128)
-	if len(got) != 2 {
-		t.Fatalf("got %d anomalies, want 2 (EOF-truncated span + sentinel); %+v",
+	if len(got) != 1 {
+		t.Fatalf("got %d anomalies, want 1 (EOF-truncated span); %+v",
 			len(got), got)
 	}
-	// Find the sentinel.
-	var sentinelFound bool
-	for _, a := range got {
-		if strings.HasPrefix(a.Description, truncatedSentinelPrefix) {
-			sentinelFound = true
-			break
-		}
+	a := got[0]
+	if !strings.HasPrefix(a.Description, "truncated:") {
+		t.Errorf("description = %q, want 'truncated:' prefix", a.Description)
 	}
-	if !sentinelFound {
-		t.Errorf("no sentinel anomaly found among: %+v", got)
+	if a.StartLine != 1 {
+		t.Errorf("partial start line = %d, want 1", a.StartLine)
 	}
 }
 
@@ -483,11 +460,8 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	if a.Detector != detectorName {
 		t.Errorf("Detector = %q, want %q", a.Detector, detectorName)
 	}
-	if a.Category != detectorName {
-		// The coordinator rewrites Category to Name() — that's the
-		// dedup contract (see analyzer.Coordinator.Finalize).
-		t.Errorf("Category = %q, want %q (coordinator overwrites to Name())",
-			a.Category, detectorName)
+	if a.Category != detectorCategory {
+		t.Errorf("Category = %q, want %q (semantic bucket)", a.Category, detectorCategory)
 	}
 	if a.StartLine != 3 || a.EndLine != 6 {
 		t.Errorf("span: start=%d end=%d, want 3..6", a.StartLine, a.EndLine)

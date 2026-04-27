@@ -160,9 +160,10 @@ func TestCoordinator_WindowLenTracksPushes(t *testing.T) {
 }
 
 func TestCoordinator_FinalizeAggregatesAnomalies(t *testing.T) {
-	// Coordinator.Finalize concatenates each detector's anomaly slice
-	// in detector order, overwriting each anomaly's Category with the
-	// producing detector's Name() so Deduplicate (Task 4) can key on it.
+	// Coordinator.Finalize concatenates each detector's anomaly slice in
+	// detector order and STAMPS DetectorName with the producing detector's
+	// Name() so Deduplicate (Task 4) can key on it. It does NOT touch
+	// Category — that's the semantic bucket and survives verbatim.
 	d1 := newTrackingDetector("t1")
 	d1.emit = []Anomaly{
 		{StartLine: 1, EndLine: 2, Category: "a", Severity: 0.5},
@@ -182,13 +183,15 @@ func TestCoordinator_FinalizeAggregatesAnomalies(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d anomalies, want 3", len(got))
 	}
-	// After Finalize the Category field carries the producing detector's
-	// Name(), NOT the semantic category the detector emitted. Aggregation
-	// order remains detector-list order: t1's anomalies first, then t2's.
-	wantNames := []string{"t1", "t1", "t2"}
-	for i, want := range wantNames {
-		if got[i].Category != want {
-			t.Errorf("got[%d].Category = %q, want %q (detector name)", i, got[i].Category, want)
+	// DetectorName is stamped; Category is preserved verbatim.
+	wantDetectors := []string{"t1", "t1", "t2"}
+	wantCategories := []string{"a", "a", "b"}
+	for i := range got {
+		if got[i].DetectorName != wantDetectors[i] {
+			t.Errorf("got[%d].DetectorName = %q, want %q", i, got[i].DetectorName, wantDetectors[i])
+		}
+		if got[i].Category != wantCategories[i] {
+			t.Errorf("got[%d].Category = %q, want %q (preserved)", i, got[i].Category, wantCategories[i])
 		}
 	}
 	// Line-number aggregation order is a secondary check: t1's (1,2) and

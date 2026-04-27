@@ -13,8 +13,8 @@ package repeatidentical
 //     and the detector in BuildOptions.Detectors, assert that the final
 //     UnifiedFileIndex.Anomalies contains the expected entries. This
 //     verifies the init() registration wiring is compatible with the
-//     coordinator's Finalize behavior (the coordinator overwrites
-//     Category with detector Name()).
+//     coordinator's Finalize behavior (the coordinator stamps
+//     DetectorName and leaves the semantic Category alone).
 
 import (
 	"os"
@@ -36,11 +36,11 @@ import (
 // it here exactly mirrors what index.Build does in production.
 //
 // Why call d.Finalize directly instead of coord.Finalize: the
-// coordinator overwrites each anomaly's Category with the detector
-// Name() before returning (see analyzer.Coordinator.Finalize rationale).
-// For the unit tests we want to verify the SEMANTIC Category the
-// detector emits, so we bypass that rewrite here. The end-to-end test
-// below asserts the coordinator's rewrite behavior separately.
+// coordinator stamps DetectorName on each anomaly before returning
+// (see analyzer.Coordinator.Finalize rationale). For the unit tests
+// we only care about the anomaly fields the detector itself sets, so
+// we bypass the stamping here. The end-to-end test below asserts the
+// coordinator's stamping behavior separately.
 //
 // Offsets are laid out as consecutive lines with a single '\n'
 // terminator between them, i.e. the total file content would be
@@ -246,11 +246,10 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	if a.Detector != detectorName {
 		t.Errorf("Detector = %q, want %q", a.Detector, detectorName)
 	}
-	// The coordinator rewrites Category to the detector name — see
-	// analyzer.Coordinator.Finalize for rationale. That's the contract
-	// Deduplicate relies on.
-	if a.Category != detectorName {
-		t.Errorf("Category = %q, want %q (coordinator overwrites to Name())", a.Category, detectorName)
+	// Category is the SEMANTIC bucket (e.g. "repetition"); the coordinator
+	// no longer overwrites it. DetectorName lives in AnomalyRangeResult.Detector.
+	if a.Category != detectorCategory {
+		t.Errorf("Category = %q, want %q (semantic bucket)", a.Category, detectorCategory)
 	}
 	if a.StartLine != 2 || a.EndLine != 7 {
 		t.Errorf("span: start=%d end=%d, want 2..7", a.StartLine, a.EndLine)
@@ -261,6 +260,57 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	if idx.AnomalySummary[detectorName] != 1 {
 		t.Errorf("AnomalySummary[%q] = %d, want 1", detectorName,
 			idx.AnomalySummary[detectorName])
+	}
+}
+
+// TestDetector_SharedInstance_StateLeakScenario documents the failure
+// mode that motivated the factory-based registration (finding #6).
+//
+// If a single detector instance is fed two SEPARATE Finalize cycles
+// without explicitly resetting between them, state from the first
+// cycle leaks into the second. Specifically: an open run at the end
+// of scan 1 survives in d.runLen/runHash, and scan 2's first line
+// gets treated as a continuation (or as an already-flushed run).
+//
+// This test reuses the same Detector for two back-to-back scans and
+// asserts the state-leak symptom. The factory pattern in init() is
+// what keeps the production path safe: every build gets a fresh
+// instance via New(), so the leak cannot happen in practice.
+//
+// If someone "optimizes" the factory back to a shared instance, this
+// test will continue to pass (it confirms the leak IS real when an
+// instance is reused) and the integration test in cmd/rx/ will fail.
+func TestDetector_SharedInstance_StateLeakScenario(t *testing.T) {
+	d := New()
+
+	// Scan 1: 6 identical lines, qualifying run.
+	coord1 := analyzer.NewCoordinator(16, []analyzer.LineDetector{d})
+	for i := 1; i <= 6; i++ {
+		coord1.ProcessLine(int64(i), int64((i-1)*5), int64(i*5), []byte("same"))
+	}
+	got1 := d.Finalize(nil)
+	if len(got1) != 1 {
+		t.Fatalf("scan 1: got %d anomalies, want 1", len(got1))
+	}
+	// runLen is reset after flushRunIfLongEnough, but `out` is not —
+	// the emitted slice sticks around. That's exactly the leak.
+	if len(d.out) != 1 {
+		t.Errorf("after scan 1, d.out has %d entries (expected 1 — state leak)", len(d.out))
+	}
+
+	// Scan 2: 4 identical lines (below minRunLength=5).
+	coord2 := analyzer.NewCoordinator(16, []analyzer.LineDetector{d})
+	for i := 1; i <= 4; i++ {
+		coord2.ProcessLine(int64(i), int64((i-1)*3), int64(i*3), []byte("x"))
+	}
+	got2 := d.Finalize(nil)
+
+	// With a shared instance, scan 2's Finalize returns scan 1's
+	// accumulated anomaly PLUS anything new. Net: ≥1, not 0. This is
+	// the state-leak symptom.
+	if len(got2) == 0 {
+		t.Errorf("shared-instance leak not reproduced — scan 2 returned 0 anomalies. " +
+			"Either the detector grew a Reset() method or the test fixture broke.")
 	}
 }
 

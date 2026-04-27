@@ -15,12 +15,12 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"slices"
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/clicommand"
 
 	// Blank-import analyzer detectors so their package init() calls
@@ -64,6 +64,13 @@ var knownSubcommands = []string{
 }
 
 func main() {
+	// Freeze the analyzer registry before any request can reach it. Go
+	// guarantees every package's init() has completed before main() runs,
+	// so by this point all blank-imported detector packages have called
+	// RegisterLineDetector. After Freeze, any further Register* call
+	// panics (a defensive signal to catch misuse during development).
+	analyzer.Freeze()
+
 	root := newRootCmd()
 	args := preprocessArgs(os.Args[1:])
 	root.SetArgs(args)
@@ -171,10 +178,3 @@ func shouldRouteToTrace(args []string) bool {
 func isFlag(arg string) bool {
 	return len(arg) > 0 && arg[0] == '-'
 }
-
-// writeErr keeps error output consistent across main paths.
-func writeErr(format string, a ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format+"\n", a...)
-}
-
-var _ = writeErr // reserved for future use

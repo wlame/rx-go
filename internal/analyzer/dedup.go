@@ -16,12 +16,10 @@ package analyzer
 //     emit an anomaly for the same detector at the same byte range, we
 //     keep only the first.
 //
-//   - The Anomaly.Category field stores the detector name — the
-//     coordinator's Finalize sets it (or the detector itself does).
-//     There is no separate "detector_name" field today, so Category is
-//     what we key on. If the wire shape grows a dedicated detector_name
-//     field later, this keying switches to it (plan §Solution Overview
-//     calls out the key as "(detector, start, end)").
+//   - The Anomaly.DetectorName field stores the detector identifier
+//     stamped by the coordinator's Finalize. It is independent of
+//     Anomaly.Category (which is the semantic bucket the detector
+//     chose) — distinct detectors that share a category won't collapse.
 //
 //   - Order preservation: within one input group, anomalies come out in
 //     the same order they went in. Across groups, groups are processed
@@ -47,12 +45,12 @@ type dedupKey struct {
 // collapsing exact duplicates that arise from the W-line chunk overlap
 // used by the index builder.
 //
-// The key is (Anomaly.Category, StartOffset, EndOffset). Category holds
-// the producing detector's name (set by the coordinator in its
-// Finalize path). Two anomalies with identical keys are considered the
-// same event; the first occurrence wins — subsequent matches are
-// discarded verbatim (we do NOT merge fields, because a duplicate
-// should be bitwise-identical by construction).
+// The key is (Anomaly.DetectorName, StartOffset, EndOffset).
+// DetectorName is stamped by the coordinator's Finalize path. Two
+// anomalies with identical keys are considered the same event; the
+// first occurrence wins — subsequent matches are discarded verbatim
+// (we do NOT merge fields, because a duplicate should be bitwise-
+// identical by construction).
 //
 // Order: within each input group, the output preserves input order; the
 // groups themselves are processed left-to-right. Given the same input,
@@ -92,7 +90,7 @@ func Deduplicate(groups [][]Anomaly) []Anomaly {
 	for _, group := range groups {
 		for _, a := range group {
 			k := dedupKey{
-				detector:    a.Category,
+				detector:    a.DetectorName,
 				startOffset: a.StartOffset,
 				endOffset:   a.EndOffset,
 			}

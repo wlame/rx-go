@@ -97,6 +97,13 @@ type FlushContext struct {
 // shards the file across N workers), so instance state does NOT cross
 // worker boundaries. Cross-worker correctness comes from a W-line
 // overlap and a post-pass deduplication step.
+//
+// IMPORTANT: LineDetector embeds FileAnalyzer for registration
+// uniformity, but the streaming path (coordinator → OnLine → Finalize)
+// is what produces anomalies. FileAnalyzer.Analyze is a NO-OP for
+// every shipped line detector — it returns an empty Report purely to
+// satisfy the embedded interface. Do not call Analyze on a LineDetector
+// and expect anomalies; run it through the coordinator instead.
 type LineDetector interface {
 	FileAnalyzer
 

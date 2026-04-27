@@ -26,10 +26,8 @@ import (
 )
 
 // feedFixture reads testdata/<name>, splits into lines, and drives a
-// fresh Detector through a real Coordinator. Returns anomalies from the
-// detector directly (so tests see the semantic Category, not the
-// coordinator's Name() rewrite — matches the pattern used by other
-// detectors' tests).
+// fresh Detector through a real Coordinator. Returns the anomalies
+// emitted by the detector directly.
 func feedFixture(t *testing.T, name string) []analyzer.Anomaly {
 	t.Helper()
 
@@ -378,11 +376,8 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	if a.Detector != detectorName {
 		t.Errorf("Detector = %q, want %q", a.Detector, detectorName)
 	}
-	if a.Category != detectorName {
-		// The coordinator rewrites Category to Name() — that's the
-		// dedup contract (see analyzer.Coordinator.Finalize).
-		t.Errorf("Category = %q, want %q (coordinator overwrites to Name())",
-			a.Category, detectorName)
+	if a.Category != detectorCategory {
+		t.Errorf("Category = %q, want %q (semantic bucket)", a.Category, detectorCategory)
 	}
 	if a.StartLine != 2 || a.EndLine != 5 {
 		t.Errorf("span: start=%d end=%d, want 2..5", a.StartLine, a.EndLine)

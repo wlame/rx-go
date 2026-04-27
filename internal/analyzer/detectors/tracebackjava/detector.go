@@ -308,9 +308,9 @@ func (d *Detector) emit() {
 		StartOffset: d.openStartOffset,
 		EndOffset:   d.endOffset,
 		Severity:    severity,
-		// Semantic category — the coordinator's Finalize overwrites this
-		// with the detector's Name() before returning. Keeping a
-		// meaningful value here helps direct-use paths (tests).
+		// Semantic category — this is the stable wire-contract
+		// `category` field. The coordinator stamps Anomaly.DetectorName
+		// separately and leaves Category alone.
 		Category:    detectorCategory,
 		Description: fmt.Sprintf("Java stack trace, %d lines", lineCount),
 	})
@@ -333,15 +333,14 @@ var (
 	_ analyzer.LineDetector = (*Detector)(nil)
 )
 
-// init registers a fresh Detector with the global analyzer registry.
+// init registers a detector FACTORY with the global analyzer registry.
 // Callers activate the detector by blank-importing this package in
 // cmd/rx/main.go:
 //
 //	import _ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjava"
 //
-// When the builder becomes chunk-parallel, each worker must instantiate
-// its own Detector (via New) so stack state doesn't leak across
-// workers.
+// Factory-based registration: every index build gets its own fresh
+// Detector so stack state cannot leak across builds.
 func init() {
-	analyzer.Register(New())
+	analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
 }

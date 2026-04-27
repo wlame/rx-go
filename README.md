@@ -38,9 +38,15 @@ rx "error"  /var/log/app.log.zst                 # compressed (auto-detected)
 rx "error"  /var/log/app.log --json --samples    # JSON + context lines
 rx samples  /var/log/app.log --lines=450000 -C 3 # context by line
 rx index    /var/log/app.log                     # build line-offset index
+rx index    /var/log/app.log --analyze           # + run anomaly detectors
 rx compress /var/log/app.log                     # produce seekable .zst
 rx serve    --port=7777 --search-root=/var/log   # HTTP API + SPA
 ```
+
+`--analyze` runs the built-in anomaly detectors (tracebacks, secrets,
+long lines, multi-line JSON blobs, coredumps, repeated runs) alongside
+the index build. See [`docs/concepts/analyzers.md`](docs/concepts/analyzers.md)
+for the full catalog and wire contract.
 
 ### Subcommands
 

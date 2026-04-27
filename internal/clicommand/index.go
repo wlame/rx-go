@@ -275,6 +275,10 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	}
 	thresholdBytes := threshold * 1024 * 1024
 
+	// Hoisted out of the per-file loop: the window size only depends on
+	// CLI flag and env precedence, not on the path. Compute once.
+	windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
+
 	for _, path := range filesToIndex {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -316,14 +320,19 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			}
 		}
 
-		// Resolve the analyzer window size here. urlParam=0 because the
-		// CLI has no URL param; the resolver applies CLI → env → default
-		// precedence. For non-analyze runs this value is ignored by the
-		// builder but still harmless to compute.
-		windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
+		// Populate detectors from the global registry when --analyze is
+		// on. LineDetectorSnapshot returns FRESH instances per call so
+		// state cannot leak across files in a multi-file invocation.
+		// Without this, the coordinator's zero-detector fast path kicks
+		// in and `rx index --analyze` silently returns zero anomalies.
+		var detectors []analyzer.LineDetector
+		if p.analyze {
+			detectors = analyzer.LineDetectorSnapshot()
+		}
 		idx, err := index.Build(path, index.BuildOptions{
 			Analyze:     p.analyze,
 			WindowLines: windowLines,
+			Detectors:   detectors,
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
