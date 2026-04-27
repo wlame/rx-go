@@ -2,40 +2,64 @@
 
 `rx` includes a pluggable file-analyzer registry. Analyzers contribute
 **anomaly detection** to `rx index --analyze` and `POST /v1/index`
-with `analyze=true`. At v1 the registry is empty — the infrastructure
-is in place but no detectors are registered.
+with `analyze=true`. The v1 catalog ships nine detectors that mark
+regions of interest (tracebacks, crashes, JSON blobs, long lines,
+repeated runs, secret-shaped strings) so rx-viewer can surface them
+as jump targets or highlights.
 
 ## What an analyzer is
 
 An analyzer is a Go implementation of the `FileAnalyzer` interface
-(in `internal/analyzer/registry.go`). It gets handed a file path and
-returns a list of anomalies — regions of the file that stand out
-statistically or semantically.
+(in `internal/analyzer/registry.go`). It inspects a file and returns
+a list of anomalies — regions of the file that stand out statistically
+or semantically. Each detector's output is a navigation hint, not a
+verdict: `severity` maps to a display bucket, not a production-grade
+alert level.
 
-Examples of what analyzers could do (none implemented in v1):
+Line-level detectors additionally implement `LineDetector`
+(`internal/analyzer/linedetector.go`): they receive each line through
+a shared **coordinator** that runs inside the index builder's per-chunk
+loop. One file pass produces both the line-offset index and the anomaly
+list.
 
-- **Log-pattern miner**: cluster lines by structure, detect outlier
-  lines that don't match any common pattern
-- **JSON schema inference**: detect JSON lines with unusual structure
-- **CSV column stats**: detect columns with missing values or type
-  violations
-- **Secret scanner**: detect embedded API keys, certificates, private
-  keys
+## Shipped catalog
+
+The nine detectors below register at process startup and run whenever
+`--analyze` is set. Each is a separate package under
+`internal/analyzer/detectors/`; bumping one detector's version does
+not invalidate the others' caches.
+
+| Detector | Category | Severity | What it finds | Package |
+|---|---|---:|---|---|
+| `traceback-python` | `log-traceback` | 0.7 | Python tracebacks (`Traceback (most recent call last):`) | [`tracebackpython`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/tracebackpython) |
+| `traceback-java` | `log-traceback` | 0.7 | Java stacks (`Exception in thread …`, `Caused by:`, `Suppressed:`) | [`tracebackjava`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/tracebackjava) |
+| `traceback-go` | `log-traceback` | 0.8 | Go runtime tracebacks (`panic:`, `fatal error:`, `goroutine N [state]:`) | [`tracebackgo`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/tracebackgo) |
+| `traceback-js` | `log-traceback` | 0.6 | JavaScript / Node.js stacks (`Error:` + `at …`) | [`tracebackjs`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/tracebackjs) |
+| `coredump-unix` | `log-crash` | 0.9 | Segfaults, ASAN reports, kernel oops, stack-smashing | [`coredumpunix`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/coredumpunix) |
+| `json-blob-multiline` | `format` | 0.3 | Multi-line JSON objects / arrays | [`jsonblob`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/jsonblob) |
+| `long-line` | `format` | 0.3 | Lines unusually long versus the file's length distribution | [`longline`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/longline) |
+| `repeat-identical` | `repetition` | 0.4 | Consecutive identical lines (runs of 5+) | [`repeatidentical`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/repeatidentical) |
+| `secrets-scan` | `secrets` | 1.0 | Credential-shaped strings (AWS key, GitHub PAT, Slack token, JWT, PEM key) | [`secretsscan`](https://github.com/wlame/rx-go/tree/main/internal/analyzer/detectors/secretsscan) |
+
+Severity values are fixed per detector — they map to one of the four
+bands exposed via `GET /v1/detectors`. Every detector on this list is
+`version = "0.1.0"`; bumps are reflected in the cache path and in
+`GET /v1/detectors`.
 
 ## The wire contract
 
-Every file analyzer produces `AnomalyRangeResult` entries:
+Every detector produces `AnomalyRangeResult` entries:
 
 ```json
 {
   "start_line":   12345,
-  "end_line":     12345,
+  "end_line":     12348,
   "start_offset": 1024000,
-  "end_offset":   1024050,
+  "end_offset":   1024512,
   "severity":     0.7,
-  "category":     "error",
-  "description":  "Unusual stack-trace pattern",
-  "detector":     "log-pattern-miner"
+  "category":     "log-traceback",
+  "description":  "Python traceback (4 frames)",
+  "detector":     "traceback-python"
 }
 ```
 
@@ -46,7 +70,7 @@ Fields:
 | `start_line`, `end_line` | int64 | Inclusive line range (1-based) |
 | `start_offset`, `end_offset` | int64 | Byte range of the anomaly |
 | `severity` | float64 | 0.0 (minor) to 1.0 (critical) |
-| `category` | string | Free-form taxonomy tag |
+| `category` | string | Free-form taxonomy tag (see catalog above) |
 | `description` | string | Human-readable explanation |
 | `detector` | string | The analyzer that produced this entry |
 
@@ -62,7 +86,7 @@ The 4-level scale is fixed:
 | `0.8 - 1.0` | critical | Fatal errors, exposed secrets |
 
 Exposed via `GET /v1/detectors` as `severity_scale`. UIs can render
-findings alongside a legend without knowing which analyzers are
+findings alongside a legend without knowing which detectors are
 registered.
 
 ## How analyzers engage
@@ -83,16 +107,37 @@ curl -sXPOST http://127.0.0.1:7777/v1/index -H 'Content-Type: application/json' 
 `rx`:
 
 1. Builds the base line-offset index (same as non-analyze mode)
-2. Iterates the analyzer registry
-3. For each analyzer that claims `Supports(path, mime) == true`, calls
-   `Analyze(path)` and collects its anomaly results
-4. Merges results from every analyzer into the `anomalies` slice of
-   the resulting index
+2. Spins up a per-worker `Coordinator` wrapping the full detector
+   registry and a shared **sliding window** of the most recent lines
+   (default 128, capped at 2048 — see
+   [`--analyze-window-lines`](../cli/line-index.md))
+3. Dispatches each line to every registered `LineDetector` through the
+   coordinator
+4. After the per-chunk pass, calls each detector's `Finalize` with a
+   `FlushContext` holding the file's total line count, median, and P99
+   length (so stats-driven detectors like `long-line` can pick a
+   threshold)
+5. Deduplicates anomalies across chunk workers by
+   `(detector, start_offset, end_offset)` and attaches the result to
+   `UnifiedFileIndex.Anomalies`
 
-With an empty registry (the v1 state), step 3 yields zero anomalies
-and the final `anomalies` slice is empty. The contract-level response
-is unchanged — clients that consumed an empty `anomalies` array
-before will continue to work.
+When `--analyze` is off, no coordinator runs and the hot loop is the
+same as the current release.
+
+## Sliding window and look-back
+
+Detectors that need context (`traceback-python` walks back to see the
+opening cue, `json-blob-multiline` counts brackets across lines) read
+from a fixed-size ring buffer owned by the coordinator. The buffer is
+passed by pointer, so detectors never allocate per line. The window
+size is configurable per request:
+
+- CLI: `rx index --analyze --analyze-window-lines=256`
+- HTTP: `{"analyze": true, "analyze_window_lines": 256}`
+- Env: `RX_ANALYZE_WINDOW_LINES=256`
+
+Precedence is URL param > CLI flag > env > default (128). The value is
+clamped to `[1, 2048]`.
 
 ## Cache namespacing
 
@@ -117,47 +162,47 @@ analyzer is a small code change to `rx` itself.
 
 Steps (for developers):
 
-1. Implement `FileAnalyzer` in a new package under
-   `internal/analyzer/<your-analyzer>/`
-2. Register it in `analyzer.NewRegistry()` so every `rx` instance
-   knows about it
-3. Rebuild `rx`
-4. The analyzer's output now appears in `GET /v1/detectors` and runs
-   when `analyze=true`
+1. Implement `LineDetector` (or `FileAnalyzer` for whole-file
+   detectors) in a new package under
+   `internal/analyzer/detectors/<your-detector>/`
+2. Call `analyzer.Register(...)` from the package's `init()` function
+3. Add a blank import (`_ "github.com/wlame/rx-go/internal/analyzer/detectors/<your-detector>"`)
+   to `cmd/rx/main.go` so the init fires at process startup
+4. Rebuild `rx`
+5. The detector's metadata now appears in `GET /v1/detectors` and runs
+   whenever `analyze=true`
 
-The `FileAnalyzer` interface (simplified):
+The `LineDetector` interface:
 
 ```go
-type FileAnalyzer interface {
-    Name() string                        // stable identifier, used in cache paths
-    Version() string                     // bump to invalidate cached output
-    Supports(path, mime string) bool     // runs for this file?
-    Analyze(path string) ([]AnomalyRangeResult, error)
+type LineDetector interface {
+    FileAnalyzer
+    OnLine(w *Window)
+    Finalize(flush *FlushContext) []Anomaly
 }
 ```
 
-Cache key scheme and the registry's concurrency contract are
-documented in `internal/analyzer/` source.
+`FileAnalyzer` (the metadata-only parent):
 
-## Future work
+```go
+type FileAnalyzer interface {
+    Name() string         // stable identifier, used in cache paths
+    Version() string      // bump to invalidate cached output
+    Category() string     // grouping tag; shown in GET /v1/detectors
+    Description() string  // human-readable
+}
+```
 
-The v1 release ships without any analyzers. Reasonable first targets:
-
-- **CSV column stats** (low effort, high value for CSV users)
-- **JSON schema inference** (medium effort)
-- **Log-pattern miner** (high effort, highest value for log users)
-
-Until then, `GET /v1/detectors` returns an empty detectors list and
-`analyze=true` is essentially the same as `analyze=false` plus a
-promise that the infrastructure is ready for future additions.
+Cache key scheme, the registry's Freeze barrier, and the coordinator's
+concurrency contract are documented in `internal/analyzer/` source.
 
 ## Implications for users
 
-- **Don't rely on `analyze=true` producing findings at v1** — it
-  currently produces none
-- **Don't build tooling on specific detector names** — none are
-  guaranteed to exist. Inspect the registry via `GET /v1/detectors`
-  before assuming
+- **`analyze=true` now produces findings** — the nine detectors above
+  run on every analyze pass
+- **Detector names are stable** — anything shipped under a given
+  `name` + `version` keeps its wire contract; breaking changes land
+  under a new version string
 - **The `severity_scale` is stable** — you can build UI around the 4
   levels today
 

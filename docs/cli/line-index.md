@@ -39,6 +39,7 @@ configurable via [`RX_LARGE_FILE_MB`](../configuration.md) or the
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `-r`, `--recursive` | `bool` | `false` | Recurse into directory paths |
 | `-a`, `--analyze` | `bool` | `false` | Run full analysis (line length stats, anomalies) |
+| `--analyze-window-lines` | `int` | `0` (resolver default 128) | Sliding-window size for the anomaly coordinator; only used with `--analyze`. Capped at 2048 |
 | `--threshold` | `int` | `0` (env default) | Minimum file size in MB to index; ignored with `--analyze` |
 
 Mode flags have a priority order: `--delete` > `--info` > build.
@@ -106,11 +107,26 @@ In addition to the line-offset checkpoints, `--analyze` populates:
 - Byte offset of the longest line
 - Detected line ending (LF vs CRLF)
 - Compression info (for compressed inputs)
-- Anomaly report (currently empty — see [concepts/analyzers](../concepts/analyzers.md))
+- Anomaly report (nine detectors run by default — see [concepts/analyzers](../concepts/analyzers.md))
 
 `--analyze` is slower than a plain build because it walks every byte
-of the file to gather statistics. A cached non-analyze index cannot
-satisfy an `--analyze` call; `rx` falls through to a full rebuild.
+of the file to gather statistics and dispatches each line to the
+detector coordinator. A cached non-analyze index cannot satisfy an
+`--analyze` call; `rx` falls through to a full rebuild.
+
+### Tuning the anomaly window
+
+Detectors that span multiple lines (tracebacks, multi-line JSON blobs)
+look back through a fixed-size sliding window. The default is 128
+lines, which covers most real-world stacks. Increase it if you see
+multi-line patterns getting truncated:
+
+```bash
+rx index /var/log/app.log --analyze --analyze-window-lines=512
+```
+
+The resolver precedence is URL param > CLI flag > `RX_ANALYZE_WINDOW_LINES`
+env var > default (128). Values outside `[1, 2048]` are clamped.
 
 ### Multiple files, recursive
 
