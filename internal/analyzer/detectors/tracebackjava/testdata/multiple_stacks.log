@@ -1,0 +1,8 @@
+request one start
+Exception in thread "pool-1-thread-1" java.lang.IllegalArgumentException: bad arg
+	at com.example.app.A.foo(A.java:10)
+	at com.example.app.A.main(A.java:3)
+Exception in thread "pool-1-thread-2" java.lang.NullPointerException: npe here
+	at com.example.app.B.bar(B.java:20)
+	at com.example.app.B.main(B.java:5)
+request one end

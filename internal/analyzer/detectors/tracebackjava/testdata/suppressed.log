@@ -1,0 +1,15 @@
+batch job start
+Exception in thread "worker-3" java.lang.RuntimeException: primary failure
+	at com.example.app.Job.run(Job.java:102)
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
+	Suppressed: java.io.IOException: cleanup failure
+		at com.example.app.Job.cleanup(Job.java:150)
+		at com.example.app.Job.run(Job.java:108)
+		... 1 more
+	Suppressed: java.lang.IllegalStateException: already closed
+		at com.example.app.Resource.close(Resource.java:33)
+		... 2 more
+Caused by: java.sql.SQLException: connection refused
+	at com.example.app.Db.connect(Db.java:25)
+	... 3 more
+batch job done
