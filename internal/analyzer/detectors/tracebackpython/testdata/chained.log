@@ -1,0 +1,17 @@
+inbound request
+Traceback (most recent call last):
+  File "/app/svc.py", line 22, in load
+    data = json.loads(raw)
+  File "/usr/lib/python3.11/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/svc.py", line 30, in handle
+    payload = load(raw)
+  File "/app/svc.py", line 24, in load
+    raise ValueError("bad payload") from e
+ValueError: bad payload
+request failed

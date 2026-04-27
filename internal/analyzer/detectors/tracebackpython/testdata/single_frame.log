@@ -1,0 +1,6 @@
+request received id=abc
+Traceback (most recent call last):
+  File "/app/handler.py", line 42, in handle
+    value = int(payload)
+ValueError: invalid literal for int() with base 10: 'xyz'
+request completed

@@ -30,6 +30,7 @@ import (
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/jsonblob"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/longline"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/repeatidentical"
+	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackpython"
 )
 
 // appVersion is overridden at link time via -ldflags "-X main.appVersion=..."
