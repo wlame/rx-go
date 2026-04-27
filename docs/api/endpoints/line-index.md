@@ -71,7 +71,7 @@ GET /v1/index?path=<file>
 | `line_length` | object \| null | `{max, avg, median, p95, p99, stddev}` when analyzed |
 | `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line |
 | `compression_format` | string \| null | For compressed inputs only |
-| `anomalies` | array \| null | Anomaly detector output (empty in v1 — see [analyzers](../../concepts/analyzers.md)) |
+| `anomalies` | array \| null | Anomaly detector output — populated when `analyze=true`, `null` otherwise. See [analyzers](../../concepts/analyzers.md) for the shipped catalog |
 | `cli_command` | string | Equivalent CLI command |
 
 ### Status codes
@@ -115,7 +115,14 @@ Content-Type: application/json
 | `path` | string | yes | — | File path |
 | `force` | bool | no | `false` | Rebuild even if a valid cache exists |
 | `analyze` | bool | no | `false` | Run full analysis (line stats, anomalies) |
+| `analyze_window_lines` | int | no | `0` (resolver default 128) | Sliding-window size for the anomaly coordinator. Ignored when `analyze=false`. Clamped to `[1, 2048]` |
 | `threshold` | int \| null | no | `RX_LARGE_FILE_MB` (default 50) | Min file size in MB |
+
+`analyze_window_lines` controls how far multi-line detectors
+(tracebacks, JSON blobs) can look back. The request value overrides
+both the `--analyze-window-lines` CLI flag (if the caller is the
+in-process CLI) and the `RX_ANALYZE_WINDOW_LINES` env var. See
+[concepts/analyzers](../../concepts/analyzers.md).
 
 ### Response — 200 OK
 
@@ -195,6 +202,18 @@ curl -sXPOST 'http://127.0.0.1:7777/v1/index' \
     -d '{"path":"/var/log/audit-2026-03.log","analyze":true}' \
     | jq '.task_id'
 ```
+
+### Example — full analysis with a wider detector window
+
+```bash
+curl -sXPOST 'http://127.0.0.1:7777/v1/index' \
+    -H 'Content-Type: application/json' \
+    -d '{"path":"/var/log/audit-2026-03.log","analyze":true,"analyze_window_lines":512}' \
+    | jq '.task_id'
+```
+
+Useful when the file contains very long tracebacks or large multi-line
+JSON blobs that the default 128-line window would truncate.
 
 ### Cache reuse behavior
 
