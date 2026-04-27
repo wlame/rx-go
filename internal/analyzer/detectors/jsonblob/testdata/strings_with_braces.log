@@ -1,0 +1,8 @@
+payload received
+{
+  "template": "hello {name}, you have [count] messages",
+  "regex": "\\{.*\\}",
+  "quoted": "she said \"{ok}\"",
+  "payload": "[1,2,3]"
+}
+payload done

@@ -1,0 +1,10 @@
+processing event
+{
+  "id": 42,
+  "metadata": {
+    "source": "sensor-1",
+    "tags": ["a", "b"]
+  },
+  "values": [1, 2, 3]
+}
+next event line
