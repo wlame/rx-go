@@ -1,0 +1,7 @@
+streaming write failure follows
+{
+  "user": "alice",
+  "nested": {
+    "deep": {
+      "more": "data",
+      "list": [1, 2, 3,
