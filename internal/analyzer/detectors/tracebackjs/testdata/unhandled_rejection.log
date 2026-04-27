@@ -1,0 +1,7 @@
+worker starting
+(node:12345) UnhandledPromiseRejectionWarning: Error: database connection lost
+UnhandledPromiseRejectionWarning: Error: database connection lost
+    at Connection.onTimeout (/app/src/db.js:88:12)
+    at Timeout._onTimeout (/app/src/db.js:144:9)
+    at listOnTimeout (internal/timers.js:554:17)
+worker continuing
