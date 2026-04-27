@@ -1,0 +1,8 @@
+2026-04-21T10:05:00Z INFO negative fixtures — none of these should fire
+2026-04-21T10:05:01Z DEBUG short AKIA prefix: AKIATOO_SHORT (only 8 chars after AKIA)
+2026-04-21T10:05:02Z DEBUG broken JWT missing third segment: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0
+2026-04-21T10:05:03Z DEBUG PEM banner missing BEGIN marker: ---- RSA PRIVATE KEY -----
+2026-04-21T10:05:04Z DEBUG PEM banner missing trailing dashes: -----BEGIN RSA PRIVATE KEY
+2026-04-21T10:05:05Z DEBUG github short PAT: ghp_tooshort
+2026-04-21T10:05:06Z DEBUG slack missing dash: xoxbNOT-A-REAL-TOKEN
+2026-04-21T10:05:07Z INFO all clear

@@ -31,6 +31,7 @@ import (
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/jsonblob"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/longline"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/repeatidentical"
+	_ "github.com/wlame/rx-go/internal/analyzer/detectors/secretsscan"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackgo"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjava"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjs"

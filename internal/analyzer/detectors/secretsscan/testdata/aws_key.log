@@ -1,0 +1,4 @@
+2026-04-21T10:00:01Z INFO starting uploader
+2026-04-21T10:00:02Z DEBUG config loaded: region=us-west-2
+2026-04-21T10:00:03Z ERROR failed auth: AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE was rejected
+2026-04-21T10:00:04Z INFO retrying with backup profile
