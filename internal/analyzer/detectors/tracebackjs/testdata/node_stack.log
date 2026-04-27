@@ -1,0 +1,7 @@
+server booting up
+TypeError: Cannot read properties of undefined (reading 'id')
+    at Object.handler (/app/src/handlers/user.js:42:17)
+    at processRequest (/app/src/server.js:88:12)
+    at next (/app/node_modules/express/lib/router/route.js:137:13)
+    at Route.dispatch (/app/node_modules/express/lib/router/route.js:112:3)
+server still running

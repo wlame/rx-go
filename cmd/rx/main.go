@@ -32,6 +32,7 @@ import (
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/repeatidentical"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackgo"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjava"
+	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjs"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackpython"
 )
 

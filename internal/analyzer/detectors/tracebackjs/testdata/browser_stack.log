@@ -1,0 +1,5 @@
+page loaded
+ReferenceError: foo is not defined
+    at bundle.js:1:234
+    at bundle.js:1:512
+user clicked button
