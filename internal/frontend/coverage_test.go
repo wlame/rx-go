@@ -213,7 +213,15 @@ func TestFetchLatestRelease_Good(t *testing.T) {
 // TestEnsure_DirectURL_Override exercises the RX_FRONTEND_URL path.
 func TestEnsure_DirectURL_Override(t *testing.T) {
 	tarball := buildFakeTarballV("1.2.3")
+	// Serve the bundle only at its own path and 404 everything else, the
+	// way a release host does. The manager asks for a .sha256 sidecar
+	// beside the asset, and answering that with the tarball itself would
+	// be a broken host, not a missing sidecar.
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dist.tar.gz" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		_, _ = w.Write(tarball)
 	}))
 	defer backend.Close()

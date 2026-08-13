@@ -127,6 +127,46 @@ partial writes leak through. The in-flight temp file is deleted.
 
 Test coverage includes malicious-tarball fixtures.
 
+## Viewer bundle integrity
+
+The bundle is unpacked into the cache and served to a browser from the rx
+origin, so what it contains matters as much as where it lands.
+
+### The bundle is verified before it is unpacked
+
+Every release publishes `dist.tar.gz.sha256` beside the asset. After the
+download, `rx` fetches that sidecar and checks the digest:
+
+| Sidecar | Result |
+|---|---|
+| Present and matching | Extracted; the digest is stored in `.metadata.json` |
+| Present and not matching | Refused. Nothing is unpacked, the cached bundle is untouched, and the failure is logged as `frontend_checksum_mismatch` |
+| Absent (HTTP 404) | Accepted with a `frontend_checksum_missing` warning — releases published before the sidecar existed are still installable |
+| Present but unreadable | Refused. A release host answering with something that is not a digest is broken, not sidecar-less |
+
+rx-python behaves identically.
+
+### A failed download never costs the working bundle
+
+The tarball streams to a temp file, is verified, and is unpacked into a
+`.staging` directory. Only when all of that succeeds is the previous
+bundle replaced. A truncated download, a bad digest or a malformed archive
+leaves the last good bundle exactly where it was.
+
+### "Latest" is bounded
+
+`rx serve` resolves the newest viewer release, but installs it only when
+its version falls inside the range this backend was built against —
+`0.2.0 <= v < 0.3.0` today (the viewer is a 0.x product, where a minor bump
+may break compatibility). A newer release is logged as
+`frontend_version_incompatible` and skipped; the server runs without the
+SPA rather than serving a viewer that expects fields this backend does not
+send.
+
+`RX_FRONTEND_VERSION=v0.2.0` pins an exact tag and bypasses the range
+check. `RX_FRONTEND_URL` bypasses release resolution entirely. Both are
+for an operator who knows what they are doing.
+
 ## Webhook SSRF protection
 
 ### The threat

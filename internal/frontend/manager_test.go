@@ -150,7 +150,8 @@ func TestManager_IsAvailable_FalseWhenMissing(t *testing.T) {
 // download the asset, extract, and leave a valid cache.
 func TestEnsure_NoCacheFetchesLatest(t *testing.T) {
 	tarball := makeFakeTarball(t)
-	tag := "v1.2.3"
+	// Inside the supported viewer range (see compat.go).
+	tag := "v0.2.3"
 
 	mux := http.NewServeMux()
 	var srv *httptest.Server
