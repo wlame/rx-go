@@ -261,6 +261,14 @@ func ValidateURL(raw string) error {
 	if u.Host == "" {
 		return fmt.Errorf("%w: %s (no host)", ErrInvalidHookURL, raw)
 	}
+	// Credentials in the URL land in proxy logs and in the target's
+	// access log, and rx never needs to authenticate to a webhook that
+	// way. Checked before the operator opt-in below: this is not an
+	// internal-address rule, so RX_ALLOW_INTERNAL_HOOKS does not
+	// switch it off.
+	if u.User != nil {
+		return fmt.Errorf("%w: %s (URL must not contain credentials)", ErrInvalidHookURL, raw)
+	}
 	// Short-circuit: operator opt-in bypasses ALL further guards.
 	if parseBoolEnv(os.Getenv("RX_ALLOW_INTERNAL_HOOKS")) {
 		return nil
@@ -348,6 +356,14 @@ func internalHostReason(host string) string {
 	return internalIPReason(ip)
 }
 
+// InternalHostReason is the exported form of internalHostReason, for
+// callers outside this package that make outbound HTTP requests and
+// need the same address policy — the frontend downloader re-checks
+// every redirect hop with it.
+//
+// Returns an empty string when the host looks public-routable.
+func InternalHostReason(host string) string { return internalHostReason(host) }
+
 // internalIPReason returns a description if the given IP falls in
 // any of the address spaces considered internal for SSRF purposes,
 // or empty if the IP is routable-public.
@@ -384,6 +400,11 @@ func internalIPReason(ip net.IP) string {
 	// parsed at package init.
 	if cgnat100_64_10.Contains(ip) {
 		return "points at a CGNAT address"
+	}
+	// Multicast beyond the link-local range handled above (224.0.0.0/4,
+	// ff00::/8). A webhook has no business addressing a group.
+	if ip.IsMulticast() {
+		return "points at a multicast address"
 	}
 	if ip.IsUnspecified() {
 		// 0.0.0.0 or :: — routing on the local machine typically sends

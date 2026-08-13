@@ -102,11 +102,23 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 		cfg.Logger = slog.Default()
 	}
 	d := &Dispatcher{
-		cfg:        cfg,
-		httpClient: &http.Client{Timeout: cfg.Timeout},
-		queue:      make(chan hookEvent, cfg.QueueDepth),
-		stopped:    make(chan struct{}),
-		logger:     cfg.Logger,
+		cfg: cfg,
+		// SECURITY: refuse every redirect. ValidateURL only ever sees
+		// the URL the operator configured; a target that answers 302
+		// would otherwise steer the request to a host nobody vetted,
+		// including the loopback and metadata addresses the SSRF guard
+		// exists to block. ErrUseLastResponse makes Do return the 3xx
+		// itself, which the caller then reports as a non-2xx failure.
+		httpClient: &http.Client{
+			Timeout: cfg.Timeout,
+			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+				cfg.Logger.Debug("hook_redirect_refused", "target", req.URL.Redacted())
+				return http.ErrUseLastResponse
+			},
+		},
+		queue:   make(chan hookEvent, cfg.QueueDepth),
+		stopped: make(chan struct{}),
+		logger:  cfg.Logger,
 	}
 	for i := 0; i < cfg.Workers; i++ {
 		d.wg.Add(1)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -177,6 +178,17 @@ func runTrace(out io.Writer, p traceParams) error {
 	if len(patterns) == 0 {
 		_ = exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
 		return errors.New("no pattern")
+	}
+
+	// SECURITY: hook URLs from the command line get the same guard the
+	// HTTP layer applies to hook_on_* query parameters — scheme
+	// allowlist, no credentials, and no loopback / link-local /
+	// private / CGNAT target.
+	for _, u := range []string{p.hookOnFile, p.hookOnMatch, p.hookOnComplete} {
+		if err := hooks.ValidateURL(u); err != nil {
+			_ = exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+			return err
+		}
 	}
 
 	// Validate paths against sandbox only if one is configured. The CLI

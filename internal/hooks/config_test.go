@@ -389,3 +389,78 @@ func TestValidateURL_R2M5_InternalIPLiteralStillRejectedUnderStrictIP(t *testing
 		})
 	}
 }
+
+// TestValidateURL_RejectsCredentials asserts a hook URL may not carry
+// userinfo. Credentials in a hook URL end up in proxy logs and in the
+// target's access log, and rx has no reason to authenticate to a
+// webhook that way.
+func TestValidateURL_RejectsCredentials(t *testing.T) {
+	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "")
+	t.Setenv("RX_HOOK_STRICT_IP_ONLY", "")
+
+	cases := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"user_and_password", "http://user:secret@example.com/hook", true},
+		{"user_only", "http://user@example.com/hook", true},
+		{"no_credentials", "http://example.com/hook", false},
+		{"at_sign_in_path_is_fine", "http://example.com/hook@v1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateURL(tc.url)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("ValidateURL(%q): err=%v, wantErr=%v", tc.url, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateURL_CredentialsRejectedEvenWhenInternalHooksAllowed
+// pins that the credential rule is not part of the internal-address
+// guard, so the operator opt-in does not switch it off.
+func TestValidateURL_CredentialsRejectedEvenWhenInternalHooksAllowed(t *testing.T) {
+	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "true")
+	if err := ValidateURL("http://user:secret@example.com/hook"); err == nil {
+		t.Errorf("ValidateURL: got nil, want an error")
+	}
+}
+
+// TestInternalIPReason_MatchesPythonClassification pins the address
+// classification both backends share. The reason strings travel to the
+// client as the 400 detail, so they are contract, not cosmetics.
+func TestInternalIPReason_MatchesPythonClassification(t *testing.T) {
+	cases := []struct {
+		ip   string
+		want string
+	}{
+		{"127.0.0.1", "points at a loopback address"},
+		{"::1", "points at a loopback address"},
+		{"::ffff:127.0.0.1", "points at a loopback address"},
+		{"169.254.169.254", "points at a link-local address"},
+		{"fe80::1", "points at a link-local address"},
+		{"224.0.0.1", "points at a link-local address"},
+		{"239.1.2.3", "points at a multicast address"},
+		{"10.0.0.1", "points at a private-network address"},
+		{"172.16.0.1", "points at a private-network address"},
+		{"192.168.1.1", "points at a private-network address"},
+		{"fc00::1", "points at a private-network address"},
+		{"100.64.0.1", "points at a CGNAT address"},
+		{"0.0.0.0", "points at an unspecified address"},
+		{"::", "points at an unspecified address"},
+		{"8.8.8.8", ""},
+		{"93.184.216.34", ""},
+		{"198.18.0.1", ""},
+		{"2001:4860:4860::8888", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ip, func(t *testing.T) {
+			got := internalIPReason(net.ParseIP(tc.ip))
+			if got != tc.want {
+				t.Errorf("internalIPReason(%s) = %q, want %q", tc.ip, got, tc.want)
+			}
+		})
+	}
+}
