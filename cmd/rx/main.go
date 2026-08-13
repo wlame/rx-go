@@ -30,8 +30,8 @@ import (
 
 	// Blank-import analyzer detectors so their package init() calls
 	// register them with the global analyzer registry before main runs
-	// analyzer.Freeze(). Add one line per detector as we roll out the
-	// MVP catalog (see docs/plans/2026-04-21-analyzers.md).
+	// analyzer.Freeze(). One line per detector; the catalog is described
+	// in docs/concepts/analyzers.md.
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/coredumpunix"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/jsonblob"
 	_ "github.com/wlame/rx-go/internal/analyzer/detectors/longline"
@@ -85,11 +85,12 @@ func main() {
 	// restores the default handler when stop() runs, so a second Ctrl-C
 	// during shutdown still kills the process immediately.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	err := root.ExecuteContext(ctx)
 	// Read the context before stop(): stop() is NotifyContext's cancel
 	// func, so calling it first would make every run look interrupted.
+	// No `defer stop()` here — os.Exit below would skip it, and the
+	// explicit call covers every path out of this function.
 	interrupted := ctx.Err() != nil
 	stop()
 	os.Exit(exitCodeFor(err, interrupted))
@@ -101,7 +102,7 @@ func main() {
 //	*clicommand.ExitError    → its Code
 //	anything else            → 1
 //
-// An interrupt wins over everything: when the user signalled us, whatever
+// An interrupt wins over everything: when the user signaled us, whatever
 // error the command reported downstream is a consequence of the signal,
 // and the contract says 5.
 func exitCodeFor(err error, interrupted bool) int {
