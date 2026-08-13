@@ -51,20 +51,16 @@ jobs:
           # plugin to read commit history and render "last updated" dates.
           fetch-depth: 0
 
-      - name: setup-python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: docs/requirements.txt
+      - name: setup-uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r docs/requirements.txt
+      - name: setup-just
+        uses: extractions/setup-just@v4
 
-      - name: mkdocs build (strict)
-        run: mkdocs build --strict
+      # The same recipe `just ci` runs, so the docs cannot pass here and
+      # fail there.
+      - name: just docs-build
+        run: just docs-build
 
       # `enablement: true` auto-enables GitHub Pages on the repo and sets
       # its source to "GitHub Actions" if it isn't already configured.
