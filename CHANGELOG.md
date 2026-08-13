@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- The viewer bundle is verified against the release's `dist.tar.gz.sha256`
+  sidecar before it is unpacked. A digest that does not match is refused
+  and the cached bundle is left alone; a missing sidecar is accepted with
+  a warning, for releases published before sidecars existed. The verified
+  digest is recorded in `.metadata.json`.
+- A bundle is unpacked into a staging directory and only swapped in once
+  it is known good, so a failed download no longer destroys the working
+  viewer. The cache used to be cleared before extraction.
+- `rx serve` installs the newest viewer release only when its version is
+  inside the range this backend was built against (`0.2.0 <= v < 0.3.0`).
+  A newer release is logged and skipped instead of being served to the
+  browser; `RX_FRONTEND_VERSION` and `RX_FRONTEND_URL` override it.
+
 - Webhook dispatch no longer follows redirects. A hook target that
   answers `3xx` cannot steer the request at a host that never passed
   validation; the hop is logged and the hook counts as a failure.
