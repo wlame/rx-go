@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `justfile` as the single dev entrypoint. `just ci` runs the gates in the
+  order CI runs them — `fmt-check vet lint tidy-check test-race docs-build`
+  — and `.github/workflows/ci.yml` invokes `just ci` rather than repeating
+  the commands, so the two cannot drift apart. `just cover` enforces an 80%
+  coverage floor (82.4% today).
+- `.github/workflows/release.yml`: a `vX.Y.Z` tag builds static binaries for
+  linux/amd64, linux/arm64, darwin/arm64 and darwin/amd64 with sha256
+  sidecars, checks that `rx --version` reports the tag, and creates the
+  GitHub Release from the changelog section.
+- `scripts/release.sh`, driven by `just release` and `just release-dry`. It
+  requires a clean tree on `main`, refuses to release an empty
+  `[Unreleased]`, promotes the changelog, commits and tags — and prints the
+  push commands instead of running them.
+- `LICENSE` (MIT). The README referenced one that did not exist.
+- Dependabot for GitHub Actions and Go modules, weekly.
+
+### Changed
+
+- `go.mod` and `go.sum` are tidy. Five direct dependencies (huma, chi, uuid,
+  cobra, xz) were sitting in the `// indirect` block, and `go mod tidy
+  -diff` is now a CI gate.
+- The Makefile is gone; its `VERSION ?= 0.1.0-dev` default meant a build
+  could claim a version that was never tagged.
+- `mkdocs.yml` excludes `docs/plans/`, which is gitignored working material
+  and failed the strict docs build with a git-revision warning.
+
+### Fixed
+
+- `golangci-lint` findings: an `exitAfterDefer` in `main`, a shadowed error
+  in the trace command, and four US-spelling misspellings. The gosec
+  path-traversal report on the static file handler is annotated with the
+  validator it cannot see through.
+
 ### Security
 
 - The viewer bundle is verified against the release's `dist.tar.gz.sha256`

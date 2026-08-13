@@ -1,0 +1,63 @@
+name: Release
+
+# Build the release binaries when a vX.Y.Z tag is pushed. scripts/release.sh
+# creates the tag locally and prints the push command; nothing here runs
+# until a human pushes it.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write # create the GitHub Release and upload the binaries
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          # The build stamps `git describe`, which needs the tag history.
+          fetch-depth: 0
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: setup-just
+        uses: extractions/setup-just@v4
+
+      - name: build binaries and checksums
+        run: just build-all
+
+      - name: verify the binary reports the tag
+        run: |
+          set -euo pipefail
+          reported=$(./dist/rx-linux-amd64 --version)
+          echo "rx --version: $reported"
+          case "$reported" in
+            *"${GITHUB_REF_NAME}"*) ;;
+            *)
+              echo "ERROR: rx --version ($reported) does not carry the tag ${GITHUB_REF_NAME}"
+              exit 1
+              ;;
+          esac
+
+      - name: release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          just release-notes "$version" > release-notes.md
+          echo "Release notes for $version:"
+          cat release-notes.md
+
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/rx-*
+          body_path: release-notes.md
+          fail_on_unmatched_files: true

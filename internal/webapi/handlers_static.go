@@ -146,5 +146,10 @@ func serveStaticFile(w http.ResponseWriter, req *http.Request, resolved string) 
 	// Hashed-asset cache hint. index-<hash>.js etc. never change, so a
 	// long cache is fine; index.html itself is handled above with no-cache.
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// resolved comes from frontend.Manager.ValidateStaticPath, which
+	// rejects absolute paths and requires the cleaned path to sit under
+	// the cache root (prefix + separator, so a sibling directory cannot
+	// match). gosec's taint analysis cannot follow that across the call.
+	//nolint:gosec // G703: the path is validated by ValidateStaticPath.
 	http.ServeFile(w, req, resolved)
 }

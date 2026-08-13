@@ -76,24 +76,35 @@ This repo is the **flagship backend** of a product with three active repos:
 
 ## Build, run, test
 
-```bash
-go build ./...                                   # compile everything
-CGO_ENABLED=0 go build -ldflags='-s -w' -o dist/rx ./cmd/rx   # static binary
-go run ./cmd/rx "error" /var/log/app.log         # run from source
-go run ./cmd/rx serve --port=8080 --search-root=/var/log      # 8080 matches the viewer dev proxy
+`just` is the entrypoint. `just --list` shows every recipe.
 
-go test -race -count=1 ./...                     # full suite (about 30 s)
-go test -race -count=10 ./internal/trace/        # hunt flaky tests
-go test -bench=. -benchmem ./internal/trace/     # benchmarks (not a CI gate)
-golangci-lint run ./...                          # lint, config in .golangci.yml (v2 schema)
-go mod tidy -diff                                # must be empty before commit
-make ci                                          # fmt-check + vet + lint + test (until the justfile lands)
+```bash
+just build                                       # static binary into dist/
+just run trace "error" /var/log/app.log          # run from source
+just serve --port=8080 --search-root=/var/log    # 8080 matches the viewer dev proxy
+
+just test                                        # full suite
+just test -run TestTrace ./internal/trace/       # arguments pass straight through
+just test-race                                   # race detector (about 30 s)
+just test-repeat ./internal/trace/               # 10x, to hunt a flaky test
+just bench                                       # benchmarks (not a CI gate)
+just cover                                       # tests + the coverage floor
+just parity trace error app.log                  # diff --json against rx-python
+
+just ci                                          # exactly what GitHub CI runs
+just check                                       # ci + cover + build + vuln
 ```
 
-Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it). The
-justfile and release recipes described in `../release-toolchain-reference.md`
-are tracked in `../tickets/08-ci-release-toolchain.md`; when they exist, prefer
-`just ci` over `make ci`.
+`just ci` is `fmt-check vet lint tidy-check test-race docs-build`, in that
+order, and `.github/workflows/ci.yml` runs `just ci` — the two cannot
+disagree. The **coverage floor is 80%** (82.4% today), enforced by
+`just cover`; raise it as coverage improves and never lower it to make a red
+build green.
+
+Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it); CI runs
+1.25 and 1.26. `golangci-lint` v2.x and `govulncheck` are needed for `just
+lint` and `just vuln` — install them with `go install`. `just docs-build`
+needs `uv`.
 
 ## Architecture
 
@@ -178,7 +189,7 @@ Data flow for `rx trace "pattern" big.log`:
 - The completion gate before you say "done":
 
 ```bash
-go build ./... && go test -race -count=1 ./... && golangci-lint run ./... && go mod tidy -diff
+just ci
 ```
 
 Paste the output. Do not summarize it.
@@ -188,9 +199,12 @@ Paste the output. Do not summarize it.
 - Commit: one imperative sentence, capital, full stop, no prefix, no body.
 - `CHANGELOG.md` (Keep a Changelog) gets an entry under `## [Unreleased]` for
   every behaviour change. Consolidate rather than duplicate bullets.
-- Version is stamped from `git describe --tags --dirty --always`. Tags are
-  `vX.Y.Z` on `main` from a clean tree. Release scripts print the `git push`
-  and `gh release create` commands; a human runs them.
+- Version is stamped from `git describe --tags --dirty --always`; there is no
+  version constant in the source. Tags are `vX.Y.Z` on `main` from a clean
+  tree. `just release-dry patch` previews, `just release patch` runs the CI
+  gate, promotes the changelog, commits and tags — and then prints the `git
+  push` commands rather than running them. Pushing the tag is what triggers
+  `release.yml`, which builds the binaries and their sha256 sidecars.
 - Never push. Never `git reset`, `stash`, `rebase` or discard changes.
 - Working files (plans, audits, notes) go in the gitignored `.claude/`.
 

@@ -6,26 +6,40 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-test:
-    # Matrix build + lint + test. No untrusted input is used in any run: block,
-    # so the "github.event.*" injection class isn't applicable here.
+  ci:
+    # The gates run through `just ci`, so a developer and CI cannot
+    # disagree about what "passing" means. No untrusted input reaches any
+    # run: block, so the github.event.* injection class does not apply.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go-version: ['1.25']
+        # The floor from go.mod and the toolchain the release is built with.
+        go-version: ['1.25', '1.26']
 
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          # `just version` and the docs' git-revision plugin need history.
+          fetch-depth: 0
 
       - name: setup-go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
+
+      - name: setup-just
+        uses: extractions/setup-just@v4
+
+      - name: setup-uv
+        uses: astral-sh/setup-uv@v5
 
       - name: install ripgrep (ubuntu)
         if: runner.os == 'Linux'
@@ -35,35 +49,48 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install ripgrep
 
-      - name: go mod download
-        run: go mod download
-
-      - name: go build
-        run: go build ./...
-
-      - name: go vet
-        run: go vet ./...
-
-      # Use golangci-lint v2.x — the repo's .golangci.yml is in the v2
-      # config schema (`version: "2"`), and we need a binary built with
-      # Go 1.25+ to match the module's `go 1.25.0` directive. Older v1
-      # releases (e.g. v1.64.7) were built with Go 1.24 and fail with
-      # "the Go language version used to build golangci-lint is lower
-      # than the targeted Go version".
+      # v2.x: the repo's .golangci.yml uses the v2 config schema, and the
+      # binary must be built with a Go at least as new as go.mod's
+      # directive or it refuses to run.
       - name: install golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.4
+          version: v2.13.2
+          install-mode: binary
+          args: --version
 
-      - name: golangci-lint
-        run: golangci-lint run ./...
+      - name: just ci
+        run: just ci
 
-      - name: go test (race + cover)
-        run: go test -race -coverprofile=coverage.out ./...
+      - name: coverage floor
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26'
+        run: just cover
 
       - name: upload coverage
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.26'
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.os }}-${{ matrix.go-version }}
-          path: coverage.out
+          name: coverage
+          path: cover.out
+
+  security:
+    # Kept out of the CI job so a CVE disclosure does not block merging a
+    # fix for it, and so the gate stays readable.
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: setup-go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: setup-just
+        uses: extractions/setup-just@v4
+
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: just vuln
+        run: just vuln

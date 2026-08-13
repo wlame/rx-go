@@ -117,7 +117,7 @@ func TestCompress_OutputInsideSearchRootSucceeds(t *testing.T) {
 }
 
 // TestCompress_OutputUnrestrictedWithoutSearchRoot keeps the default
-// CLI behaviour: with no sandbox configured, any output path is allowed.
+// CLI behavior: with no sandbox configured, any output path is allowed.
 func TestCompress_OutputUnrestrictedWithoutSearchRoot(t *testing.T) {
 	paths.Reset()
 	base := t.TempDir()

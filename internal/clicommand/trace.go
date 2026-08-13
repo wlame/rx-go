@@ -194,8 +194,8 @@ func runTrace(out io.Writer, p traceParams) error {
 	// allowlist, no credentials, and no loopback / link-local /
 	// private / CGNAT target.
 	for _, u := range []string{p.hookOnFile, p.hookOnMatch, p.hookOnComplete} {
-		if err := hooks.ValidateURL(u); err != nil {
-			return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+		if hookErr := hooks.ValidateURL(u); hookErr != nil {
+			return exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
 		}
 	}
 

@@ -76,6 +76,12 @@ theme:
     - content.tabs.link
     - content.action.edit      # adds "Edit this page" button
 
+# docs/plans/ is gitignored working material. Excluding it keeps a stray
+# plan file from failing the strict docs build (the git-revision plugin
+# warns on any page with no git history).
+exclude_docs: |
+  plans/
+
 plugins:
   - search:
       # Split on whitespace, dashes, dots — better matches for flag names

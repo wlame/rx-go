@@ -337,7 +337,7 @@ func ProcessChunk(
 				msg := strings.TrimSpace(stderrBuf.String())
 				// A pattern rg cannot compile is not a property of this
 				// file — it dooms the whole request — so it gets its own
-				// error the caller can recognise instead of being folded
+				// error the caller can recognize instead of being folded
 				// into "this file was skipped".
 				if isRegexParseError(msg) {
 					return nil, nil, elapsed, fmt.Errorf("%w: %s", ErrInvalidPattern, msg)
@@ -615,7 +615,7 @@ func isBrokenPipe(err error) bool {
 // rather than record the file as skipped.
 var ErrInvalidPattern = errors.New("invalid regex pattern")
 
-// isRegexParseError recognises ripgrep's own wording for a pattern it
+// isRegexParseError recognizes ripgrep's own wording for a pattern it
 // could not compile. rg exits 2 for this and prints, on stderr:
 //
 //	regex parse error:
