@@ -17,16 +17,34 @@ Built for multi-GB log files; designed to scale to ~100 GB.
 
 ## Install
 
-```bash
-# Build and install from source
-CGO_ENABLED=0 go build -o /usr/local/bin/rx ./cmd/rx
+### Download a release
 
-# Or use the Makefile
-make build            # → dist/rx
-make build-all        # cross-compile linux/darwin, amd64/arm64
+Every `vX.Y.Z` tag publishes static binaries with sha256 sidecars for
+linux/amd64, linux/arm64, darwin/arm64 and darwin/amd64. No Go toolchain is
+needed to run them; `ripgrep` 13+ must be on `PATH`.
+
+```bash
+version=v0.1.0
+base="https://github.com/wlame/rx-go/releases/download/$version"
+asset="rx-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+
+curl -LO "$base/$asset"
+curl -LO "$base/$asset.sha256"
+sha256sum -c "$asset.sha256"
+install -m 0755 "$asset" /usr/local/bin/rx
+rx --version
 ```
 
-Version override: `VERSION=v1.2.3 make build`.
+### Build from source
+
+```bash
+just build            # → dist/rx, version stamped from git describe
+just install          # → $GOBIN/rx, plus shell completions
+just build-all        # cross-compile every release target with checksums
+```
+
+The version comes from the git tag; there is nothing to override by hand.
+`just --list` shows the rest.
 
 ## Usage
 
