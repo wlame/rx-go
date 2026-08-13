@@ -97,8 +97,7 @@ func runServe(out io.Writer, p serveParams) error {
 	// RX_ALLOW_INTERNAL_HOOKS is the documented opt-in for a genuinely
 	// internal collector.
 	if err := validateEnvHooks(); err != nil {
-		_ = exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 
 	// Resolve + apply search roots. Default: CWD.
@@ -120,8 +119,7 @@ func runServe(out io.Writer, p serveParams) error {
 		resolvedRoots = append(resolvedRoots, abs)
 	}
 	if err := paths.SetSearchRoots(resolvedRoots); err != nil {
-		_ = exitWithError(os.Stderr, ExitUsageError, "search roots: %s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitUsageError, "search roots: %s", err.Error())
 	}
 	// Publish to env so any subprocess we spawn inherits the sandbox.
 	_ = os.Setenv("RX_SEARCH_ROOTS", strings.Join(resolvedRoots, string(os.PathListSeparator)))

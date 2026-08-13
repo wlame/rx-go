@@ -47,10 +47,22 @@ All subcommands share the same exit-code scheme:
 |-----:|---------|
 | 0 | Success |
 | 1 | Generic error (subprocess failure, IO error, rebuild failed) |
-| 2 | Usage error (bad flag combination, missing required argument) |
+| 2 | Usage error (bad flag combination, missing required argument, regex that does not compile) |
 | 3 | File not found |
 | 4 | Access denied (path outside `--search-root`) |
-| 5 | Interrupted by signal |
+| 5 | Interrupted by signal (SIGINT or SIGTERM) |
+
+A scan that completes and finds nothing exits **0**, not 1: `rx` reports
+whether the search ran, not whether it matched. This differs from `grep`
+deliberately — check the result count in `--json` output if you need to
+branch on "found something".
+
+A pattern ripgrep cannot compile is fatal for the whole request. `rx`
+prints ripgrep's own message, which names the offending position, and
+exits 2. It does not list the file under `skipped_files` and report
+success; `skipped_files` is for files that could not be read.
+
+`rx-python` uses the same table.
 
 ## Subcommands
 

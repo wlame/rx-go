@@ -112,16 +112,14 @@ func runCompress(out io.Writer, p compressParams) error {
 	// --output and --output-dir are mutually exclusive (Python parity —
 	// rx-python/src/rx/cli/compress.py raises a click UsageError).
 	if p.output != "" && p.outputDir != "" {
-		_ = exitWithError(os.Stderr, ExitUsageError,
+		return exitWithError(os.Stderr, ExitUsageError,
 			"--output and --output-dir are mutually exclusive")
-		return errors.New("output + output-dir")
 	}
 
 	// Multi-path + --output is illegal (matches Python's check).
 	if p.output != "" && len(p.paths) > 1 {
-		_ = exitWithError(os.Stderr, ExitUsageError,
+		return exitWithError(os.Stderr, ExitUsageError,
 			"--output can only be used with a single input file")
-		return errors.New("multi path + output")
 	}
 
 	// Auto-create --output-dir (Python's os.makedirs(exist_ok=True)).
@@ -130,8 +128,7 @@ func runCompress(out io.Writer, p compressParams) error {
 	// for when/if multi-file compress runs in parallel).
 	if p.outputDir != "" {
 		if _, err := sandboxCheck(p.outputDir); err != nil {
-			_ = exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
-			return err
+			return exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
 		}
 		// Mode 0750 (rwxr-x---) matches the posture used elsewhere in rx-go
 		// (e.g. internal/index/store.go Save) and satisfies gosec G301.
@@ -140,23 +137,20 @@ func runCompress(out io.Writer, p compressParams) error {
 		// a deliberate hardening: the directory holds compressed data the
 		// user wrote, so world-readable is not required by default.
 		if err := os.MkdirAll(p.outputDir, 0o750); err != nil {
-			_ = exitWithError(os.Stderr, ExitGenericError,
+			return exitWithError(os.Stderr, ExitGenericError,
 				"failed to create --output-dir: %s", err.Error())
-			return fmt.Errorf("mkdir output-dir: %w", err)
 		}
 	}
 
 	// Level validation — zstd is 1..22.
 	if p.level < 1 || p.level > 22 {
-		_ = exitWithError(os.Stderr, ExitUsageError, "--level must be 1..22, got %d", p.level)
-		return errors.New("bad level")
+		return exitWithError(os.Stderr, ExitUsageError, "--level must be 1..22, got %d", p.level)
 	}
 
 	// Frame size parse (rejects bad input once, up front).
 	frameBytes, err := ParseFrameSize(p.frameSize)
 	if err != nil {
-		_ = exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 
 	workers := p.workers

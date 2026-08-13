@@ -121,8 +121,7 @@ func runIndex(out io.Writer, p indexParams) error {
 	for _, path := range p.paths {
 		if _, err := paths.ValidatePathWithinRoots(path); err != nil &&
 			!errors.Is(err, paths.ErrNoSearchRootsConfigured) {
-			_ = exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
-			return err
+			return exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
 		}
 	}
 
@@ -165,8 +164,7 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 	if len(p.paths) == 1 {
 		idx, err := index.LoadForSource(p.paths[0])
 		if err != nil || idx == nil {
-			_ = exitWithError(os.Stderr, ExitFileNotFound, "no index found for %s", p.paths[0])
-			return errors.New("no index")
+			return exitWithError(os.Stderr, ExitFileNotFound, "no index found for %s", p.paths[0])
 		}
 		if p.jsonOutput {
 			enc := json.NewEncoder(out)
