@@ -110,7 +110,12 @@ are **rejected**:
 | Link-local | `169.254.169.254` | AWS/GCP IMDS (credential theft) |
 | RFC 1918 private | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | Internal networks |
 | CGNAT | `100.64.0.0/10` | Carrier-grade NAT |
+| Multicast | `224.0.0.0/4`, `ff00::/8` | Group addressing |
 | Unspecified | `0.0.0.0`, `::` | Locally-routed |
+
+A URL that carries credentials (`http://user:pass@host/`) is rejected as
+well, whatever address it points at. `RX_ALLOW_INTERNAL_HOOKS` does not
+switch that rule off.
 
 The validation runs at two points:
 
@@ -130,6 +135,16 @@ naturally if the host is truly unreachable.
 |---|---|
 | `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks. Use only when you actually need internal destinations (e.g. an internal logging service). |
 | `RX_HOOK_STRICT_IP_ONLY=true` | Reject **any** hostname, accept only IP literals. Strongest defense against DNS rebinding attacks. Operators must maintain IP allowlists. |
+
+### Redirects are never followed
+
+Validation only sees the configured URL, so a target that answers a
+`3xx` could otherwise redirect the request to any host — including the
+ones in the table above. The dispatcher refuses every redirect, to a
+public host as much as an internal one. The hop is logged at debug
+level as `hook_redirect_refused`, the `3xx` counts as a non-2xx
+response, and the hook is recorded as a failure. Point the hook at the
+final URL instead of one that redirects.
 
 ### Known limitations
 

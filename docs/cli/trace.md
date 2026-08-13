@@ -208,6 +208,14 @@ before each match, which is more expensive on the first access.
     set as well. A 1-million-match scan with an uncapped per-match hook
     would flood your webhook endpoint.
 
+!!! warning "Hook URLs are validated"
+    `--hook-on-file`, `--hook-on-match` and `--hook-on-complete` go
+    through the same SSRF guard as the `hook_on_*` query parameters: the
+    scheme must be `http` or `https`, the URL must carry no credentials,
+    and the target must not be a loopback, link-local, private or CGNAT
+    address. A rejected URL is a usage error and no scan runs. See
+    [webhook SSRF protection](../concepts/security.md#webhook-ssrf-protection).
+
 !!! warning "Directory scans can be slow on network mounts"
     `rx trace <dir>` walks the tree, stats every file to decide if it's
     a text file, and skips binary files. On a slow NFS mount this walk

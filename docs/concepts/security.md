@@ -152,7 +152,12 @@ When validating a hook URL, `rx` rejects:
 | Link-local | `169.254.0.0/16`, `fe80::/10` | Cloud IMDS |
 | RFC 1918 private | `10/8`, `172.16/12`, `192.168/16`, `fc00::/7` | Internal networks |
 | CGNAT (RFC 6598) | `100.64.0.0/10` | Carrier-grade NAT |
+| Multicast | `224.0.0.0/4`, `ff00::/8` | Group addressing |
 | Unspecified | `0.0.0.0`, `::` | Locally-routed |
+
+A URL that carries credentials (`http://user:pass@host/`) is rejected
+too, whatever it points at: those end up in proxy and access logs, and
+`RX_ALLOW_INTERNAL_HOOKS` does not switch that rule off.
 
 Validation runs at two layers:
 
@@ -171,6 +176,20 @@ shouldn't false-positive-reject every validation.
 |---|---|
 | `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks. Use only when you explicitly need an internal destination. |
 | `RX_HOOK_STRICT_IP_ONLY=true` | Reject every hostname; accept only IP literals. Strongest mitigation against DNS rebinding. |
+
+### Redirects are refused
+
+Validation only ever sees the URL that was configured. A webhook target
+that answers `301`/`302` would otherwise steer the request at a host
+nobody vetted — including every address in the table above — so the
+dispatcher refuses **every** redirect, public or internal. The hop is
+logged at debug level (`hook_redirect_refused`) and the hook is counted
+as a failure.
+
+The viewer-bundle downloader is the one client that still follows
+redirects, because GitHub redirects asset URLs to a CDN. It re-checks
+each hop against the same address table and aborts on a hop that points
+somewhere internal, keeping the standard 10-hop cap.
 
 ### Known limitation: DNS rebinding
 
