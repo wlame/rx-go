@@ -51,6 +51,19 @@ runs. The sandbox is opt-in for CLI and on-by-default for
 `rx serve` (which defaults to the current working directory as the
 sole root).
 
+### Write paths are validated too
+
+The sandbox covers destinations, not only sources. `POST /v1/compress`
+and `rx compress` validate the effective output path — `output_path` (or
+`--output`/`--output-dir` on the CLI) when given, otherwise the derived
+`<input>.zst` — before the encoder opens anything. A rejected output path
+produces `403` (HTTP) or an access-denied error (CLI) and leaves the
+filesystem untouched: nothing is created, truncated or removed, and
+`force` does not relax the check.
+
+Without this, an unauthenticated `rx serve` would expose an
+arbitrary-file-write primitive to any client that can reach the socket.
+
 ### Symlink behavior
 
 Symlinks are **followed once** at startup. If you configure

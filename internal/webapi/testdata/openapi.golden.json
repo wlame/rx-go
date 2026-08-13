@@ -74,9 +74,11 @@
             "type": "string"
           },
           "input_path": {
+            "description": "Path to the input file. Must be inside a configured --search-root.",
             "type": "string"
           },
           "output_path": {
+            "description": "Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root.",
             "type": [
               "string",
               "null"
@@ -944,7 +946,7 @@
     },
     "/v1/compress": {
       "post": {
-        "description": "Creates a background task that encodes the file to .zst. Poll /v1/tasks/{id} for progress.",
+        "description": "Creates a background task that encodes the file to .zst. Poll /v1/tasks/{id} for progress. The input path and the effective output path are both validated against --search-root.",
         "operationId": "compress",
         "requestBody": {
           "content": {

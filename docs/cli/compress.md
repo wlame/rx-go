@@ -46,6 +46,12 @@ seekable zstd.
 `--output` and `--output-dir` are mutually exclusive. `--output` is
 only valid with exactly one input path.
 
+When search roots are configured, the destination is validated against
+them exactly like the input path: `--output`, `--output-dir` and the
+derived `<PATH>.zst` default must all resolve inside a root, or the file
+is reported as failed and nothing is written. See
+[the path sandbox](../concepts/security.md#path-sandbox-search-root).
+
 ### Frame size parsing
 
 The `--frame-size` value is parsed case-insensitively. These are all

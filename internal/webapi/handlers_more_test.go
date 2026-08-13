@@ -308,3 +308,65 @@ func TestSamples_ByteOffset(t *testing.T) {
 		t.Errorf("sample at offset 5: got %v, want [123]", got)
 	}
 }
+
+// TestCompress_TaskResultRatioIsDecompressedOverCompressed pins the
+// documented direction of compression_ratio: it reads >= 1 for data that
+// actually shrank, matching the CLI and rx-python.
+func TestCompress_TaskResultRatioIsDecompressedOverCompressed(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "big.log")
+	// Highly repetitive content compresses well, so the ratio is far
+	// from 1 in either direction and the assertion cannot pass by luck.
+	if err := os.WriteFile(f, []byte(strings.Repeat("this is a line\n", 20000)), 0o600); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+
+	ts := newTestServer(t)
+	req := rxtypes.CompressRequest{InputPath: f, FrameSize: "4K", CompressionLevel: 1}
+	body, _ := json.Marshal(req)
+	resp, err := http.Post(ts.URL+"/v1/compress", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	var created rxtypes.TaskResponse
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	_ = resp.Body.Close()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		statusResp, statusErr := http.Get(ts.URL + "/v1/tasks/" + created.TaskID)
+		if statusErr != nil {
+			t.Fatalf("get task: %v", statusErr)
+		}
+		var task map[string]any
+		_ = json.NewDecoder(statusResp.Body).Decode(&task)
+		_ = statusResp.Body.Close()
+
+		if task["status"] != "completed" {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		result, ok := task["result"].(map[string]any)
+		if !ok {
+			t.Fatalf("task has no result: %v", task)
+		}
+		ratio, ok := result["compression_ratio"].(float64)
+		if !ok {
+			t.Fatalf("compression_ratio missing or not a number: %v", result)
+		}
+		compressed, _ := result["compressed_size"].(float64)
+		decompressed, _ := result["decompressed_size"].(float64)
+		if compressed >= decompressed {
+			t.Fatalf("input did not compress: %v → %v", decompressed, compressed)
+		}
+		if ratio <= 1 {
+			t.Errorf("compression_ratio: got %v, want > 1 (decompressed/compressed)", ratio)
+		}
+		return
+	}
+	t.Fatalf("compress task did not complete")
+}
