@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/wlame/rx-go/internal/hooks"
+	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -70,14 +72,20 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTrace(out, traceParams{
-				args:           args,
-				paths:          inputPaths,
-				regexps:        regexps,
-				maxResults:     maxResults,
-				showSamples:    showSamples,
-				ctxLines:       ctxLines,
-				beforeCtx:      beforeCtx,
-				afterCtx:       afterCtx,
+				args:        args,
+				paths:       inputPaths,
+				regexps:     regexps,
+				maxResults:  maxResults,
+				showSamples: showSamples,
+				ctxLines:    ctxLines,
+				beforeCtx:   beforeCtx,
+				afterCtx:    afterCtx,
+				// A flag that was given as 0 means "no context", which is
+				// not the same as leaving it out; only Changed() can tell
+				// them apart on an int flag.
+				ctxSet:         cmd.Flags().Changed("context"),
+				beforeSet:      cmd.Flags().Changed("before"),
+				afterSet:       cmd.Flags().Changed("after"),
 				jsonOutput:     jsonOutput,
 				noColor:        noColor,
 				debug:          debugMode,
@@ -141,6 +149,9 @@ type traceParams struct {
 	noColor        bool
 	debug          bool
 	requestID      string
+	ctxSet         bool
+	beforeSet      bool
+	afterSet       bool
 	hookOnFile     string
 	hookOnMatch    string
 	hookOnComplete string
@@ -240,7 +251,7 @@ func runTrace(out io.Writer, p traceParams) error {
 		NoCache:       p.noCache,
 		NoIndex:       p.noIndex,
 		NoRecursive:   p.noRecursive,
-		RequestID:     p.requestID,
+		RequestID:     requestIDOrNew(p.requestID),
 	})
 	if err != nil {
 		// A pattern ripgrep cannot compile is a usage error, and rg's own
@@ -255,6 +266,19 @@ func runTrace(out io.Writer, p traceParams) error {
 		return writeTraceJSON(out, resp)
 	}
 	return writeTraceHuman(out, resp, p)
+}
+
+// requestIDOrNew returns the user's --request-id, or a fresh UUID v7.
+// Every trace response carries one, over HTTP and on the command line
+// alike, so a run can be correlated with its webhook payloads.
+func requestIDOrNew(given string) string {
+	if given != "" {
+		return given
+	}
+	if id, err := uuid.NewV7(); err == nil {
+		return id.String()
+	}
+	return uuid.New().String()
 }
 
 // resolveTracePositionals turns [PATTERN, PATH...] + --regexp flags into
@@ -288,21 +312,38 @@ func resolveTracePositionals(p traceParams) ([]string, []string, error) {
 	return patterns, explicit, nil
 }
 
-// resolveBefore / resolveAfter follow Python's precedence:
-// --before > --context > 0 (default).
+// defaultSamplesContext is the window --samples asks for when no explicit
+// --before / --after / --context was given. Matches rx-python.
+const defaultSamplesContext = 3
+
+// resolveBefore / resolveAfter follow rx-python's precedence:
+// --before > --context > (3 with --samples, else 0). A flag given
+// explicitly wins even when its value is 0.
 func resolveBefore(p traceParams) int {
-	if p.beforeCtx > 0 {
+	if p.beforeSet {
 		return p.beforeCtx
 	}
-	return p.ctxLines
+	if p.ctxSet {
+		return p.ctxLines
+	}
+	if p.showSamples {
+		return defaultSamplesContext
+	}
+	return 0
 }
 
 // resolveAfter mirrors resolveBefore.
 func resolveAfter(p traceParams) int {
-	if p.afterCtx > 0 {
+	if p.afterSet {
 		return p.afterCtx
 	}
-	return p.ctxLines
+	if p.ctxSet {
+		return p.ctxLines
+	}
+	if p.showSamples {
+		return defaultSamplesContext
+	}
+	return 0
 }
 
 // writeTraceJSON emits the TraceResponse directly. Matches `--json` flag.
@@ -315,26 +356,17 @@ func writeTraceJSON(out io.Writer, resp any) error {
 	return nil
 }
 
-// writeTraceHuman emits the human-readable output. For M6 we keep this
-// deliberately minimal: one line per match. A richer TTY-colored output
-// is a Stage 8+ enhancement.
+// writeTraceHuman emits the human-readable output.
+//
+// The layout is shared with rx-python byte for byte: a header block, the
+// match list as "file:line:offset [pattern]", and — when context was
+// asked for — the context section built by internal/output.
 func writeTraceHuman(out io.Writer, resp *rxtypes.TraceResponse, p traceParams) error {
-	if len(resp.Matches) == 0 {
-		_, _ = fmt.Fprintf(out, "no matches in %d files\n", len(resp.Files))
-		return nil
-	}
-	for _, m := range resp.Matches {
-		file := resp.Files[m.File]
-		pattern := resp.Patterns[m.Pattern]
-		line := ""
-		if m.LineText != nil {
-			line = *m.LineText
-		}
-		_, _ = fmt.Fprintf(out, "%s: [%s] offset=%d line=%d %s\n",
-			file, pattern, m.Offset, m.AbsoluteLineNumber, line)
-	}
-	_, _ = fmt.Fprintf(out, "--- %d matches in %d files (skipped %d) ---\n",
-		len(resp.Matches), len(resp.ScannedFiles), len(resp.SkippedFiles))
-	_ = p // silence unused if we add p-dependent logic later
+	before, after := resolveBefore(p), resolveAfter(p)
+	_, _ = fmt.Fprint(out, output.FormatTraceCLI(resp, output.TraceFormatOptions{
+		Before:      before,
+		After:       after,
+		ShowContext: p.showSamples || p.ctxSet || p.beforeSet || p.afterSet,
+	}))
 	return nil
 }

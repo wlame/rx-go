@@ -23,6 +23,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rx trace --hook-on-file/--hook-on-match/--hook-on-complete` validate
   their URLs with the same guard the HTTP layer uses.
 
+### Changed
+
+- `rx trace` human output now matches rx-python byte for byte: a header
+  block, then `file:line:offset [pattern]` per match. The matched line
+  text is no longer printed inline — ask for a context window to see it.
+- `rx index` prints the statistics and anomaly counts rx-python prints,
+  and its summary line is `Indexed N files in Ts` rather than
+  `index built for N files`.
+- `rx compress --build-index` no longer claims to build an index it never
+  built: it reports `index_error` in `--json` and a warning on stderr.
+
+### Added
+
+- `rx trace` renders context lines. `--before`, `--after` and `--context`
+  each work on their own; `--samples` is a shorthand for the default
+  window of 3. Overlapping windows merge so no line is printed twice,
+  non-contiguous regions are separated by `--`, and each line is marked
+  `:` for a match or `-` for context.
+- `rx trace` fills `request_id` and `path` in its response. Both were
+  empty on the command line, so `--json` emitted `"path": null`.
+
 ### Fixed
 
 - Every CLI failure exited 1, ignoring the documented table. `rx` now

@@ -36,8 +36,8 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `-e`, `--regexp`, `--regex` | `string[]` | — | Regex pattern (repeatable) |
 | `--path`, `--file` | `string[]` | — | Path to search (repeatable; alias of positional) |
 | `--max-results` | `int` | `0` | Maximum matches to return; `0` = unlimited |
-| `--samples` | `bool` | `false` | Include context lines around each match |
-| `--context` | `int` | `0` | Context lines before and after (for `--samples`) |
+| `--samples` | `bool` | `false` | Show context lines using the default window (3) |
+| `--context` | `int` | `0` | Context lines before and after each match |
 | `-B`, `--before` | `int` | `0` | Lines before each match (overrides `--context`) |
 | `-A`, `--after` | `int` | `0` | Lines after each match (overrides `--context`) |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
@@ -66,8 +66,26 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 
 ### Context flags precedence
 
-`--before`/`--after` override `--context`. All three are ignored unless
-`--samples` is also set.
+`--before` and `--after` override `--context`, and any of the three is
+enough on its own — `--samples` is only a shorthand for the default window
+of 3 lines. An explicit zero wins over that shorthand, so
+`--samples --context=0` prints the matched lines and nothing around them.
+
+Context is printed under a `Context (N before, N after):` heading, grouped
+by file. Overlapping windows are merged so no line is printed twice, a
+gap between regions is drawn as `--`, and each line carries its number
+with `:` for a match and `-` for context:
+
+```text
+Context (1 before, 1 after):
+
+/var/log/app.log
+2- line two beta
+3: line three ERROR here
+4- line four delta
+```
+
+rx-python prints exactly the same text.
 
 ## Examples
 

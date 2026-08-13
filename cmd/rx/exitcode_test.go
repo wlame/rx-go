@@ -173,8 +173,10 @@ func TestExitCode_SuccessWithMatchesIsZero(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit code: got %d, want 0 (stderr: %s)", code, stderr)
 	}
-	if !strings.Contains(stdout, "error happened here") {
-		t.Errorf("stdout should show the match: %s", stdout)
+	// The match list prints positions, not the matched text; the text
+	// appears in the context section when a context window is asked for.
+	if !strings.Contains(stdout, "app.log:2:11 [error]") {
+		t.Errorf("stdout should show the match position: %s", stdout)
 	}
 }
 

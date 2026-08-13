@@ -510,6 +510,8 @@ func (e *Engine) RunWithOptions(
 	// Centralize via emptyIfNilStrings for consistency. See Stage 8
 	// Reviewer 2 High #8.
 	resp := &rxtypes.TraceResponse{
+		RequestID:    opts.RequestID,
+		Path:         emptyIfNilStrings(append([]string(nil), paths...)),
 		Patterns:     patternIDs,
 		Files:        fileIDs,
 		Matches:      emptyIfNilMatches(allMatches),
