@@ -1,9 +1,12 @@
 package clicommand
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/wlame/rx-go/internal/paths"
 )
 
 // ExitCode encodes the classical CLI-return-code convention used by rx:
@@ -70,4 +73,22 @@ func stdinIsPipe() bool {
 func exitWithError(w io.Writer, code int, format string, args ...any) int {
 	_, _ = fmt.Fprintf(w, "Error: "+format+"\n", args...)
 	return code
+}
+
+// sandboxCheck validates a user-supplied path against the --search-root
+// sandbox and returns the validated form.
+//
+// The CLI usually runs without a sandbox: no search roots are configured
+// unless `serve` (or a test) installs them, and in that case every path
+// is allowed and returned unchanged. When roots are configured, a path
+// outside them is an access-denied error (exit code 4).
+func sandboxCheck(path string) (string, error) {
+	validated, err := paths.ValidatePathWithinRoots(path)
+	if err != nil {
+		if errors.Is(err, paths.ErrNoSearchRootsConfigured) {
+			return path, nil
+		}
+		return "", err
+	}
+	return validated, nil
 }
