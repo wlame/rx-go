@@ -120,19 +120,15 @@ func RunGoRx(t *testing.T, args ...string) ([]byte, error) {
 // decide whether to SkipIf.
 func RunPythonRx(t *testing.T, args ...string) ([]byte, error) {
 	t.Helper()
+
+	// An explicit RX_PYTHON_PATH is a request for the comparison to run.
+	// If it points at nothing, that is a broken setup and must be an
+	// error: skipping would leave the harness reporting success while
+	// comparing nothing at all.
+	explicit := os.Getenv("RX_PYTHON_PATH") != ""
 	pyRoot := os.Getenv("RX_PYTHON_PATH")
-	if pyRoot == "" {
-		// Walk up to find the monorepo root.
-		_, thisFile, _, _ := runtime.Caller(0)
-		root := filepath.Dir(thisFile)
-		for i := 0; i < 5; i++ {
-			candidate := filepath.Join(root, "..", "rx-python")
-			if _, err := os.Stat(candidate); err == nil {
-				pyRoot = candidate
-				break
-			}
-			root = filepath.Dir(root)
-		}
+	if !explicit {
+		pyRoot = findPythonRoot()
 	}
 	if pyRoot == "" {
 		return nil, ErrPythonUnavailable
@@ -141,6 +137,11 @@ func RunPythonRx(t *testing.T, args ...string) ([]byte, error) {
 	// #nosec G703 -- path is developer-controlled (RX_PYTHON_PATH) or
 	// derived from the rx-python checkout beside rx-go. Not a user input.
 	if _, err := os.Stat(venvPython); err != nil {
+		if explicit {
+			return nil, fmt.Errorf(
+				"RX_PYTHON_PATH is set to %q but %s does not exist: run `uv sync` in rx-python, "+
+					"or unset RX_PYTHON_PATH to skip the parity comparison", pyRoot, venvPython)
+		}
 		return nil, ErrPythonUnavailable
 	}
 	fullArgs := append([]string{"-m", "rx.cli.main"}, args...)
@@ -155,6 +156,31 @@ func RunPythonRx(t *testing.T, args ...string) ([]byte, error) {
 		t.Logf("rx-python stderr: %s", stderr.String())
 	}
 	return stdout.Bytes(), err
+}
+
+// findPythonRoot walks up from this file looking for an rx-python
+// checkout beside rx-go. Returns "" when there is none.
+//
+// RX_PARITY_SEARCH_ROOT overrides the starting directory; tests use it to
+// exercise the "no checkout anywhere" case without depending on what the
+// machine happens to have.
+func findPythonRoot() string {
+	root := os.Getenv("RX_PARITY_SEARCH_ROOT")
+	if root == "" {
+		_, thisFile, _, _ := runtime.Caller(0)
+		root = filepath.Dir(thisFile)
+	}
+	for i := 0; i < 5; i++ {
+		candidate := filepath.Join(root, "..", "rx-python")
+		// #nosec G703 -- test-only helper; the path is derived from this
+		// source file's own location or from a developer-set env var,
+		// never from a request.
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		root = filepath.Dir(root)
+	}
+	return ""
 }
 
 // ErrPythonUnavailable is returned by RunPythonRx when the venv can't

@@ -2,6 +2,7 @@ package testparity
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -94,12 +95,35 @@ func TestDiffJSON_StructuralDifferences(t *testing.T) {
 	}
 }
 
-// TestPythonRunner_SkipsIfMissing shows that an absent rx-python tree
-// yields the sentinel, letting tests skip cleanly.
-func TestPythonRunner_SkipsIfMissing(t *testing.T) {
+// TestPythonRunner_FailsLoudlyWhenPathIsSet asserts that an
+// RX_PYTHON_PATH pointing at nothing is an error, not a skip. Someone who
+// set the variable asked for the parity comparison, and silently skipping
+// it turns the whole harness into a no-op that reports success.
+func TestPythonRunner_FailsLoudlyWhenPathIsSet(t *testing.T) {
 	t.Setenv("RX_PYTHON_PATH", "/definitely/not/a/path")
+
 	_, err := RunPythonRx(t, "--version")
+
+	if err == nil {
+		t.Fatalf("expected an error for a bad RX_PYTHON_PATH")
+	}
+	if IsPythonUnavailable(err) {
+		t.Errorf("a set RX_PYTHON_PATH must not produce the skip sentinel: %v", err)
+	}
+	if !strings.Contains(err.Error(), "RX_PYTHON_PATH") {
+		t.Errorf("the error should name the variable: %v", err)
+	}
+}
+
+// TestPythonRunner_SkipsWhenPathIsUnsetAndTreeIsAbsent keeps the skip
+// path for an environment that simply has no rx-python checkout.
+func TestPythonRunner_SkipsWhenPathIsUnsetAndTreeIsAbsent(t *testing.T) {
+	t.Setenv("RX_PYTHON_PATH", "")
+	t.Setenv("RX_PARITY_SEARCH_ROOT", t.TempDir())
+
+	_, err := RunPythonRx(t, "--version")
+
 	if !IsPythonUnavailable(err) {
-		t.Errorf("expected ErrPythonUnavailable, got %v", err)
+		t.Errorf("expected the skip sentinel, got %v", err)
 	}
 }
