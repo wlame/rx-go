@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GET /health` reports `contract_version`, the HTTP wire contract this
+  backend speaks (`1.0`). rx-python reports the same value and rx-viewer
+  refuses a contract major it was not built for.
+- The golden OpenAPI document is published at `docs/api/openapi.json`, and
+  `just spec-check` — part of `just ci` — fails when it is stale, so the
+  spec a client generates from is always the one the tests pin.
+- The `/v1/detectors` schemas describe every field, so a client can render
+  a detector set it has never seen without hardcoding names.
+
 - `justfile` as the single dev entrypoint. `just ci` runs the gates in the
   order CI runs them — `fmt-check vet lint tidy-check test-race docs-build`
   — and `.github/workflows/ci.yml` invokes `just ci` rather than repeating
@@ -28,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependabot for GitHub Actions and Go modules, weekly.
 
 ### Changed
+
+- `TraceResponse`'s `matches`, `path`, `scanned_files` and `skipped_files`
+  are no longer nullable in the spec. The engine passes every one through
+  `emptyIfNil*`, so they are always arrays on the wire; huma had inferred
+  `null` from the Go nil slice and generated clients carried a null case
+  that cannot happen.
+- The parity harness fails loudly when `RX_PYTHON_PATH` is set but the venv
+  is missing, instead of returning the skip sentinel. Someone who set the
+  variable asked for the comparison; skipping it made the harness report
+  success while comparing nothing.
 
 - `go.mod` and `go.sum` are tidy. Five direct dependencies (huma, chi, uuid,
   cobra, xz) were sitting in the `// indirect` block, and `go mod tidy

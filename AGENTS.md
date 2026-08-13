@@ -35,11 +35,19 @@ This repo is the **flagship backend** of a product with three active repos:
    `Parity gap:` line under `## [Unreleased]` in `rx-python/CHANGELOG.md`.
 2. **The wire contract lives here.** `pkg/rxtypes/` plus the golden OpenAPI
    document `internal/webapi/testdata/openapi.golden.json` are the source of
-   truth. Adding a field: update `pkg/rxtypes`, regenerate the golden file, then
-   mirror in `rx-python/src/rx/models.py` and `rx-viewer/src/lib/types.ts`.
-   Renaming, removing or changing a field's meaning is breaking: bump the
-   contract version, note it in all three changelogs, release backends before
-   the viewer.
+   truth, published to `docs/api/openapi.json` (kept in step by
+   `just spec-sync`; `just ci` fails when they differ).
+
+   Adding a field: update `pkg/rxtypes`, run
+   `go test ./internal/webapi/ -update-golden`, `just spec-sync`, then
+   `rx-python/src/rx/models.py` and `cd ../rx-viewer && just gen-types`.
+   `rx-python`'s `tests/test_contract.py` compares the two specs route by
+   route and fails on a field only one backend has.
+
+   Renaming, removing or changing a field's meaning is breaking: bump
+   `ContractVersion` in `internal/webapi/contract.go` **and**
+   `rx-python/src/rx/contract.py`, note it in all three changelogs, release
+   backends before the viewer.
 3. **Do not break the cache format.** Python-built index and trace-cache files
    must stay readable here and the other way round. Field names, the mtime
    string format and the JSON key spacing used for the patterns hash are part

@@ -97,6 +97,19 @@ lint:
 tidy-check:
     go mod tidy -diff
 
+# Copy the golden OpenAPI document to docs/, where it is published
+spec-sync:
+    cp internal/webapi/testdata/openapi.golden.json docs/api/openapi.json
+
+# Fail when the published spec is not the golden one (CI gate)
+spec-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! diff -u docs/api/openapi.json internal/webapi/testdata/openapi.golden.json; then
+        echo "docs/api/openapi.json is stale — run \`just spec-sync\` and commit the result" >&2
+        exit 1
+    fi
+
 # Reachable-CVE scan. Needs network access to vuln.go.dev.
 vuln:
     govulncheck ./...
@@ -132,7 +145,7 @@ cover:
 # ── aggregates ───────────────────────────────────────────────────────────
 
 # Exactly what GitHub CI enforces, in the same order
-ci: fmt-check vet lint tidy-check test-race docs-build
+ci: fmt-check vet lint tidy-check spec-check test-race docs-build
 
 # The full pre-push battery
 check: ci cover build vuln

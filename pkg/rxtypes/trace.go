@@ -78,13 +78,13 @@ type Match struct {
 // distinction.
 type TraceResponse struct {
 	RequestID     string                   `json:"request_id"`
-	Path          []string                 `json:"path"`
+	Path          []string                 `json:"path" nullable:"false"`
 	Time          float64                  `json:"time"`
 	Patterns      map[string]string        `json:"patterns"`
 	Files         map[string]string        `json:"files"`
-	Matches       []Match                  `json:"matches"`
-	ScannedFiles  []string                 `json:"scanned_files"`
-	SkippedFiles  []string                 `json:"skipped_files"`
+	Matches       []Match                  `json:"matches" nullable:"false"`
+	ScannedFiles  []string                 `json:"scanned_files" nullable:"false"`
+	SkippedFiles  []string                 `json:"skipped_files" nullable:"false"`
 	MaxResults    *int                     `json:"max_results"`
 	FileChunks    map[string]int           `json:"file_chunks"`
 	ContextLines  map[string][]ContextLine `json:"context_lines"`
