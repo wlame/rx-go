@@ -9,7 +9,11 @@
 //     tests can cross-compare outputs.
 package output
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // ANSI escape sequences. These are copied VERBATIM from rx-python/src/rx/models.py
 // so that CLI output in `rx trace` / `rx samples` golden-file tests
@@ -73,4 +77,26 @@ func HumanSize(bytes int64) string {
 	}
 	// Overflow past TB: Python falls through to PB.
 	return fmt.Sprintf("%.2f PB", v)
+}
+
+// Thousands formats an integer with "," between thousands groups, which
+// is what Python's `f'{n:,}'` produces. Line counts are printed that way
+// in both backends.
+func Thousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	negative := strings.HasPrefix(s, "-")
+	if negative {
+		s = s[1:]
+	}
+	var b strings.Builder
+	for i, digit := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(digit)
+	}
+	if negative {
+		return "-" + b.String()
+	}
+	return b.String()
 }

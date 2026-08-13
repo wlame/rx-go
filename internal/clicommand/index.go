@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,6 +15,7 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -105,6 +108,10 @@ type indexBuildResult struct {
 	Skipped   []string         `json:"skipped"`
 	Errors    []indexErrorItem `json:"errors"`
 	TotalTime float64          `json:"total_time"`
+
+	// builtIndexes keeps the typed indexes for the human renderer, which
+	// needs fields the JSON view flattens. Never serialized.
+	builtIndexes []*rxtypes.UnifiedFileIndex
 }
 
 // indexErrorItem is the shape of each entry in the `errors` array —
@@ -348,6 +355,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			continue
 		}
 		result.Indexed = append(result.Indexed, indexEntryJSON(idx, cachePath))
+		result.builtIndexes = append(result.builtIndexes, idx)
 	}
 
 	result.TotalTime = time.Since(t0).Seconds()
@@ -507,19 +515,30 @@ func walkFiles(dir string, out *[]string) error {
 // writeIndexBuildHuman — plain-text summary for --json=false mode.
 // Matches Python's _output_human_readable shape (one line per indexed
 // file, summary counters).
+// writeIndexBuildHuman renders the same block rx-python prints
+// (`cli/index.py`): one line per file, plus the analysis statistics and
+// the anomaly summary when --analyze was used. The two must stay
+// identical.
 func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
-	if len(r.Indexed) == 0 && len(r.Errors) == 0 && len(r.Skipped) == 0 {
+	// Nothing indexed: say so, then still report why files were passed
+	// over. rx-python prints the same two lines.
+	if len(r.Indexed) == 0 {
 		_, _ = fmt.Fprintln(out, "No files indexed.")
+		if len(r.Skipped) > 0 {
+			_, _ = fmt.Fprintf(out, "Skipped %d files (below threshold or not text)\n", len(r.Skipped))
+		}
+		for _, e := range r.Errors {
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", e.Path, e.Error)
+		}
 		return
 	}
 	if analyze {
 		_, _ = fmt.Fprintf(out, "Indexed and analyzed %d files in %.1fs\n", len(r.Indexed), r.TotalTime)
 	} else {
-		_, _ = fmt.Fprintf(out, "index built for %d files in %.3fs\n", len(r.Indexed), r.TotalTime)
+		_, _ = fmt.Fprintf(out, "Indexed %d files in %.1fs\n", len(r.Indexed), r.TotalTime)
 	}
-	for _, entry := range r.Indexed {
-		_, _ = fmt.Fprintf(out, "  %s: %v lines, cache=%v\n",
-			entry["path"], entry["line_count"], entry["index_path"])
+	for _, idx := range r.builtIndexes {
+		writeIndexEntryHuman(out, idx)
 	}
 	if len(r.Skipped) > 0 {
 		_, _ = fmt.Fprintf(out, "Skipped %d files (below threshold or not text)\n", len(r.Skipped))
@@ -527,4 +546,81 @@ func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
 	for _, e := range r.Errors {
 		_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", e.Path, e.Error)
 	}
+}
+
+// writeIndexEntryHuman prints one file's summary and, when the index was
+// built with analysis, its statistics and anomaly counts.
+func writeIndexEntryHuman(out io.Writer, idx *rxtypes.UnifiedFileIndex) {
+	lineInfo := "unknown lines"
+	if idx.LineCount != nil {
+		lineInfo = fmt.Sprintf("%s lines", output.Thousands(*idx.LineCount))
+	}
+	_, _ = fmt.Fprintf(out, "  %s: %s, %s\n",
+		idx.SourcePath, lineInfo, output.HumanSize(idx.SourceSizeBytes))
+
+	if !idx.AnalysisPerformed {
+		return
+	}
+	if idx.LineCount != nil && idx.EmptyLineCount != nil {
+		_, _ = fmt.Fprintf(out, "    Lines: %s total, %s empty\n",
+			output.Thousands(*idx.LineCount), output.Thousands(*idx.EmptyLineCount))
+	}
+	if idx.LineEnding != nil {
+		_, _ = fmt.Fprintf(out, "    Line ending: %s\n", *idx.LineEnding)
+	}
+	if idx.LineLengthMax != nil {
+		_, _ = fmt.Fprintf(out,
+			"    Line length: max=%d, avg=%.1f, median=%.1f, p95=%.1f, p99=%.1f, stddev=%.1f\n",
+			*idx.LineLengthMax, derefFloat(idx.LineLengthAvg), derefFloat(idx.LineLengthMedian),
+			derefFloat(idx.LineLengthP95), derefFloat(idx.LineLengthP99), derefFloat(idx.LineLengthStddev))
+		if idx.LineLengthMaxLineNumber != nil {
+			_, _ = fmt.Fprintf(out, "    Longest line: line %d, offset %d\n",
+				*idx.LineLengthMaxLineNumber, derefInt64(idx.LineLengthMaxByteOffset))
+		}
+	}
+	writeAnomalySummaryHuman(out, idx)
+}
+
+// writeAnomalySummaryHuman prints the per-category counts, and points at
+// --json for the detail, which is the only place the ranges appear.
+func writeAnomalySummaryHuman(out io.Writer, idx *rxtypes.UnifiedFileIndex) {
+	count := 0
+	if idx.Anomalies != nil {
+		count = len(*idx.Anomalies)
+	}
+	if count == 0 {
+		_, _ = fmt.Fprintln(out, "    Anomalies: none")
+		return
+	}
+	if len(idx.AnomalySummary) > 0 {
+		categories := make([]string, 0, len(idx.AnomalySummary))
+		for category := range idx.AnomalySummary {
+			categories = append(categories, category)
+		}
+		sort.Strings(categories)
+		parts := make([]string, 0, len(categories))
+		for _, category := range categories {
+			parts = append(parts, fmt.Sprintf("%d %s", idx.AnomalySummary[category], category))
+		}
+		_, _ = fmt.Fprintf(out, "    Anomalies: %s\n", strings.Join(parts, ", "))
+	} else {
+		_, _ = fmt.Fprintf(out, "    Anomalies: %d\n", count)
+	}
+	_, _ = fmt.Fprintln(out, "    Use --json for the full anomaly list")
+}
+
+// derefFloat and derefInt64 read an optional statistic, treating an
+// absent value as zero the way Python's formatting does.
+func derefFloat(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func derefInt64(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }

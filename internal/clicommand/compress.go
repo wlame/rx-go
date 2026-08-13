@@ -79,7 +79,8 @@ func NewCompressCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&frameSize, "frame-size", "4M", "Target frame size (e.g. 4M, 16MB)")
 	cmd.Flags().IntVarP(&level, "level", "l", 3, "zstd compression level (1-22)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing output")
-	cmd.Flags().BoolVar(&buildIdx, "build-index", true, "Build line index after compression (default: true)")
+	cmd.Flags().BoolVar(&buildIdx, "build-index", true,
+		"Build line index after compression (not implemented in this backend; reports index_error)")
 	cmd.Flags().BoolVar(&noIndex, "no-index", false, "Skip building line index after compression")
 	cmd.Flags().IntVar(&workers, "workers", 1, "Parallel workers for encoding (1-N)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format (Python-compatible wrapper)")
@@ -297,13 +298,17 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	entry["frame_count"] = len(tbl.Frames)
 	entry["compression_ratio"] = ratio
 
-	// Index is optional. When --no-index is NOT set and --build-index
-	// is true (default), we'd build the line index here. The Go port
-	// of build_index is in internal/seekable-index which is not wired
-	// into the CLI yet at this parity stage; the JSON wrapper exposes
-	// the `index` key only when an index was actually built, so omitting
-	// it on non-indexed runs is Python-compatible.
-	_ = p.buildIdx // reserved for follow-up wiring
+	// Indexing the .zst afterwards needs a frame-aware index builder,
+	// which this backend does not have yet: rx-python writes a v2
+	// UnifiedFileIndex with per-frame line boundaries, and producing a
+	// file both backends can read is more than a wrapper around the
+	// existing line indexer. Report it instead of silently skipping, so
+	// `--build-index` never claims work it did not do. The `index_error`
+	// key is the one rx-python already uses for a failed index build.
+	if p.buildIdx {
+		entry["index_error"] = "index building after compress is not implemented in this backend; " +
+			"run `rx index` on the .zst instead"
+	}
 
 	return entry
 }
@@ -318,6 +323,9 @@ func writeCompressHuman(out io.Writer, r compressResult) {
 		_, _ = fmt.Fprintf(out, "wrote %v (%v bytes → %v bytes, %.2fx) in %v frames\n",
 			e["output"], e["decompressed_size"], e["compressed_size"],
 			e["compression_ratio"], e["frame_count"])
+		if msg, ok := e["index_error"].(string); ok {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		}
 	}
 }
 
