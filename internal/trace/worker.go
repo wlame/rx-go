@@ -334,8 +334,15 @@ func ProcessChunk(
 		if errors.As(waitErr, &exitErr) {
 			code := exitErr.ExitCode()
 			if code != 0 && code != 1 {
-				return nil, nil, elapsed, fmt.Errorf(
-					"rg exit %d: %s", code, strings.TrimSpace(stderrBuf.String()))
+				msg := strings.TrimSpace(stderrBuf.String())
+				// A pattern rg cannot compile is not a property of this
+				// file — it dooms the whole request — so it gets its own
+				// error the caller can recognise instead of being folded
+				// into "this file was skipped".
+				if isRegexParseError(msg) {
+					return nil, nil, elapsed, fmt.Errorf("%w: %s", ErrInvalidPattern, msg)
+				}
+				return nil, nil, elapsed, fmt.Errorf("rg exit %d: %s", code, msg)
 			}
 		} else if !errors.Is(waitErr, context.Canceled) {
 			return nil, nil, elapsed, fmt.Errorf("rg wait: %w", waitErr)
@@ -600,4 +607,26 @@ func isBrokenPipe(err error) bool {
 	return strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "file already closed") ||
 		strings.Contains(msg, "EPIPE")
+}
+
+// ErrInvalidPattern reports a pattern ripgrep refused to compile. It is
+// fatal for the whole request: no file can be searched with a pattern
+// that does not parse, so callers must surface it (CLI exit 2, HTTP 400)
+// rather than record the file as skipped.
+var ErrInvalidPattern = errors.New("invalid regex pattern")
+
+// isRegexParseError recognises ripgrep's own wording for a pattern it
+// could not compile. rg exits 2 for this and prints, on stderr:
+//
+//	regex parse error:
+//	    (?:a()
+//	    ^
+//	error: unclosed group
+//
+// Matching on the text is the only option: rg uses exit status 2 for
+// every fatal error, not just this one.
+func isRegexParseError(stderr string) bool {
+	lowered := strings.ToLower(stderr)
+	return strings.Contains(lowered, "regex parse error") ||
+		strings.Contains(lowered, "error parsing regex")
 }

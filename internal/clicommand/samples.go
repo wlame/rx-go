@@ -108,29 +108,24 @@ type samplesParams struct {
 func runSamples(out io.Writer, p samplesParams) error {
 	// Mode mutual exclusion.
 	if (p.offsets == "") == (p.lines == "") {
-		_ = exitWithError(os.Stderr, ExitUsageError,
+		return exitWithError(os.Stderr, ExitUsageError,
 			"must provide exactly one of --offsets or --lines")
-		return errors.New("mutex")
 	}
 
 	// Sandbox + stat.
 	_, err := paths.ValidatePathWithinRoots(p.path)
 	if err != nil && !errors.Is(err, paths.ErrNoSearchRootsConfigured) {
-		_ = exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
 	}
 	info, err := os.Stat(p.path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			_ = exitWithError(os.Stderr, ExitFileNotFound, "file not found: %s", p.path)
-			return err
+			return exitWithError(os.Stderr, ExitFileNotFound, "file not found: %s", p.path)
 		}
-		_ = exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
 	}
 	if info.IsDir() {
-		_ = exitWithError(os.Stderr, ExitUsageError, "path is a directory, not a file: %s", p.path)
-		return errors.New("is directory")
+		return exitWithError(os.Stderr, ExitUsageError, "path is a directory, not a file: %s", p.path)
 	}
 
 	// Parse the spec string into OffsetOrRange slices.
@@ -144,8 +139,7 @@ func runSamples(out io.Writer, p samplesParams) error {
 		parsedLines, err = samples.ParseCSV(p.lines)
 	}
 	if err != nil {
-		_ = exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 
 	// Context precedence: explicit --before/--after override --context.
@@ -188,8 +182,7 @@ func runSamples(out io.Writer, p samplesParams) error {
 	}
 	resp, err := samples.Resolve(req)
 	if err != nil {
-		_ = exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
-		return err
+		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
 	}
 
 	if p.jsonOutput {

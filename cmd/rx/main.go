@@ -15,8 +15,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/signal"
 	"slices"
+	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -74,10 +79,69 @@ func main() {
 	root := newRootCmd()
 	args := preprocessArgs(os.Args[1:])
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
-		// cobra already prints its own error; we just need a non-zero exit.
-		os.Exit(1)
+
+	// SIGINT / SIGTERM cancel the command's context so the engine winds
+	// down its rg subprocesses, then the process exits 5. signal.NotifyContext
+	// restores the default handler when stop() runs, so a second Ctrl-C
+	// during shutdown still kills the process immediately.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	err := root.ExecuteContext(ctx)
+	// Read the context before stop(): stop() is NotifyContext's cancel
+	// func, so calling it first would make every run look interrupted.
+	interrupted := ctx.Err() != nil
+	stop()
+	os.Exit(exitCodeFor(err, interrupted))
+}
+
+// exitCodeFor maps the error cobra returned to a process exit code.
+//
+//	nil                      → 0
+//	*clicommand.ExitError    → its Code
+//	anything else            → 1
+//
+// An interrupt wins over everything: when the user signalled us, whatever
+// error the command reported downstream is a consequence of the signal,
+// and the contract says 5.
+func exitCodeFor(err error, interrupted bool) int {
+	if interrupted {
+		return clicommand.ExitInterrupted
 	}
+	if err == nil {
+		return clicommand.ExitSuccess
+	}
+	var exitErr *clicommand.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
+	}
+	// cobra's own flag-parsing failures are usage errors; it has already
+	// printed the message.
+	if isUsageError(err) {
+		return clicommand.ExitUsageError
+	}
+	return clicommand.ExitGenericError
+}
+
+// isUsageError recognizes the errors cobra and pflag produce for a bad
+// command line. They are plain fmt.Errorf values with no type to match
+// on, so the text is all there is to go by.
+func isUsageError(err error) bool {
+	msg := err.Error()
+	for _, prefix := range []string{
+		"unknown flag",
+		"unknown shorthand flag",
+		"unknown command",
+		"flag needs an argument",
+		"invalid argument",
+		"accepts ",
+		"requires at least",
+	} {
+		if strings.Contains(msg, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // newRootCmd assembles every subcommand. The root command's own RunE is

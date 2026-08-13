@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every CLI failure exited 1, ignoring the documented table. `rx` now
+  exits 2 for a usage error, 3 for a missing file, 4 for a path outside
+  `--search-root` and 5 on SIGINT or SIGTERM, as `docs/cli/index.md` has
+  always claimed. The 26 call sites that discarded `exitWithError`'s
+  return value now return it, and `main` unwraps the code.
+- A pattern ripgrep cannot compile is no longer swallowed. `rx trace 'a('`
+  reported success with the file listed under `skipped_files`; it now
+  prints ripgrep's message and exits 2, and `GET /v1/trace` answers 400
+  instead of 200 with an empty result.
 - The compress output path is now validated against the search roots.
   `POST /v1/compress` answers `403` for an `output_path` outside
   `--search-root`, including one reached through a symlink and including

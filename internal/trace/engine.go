@@ -255,6 +255,11 @@ func (e *Engine) RunWithOptions(
 				remaining,
 			)
 			if perr != nil && !errors.Is(perr, context.Canceled) {
+				// A pattern that does not compile dooms every file, so it
+				// travels up instead of turning into a skipped file.
+				if errors.Is(perr, ErrInvalidPattern) {
+					return nil, perr
+				}
 				skipped = append(skipped, b.path)
 				continue
 			}
@@ -315,6 +320,9 @@ func (e *Engine) RunWithOptions(
 				remaining,
 			)
 			if cerr != nil {
+				if errors.Is(cerr, ErrInvalidPattern) {
+					return nil, cerr
+				}
 				skipped = append(skipped, b.path)
 				continue
 			}
@@ -354,6 +362,9 @@ func (e *Engine) RunWithOptions(
 				remaining,
 			)
 			if serr != nil {
+				if errors.Is(serr, ErrInvalidPattern) {
+					return nil, serr
+				}
 				skipped = append(skipped, b.path)
 				continue
 			}
