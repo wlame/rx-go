@@ -60,8 +60,11 @@ if [[ "$BRANCH" != "main" ]]; then
 fi
 
 # A dirty tree blocks a real run but not a preview — you often want to see
-# the plan before committing the last change.
-if ! git diff --quiet HEAD 2>/dev/null; then
+# the plan before committing the last change. `git status --porcelain` is
+# used rather than `git diff HEAD` because the latter does not see untracked
+# files, and a release cut with a stray file in the tree is a release whose
+# tag does not describe what was built.
+if [[ -n "$(git status --porcelain)" ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo "Warning: working tree has uncommitted changes — a real run would refuse."
         echo
