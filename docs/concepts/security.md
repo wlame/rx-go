@@ -1,5 +1,27 @@
 # Security
 
+## Intended use, first
+
+**`rx` is built for internal use on a trusted network. It is not intended
+to be exposed to the internet.**
+
+`rx serve` has no authentication. Anyone who can reach the port can read
+any file under `--search-root`, and `--search-root` defaults to the
+current directory. There is no TLS and no multi-tenancy.
+
+That is a deliberate scope decision, and it divides this page in two.
+**Building the perimeter is the operator's job** — bind to loopback,
+reach it over a VPN or an SSH tunnel, or front it with an authenticating
+reverse proxy. Identity, RBAC, sessions and certificates belong there,
+not in `rx`.
+
+**What `rx` takes responsibility for is hygiene inside that perimeter**:
+that a path outside the sandbox is refused, that a webhook cannot be
+turned into a probe of your internal network, and that the viewer bundle
+it downloads is the one it expected. Those are the surfaces below.
+
+## The three surfaces
+
 `rx` has three main security surfaces:
 
 - **The path sandbox** — `--search-root` prevents reading arbitrary
@@ -199,13 +221,18 @@ A URL that carries credentials (`http://user:pass@host/`) is rejected
 too, whatever it points at: those end up in proxy and access logs, and
 `RX_ALLOW_INTERNAL_HOOKS` does not switch that rule off.
 
-Validation runs at two layers:
+Validation runs at three layers, the last of which is the one that
+cannot be raced:
 
 1. **Static check**: if the URL's host is an IP literal or the string
    `"localhost"`, it's checked directly against the above ranges
 2. **DNS resolution check**: for hostname URLs, `rx` resolves the
    name (2-second timeout) and rejects if **any** returned IP falls
    in a blocked range
+3. **Dial-time check** (rx-go): the same table is applied again to the
+   literal IP the HTTP client is about to connect to. See "DNS rebinding
+   is checked at connect time" below for why the first two are not enough
+   on their own.
 
 A DNS failure is a **soft-accept** — a transient resolver outage
 shouldn't false-positive-reject every validation.
@@ -231,27 +258,37 @@ redirects, because GitHub redirects asset URLs to a CDN. It re-checks
 each hop against the same address table and aborts on a hop that points
 somewhere internal, keeping the standard 10-hop cap.
 
-### Known limitation: DNS rebinding
+### DNS rebinding is checked at connect time
 
-The DNS-resolution check runs **once** at validation time. An
-attacker who controls DNS can:
+The address check runs twice, and the second time is the one that counts.
 
-1. Configure `evil.example.com` to resolve to a public IP initially
-2. Pass a hook URL for `evil.example.com` to `rx`
-3. The validation step resolves the public IP — accepted
-4. Between validation and the POST, DNS is changed to resolve to
-   an internal IP
-5. The POST hits the internal IP
+Validating a hook URL resolves its hostname and checks the addresses.
+That alone is advisory: the HTTP client resolves the name *again* when
+the request goes out, and nothing makes the two answers agree. An
+attacker who controls DNS for a hostname they can get configured returns
+a public address for the first lookup and `127.0.0.1` for the second. The
+same thing happens without an attacker whenever a short-TTL record
+changes in between.
 
-Mitigations:
+So the client's dialer re-applies the whole address policy to the literal
+IP it is about to connect to. By that point resolution has already
+happened and there is no window left for the answer to change.
 
-- `RX_HOOK_STRICT_IP_ONLY=true` — force IP-literal URLs only
-- Deploy `rx serve` with no outbound access to internal networks
-  (firewall egress)
-- Run `rx serve` in a dedicated namespace with restricted routing
+`RX_ALLOW_INTERNAL_HOOKS=true` is honored there too, so an operator who
+deliberately points a hook at a local collector is unaffected.
 
-A future release may add DNS re-resolution at POST time as a
-defense-in-depth measure.
+`RX_HOOK_STRICT_IP_ONLY=true` remains available and is still the
+strictest option: it refuses hostname URLs outright, so no resolution
+happens at all.
+
+!!! note "rx-python"
+
+    rx-python validates at configuration time only. `httpx` has no
+    equivalent of Go's `DialContext` hook, so closing the gap there means
+    resolving, checking, and connecting to a pinned IP with the `Host`
+    header and SNI set by hand. Until that lands, use
+    `RX_HOOK_STRICT_IP_ONLY=true` on the Python backend if DNS rebinding
+    is in your threat model.
 
 ## Threat model
 
@@ -267,13 +304,17 @@ defense-in-depth measure.
 ### Things `rx` does NOT defend against
 
 - **Auth** — `rx serve` has no built-in authentication. Anyone who
-  can reach the socket can run any operation within the sandbox. Put
-  it behind a reverse proxy with auth.
+  can reach the socket can run any operation within the sandbox. This
+  is by design; see "Intended use, first" above.
 - **DoS** — no built-in rate limiting. A single client can
   simultaneously launch N traces and exhaust CPU. Use a reverse
   proxy or a process supervisor that caps concurrent requests.
-- **DNS rebinding** — the SSRF guard is vulnerable to DNS rebinding.
-  Use `RX_HOOK_STRICT_IP_ONLY` or firewall egress.
+- **Exposure to an untrusted network** — there is no authentication
+  and no TLS. This is the scope decision at the top of the page, not a
+  bug. Put `rx` behind a perimeter.
+- **DNS rebinding, on rx-python only** — rx-go re-checks the address at
+  connect time; rx-python validates once. Use
+  `RX_HOOK_STRICT_IP_ONLY=true` there.
 - **Cache poisoning** — multi-user cache directories share entries;
   a user who writes a bad cache entry affects other users. Use
   per-user `RX_CACHE_DIR`.
@@ -285,20 +326,26 @@ defense-in-depth measure.
 
 ## Deployment recommendations
 
-For production:
-
-1. **Set multiple specific `--search-root` values** rather than one
-   broad root
-2. **Front `rx serve` with a reverse proxy** that handles TLS, auth,
-   and rate limiting
-3. **Disable per-request hook overrides** in multi-tenant settings:
-   `RX_DISABLE_CUSTOM_HOOKS=true`
-4. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations
-   are internal and DNS rebinding is in the threat model
-5. **Monitor `/metrics`** — `rx_errors_total{error_type="permission_denied"}`
-   and `rx_hook_calls_total{status="failure"}` flag misbehavior
-6. **Use separate per-user `RX_CACHE_DIR`** if multiple users share
-   a host
+1. **Put it behind a perimeter.** Loopback binding, a VPN, an SSH tunnel
+   (`ssh -L 7777:127.0.0.1:7777 loghost`), or an authenticating reverse
+   proxy. `rx` should never be directly reachable from an untrusted
+   network. Everything below assumes this one is done.
+2. **Set multiple specific `--search-root` values** rather than one
+   broad root. The sandbox is only as narrow as you make it.
+3. **Let the proxy handle TLS and rate limiting** as well as auth. `rx`
+   serves plain HTTP and has no rate limiter.
+4. **Disable per-request hook overrides** where more than one person can
+   reach the server: `RX_DISABLE_CUSTOM_HOOKS=true`.
+5. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations are
+   internal — and on rx-python, if DNS rebinding is in your threat model
+   at all.
+6. **Monitor `/metrics`** — `rx_errors_total{error_type="access_denied"}`
+   and `rx_hook_calls_total{status="failure"}` flag misbehavior. The full
+   `error_type` set is `access_denied`, `file_not_found`,
+   `invalid_params`, `invalid_regex`, `service_unavailable` and
+   `internal_error`.
+7. **Use separate per-user `RX_CACHE_DIR`** if several people share a
+   host. Cache entries are not isolated between users.
 
 ## Related concepts
 

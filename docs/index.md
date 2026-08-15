@@ -8,6 +8,17 @@ chunking, line-offset indexes, and seekable compression on top of `ripgrep`
 so that repeated searches, line lookups, and content retrieval scale to
 files in the tens of gigabytes.
 
+!!! warning "Intended use"
+
+    `rx` is built for **internal use on a trusted network. It is not
+    intended to be exposed to the internet.**
+
+    `rx serve` has no authentication: anyone who can reach the port can
+    read any file under `--search-root`. Bind to loopback, reach it over
+    a VPN or an SSH tunnel, or front it with an authenticating reverse
+    proxy. See [Security](concepts/security.md) for what `rx` does and
+    does not take responsibility for.
+
 ## What makes `rx` different
 
 - **Parallel chunking with newline-aligned boundaries.** A single file is

@@ -7,19 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security
+### Added
 
-- Webhook targets are now checked at dial time, not only when the hook
-  is configured. `ValidateURL` resolves the hostname and rejects internal
-  addresses, but the HTTP client resolved that name again when the
-  request went out, and nothing made the two answers agree — a name that
-  resolved to a public address at configuration time could resolve to
-  `127.0.0.1` by request time, whether through DNS rebinding or a
-  short-TTL record that simply changed. The client's dialer now applies
-  the same address policy to the literal IP it is about to connect to,
-  which is the point with no window left. `RX_ALLOW_INTERNAL_HOOKS` is
-  honored, so an operator who deliberately targets a local collector is
-  unaffected.
+- A test pins the `rx serve` bind address (`127.0.0.1:7777`), which is
+  now also rx-python's default. The two backends answer on the same
+  address, so swapping one for the other needs no URL change.
+
+### Changed
+
+- The documentation now states the intended use plainly: rx is for
+  internal use on a trusted network and is not intended to be exposed to
+  the internet. `serve` has no authentication by design; the operator
+  builds the perimeter. Added to the README, and for rx-go to the docs
+  home page and the security concepts page, which also gained the third
+  validation layer the dial-time webhook check introduced and lost a
+  reference to an `error_type` label that is never emitted
+  (`permission_denied`; the real one is `access_denied`).
 
 ### Fixed
 
@@ -41,11 +44,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rx_errors_total{error_type="invalid_regex"}` rather than
   `invalid_params`, matching rx-python.
 
-### Added
+### Security
 
-- A test pins the `rx serve` bind address (`127.0.0.1:7777`), which is
-  now also rx-python's default. The two backends answer on the same
-  address, so swapping one for the other needs no URL change.
+- Webhook targets are now checked at dial time, not only when the hook
+  is configured. `ValidateURL` resolves the hostname and rejects internal
+  addresses, but the HTTP client resolved that name again when the
+  request went out, and nothing made the two answers agree — a name that
+  resolved to a public address at configuration time could resolve to
+  `127.0.0.1` by request time, whether through DNS rebinding or a
+  short-TTL record that simply changed. The client's dialer now applies
+  the same address policy to the literal IP it is about to connect to,
+  which is the point with no window left. `RX_ALLOW_INTERNAL_HOOKS` is
+  honored, so an operator who deliberately targets a local collector is
+  unaffected.
 
 ## [0.1.0] - 2026-09-03
 
