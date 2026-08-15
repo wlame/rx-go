@@ -167,6 +167,10 @@ func ProcessChunk(
 	rgArgs = append(rgArgs, "-") // read from stdin
 
 	rgCmd := exec.CommandContext(ctx, "rg", rgArgs...)
+	// Separate the subprocess cost from the rest of the request, so a
+	// slow scan can be told apart from slow bookkeeping around it.
+	rgStart := time.Now()
+	defer func() { prometheus.RecordRipgrepProcessing(time.Since(rgStart)) }()
 
 	// stdin pipe carries the chunk bytes from our ReadAt loop into rg.
 	rgStdin, err := rgCmd.StdinPipe()

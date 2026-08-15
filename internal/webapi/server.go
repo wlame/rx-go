@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/prometheus"
@@ -166,12 +167,13 @@ func applyConfigDefaults(cfg *Config) {
 // fatal error). Intended to run in its own goroutine; in the usual
 // case the caller selects on SIGINT/SIGTERM and then calls Shutdown.
 //
-// Stage 9 Round 2 S6: calls prometheus.Enable() before the socket
-// binds so metric updates from in-flight HTTP work are recorded. CLI
-// invocations (rx trace / index / samples / compress) never take this
-// path, so the prometheus gate stays false for them.
+// It calls prometheus.Enable() before the socket binds, so metric
+// updates from in-flight HTTP work are recorded. CLI invocations
+// (rx trace / index / samples / compress) never take this path, so the
+// prometheus gate stays false for them and they pay nothing.
 func (s *Server) Start() error {
 	prometheus.Enable()
+	prometheus.RecordConfig(config.MinChunkSizeMB())
 	err := s.http.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		// Graceful shutdown path — not an error.

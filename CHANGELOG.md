@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses, so a dashboard works against either backend. Request counters
   are incremented from a single deferred site per handler, so a request
   is counted exactly once however it exits.
+- `rx_large_file_threshold_mb` and `rx_ripgrep_processing_seconds`, both
+  of which rx-python exposes. The first publishes the chunking threshold
+  a scrape needs to read `rx_parallel_tasks_created`; the second
+  separates the ripgrep subprocess cost from the rest of a request.
+
 - A pattern the regex engine cannot compile is now counted as
   `rx_errors_total{error_type="invalid_regex"}` rather than
   `invalid_params`, matching rx-python.

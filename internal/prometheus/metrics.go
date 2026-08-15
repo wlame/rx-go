@@ -550,6 +550,43 @@ func RecordHookDuration(kind string, dur time.Duration) {
 	HookCallDurationSeconds.WithLabelValues(kind).Observe(dur.Seconds())
 }
 
+// LargeFileThresholdMB publishes the size above which a file is chunked.
+// A scrape cannot interpret rx_parallel_tasks_created without it.
+// rx-python publishes the same gauge from the same constant.
+var LargeFileThresholdMB = factory.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "rx_large_file_threshold_mb",
+		Help: `Threshold in MB for considering a file "large" for chunking`,
+	},
+)
+
+// RipgrepProcessingSeconds measures wall-clock time inside one ripgrep
+// invocation, separating the subprocess cost from the rest of a request.
+var RipgrepProcessingSeconds = factory.NewHistogram(
+	prometheus.HistogramOpts{
+		Name:    "rx_ripgrep_processing_seconds",
+		Help:    "Time spent in ripgrep processing",
+		Buckets: prometheus.DefBuckets,
+	},
+)
+
+// RecordConfig publishes the configuration gauges a scrape needs to
+// interpret the rest of the exposition.
+func RecordConfig(minChunkSizeMB int) {
+	if !enabled.Load() {
+		return
+	}
+	LargeFileThresholdMB.Set(float64(minChunkSizeMB))
+}
+
+// RecordRipgrepProcessing observes how long one ripgrep run took.
+func RecordRipgrepProcessing(dur time.Duration) {
+	if !enabled.Load() {
+		return
+	}
+	RipgrepProcessingSeconds.Observe(dur.Seconds())
+}
+
 // RecordError increments ErrorsTotal with the given error_type label.
 func RecordError(errorType string) {
 	if !enabled.Load() {
