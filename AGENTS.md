@@ -55,9 +55,13 @@ This repo is the **flagship backend** of a product with three active repos:
 4. **Prove it.** Before reporting a CLI or HTTP change as done, run the same
    command or request against both backends and diff the JSON. Run
    `go test ./internal/testparity/...` when `../rx-python` has a `.venv`.
-5. **Do not add new default differences.** Known gaps (default port 7777 vs
-   8000, different detector sets, no `/v1/complexity` here) are tracked in
-   `../tickets/10-backend-parity-gaps.md`.
+5. **Do not add new default differences.** Both backends serve
+   `127.0.0.1:7777` and expose the same metric families. Two gaps remain: the
+   detector sets differ, and `/v1/complexity` exists only in rx-python.
+6. **rx-go is polished first, but rx-python is not optional.** Sequence effort
+   here when you have to choose — this is the backend most people run. That is
+   an ordering of work, not of support: a feature that lands here and not there
+   is unfinished, and rule 2 applies without exception.
 
 ## Quick orientation
 
@@ -218,12 +222,23 @@ Paste the output. Do not summarize it.
 
 ## Security notes
 
-- `serve` binds `127.0.0.1:7777` by default and has no authentication. Anyone
-  who can reach the socket can run any operation inside the sandbox.
+- **Scope: internal use on a trusted network. Not for internet exposure.**
+  There is no authentication, no TLS and no multi-tenancy, by design. The
+  operator builds the perimeter — loopback, VPN, SSH tunnel or an
+  authenticating reverse proxy. Do not design identity, RBAC, sessions or
+  certificate handling into rx; say it is out of scope and move on.
+  What *is* in scope is hygiene inside that perimeter: sandbox
+  containment, SSRF defence, safe extraction, and an opt-in viewer token.
+- `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
+  can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
   dash cannot become a flag. Keep it that way.
-- The viewer bundle is downloaded from GitHub Releases; verify its checksum when
-  the sidecar exists (`../tickets/07-frontend-bundle-integrity.md`).
+- The viewer bundle is downloaded from GitHub Releases; verify its checksum
+  when the sidecar exists.
+- Webhook targets are checked against internal address ranges twice: when the
+  URL is validated, and again in the HTTP client's dialer against the literal
+  IP it is about to connect to. The second check is the one that survives DNS
+  rebinding — do not remove it.
 - Threat model and defences: `docs/concepts/security.md`. Keep it current when
   you change a defence.
 

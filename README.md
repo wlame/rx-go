@@ -10,6 +10,31 @@ deps beyond `rg`).
 
 Built for multi-GB log files; designed to scale to ~100 GB.
 
+## Intended use
+
+rx is built for **internal use on a trusted network. It is not intended to be
+exposed to the internet.**
+
+`rx serve` has **no authentication**. Anyone who can reach the port can read any
+file under `--search-root`, and `--search-root` defaults to the current
+directory. There is no TLS and no multi-tenancy.
+
+This is a deliberate scope decision. Building the perimeter is the operator's
+job, and any of these is enough:
+
+- bind to loopback, which is the default, and keep it there;
+- reach it over a VPN, or an SSH tunnel —
+  `ssh -L 7777:127.0.0.1:7777 loghost`;
+- or put an authenticating reverse proxy in front of it.
+
+Inside that perimeter rx handles the hygiene that is cheap to get right: a path
+outside `--search-root` is refused rather than served, webhook targets are
+checked against internal address ranges before *and* at the moment of
+connecting, and the viewer bundle is verified against its checksum.
+
+Identity providers, RBAC, session management and certificate handling are out of
+scope — they belong to the perimeter, not to rx.
+
 ## Requirements
 
 - Go **1.25+** (to build)
