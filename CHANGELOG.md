@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Webhook targets are now checked at dial time, not only when the hook
+  is configured. `ValidateURL` resolves the hostname and rejects internal
+  addresses, but the HTTP client resolved that name again when the
+  request went out, and nothing made the two answers agree — a name that
+  resolved to a public address at configuration time could resolve to
+  `127.0.0.1` by request time, whether through DNS rebinding or a
+  short-TTL record that simply changed. The client's dialer now applies
+  the same address policy to the literal IP it is about to connect to,
+  which is the point with no window left. `RX_ALLOW_INTERNAL_HOOKS` is
+  honored, so an operator who deliberately targets a local collector is
+  unaffected.
+
 ### Fixed
 
 - Seven metric families were declared and registered but never
