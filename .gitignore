@@ -2,10 +2,8 @@
 .DS_Store
 
 # Claude working files
-.claude/
 
 # Serena config
-.serena/
 
 rx-python/
 .fuse_hidden*
@@ -41,3 +39,10 @@ site/
 
 tmp/
 docs/plans/
+
+# Agent and development-process artifacts — never committed
+.claude/
+.serena/
+superpowers/
+docs/superpowers/
+CLAUDE.local.md
