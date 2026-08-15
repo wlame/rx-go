@@ -68,7 +68,14 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		Summary:     "Search file for regex patterns (supports multiple patterns)",
 		Description: "Uses ripgrep to scan one or more paths for one or more regex patterns, returning match offsets.",
 		Tags:        []string{"Search"},
-	}, func(ctx context.Context, in *traceInput) (*traceOutput, error) {
+		// The results are named only so the deferred counter below can
+		// read whatever this handler ends up returning; nothing assigns
+		// them directly.
+	}, func(ctx context.Context, in *traceInput) (traceResp *traceOutput, traceErr error) {
+		// One counter increment per request, whichever of the handler's
+		// many returns is taken.
+		defer func() { recordEndpoint(prometheus.RecordTraceRequest, traceErr) }()
+
 		if s.cfg.RipgrepPath == "" {
 			prometheus.RecordHTTPResponse(http.MethodGet, "/v1/trace", http.StatusServiceUnavailable)
 			return nil, ErrServiceUnavailable("ripgrep is not available on this system")
@@ -168,11 +175,13 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			// A pattern ripgrep cannot compile is the caller's mistake,
 			// not ours, and rg's message names the exact position.
 			if errors.Is(err, trace.ErrInvalidPattern) {
-				return nil, ErrBadRequest(err.Error())
+				return nil, ErrInvalidRegex(err.Error())
 			}
 			return nil, ErrInternal(fmt.Sprintf("Internal error: %s", err.Error()))
 		}
 		resp.RequestID = reqID
+
+		observeTraceDuration(validatedPaths, start)
 
 		// Update request-store bookkeeping.
 		dur := time.Since(start)

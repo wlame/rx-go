@@ -14,6 +14,7 @@ import (
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -93,7 +94,14 @@ func registerIndexHandlers(s *Server, api huma.API) {
 
 // createIndexTask is the heavy-lifting half of POST /v1/index, split out
 // so integration tests can drive it without a full HTTP round-trip.
-func createIndexTask(s *Server, req rxtypes.IndexRequest) (*postIndexOutput, error) {
+func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput, err error) {
+	// Only an indexing request that asks for analysis belongs in the
+	// analyze counter; a plain index build is not an analyze request.
+	// Counted from one deferred site so every return path is covered.
+	if req.Analyze {
+		defer func() { recordEndpoint(prometheus.RecordAnalyzeRequest, err) }()
+	}
+
 	validated, err := paths.ValidatePathWithinRoots(req.Path)
 	if err != nil {
 		var perr *paths.ErrPathOutsideRoots

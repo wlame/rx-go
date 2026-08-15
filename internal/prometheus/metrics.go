@@ -31,9 +31,7 @@ import (
 // The `serve` command calls Enable() once on startup to flip it true;
 // CLI invocations never enable and therefore pay no collection cost.
 //
-// Stage 9 Round 2 S6 fix: Round 1 exposed that the CLI-mode rx
-// binary unnecessarily ran counter increments, histogram observations
-// and registry writes. An atomic bool is the cheapest possible gate —
+// An atomic bool is the cheapest possible gate —
 // on amd64 / arm64 it's a single mov instruction, well below the 1ns
 // mark. The helpers below early-return on the atomic check; the
 // Prometheus client library's own overhead (WithLabelValues lookup,
@@ -275,9 +273,8 @@ var (
 		},
 		[]string{"kind", "status"},
 	)
-	// HookCallDurationSeconds measures how long a webhook POST took.
-	// Stage 9 Round 2 S6: Python exposes rx_hook_call_duration_seconds
-	// with per-event-type labels; Go matches at v2.
+	// HookCallDurationSeconds measures how long a webhook POST took,
+	// labeled by event type as rx-python labels its equivalent.
 	HookCallDurationSeconds = factory.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "rx_hook_call_duration_seconds",
@@ -289,13 +286,13 @@ var (
 )
 
 // ============================================================================
-// Stage 9 Round 2 S6: Python-parity metrics newly added to rx-go
+// Metrics shared with rx-python
 // ============================================================================
 //
-// These metric families existed in rx-python's /metrics output but were
-// absent from the Go port at Round 1. Per user decision they are now
-// emitted when Enable() has been called (serve mode). CLI mode skips
-// them entirely via the helper gate below.
+// These families exist in rx-python's /metrics output too, with the same
+// names, labels and bucket boundaries, so a dashboard works against
+// either backend. They are emitted only when Enable() has been called
+// (serve mode); CLI mode skips them via the helper gate below.
 var (
 	// ErrorsTotal: per-kind error counter (invalid_regex, file_not_found,
 	// binary_file, permission_error, internal_error, etc.). Mirrors
@@ -445,9 +442,9 @@ var (
 // NOT doing the strconv.Itoa on status codes, NOT incrementing the
 // counter's internal atomic etc.
 //
-// Stage 9 Round 2 S6 rule: CLI invocations of rx MUST NOT pay any
-// metric collection cost — users running `rx "error" file.log` from
-// shell scripts don't care about metrics and shouldn't pay for them.
+// CLI invocations of rx must not pay any metric collection cost —
+// someone running `rx "error" file.log` from a shell script does not
+// scrape metrics and should not pay for them.
 
 // RecordHTTPResponse increments HTTPResponsesTotal for the given (method, path, status).
 func RecordHTTPResponse(method, path string, status int) {
@@ -457,6 +454,33 @@ func RecordHTTPResponse(method, path string, status int) {
 	HTTPResponsesTotal.
 		WithLabelValues(method, path, strconv.Itoa(status)).
 		Inc()
+}
+
+// RecordTraceRequest counts one /v1/trace request. status is "success"
+// for a request that produced a response body and "error" for one
+// rejected or failed, spelled as rx-python spells it so a dashboard
+// ports between the backends unchanged.
+func RecordTraceRequest(status string) {
+	if !enabled.Load() {
+		return
+	}
+	TraceRequestsTotal.WithLabelValues(status).Inc()
+}
+
+// RecordSamplesRequest counts one /v1/samples request.
+func RecordSamplesRequest(status string) {
+	if !enabled.Load() {
+		return
+	}
+	SamplesRequestsTotal.WithLabelValues(status).Inc()
+}
+
+// RecordAnalyzeRequest counts one index-with-analysis request.
+func RecordAnalyzeRequest(status string) {
+	if !enabled.Load() {
+		return
+	}
+	AnalyzeRequestsTotal.WithLabelValues(status).Inc()
 }
 
 // RecordTraceDuration observes a trace-request duration.
@@ -518,7 +542,7 @@ func RecordHook(kind, status string) {
 }
 
 // RecordHookDuration adds a duration observation to the per-kind
-// HookCallDurationSeconds histogram. Stage 9 Round 2 S6 parity port.
+// HookCallDurationSeconds histogram.
 func RecordHookDuration(kind string, dur time.Duration) {
 	if !enabled.Load() {
 		return
@@ -527,7 +551,6 @@ func RecordHookDuration(kind string, dur time.Duration) {
 }
 
 // RecordError increments ErrorsTotal with the given error_type label.
-// Stage 9 Round 2 S6 Python parity.
 func RecordError(errorType string) {
 	if !enabled.Load() {
 		return
@@ -535,7 +558,7 @@ func RecordError(errorType string) {
 	ErrorsTotal.WithLabelValues(errorType).Inc()
 }
 
-// RecordFileSize observes a file size in bytes. Stage 9 Round 2 S6.
+// RecordFileSize observes a file size in bytes.
 func RecordFileSize(sizeBytes int64) {
 	if !enabled.Load() {
 		return
@@ -648,10 +671,9 @@ func RecordTraceCacheSkip() {
 // Gated helpers for previously-direct-access counters.
 // ============================================================================
 //
-// Before Stage 9 Round 2, call sites like `prometheus.ActiveWorkers.Inc()`
-// hit the counter directly. With the `enabled` gate we want those calls
-// to be cheap no-ops in CLI mode — these wrappers accept the caller's
-// intent and only do work when Enable() has been called.
+// Call sites must not touch a counter directly: these wrappers are
+// cheap no-ops in CLI mode, doing work only when Enable() has been
+// called.
 
 // IncActiveWorkers increments the ActiveWorkers gauge when enabled.
 func IncActiveWorkers() {
