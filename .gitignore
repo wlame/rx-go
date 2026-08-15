@@ -20,6 +20,7 @@ bin/
 dist/
 
 # Test/coverage
+cover.out
 coverage.out
 coverage.html
 *.test
