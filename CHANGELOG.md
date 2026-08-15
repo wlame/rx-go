@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A test pins the `rx serve` bind address (`127.0.0.1:7777`), which is
+  now also rx-python's default. The two backends answer on the same
+  address, so swapping one for the other needs no URL change.
+
 ## [0.1.0] - 2026-09-03
 
 ### Added
