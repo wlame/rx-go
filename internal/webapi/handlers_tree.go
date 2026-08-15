@@ -123,6 +123,11 @@ func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeRespon
 	dirs := make([]os.DirEntry, 0, len(entries))
 	files := make([]os.DirEntry, 0, len(entries))
 	for _, e := range entries {
+		// A hidden entry is unreachable by name while --hidden is off,
+		// so listing it would only offer a link that returns 403.
+		if paths.SkipEntry(e.Name()) {
+			continue
+		}
 		if e.IsDir() {
 			dirs = append(dirs, e)
 		} else {
@@ -207,7 +212,12 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 	if isDir {
 		// Count children (non-recursive).
 		if children, err := os.ReadDir(entryPath); err == nil {
-			count := len(children)
+			count := 0
+			for _, child := range children {
+				if !paths.SkipEntry(child.Name()) {
+					count++
+				}
+			}
 			entry.ChildrenCount = &count
 		}
 		return entry

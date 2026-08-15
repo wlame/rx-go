@@ -45,6 +45,7 @@ See [concepts/caching](concepts/caching.md).
 | `RX_MIN_CHUNK_SIZE_MB` | `20` | Smallest chunk the parallel scanner carves. Below this file size, scans run single-threaded. |
 | `RX_MAX_LINE_SIZE_KB` | `8` | Max line length the chunker tolerates; affects the forward-scan window when finding newline-aligned boundaries. |
 | `RX_MAX_FILES` | `1000` | Max files a single trace request will scan. Protects against runaway directory scans. |
+| `RX_HIDDEN` | `false` | Include files and directories whose name starts with a dot. Off by default, as in `ripgrep`. The `--hidden` flag overrides it. |
 
 See [concepts/chunking](concepts/chunking.md).
 

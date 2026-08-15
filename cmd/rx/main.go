@@ -27,6 +27,8 @@ import (
 
 	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/clicommand"
+	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/paths"
 
 	// Blank-import analyzer detectors so their package init() calls
 	// register them with the global analyzer registry before main runs
@@ -164,6 +166,17 @@ func newRootCmd() *cobra.Command {
 		Version:       appVersion,
 	}
 	root.SetVersionTemplate("rx version {{.Version}}\n")
+
+	// Hidden entries — names starting with a dot — are skipped by
+	// default, as ripgrep skips them. This is persistent rather than
+	// per-command because it is one policy: every subcommand that walks
+	// a directory or validates a path honors it.
+	var includeHidden bool
+	root.PersistentFlags().BoolVar(&includeHidden, "hidden", config.GetBoolEnv("RX_HIDDEN", false),
+		"Include hidden files and directories (names starting with a dot)")
+	root.PersistentPreRun = func(_ *cobra.Command, _ []string) {
+		paths.SetIncludeHidden(includeHidden)
+	}
 
 	root.AddCommand(clicommand.NewTraceCommand(os.Stdout))
 	root.AddCommand(clicommand.NewSamplesCommand(os.Stdout))

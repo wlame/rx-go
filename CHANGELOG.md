@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** files and directories whose name starts with a dot are no
+  longer served by default. `rx serve` defaults `--search-root` to the
+  current directory, so started from a home directory it used to serve
+  `~/.ssh`, `~/.aws` and `~/.gnupg` through `/v1/samples` to anyone who
+  could reach the port. `--hidden`, or `RX_HIDDEN=true`, restores the old
+  behaviour; a hidden component of a `--search-root` itself is exempt.
+  The rule matches ripgrep's and is enforced in the path validator as
+  well as in directory listings, so a hidden file is refused when asked
+  for by name and not merely omitted from the tree.
+
 - The documentation now states the intended use plainly: rx is for
   internal use on a trusted network and is not intended to be exposed to
   the internet. `serve` has no authentication by design; the operator

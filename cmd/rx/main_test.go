@@ -126,6 +126,10 @@ func TestPreprocessArgs_TruthTable(t *testing.T) {
 		{"flag then pattern", []string{"--json", "error", "/var/log"}, []string{"trace", "--json", "error", "/var/log"}},
 		{"flag then subcommand", []string{"--json", "index", "/var/log"}, []string{"--json", "index", "/var/log"}},
 		{"subcommand then flag", []string{"index", "--json"}, []string{"index", "--json"}},
+		// A group-level flag may precede the subcommand. rx-python's
+		// default-command group had to be taught the same thing.
+		{"hidden then subcommand", []string{"--hidden", "trace", "pat"}, []string{"--hidden", "trace", "pat"}},
+		{"hidden then bare pattern", []string{"--hidden", "error", "/var/log"}, []string{"trace", "--hidden", "error", "/var/log"}},
 		{"only flag", []string{"--json"}, []string{"trace", "--json"}},
 		{"short flag then pattern", []string{"-j", "err", "/var/log"}, []string{"trace", "-j", "err", "/var/log"}},
 		{"regex positional", []string{"error.*failed", "a.log"}, []string{"trace", "error.*failed", "a.log"}},

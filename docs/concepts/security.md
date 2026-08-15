@@ -121,6 +121,66 @@ curl "http://localhost:7777/v1/trace?path=/var/log/nginx/access.log&regexp=500"
 curl "http://localhost:7777/v1/trace?path=/etc/passwd&regexp=root"
 ```
 
+## Hidden files and directories
+
+Entries whose name starts with a dot are **not served by default**, in
+either backend.
+
+The case this exists for: `rx serve` with no `--search-root` serves the
+current directory. Started from a home directory, that includes `~/.ssh`,
+`~/.aws` and `~/.gnupg` — readable through `/v1/samples` by anyone who
+can reach the port. The sandbox was working exactly as designed; the
+default root was the problem.
+
+The rule matches ripgrep's, which rx users already know:
+
+```bash
+rx "token" ~/                 # skips ~/.ssh, ~/.aws, ~/.bashrc
+rx --hidden "token" ~/        # includes them
+RX_HIDDEN=true rx "token" ~/  # same, from the environment
+```
+
+### It is enforced in the sandbox, not the listing
+
+Omitting hidden entries from a directory listing hides them from someone
+browsing. It does nothing about a caller who already knows the path and
+asks for the file directly. So the check lives in the path validator that
+every endpoint and every CLI command already goes through:
+
+```bash
+# Hidden entries do not appear in the tree...
+curl -s "$RX/v1/tree?path=/home/u" | jq '.entries[].name'
+# ["logs", "data"]
+
+# ...and asking for one by name is refused, not merely undocumented.
+curl -si "$RX/v1/samples?path=/home/u/.ssh/id_rsa&lines=1" | head -1
+# HTTP/1.1 403 Forbidden
+```
+
+The refusal names the rule and the way out, because "access denied" alone
+sends people looking for a permissions problem they do not have:
+
+```json
+{
+  "detail": "Access denied: path '/home/u/.ssh/id_rsa' contains hidden component '.ssh'; pass --hidden (or set RX_HIDDEN=true) to include hidden files and directories"
+}
+```
+
+It is a different error type from the outside-the-sandbox refusal
+(`ErrHiddenPath` in Go, `HiddenPathError` in Python), so a client can
+tell "not yours to read" from "pass `--hidden` if you meant it". Both are
+403.
+
+### Components of the root itself are exempt
+
+`--search-root=~/.local/share/logs` is a deliberate choice. Only
+components *below* a root are subject to the rule — refusing to serve the
+directory you were pointed at would be absurd:
+
+```bash
+rx serve --search-root=/home/u/.local/share/logs   # works, no --hidden needed
+```
+
 ## Tarball extraction defenses
 
 `rx serve` downloads the `rx-viewer` SPA from GitHub on first start
@@ -229,7 +289,7 @@ cannot be raced:
 2. **DNS resolution check**: for hostname URLs, `rx` resolves the
    name (2-second timeout) and rejects if **any** returned IP falls
    in a blocked range
-3. **Dial-time check** (rx-go): the same table is applied again to the
+8. **Dial-time check** (rx-go): the same table is applied again to the
    literal IP the HTTP client is about to connect to. See "DNS rebinding
    is checked at connect time" below for why the first two are not enough
    on their own.
@@ -296,6 +356,8 @@ happens at all.
 
 - Arbitrary-file-read via `/v1/trace?path=/etc/passwd` — blocked by
   `--search-root`
+- Reading `~/.ssh`, `~/.aws` and friends when `rx serve` was started
+  from a home directory — blocked by the hidden-entry rule
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range
@@ -332,19 +394,22 @@ happens at all.
    network. Everything below assumes this one is done.
 2. **Set multiple specific `--search-root` values** rather than one
    broad root. The sandbox is only as narrow as you make it.
-3. **Let the proxy handle TLS and rate limiting** as well as auth. `rx`
+3. **Leave `--hidden` off** unless you need it. It is off by default, and
+   turning it on inside a home directory re-exposes exactly the files the
+   rule exists to keep back.
+4. **Let the proxy handle TLS and rate limiting** as well as auth. `rx`
    serves plain HTTP and has no rate limiter.
-4. **Disable per-request hook overrides** where more than one person can
+5. **Disable per-request hook overrides** where more than one person can
    reach the server: `RX_DISABLE_CUSTOM_HOOKS=true`.
-5. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations are
+6. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations are
    internal — and on rx-python, if DNS rebinding is in your threat model
    at all.
-6. **Monitor `/metrics`** — `rx_errors_total{error_type="access_denied"}`
+7. **Monitor `/metrics`** — `rx_errors_total{error_type="access_denied"}`
    and `rx_hook_calls_total{status="failure"}` flag misbehavior. The full
    `error_type` set is `access_denied`, `file_not_found`,
    `invalid_params`, `invalid_regex`, `service_unavailable` and
    `internal_error`.
-7. **Use separate per-user `RX_CACHE_DIR`** if several people share a
+8. **Use separate per-user `RX_CACHE_DIR`** if several people share a
    host. Cache entries are not isolated between users.
 
 ## Related concepts

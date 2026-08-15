@@ -35,6 +35,27 @@ connecting, and the viewer bundle is verified against its checksum.
 Identity providers, RBAC, session management and certificate handling are out of
 scope — they belong to the perimeter, not to rx.
 
+## Hidden files and directories
+Entries whose name starts with a dot are skipped by default, the way
+`ripgrep` skips them. This matters most for `rx serve`, whose
+`--search-root` defaults to the current directory: started from a home
+directory it would otherwise serve `~/.ssh` and `~/.aws`.
+
+```bash
+rx "token" ~/                 # skips ~/.ssh, ~/.aws, ~/.bashrc
+rx --hidden "token" ~/        # includes them
+RX_HIDDEN=true rx "token" ~/  # same, from the environment
+```
+
+`--hidden` is a global flag, so it works on every subcommand and may
+appear before or after the subcommand name. The rule is enforced in the
+path sandbox as well as in directory listings, so a hidden file is not
+merely absent from `rx serve`'s tree — asking for it by name returns 403
+with a message naming the flag.
+
+A hidden component of a `--search-root` is exempt: pointing rx at
+`~/.local/share/logs` is a deliberate choice and needs no flag.
+
 ## Requirements
 
 - Go **1.25+** (to build)
@@ -129,6 +150,7 @@ Configured via environment variables. The most common ones:
 | `RX_MAX_SUBPROCESSES` | `20`            | Concurrent `rg` workers               |
 | `RX_LARGE_FILE_MB`    | `50`            | Threshold for large-file optimizations |
 | `RX_NO_CACHE`         | `0`             | Disable trace caching                 |
+| `RX_HIDDEN`           | `false`         | Serve dot-prefixed files and dirs     |
 | `RX_LOG_LEVEL`        | `info`          | `debug` \| `info` \| `warn` \| `error` |
 
 Full list and tuning notes: [`docs/configuration.md`](docs/configuration.md).
