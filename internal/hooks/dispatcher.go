@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -114,6 +115,16 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
 				cfg.Logger.Debug("hook_redirect_refused", "target", req.URL.Redacted())
 				return http.ErrUseLastResponse
+			},
+			// SECURITY: re-apply the address policy at dial time.
+			// ValidateURL resolves the hostname when the hook is
+			// configured; this client resolves it again when the request
+			// goes out, and a name can answer differently the second
+			// time. guardedDialer checks the literal IP being connected
+			// to, which is the only point with no window left.
+			Transport: &http.Transport{
+				DialContext:         guardedDialer(nil, parseBoolEnv(os.Getenv("RX_ALLOW_INTERNAL_HOOKS"))),
+				TLSHandshakeTimeout: cfg.Timeout,
 			},
 		},
 		queue:   make(chan hookEvent, cfg.QueueDepth),
