@@ -484,7 +484,7 @@ func expandDirForIndex(dir string, recursive bool) ([]string, error) {
 		return nil, err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || paths.SkipEntry(entry.Name()) {
 			continue
 		}
 		files = append(files, dir+string(os.PathSeparator)+entry.Name())
@@ -500,6 +500,11 @@ func walkFiles(dir string, out *[]string) error {
 		return err
 	}
 	for _, entry := range entries {
+		// Skipped before the recursion, so a hidden directory is not
+		// descended into either.
+		if paths.SkipEntry(entry.Name()) {
+			continue
+		}
 		full := dir + string(os.PathSeparator) + entry.Name()
 		if entry.IsDir() {
 			if werr := walkFiles(full, out); werr != nil {

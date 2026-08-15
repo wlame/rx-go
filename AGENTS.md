@@ -229,6 +229,13 @@ Paste the output. Do not summarize it.
   certificate handling into rx; say it is out of scope and move on.
   What *is* in scope is hygiene inside that perimeter: sandbox
   containment, SSRF defence, safe extraction, and an opt-in viewer token.
+- **Hidden entries are not served by default.** A path component starting
+  with a dot is refused unless `--hidden` / `RX_HIDDEN=true` is set, the
+  way ripgrep skips them. The rule lives in the path validator, not only
+  in the directory walkers: hiding an entry from a listing does nothing
+  about a caller who knows the path. Components of a `--search-root`
+  itself are exempt. Both backends must agree exactly — the error message
+  is part of the contract.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading

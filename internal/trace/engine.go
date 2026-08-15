@@ -12,6 +12,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
+	sandbox "github.com/wlame/rx-go/internal/paths" // aliased: local vars named `paths`
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -584,7 +585,7 @@ func expandPaths(paths []string, recursive bool) (files, scannedDirs, skipped []
 				continue
 			}
 			for _, entry := range entries {
-				if entry.IsDir() {
+				if entry.IsDir() || sandbox.SkipEntry(entry.Name()) {
 					continue
 				}
 				full := p
@@ -619,6 +620,11 @@ func walkDirForTextFiles(dir string, files, skipped *[]string) error {
 		return err
 	}
 	for _, entry := range entries {
+		// Hidden entries are skipped before the recursion, so a hidden
+		// directory is not descended into either.
+		if sandbox.SkipEntry(entry.Name()) {
+			continue
+		}
 		full := dir
 		if !strings.HasSuffix(full, "/") {
 			full += "/"

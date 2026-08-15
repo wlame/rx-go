@@ -168,6 +168,13 @@ func ValidatePathWithinRoots(path string) (string, error) {
 	sep := string(filepath.Separator)
 	for _, root := range snapshot {
 		if canonical == root || strings.HasPrefix(canonical, root+sep) {
+			// Inside the sandbox. One more rule: hidden entries below
+			// the root are not served unless asked for. See hidden.go.
+			if !IncludeHidden() {
+				if component := hiddenComponentBelow(root, canonical); component != "" {
+					return "", &ErrHiddenPath{Path: path, Component: component}
+				}
+			}
 			return absPath, nil
 		}
 	}
