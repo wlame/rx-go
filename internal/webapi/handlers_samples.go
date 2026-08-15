@@ -16,6 +16,7 @@ import (
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -87,7 +88,11 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		Summary:     "Get context lines around byte offsets or line numbers",
 		Description: "Use this endpoint to view actual content around matches from /v1/trace.",
 		Tags:        []string{"Context"},
-	}, func(_ context.Context, in *samplesInput) (*samplesOutput, error) {
+	}, func(_ context.Context, in *samplesInput) (out *samplesOutput, err error) {
+		// One counter increment per request, whichever of the handler's
+		// many returns is taken.
+		defer func() { recordEndpoint(prometheus.RecordSamplesRequest, err) }()
+
 		if s.cfg.RipgrepPath == "" {
 			return nil, ErrServiceUnavailable("ripgrep is not available on this system")
 		}

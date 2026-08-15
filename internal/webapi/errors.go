@@ -58,7 +58,18 @@ func humaNewError(status int, message string, errs ...error) huma.StatusError {
 type apiError struct {
 	Status int    `json:"-"`
 	Detail string `json:"detail"`
+
+	// errorType overrides the status-derived rx_errors_total label for a
+	// failure the status alone does not identify: an uncompilable
+	// pattern and a bad query parameter are both 400, but rx-python
+	// counts them apart. Unexported, so it never reaches the response
+	// body. Empty means "derive it from Status".
+	errorType string
 }
+
+// MetricErrorType reports the rx_errors_total label this error should be
+// counted under, or "" to let the caller derive one from the status.
+func (e *apiError) MetricErrorType() string { return e.errorType }
 
 func (e *apiError) Error() string { return e.Detail }
 
@@ -79,6 +90,18 @@ func ErrNotFound(detail string) huma.StatusError {
 // ErrBadRequest returns a 400 apiError with the given detail.
 func ErrBadRequest(detail string) huma.StatusError {
 	return &apiError{Status: http.StatusBadRequest, Detail: detail}
+}
+
+// ErrInvalidRegex returns a 400 apiError for a pattern the regex engine
+// refused to compile. It is a separate constructor from ErrBadRequest so
+// the failure is counted as invalid_regex rather than invalid_params,
+// matching rx-python.
+func ErrInvalidRegex(detail string) huma.StatusError {
+	return &apiError{
+		Status:    http.StatusBadRequest,
+		Detail:    detail,
+		errorType: "invalid_regex",
+	}
 }
 
 // ErrForbidden returns a 403 apiError with the given detail.

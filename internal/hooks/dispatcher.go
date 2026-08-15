@@ -298,6 +298,7 @@ func (d *Dispatcher) fire(ev hookEvent) {
 		return
 	}
 	prometheus.RecordHook(ev.kind, "success")
+	prometheus.RecordHookDuration(ev.kind, time.Since(start))
 	// Successful hook calls stay silent at default log level — they're
 	// expected and high-volume. Use Debug for observability.
 	d.logger.Debug("hook_fired",
@@ -311,6 +312,9 @@ func (d *Dispatcher) fire(ev hookEvent) {
 // recordFailure centralizes the "hook failed" bookkeeping.
 func (d *Dispatcher) recordFailure(kind string, err error, start time.Time, requestID string) {
 	prometheus.RecordHook(kind, "failure")
+	// A failed call still cost wall-clock time — a hook target that
+	// times out is exactly what the latency histogram should show.
+	prometheus.RecordHookDuration(kind, time.Since(start))
 	d.logger.Warn("hook_failed",
 		"kind", kind,
 		"error", err.Error(),

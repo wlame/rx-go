@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Seven metric families were declared and registered but never
+  incremented, so they never appeared in a scrape:
+  `rx_trace_requests_total`, `rx_samples_requests_total`,
+  `rx_analyze_requests_total`, `rx_trace_duration_seconds`,
+  `rx_errors_total` and `rx_hook_call_duration_seconds`. They are now
+  recorded, with the same names, labels and `status` values rx-python
+  uses, so a dashboard works against either backend. Request counters
+  are incremented from a single deferred site per handler, so a request
+  is counted exactly once however it exits.
+- A pattern the regex engine cannot compile is now counted as
+  `rx_errors_total{error_type="invalid_regex"}` rather than
+  `invalid_params`, matching rx-python.
+
 ### Added
 
 - A test pins the `rx serve` bind address (`127.0.0.1:7777`), which is
