@@ -25,6 +25,8 @@ package frontend
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +57,26 @@ const githubAPIBase = "https://api.github.com"
 // RequestTimeout applies to GitHub API calls and tarball downloads.
 const RequestTimeout = 30 * time.Second
 
+// metadataFileName and tempFileName are the non-bundle entries the cache
+// directory holds alongside the extracted viewer.
+const (
+	metadataFileName = ".metadata.json"
+	tempFileName     = "dist.tar.gz.tmp"
+)
+
+// sha256SidecarSuffix is appended to an asset URL to find its digest.
+const sha256SidecarSuffix = ".sha256"
+
+// sha256HexLen is the length of a sha256 digest in hex.
+const sha256HexLen = 64
+
+// maxSidecarBytes caps the sidecar read; it holds one line.
+const maxSidecarBytes = 4096
+
+// stagingDirName is where a bundle is unpacked before it replaces the
+// cached one. Hidden so the SPA file server never serves it.
+const stagingDirName = ".staging"
+
 // maxRedirects mirrors net/http's own default hop limit. Stated
 // explicitly because checkRedirectTarget replaces the default policy
 // and would otherwise allow unlimited hops.
@@ -81,6 +103,9 @@ type CacheMetadata struct {
 	DownloadedAt string  `json:"downloaded_at"`
 	LastCheck    string  `json:"last_check"`
 	ReleaseURL   string  `json:"release_url"`
+	// SHA256 is the digest this bundle was verified against, or "" when
+	// the release published no sidecar. Written by both backends.
+	SHA256 string `json:"sha256"`
 }
 
 // ============================================================================
@@ -197,7 +222,7 @@ func expandHome(p string) string {
 
 // MetadataPath returns the path to .metadata.json inside the cache.
 func (m *Manager) MetadataPath() string {
-	return filepath.Join(m.CacheDir, ".metadata.json")
+	return filepath.Join(m.CacheDir, metadataFileName)
 }
 
 // IndexHTMLPath returns the path to the SPA's entry HTML file.
@@ -362,25 +387,53 @@ func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) 
 
 	// Stream the tarball to a temp file first so a partial download
 	// never overwrites a working cache. Clean up on any failure path.
-	tmpPath := filepath.Join(m.CacheDir, "dist.tar.gz.tmp")
+	tmpPath := filepath.Join(m.CacheDir, tempFileName)
 	if err := streamToFile(resp.Body, tmpPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
 
-	// Clear existing content BEFORE extracting so removed files don't
-	// linger (same as Python).
-	if err := m.clearExistingContent(); err != nil {
-		_ = os.Remove(tmpPath)
-		return err
+	// SECURITY: verify the bundle against the release's .sha256 sidecar
+	// before unpacking anything. A missing sidecar is accepted with a
+	// warning, because releases published before the sidecar existed are
+	// still installable; a sidecar that does not match is always fatal.
+	var verifiedDigest string
+	sidecar, sidecarErr := m.fetchSHA256Sidecar(ctx, downloadURL)
+	if sidecarErr != nil {
+		m.Logger.Warn("frontend_checksum_missing", "url", downloadURL, "reason", sidecarErr.Error())
+	} else {
+		if err := verifySHA256(tmpPath, sidecar); err != nil {
+			_ = os.Remove(tmpPath)
+			return fmt.Errorf("frontend checksum: %w", err)
+		}
+		verifiedDigest = strings.ToLower(strings.Fields(sidecar)[0])
+		m.Logger.Info("frontend_checksum_verified", "sha256", verifiedDigest)
 	}
 
-	// Extract with traversal protection.
-	if err := extractTarGz(tmpPath, m.CacheDir); err != nil {
+	// Unpack into a staging directory first, so a bundle that turns out
+	// to be unusable never costs the working cache.
+	staging := filepath.Join(m.CacheDir, stagingDirName)
+	_ = os.RemoveAll(staging)
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("mkdir staging: %w", err)
+	}
+	if err := extractTarGz(tmpPath, staging); err != nil {
+		_ = os.RemoveAll(staging)
 		_ = os.Remove(tmpPath)
 		return err
 	}
 	_ = os.Remove(tmpPath)
+
+	// The new bundle is good: replace the old content with it.
+	if err := m.clearExistingContent(); err != nil {
+		_ = os.RemoveAll(staging)
+		return err
+	}
+	if err := moveDirContents(staging, m.CacheDir); err != nil {
+		return err
+	}
+	_ = os.RemoveAll(staging)
 
 	// Prefer the version inside dist/version.json when present;
 	// otherwise fall back to the release tag.
@@ -395,11 +448,84 @@ func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) 
 		DownloadedAt: now,
 		LastCheck:    now,
 		ReleaseURL:   downloadURL,
+		SHA256:       verifiedDigest,
 	}
 	if err := m.WriteMetadata(md); err != nil {
 		return err
 	}
 	m.Logger.Info("frontend_installed", "version", version.Version)
+	return nil
+}
+
+// fetchSHA256Sidecar retrieves the `.sha256` file published beside a
+// bundle. An error means the release has no sidecar, which the caller
+// treats as "unverified" rather than "invalid".
+func (m *Manager) fetchSHA256Sidecar(ctx context.Context, downloadURL string) (string, error) {
+	sidecarURL := downloadURL + sha256SidecarSuffix
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sidecarURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	resp, err := m.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch sidecar: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("sidecar returned %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSidecarBytes))
+	if err != nil {
+		return "", fmt.Errorf("read sidecar: %w", err)
+	}
+	return string(body), nil
+}
+
+// verifySHA256 checks a file against the contents of a `.sha256` sidecar.
+//
+// The sidecar is what `sha256sum` writes: a hex digest, optionally
+// followed by the file name. A digest that does not parse is a failure,
+// not a pass — the point is to refuse anything unproven.
+func verifySHA256(path, sidecar string) error {
+	fields := strings.Fields(sidecar)
+	if len(fields) == 0 {
+		return errors.New("sidecar is empty")
+	}
+	expected := strings.ToLower(fields[0])
+	if len(expected) != sha256HexLen {
+		return fmt.Errorf("sidecar does not hold a sha256 digest: %q", fields[0])
+	}
+	if _, err := hex.DecodeString(expected); err != nil {
+		return fmt.Errorf("sidecar does not hold a sha256 digest: %q", fields[0])
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open bundle: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("hash bundle: %w", err)
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+	if actual != expected {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expected, actual)
+	}
+	return nil
+}
+
+// moveDirContents moves every entry of src into dst.
+func moveDirContents(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("read staging: %w", err)
+	}
+	for _, e := range entries {
+		if err := os.Rename(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())); err != nil {
+			return fmt.Errorf("install %s: %w", e.Name(), err)
+		}
+	}
 	return nil
 }
 
@@ -427,7 +553,9 @@ func (m *Manager) clearExistingContent() error {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if name == ".metadata.json" || name == "dist.tar.gz.tmp" {
+		// The metadata, the in-flight download and the staged bundle are
+		// not part of the served content.
+		if name == metadataFileName || name == tempFileName || name == stagingDirName {
 			continue
 		}
 		path := filepath.Join(m.CacheDir, name)
@@ -488,6 +616,15 @@ func (m *Manager) Ensure(ctx context.Context) error {
 	}
 	if rel == nil {
 		return errors.New("frontend: no latest release found on github")
+	}
+	if !viewerVersionCompatible(rel.TagName) {
+		// Not an error: the server runs fine without the SPA, and an
+		// operator who wants the newer viewer can name it explicitly.
+		m.Logger.Warn("frontend_version_incompatible",
+			"tag", rel.TagName,
+			"supported", MinViewerVersion+" <= v < "+MaxViewerVersionExclusive,
+			"hint", "set RX_FRONTEND_VERSION to install it anyway")
+		return nil
 	}
 	durl := rel.DistURL()
 	if durl == "" {
