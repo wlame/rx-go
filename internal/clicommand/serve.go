@@ -61,6 +61,17 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 	return cmd
 }
 
+// validateEnvHooks runs the hook-URL guard over RX_HOOK_ON_*_URL.
+// Returns the first failure, or nil when no env hook is configured.
+func validateEnvHooks() error {
+	env := hooks.HookEnvFromEnv()
+	return hooks.ValidateConfig(hooks.HookConfig{
+		OnFileURL:     env.OnFileURL,
+		OnMatchURL:    env.OnMatchURL,
+		OnCompleteURL: env.OnCompleteURL,
+	})
+}
+
 type serveParams struct {
 	host         string
 	port         int
@@ -77,6 +88,18 @@ func runServe(out io.Writer, p serveParams) error {
 	// disrupt callers that set their own handler — we only adjust the
 	// level-reporting side channel.
 	configureLogLevelFromEnv()
+
+	// SECURITY: refuse to start when an env-configured webhook points
+	// somewhere the SSRF guard would block. Checked before anything
+	// else is set up, so a misconfigured server never reaches the
+	// listener. Starting anyway would report the same problem once per
+	// trace request instead of once at startup;
+	// RX_ALLOW_INTERNAL_HOOKS is the documented opt-in for a genuinely
+	// internal collector.
+	if err := validateEnvHooks(); err != nil {
+		_ = exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+		return err
+	}
 
 	// Resolve + apply search roots. Default: CWD.
 	rootsToSet := p.searchRoots

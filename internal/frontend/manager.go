@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/hooks"
 )
 
 // ============================================================================
@@ -53,6 +54,11 @@ const githubAPIBase = "https://api.github.com"
 
 // RequestTimeout applies to GitHub API calls and tarball downloads.
 const RequestTimeout = 30 * time.Second
+
+// maxRedirects mirrors net/http's own default hop limit. Stated
+// explicitly because checkRedirectTarget replaces the default policy
+// and would otherwise allow unlimited hops.
+const maxRedirects = 10
 
 // ============================================================================
 // Metadata
@@ -131,7 +137,16 @@ func NewManager(cfg Config) *Manager {
 		m.APIBase = githubAPIBase
 	}
 	if m.HTTPClient == nil {
-		m.HTTPClient = &http.Client{Timeout: RequestTimeout}
+		m.HTTPClient = &http.Client{
+			Timeout: RequestTimeout,
+			// SECURITY: GitHub redirects asset URLs to a CDN, so
+			// redirects stay enabled — but each hop is re-checked
+			// against the same address policy the webhook guard uses.
+			// Without this, a release host (or an operator-supplied
+			// RX_FRONTEND_URL) could steer the download at a loopback
+			// or cloud-metadata address.
+			CheckRedirect: checkRedirectTarget,
+		}
 	}
 	if m.Logger == nil {
 		m.Logger = slog.Default()
@@ -139,6 +154,22 @@ func NewManager(cfg Config) *Manager {
 	m.envURL = os.Getenv("RX_FRONTEND_URL")
 	m.envVersion = os.Getenv("RX_FRONTEND_VERSION")
 	return m
+}
+
+// checkRedirectTarget is the http.Client CheckRedirect hook for the
+// bundle downloader. It allows a redirect only when the new target is
+// a public-looking host, and it keeps Go's default cap of 10 hops.
+//
+// Returning an error here aborts the request; net/http wraps it in a
+// *url.Error, so the caller sees the reason in the error chain.
+func checkRedirectTarget(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	if reason := hooks.InternalHostReason(req.URL.Hostname()); reason != "" {
+		return fmt.Errorf("refused redirect to %s: %s", req.URL.Redacted(), reason)
+	}
+	return nil
 }
 
 // expandHome replaces a leading "~" with the user's home dir. Matches
@@ -318,7 +349,8 @@ func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) 
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	// Follow redirects — GitHub asset URLs redirect to CDN.
+	// Follow redirects — GitHub asset URLs redirect to CDN — but only
+	// to public addresses (see checkRedirectTarget).
 	resp, err := m.HTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download: %w", err)
