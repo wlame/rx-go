@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
 
@@ -130,6 +129,10 @@ func runCompress(out io.Writer, p compressParams) error {
 	// race with the others trying to MkdirAll concurrently (future-proofing
 	// for when/if multi-file compress runs in parallel).
 	if p.outputDir != "" {
+		if _, err := sandboxCheck(p.outputDir); err != nil {
+			_ = exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
+			return err
+		}
 		// Mode 0750 (rwxr-x---) matches the posture used elsewhere in rx-go
 		// (e.g. internal/index/store.go Save) and satisfies gosec G301.
 		// Python's os.makedirs uses 0777 & ~umask, so on a typical system
@@ -204,8 +207,7 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 		"compression_ratio": nil,
 	}
 
-	if _, err := paths.ValidatePathWithinRoots(inputPath); err != nil &&
-		!errors.Is(err, paths.ErrNoSearchRootsConfigured) {
+	if _, err := sandboxCheck(inputPath); err != nil {
 		entry["error"] = err.Error()
 		return entry
 	}
@@ -230,16 +232,6 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	// filepath.Base. (Suffix stripping is not yet done on the Go side even
 	// for the default case; keeping the behavior consistent preserves the
 	// existing parity status.)
-	// Resolve output path. Precedence (Python parity):
-	//   --output        → exact path given
-	//   --output-dir    → {dir}/{basename}.zst
-	//   neither         → {sourceDir}/{basename}.zst
-	//
-	// Python uses pathlib's .name (already excludes dir) and strips a
-	// known compression suffix if present; we reproduce .name with
-	// filepath.Base. (Suffix stripping is not yet done on the Go side even
-	// for the default case; keeping the behavior consistent preserves the
-	// existing parity status.)
 	outputPath := p.output
 	if outputPath == "" {
 		if p.outputDir != "" {
@@ -248,6 +240,15 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 			outputPath = inputPath + ".zst"
 		}
 	}
+	// SECURITY: the output path is a write target, so it goes through the
+	// same sandbox as the input. The validated form is what gets created.
+	validatedOutput, err := sandboxCheck(outputPath)
+	if err != nil {
+		entry["error"] = err.Error()
+		return entry
+	}
+	outputPath = validatedOutput
+
 	if _, existsErr := os.Stat(outputPath); existsErr == nil && !p.force {
 		entry["error"] = fmt.Sprintf(
 			"output file already exists: %s (use --force to overwrite)", outputPath)

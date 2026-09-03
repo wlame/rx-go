@@ -37,7 +37,7 @@ func registerCompressHandlers(s *Server, api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/compress",
 		Summary:     "Compress file to seekable zstd format (background task)",
-		Description: "Creates a background task that encodes the file to .zst. Poll /v1/tasks/{id} for progress.",
+		Description: "Creates a background task that encodes the file to .zst. Poll /v1/tasks/{id} for progress. The input path and the effective output path are both validated against --search-root.",
 		Tags:        []string{"Operations"},
 	}, func(_ context.Context, in *postCompressInput) (*postCompressOutput, error) {
 		return createCompressTask(s, in.Body)
@@ -50,11 +50,7 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 	// Validate input path within search roots.
 	validated, err := paths.ValidatePathWithinRoots(req.InputPath)
 	if err != nil {
-		var perr *paths.ErrPathOutsideRoots
-		if errors.As(err, &perr) {
-			return nil, NewSandboxError(perr)
-		}
-		return nil, ErrForbidden(err.Error())
+		return nil, ClassifyPathError(err)
 	}
 	if _, statErr := os.Stat(validated); statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -63,10 +59,19 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		return nil, ErrForbidden(statErr.Error())
 	}
 
-	// Determine output path.
+	// Determine the output path, then put it through the same sandbox as
+	// the input. The background task removes and re-creates this file, so
+	// an unvalidated output_path would be an arbitrary-file-write
+	// primitive on a server that has no authentication.
+	// SECURITY: validate before any stat, and use the returned path for
+	// the task so the checked string is the written string.
 	output := validated + ".zst"
 	if req.OutputPath != nil && *req.OutputPath != "" {
 		output = *req.OutputPath
+	}
+	output, err = paths.ValidatePathWithinRoots(output)
+	if err != nil {
+		return nil, ClassifyPathError(err)
 	}
 	if !req.Force {
 		if _, statErr := os.Stat(output); statErr == nil {
@@ -203,9 +208,13 @@ func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 	}
 	compressedSize := outInfo.Size()
 	decompressedSize := info.Size()
+	// compression_ratio is decompressed/compressed, so it reads >= 1 for
+	// data that actually shrank. The CLI and rx-python use the same
+	// convention.
 	var ratio float64
-	if decompressedSize > 0 {
-		ratio = float64(compressedSize) / float64(decompressedSize)
+	if compressedSize > 0 {
+		ratio = float64(decompressedSize) / float64(compressedSize)
+		ratio = float64(int(ratio*100)) / 100
 	}
 	frameCount := len(tbl.Frames)
 	elapsed := time.Since(start).Seconds()

@@ -36,8 +36,8 @@ type TaskStatusResponse struct {
 // CompressRequest emits output_path as null and force as false on default
 // input, so Go preserves both keys in the JSON output.
 type CompressRequest struct {
-	InputPath        string  `json:"input_path"`
-	OutputPath       *string `json:"output_path"`
+	InputPath        string  `json:"input_path" doc:"Path to the input file. Must be inside a configured --search-root."`
+	OutputPath       *string `json:"output_path" doc:"Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root."`
 	FrameSize        string  `json:"frame_size"`
 	CompressionLevel int     `json:"compression_level"`
 	BuildIndex       bool    `json:"build_index"`

@@ -21,7 +21,7 @@ Content-Type: application/json
 | Field | Type | Required | Default | Description |
 |---|---|:-:|---|---|
 | `input_path` | string | yes | — | Source file path |
-| `output_path` | string \| null | no | `<input_path>.zst` | Output file path |
+| `output_path` | string \| null | no | `<input_path>.zst` | Output file path. Validated against `--search-root` like the input |
 | `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`) |
 | `compression_level` | int | no | `3` | zstd level: 1-22 |
 | `build_index` | bool | no | `false` | Register for line indexing after compression |
@@ -68,9 +68,19 @@ Content-Type: application/json
 |---:|---|
 | `200 OK` | Task queued |
 | `400 Bad Request` | Output file exists and `force=false`; level out of range; bad `frame_size` |
-| `403 Forbidden` | Input path outside `--search-root` |
+| `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
 | `409 Conflict` | Another compress task for the same input is already running |
+
+## Path sandbox
+
+Both `input_path` and the effective output path are validated against
+the configured `--search-root` directories before any filesystem access.
+The effective output path is `output_path` when it is set, otherwise
+`<input_path>.zst`. A path that resolves outside every root — including
+one that escapes through a symlink inside a root — is rejected with
+`403 Forbidden`, and no file is created, truncated or removed. This holds
+with `force=true` as well.
 
 ## Examples
 
@@ -85,12 +95,15 @@ curl -sXPOST 'http://127.0.0.1:7777/v1/compress' \
 
 ### Custom output and level
 
+The output path must be inside a `--search-root` as well, so this example
+assumes the server was started with `--search-root=/var/log`.
+
 ```bash
 curl -sXPOST 'http://127.0.0.1:7777/v1/compress' \
     -H 'Content-Type: application/json' \
     -d '{
       "input_path": "/var/log/audit-2026-03.log",
-      "output_path": "/backup/audit-2026-03.zst",
+      "output_path": "/var/log/archive/audit-2026-03.zst",
       "compression_level": 9,
       "frame_size": "1M"
     }'
