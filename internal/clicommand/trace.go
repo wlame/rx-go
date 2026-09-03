@@ -171,13 +171,11 @@ func runTrace(out io.Writer, p traceParams) error {
 
 	// Ripgrep binary lookup. Missing rg is a 1 exit with clear error.
 	if _, rgErr := exec.LookPath("rg"); rgErr != nil {
-		_ = exitWithError(os.Stderr, ExitGenericError, "ripgrep (rg) is not installed or not on PATH")
-		return errors.New("ripgrep missing")
+		return exitWithError(os.Stderr, ExitGenericError, "ripgrep (rg) is not installed or not on PATH")
 	}
 
 	if len(patterns) == 0 {
-		_ = exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
-		return errors.New("no pattern")
+		return exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
 	}
 
 	// SECURITY: hook URLs from the command line get the same guard the
@@ -186,8 +184,7 @@ func runTrace(out io.Writer, p traceParams) error {
 	// private / CGNAT target.
 	for _, u := range []string{p.hookOnFile, p.hookOnMatch, p.hookOnComplete} {
 		if err := hooks.ValidateURL(u); err != nil {
-			_ = exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
-			return err
+			return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 		}
 	}
 
@@ -209,11 +206,9 @@ func runTrace(out io.Writer, p traceParams) error {
 			}
 			var perr *paths.ErrPathOutsideRoots
 			if errors.As(vErr, &perr) {
-				_ = exitWithError(os.Stderr, ExitAccessDenied, "%s", perr.Error())
-				return perr
+				return exitWithError(os.Stderr, ExitAccessDenied, "%s", perr.Error())
 			}
-			_ = exitWithError(os.Stderr, ExitAccessDenied, "%s", vErr.Error())
-			return vErr
+			return exitWithError(os.Stderr, ExitAccessDenied, "%s", vErr.Error())
 		}
 		validated = append(validated, v)
 	}
@@ -224,11 +219,9 @@ func runTrace(out io.Writer, p traceParams) error {
 	for _, f := range validated {
 		if _, statErr := os.Stat(f); statErr != nil {
 			if os.IsNotExist(statErr) {
-				_ = exitWithError(os.Stderr, ExitFileNotFound, "path not found: %s", f)
-				return statErr
+				return exitWithError(os.Stderr, ExitFileNotFound, "path not found: %s", f)
 			}
-			_ = exitWithError(os.Stderr, ExitGenericError, "%s: %s", f, statErr.Error())
-			return statErr
+			return exitWithError(os.Stderr, ExitGenericError, "%s: %s", f, statErr.Error())
 		}
 	}
 
@@ -250,8 +243,12 @@ func runTrace(out io.Writer, p traceParams) error {
 		RequestID:     p.requestID,
 	})
 	if err != nil {
-		_ = exitWithError(os.Stderr, ExitGenericError, "trace failed: %v", err)
-		return err
+		// A pattern ripgrep cannot compile is a usage error, and rg's own
+		// message ("regex parse error: ...") says more than we could.
+		if errors.Is(err, trace.ErrInvalidPattern) {
+			return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+		}
+		return exitWithError(os.Stderr, ExitGenericError, "trace failed: %v", err)
 	}
 
 	if p.jsonOutput {

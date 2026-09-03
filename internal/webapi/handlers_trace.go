@@ -165,6 +165,11 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		})
 		if err != nil {
 			prometheus.RecordHTTPResponse(http.MethodGet, "/v1/trace", http.StatusInternalServerError)
+			// A pattern ripgrep cannot compile is the caller's mistake,
+			// not ours, and rg's message names the exact position.
+			if errors.Is(err, trace.ErrInvalidPattern) {
+				return nil, ErrBadRequest(err.Error())
+			}
 			return nil, ErrInternal(fmt.Sprintf("Internal error: %s", err.Error()))
 		}
 		resp.RequestID = reqID
