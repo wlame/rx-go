@@ -38,8 +38,8 @@ seekable zstd.
 | `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB` |
 | `-l`, `--level` | `int` | `3` | zstd level: `1` (fast) .. `22` (slowest, smallest) |
 | `-f`, `--force` | `bool` | `false` | Overwrite existing output |
-| `--build-index` | `bool` | `true` | Reserved: register for post-compress line indexing (CLI not yet wired; run `rx index` afterward) |
-| `--no-index` | `bool` | `false` | Reserved: paired with `--build-index` (see above) |
+| `--build-index` | `bool` | `true` | Not implemented in this backend: reports `index_error` and writes no index. Run `rx index` on the `.zst` instead |
+| `--no-index` | `bool` | `false` | Turns `--build-index` off, silencing that report |
 | `--workers` | `int` | `1` | Parallel encoder goroutines (1..N) |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 

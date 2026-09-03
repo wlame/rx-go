@@ -44,6 +44,27 @@ configurable via [`RX_LARGE_FILE_MB`](../configuration.md) or the
 
 Mode flags have a priority order: `--delete` > `--info` > build.
 
+
+## Output
+
+`rx index` prints one line per indexed file. With `--analyze` the
+statistics and the anomaly counts follow underneath:
+
+```text
+Indexed and analyzed 1 files in 0.1s
+  /var/log/app.log: 12 lines, 245.00 B
+    Lines: 12 total, 0 empty
+    Line ending: LF
+    Line length: max=38, avg=19.4, median=11.0, p95=36.4, p99=37.7, stddev=11.9
+    Longest line: line 3, offset 50
+    Anomalies: 1 secrets-scan, 1 traceback-python
+    Use --json for the full anomaly list
+```
+
+The per-anomaly line ranges, severities and descriptions appear only in
+`--json`. When nothing was indexed the output is `No files indexed.`
+followed by the skipped-file count. rx-python prints the same layout.
+
 ## Examples
 
 ### Build an index

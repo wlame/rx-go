@@ -86,8 +86,9 @@ func TestIndexCommand_BuildAndInfo(t *testing.T) {
 	if err := cmdBuild.Execute(); err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if !strings.Contains(bufBuild.String(), "index built") {
-		t.Errorf("expected 'index built': %s", bufBuild.String())
+	// The summary line is shared with rx-python: "Indexed N files in Ts".
+	if !strings.Contains(bufBuild.String(), "Indexed 1 files") {
+		t.Errorf("expected 'Indexed 1 files': %s", bufBuild.String())
 	}
 	if !strings.Contains(bufBuild.String(), "lines") {
 		t.Errorf("expected 'lines' word in output: %s", bufBuild.String())
@@ -639,10 +640,11 @@ func TestTraceCommand_HumanOutput(t *testing.T) {
 	if !strings.Contains(out, "[error]") {
 		t.Errorf("human trace output missing pattern label: %s", out)
 	}
-	if !strings.Contains(out, "error one") {
-		t.Errorf("human trace output missing match: %s", out)
+	// The shared layout prints positions, not the matched text.
+	if !strings.Contains(out, "a.log:2:6") {
+		t.Errorf("human trace output missing match position: %s", out)
 	}
-	if !strings.Contains(out, "matches in") {
+	if !strings.Contains(out, "Matches: 1") {
 		t.Errorf("human trace output missing summary: %s", out)
 	}
 }
@@ -662,7 +664,7 @@ func TestTraceCommand_NoMatches(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no matches in") {
+	if !strings.Contains(buf.String(), "Matches: 0") {
 		t.Errorf("empty-result branch missing summary: %s", buf.String())
 	}
 }
@@ -748,10 +750,10 @@ func TestTraceCommand_DirectoryRecursiveByDefault(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "error one") {
+	if !strings.Contains(out, "a.log:") {
 		t.Errorf("recursive default: missing match from top-level a.log: %s", out)
 	}
-	if !strings.Contains(out, "error two") {
+	if !strings.Contains(out, "b.log:") {
 		t.Errorf("recursive default: missing match from sub/b.log — default must recurse: %s", out)
 	}
 }
@@ -779,10 +781,10 @@ func TestTraceCommand_NoRecursiveFlag(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "error one") {
+	if !strings.Contains(out, "a.log:") {
 		t.Errorf("--no-recursive: top-level match still expected: %s", out)
 	}
-	if strings.Contains(out, "error two") {
+	if strings.Contains(out, "b.log:") {
 		t.Errorf("--no-recursive: sub-dir match should NOT appear, got: %s", out)
 	}
 }
@@ -806,8 +808,12 @@ func TestTraceCommand_SingleFileUnaffected(t *testing.T) {
 		t.Fatalf("execute: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "error one") || !strings.Contains(out, "error two") {
+	// Two matches in the one file, reported by position.
+	if !strings.Contains(out, "Matches: 2") {
 		t.Errorf("single-file scan missing expected matches: %s", out)
+	}
+	if !strings.Contains(out, "a.log:1:0") || !strings.Contains(out, "a.log:3:15") {
+		t.Errorf("single-file scan missing expected positions: %s", out)
 	}
 }
 
@@ -834,10 +840,18 @@ func TestResolveBeforeAfter(t *testing.T) {
 		wantB, wantA int
 	}{
 		{"default", traceParams{}, 0, 0},
-		{"context only", traceParams{ctxLines: 3}, 3, 3},
-		{"before overrides", traceParams{ctxLines: 3, beforeCtx: 5}, 5, 3},
-		{"after overrides", traceParams{ctxLines: 3, afterCtx: 7}, 3, 7},
-		{"both override", traceParams{ctxLines: 3, beforeCtx: 5, afterCtx: 7}, 5, 7},
+		{"context only", traceParams{ctxLines: 3, ctxSet: true}, 3, 3},
+		{"before overrides", traceParams{ctxLines: 3, ctxSet: true, beforeCtx: 5, beforeSet: true}, 5, 3},
+		{"after overrides", traceParams{ctxLines: 3, ctxSet: true, afterCtx: 7, afterSet: true}, 3, 7},
+		{
+			"both override",
+			traceParams{ctxLines: 3, ctxSet: true, beforeCtx: 5, beforeSet: true, afterCtx: 7, afterSet: true},
+			5, 7,
+		},
+		// --samples supplies the default window, and an explicit zero
+		// beats it: "--samples --context=0" means the match lines alone.
+		{"samples default", traceParams{showSamples: true}, 3, 3},
+		{"samples with explicit zero", traceParams{showSamples: true, ctxSet: true}, 0, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
