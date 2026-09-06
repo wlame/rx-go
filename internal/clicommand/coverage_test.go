@@ -710,16 +710,100 @@ func TestTraceCommand_SandboxViolation(t *testing.T) {
 	}
 }
 
-// TestTraceCommand_StdinReject returns an error for '-' input.
-func TestTraceCommand_StdinReject(t *testing.T) {
+// TestTraceCommand_StdinDashSearchesPipedInput covers `rx pattern -`,
+// which spools what arrives on stdin to a temporary file and searches
+// that — the same shape rx-python produces, temp path included.
+func TestTraceCommand_StdinDashSearchesPipedInput(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg not installed")
 	}
+	piped := withStdin(t, "first error line\nsecond ok line\nthird error line\n")
+	defer piped()
+
 	var buf bytes.Buffer
 	cmd := NewTraceCommand(&buf)
 	cmd.SetArgs([]string{"error", "-"})
-	if err := cmd.Execute(); err == nil {
-		t.Errorf("expected error for stdin input")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("trace from stdin: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Matches: 2") {
+		t.Errorf("expected 2 matches from the piped input, got:\n%s", out)
+	}
+	if !strings.Contains(out, "rx_stdin_") {
+		t.Errorf("expected the spooled path in the output, got:\n%s", out)
+	}
+}
+
+// TestTraceCommand_StdinDashWithNoInputSearchesNothing pins the empty
+// pipe: naming "-" makes the empty input the whole request. Falling
+// back to the current directory would turn `printf "" | rx x -` into a
+// scan of everything below it.
+func TestTraceCommand_StdinDashWithNoInputSearchesNothing(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
+	}
+	piped := withStdin(t, "")
+	defer piped()
+
+	var buf bytes.Buffer
+	cmd := NewTraceCommand(&buf)
+	cmd.SetArgs([]string{"error", "-"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("trace from empty stdin: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Matches: 0") {
+		t.Errorf("expected no matches, got:\n%s", buf.String())
+	}
+}
+
+// TestTraceCommand_StdinLeavesNoTemporaryFile checks the spool is
+// removed once the search is done.
+func TestTraceCommand_StdinLeavesNoTemporaryFile(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
+	}
+	piped := withStdin(t, "error here\n")
+	defer piped()
+
+	var buf bytes.Buffer
+	cmd := NewTraceCommand(&buf)
+	cmd.SetArgs([]string{"error", "-"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("trace from stdin: %v", err)
+	}
+	spooled := ""
+	for _, field := range strings.Fields(buf.String()) {
+		if strings.Contains(field, "rx_stdin_") {
+			spooled = strings.SplitN(field, ":", 2)[0]
+			break
+		}
+	}
+	if spooled == "" {
+		t.Fatalf("no spooled path in the output:\n%s", buf.String())
+	}
+	if _, err := os.Stat(spooled); !os.IsNotExist(err) {
+		t.Errorf("%s still exists after the search (stat err = %v)", spooled, err)
+	}
+}
+
+// withStdin replaces os.Stdin with a pipe carrying content, and returns
+// the function that puts the real one back.
+func withStdin(t *testing.T, content string) func() {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	go func() {
+		defer func() { _ = w.Close() }()
+		_, _ = w.WriteString(content)
+	}()
+	original := os.Stdin
+	os.Stdin = r
+	return func() {
+		os.Stdin = original
+		_ = r.Close()
 	}
 }
 
