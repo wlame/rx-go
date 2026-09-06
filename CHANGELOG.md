@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An index left behind by an older rx was read with today's rules. A
+  version 2 index names the line *before* the byte offset it records,
+  so `rx samples --lines=2500000` on a 226 MB log answered with line
+  2,500,001. The index cache is shared with rx-python, which has always
+  refused a version it does not know; rx-go checked nothing. Any index
+  whose version is not the current one is now treated as absent, so it
+  is rebuilt instead of trusted.
+- A file rewritten in place kept a valid-looking index. Size and mtime
+  are all rx compared, and neither moves when a copy is restored with
+  `cp -p` or when an edit swaps one byte for another — turning a space
+  into a newline near the top of a 226 MB log shifted every line number
+  by one while `rx samples` kept answering from the old checkpoints. An
+  index now also records the source inode, its ctime, and a digest of
+  the size plus the first and last 64 KiB, and every one of those it
+  carries must still match before it is used. The index format version
+  moves to 4 in both backends together.
+
 - `GET /v1/samples` with several byte offsets read the whole file once
   per offset, and again to collect each window: twenty offsets on a
   multi-gigabyte log meant more than twenty passes. That is how the

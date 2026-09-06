@@ -31,12 +31,19 @@ import (
 
 // Version is the schema version of UnifiedFileIndex. Bump when the
 // on-disk JSON changes shape in a way that old readers can't handle.
+//
 // Version 3: checkpoints in a compressed file's index name the line that
 // starts at the recorded offset. rx-python's version 2 named the line
 // before it, so every lookup in such an index landed one line late.
-// Indexes written earlier are rebuilt rather than read. Must stay in
-// lockstep with rx-python's UNIFIED_INDEX_VERSION.
-const Version = 3
+//
+// Version 4: the index records the source inode and ctime, so a file
+// rewritten with the same size and mtime no longer looks unchanged.
+//
+// An index stamped with any other version is refused by LoadFromPath.
+// That refusal is the point of the constant: before it existed, a
+// version 2 index was read with version 3 rules and answered one line
+// off. Must stay in lockstep with rx-python's UNIFIED_INDEX_VERSION.
+const Version = 4
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp
@@ -182,6 +189,16 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, fmt.Errorf("unmarshal %s: %w", cachePath, err)
 	}
+	// An index whose schema we do not know is not a usable index, so
+	// report it the same way as a missing one. Wrapping ErrIndexNotFound
+	// keeps errors.Is working, which is what every caller branches on:
+	// they rebuild, or fall back to a linear scan, instead of failing.
+	// Reading it anyway is what produced off-by-one line numbers from
+	// caches left behind by an older rx.
+	if idx.Version != Version {
+		return nil, fmt.Errorf("%w: %s has index version %d, want %d",
+			ErrIndexNotFound, cachePath, idx.Version, Version)
+	}
 	return &idx, nil
 }
 
@@ -202,8 +219,69 @@ func IsValidForSource(idx *rxtypes.UnifiedFileIndex, sourcePath string) bool {
 	if info.Size() != idx.SourceSizeBytes {
 		return false
 	}
-	current := formatMtime(info.ModTime())
-	return current == idx.SourceModifiedAt
+	if formatMtime(info.ModTime()) != idx.SourceModifiedAt {
+		return false
+	}
+	if !matchesIdentity(idx, info) {
+		return false
+	}
+	return matchesFingerprint(idx, sourcePath)
+}
+
+// matchesIdentity compares the inode and ctime recorded in the index
+// against the file on disk.
+//
+// Size and mtime miss two ordinary cases: a file restored from a backup
+// or copied with `cp -p` keeps its mtime, and an edit that replaces one
+// byte with another keeps its size. Either leaves a stale index looking
+// valid, and a stale index answers with the wrong line. ctime moves on
+// every write and cannot be set through utime, and the inode changes
+// when a file is replaced by rename, so together they close the gap.
+//
+// A missing field means the index predates this check or the filesystem
+// did not report one, so an absent value is not treated as a mismatch.
+func matchesIdentity(idx *rxtypes.UnifiedFileIndex, info os.FileInfo) bool {
+	inode, changed, ok := sourceIdentity(info)
+	if !ok {
+		return true
+	}
+	if idx.SourceInode != nil && *idx.SourceInode != inode {
+		return false
+	}
+	if idx.SourceChangedAt != nil && *idx.SourceChangedAt != formatMtime(changed) {
+		return false
+	}
+	return true
+}
+
+// matchesFingerprint re-reads the two 64 KiB windows the fingerprint
+// covers and compares the digest.
+//
+// A fingerprint the index does not carry is not a mismatch, so a cache
+// written before this field existed still validates on size and mtime.
+// A read failure is treated as a mismatch: if we cannot confirm the file
+// is the one that was indexed, the index does not get used.
+func matchesFingerprint(idx *rxtypes.UnifiedFileIndex, sourcePath string) bool {
+	if idx.SourceFingerprint == nil {
+		return true
+	}
+	current, err := SourceFingerprint(sourcePath)
+	if err != nil {
+		return false
+	}
+	return current == *idx.SourceFingerprint
+}
+
+// SourceIdentityFields returns the inode and ctime to stamp into a new
+// index for info, in the same string layout as SourceModifiedAt. Both
+// are nil when the platform does not report them.
+func SourceIdentityFields(info os.FileInfo) (*uint64, *string) {
+	inode, changed, ok := sourceIdentity(info)
+	if !ok {
+		return nil, nil
+	}
+	stamp := formatMtime(changed)
+	return &inode, &stamp
 }
 
 // FormatMtime exposes the mtime-to-string conversion so tests (and the
