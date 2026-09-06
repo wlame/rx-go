@@ -37,10 +37,12 @@ type Submatch struct {
 
 // ContextLine is a non-matching line shown around a match.
 //
-// file_chunks == 1: RelativeLineNumber IS the absolute line number.
-// file_chunks >  1: RelativeLineNumber may be local to the chunk; consult
-//
-//	AbsoluteLineNumber (which is -1 if unknown).
+// Both numbers are the line's position in the file whenever the scan
+// could work it out, which is every completed scan: the workers count
+// newlines as they read, so a file split across chunks is numbered as
+// one file. A scan cut short by a max_results cap can leave a line
+// unnumbered, and AbsoluteLineNumber is then -1 while
+// RelativeLineNumber holds the number ripgrep gave it inside its chunk.
 type ContextLine struct {
 	RelativeLineNumber int    `json:"relative_line_number"`
 	AbsoluteLineNumber int    `json:"absolute_line_number"`
@@ -49,6 +51,11 @@ type ContextLine struct {
 }
 
 // Match is a single matched line returned by the trace engine.
+//
+// RelativeLineNumber and AbsoluteLineNumber follow the same rule as
+// ContextLine: both hold the line's position in the file for a
+// completed scan, and only a scan a cap cut short can leave
+// AbsoluteLineNumber at -1.
 //
 // Pattern and File are ID strings (e.g. "p1", "f1") that index into
 // TraceResponse.Patterns and TraceResponse.Files respectively. This
