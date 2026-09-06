@@ -161,11 +161,23 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	}
 
 	// Build the final index.
+	// Inode and ctime are what let a later run tell this exact file
+	// from one that was rewritten with the same size and mtime.
+	inode, changedAt := SourceIdentityFields(info)
+	// A fingerprint we cannot compute is left out rather than treated as
+	// a build failure; validation then falls back to size and mtime.
+	var fingerprint *string
+	if fp, fpErr := SourceFingerprint(sourcePath); fpErr == nil {
+		fingerprint = &fp
+	}
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
 		SourcePath:        sourcePath,
 		SourceModifiedAt:  formatMtime(info.ModTime()),
 		SourceSizeBytes:   info.Size(),
+		SourceInode:       inode,
+		SourceChangedAt:   changedAt,
+		SourceFingerprint: fingerprint,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds:  time.Since(started).Seconds(),
 		FileType:          rxtypes.FileTypeText,

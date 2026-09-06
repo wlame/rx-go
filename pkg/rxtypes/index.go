@@ -46,6 +46,24 @@ type UnifiedFileIndex struct {
 	CreatedAt        string  `json:"created_at"`
 	BuildTimeSeconds float64 `json:"build_time_seconds"`
 
+	// Source identity. SourceModifiedAt and SourceSizeBytes alone
+	// cannot tell a rewritten file from an untouched one: a copy that
+	// restores the mtime, or an in-place edit that keeps the byte
+	// count, leaves both unchanged. The inode number and the
+	// inode-change time close that gap. Nothing can set ctime through
+	// utime, so any write to the file moves it.
+	//
+	// Both are pointers because a filesystem may not report them and
+	// because rx-python writes null when it cannot.
+	SourceInode     *uint64 `json:"source_inode"`
+	SourceChangedAt *string `json:"source_changed_at"`
+
+	// SourceFingerprint is a digest of the file size plus the first and
+	// last 64 KiB. It is what catches a rewrite on a filesystem whose
+	// ctime does not move, which is the common case inside containers
+	// and on some network mounts.
+	SourceFingerprint *string `json:"source_fingerprint"`
+
 	// File type information
 	FileType          FileType `json:"file_type"`
 	CompressionFormat *string  `json:"compression_format"`
