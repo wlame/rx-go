@@ -412,48 +412,40 @@ func (e *Engine) RunWithOptions(
 			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size,
 				countMatchesForFile(allMatches, fileID))
-		case "cached-regular":
-			for _, cm := range b.cachedMatch {
-				match, ctxLines, rerr := ReconstructMatchData(
-					b.path, cm, patterns, patternIDs,
-					fileID, opts.RgExtraArgs,
-					opts.ContextBefore, opts.ContextAfter, !opts.NoIndex,
-				)
-				if rerr != nil {
+		case "cached-regular", "cached-seekable":
+			cachedMatches := b.cachedMatch
+			if b.kind == "cached-seekable" {
+				if b.cacheInfo == nil {
 					continue
 				}
-				allMatches = append(allMatches, match)
-				for _, cl := range ctxLines {
-					allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
-				}
-				opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
-					Pattern: patterns[cm.PatternIndex], Offset: cm.Offset, LineNumber: cm.LineNumber,
-				})
+				cachedMatches = b.cacheInfo.Matches
 			}
-			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, len(b.cachedMatch))
-		case "cached-seekable":
-			// The seekable fast-path cache uses the same reconstruction
-			// machinery; decompressing only frames_with_matches.
-			if b.cacheInfo == nil {
+			reMatches, reContexts, rerr := ReconstructFromCache(ReconstructRequest{
+				SourcePath:    b.path,
+				Cached:        cachedMatches,
+				Patterns:      patterns,
+				FileID:        fileID,
+				RgExtraArgs:   opts.RgExtraArgs,
+				ContextBefore: opts.ContextBefore,
+				ContextAfter:  opts.ContextAfter,
+				UseIndex:      !opts.NoIndex,
+			})
+			if rerr != nil {
+				skipped = append(skipped, b.path)
 				continue
 			}
-			for _, cm := range b.cacheInfo.Matches {
-				match, ctxLines, rerr := ReconstructMatchData(
-					b.path, cm, patterns, patternIDs,
-					fileID, opts.RgExtraArgs,
-					opts.ContextBefore, opts.ContextAfter, !opts.NoIndex,
-				)
-				if rerr != nil {
-					continue
-				}
-				// Tag as compressed for symmetry; callers that look at
-				// is_compressed (frontend) need this flag.
-				allMatches = append(allMatches, match)
-				for _, cl := range ctxLines {
-					allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
-				}
+			allMatches = append(allMatches, reMatches...)
+			for _, cl := range reContexts {
+				allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
 			}
-			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, len(b.cacheInfo.Matches))
+			for _, m := range reMatches {
+				opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
+					Pattern:    patternIDs[m.Pattern],
+					Offset:     m.Offset,
+					LineNumber: int64(m.AbsoluteLineNumber),
+				})
+			}
+			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, len(reMatches))
 		}
 	}
 
@@ -760,6 +752,25 @@ func buildContextDict(
 	contextBefore, contextAfter int,
 ) map[string][]rxtypes.ContextLine {
 	out := make(map[string][]rxtypes.ContextLine)
+	width := contextBefore
+	if contextAfter > width {
+		width = contextAfter
+	}
+
+	// Index the context lines by file and line number. Walking the
+	// whole slice per match is quadratic, and a large scan produces
+	// tens of thousands of both.
+	type lineKey struct {
+		fileID string
+		line   int
+	}
+	byLine := make(map[lineKey]rxtypes.ContextLine, len(contexts))
+	if width > 0 {
+		for _, cwf := range contexts {
+			byLine[lineKey{fileID: cwf.fileID, line: cwf.ctx.RelativeLineNumber}] = cwf.ctx
+		}
+	}
+
 	for _, m := range matches {
 		if m.RelativeLineNumber == nil {
 			continue
@@ -767,9 +778,8 @@ func buildContextDict(
 		matchLine := *m.RelativeLineNumber
 		key := fmt.Sprintf("%s:%s:%d", m.Pattern, m.File, m.Offset)
 
-		// Build the window: the matched line itself + every context
-		// line within [-contextBefore, +contextAfter] of matchLine for
-		// the SAME file.
+		// The window is the matched line plus every context line within
+		// [-contextBefore, +contextAfter] of it in the SAME file.
 		matchedText := ""
 		if m.LineText != nil {
 			matchedText = *m.LineText
@@ -780,23 +790,12 @@ func buildContextDict(
 			LineText:           matchedText,
 			AbsoluteOffset:     m.Offset,
 		}}
-		if contextBefore > 0 || contextAfter > 0 {
-			width := contextBefore
-			if contextAfter > width {
-				width = contextAfter
+		for d := -width; d <= width; d++ {
+			if d == 0 {
+				continue // matched line already added
 			}
-			for _, cwf := range contexts {
-				if cwf.fileID != m.File {
-					continue
-				}
-				d := cwf.ctx.RelativeLineNumber - matchLine
-				if d == 0 {
-					continue // matched line already added
-				}
-				if d < -width || d > width {
-					continue
-				}
-				window = append(window, cwf.ctx)
+			if cl, ok := byLine[lineKey{fileID: m.File, line: matchLine + d}]; ok {
+				window = append(window, cl)
 			}
 		}
 		sort.SliceStable(window, func(i, j int) bool {

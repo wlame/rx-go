@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace cache hit returned the wrong lines and took minutes. The
+  cache stores a byte offset and a line number per match; the line
+  number was the one counted inside a chunk, and rebuilding read "line
+  N" by scanning from the start of the file once per match — 334
+  seconds and the wrong text for 7,734 matches on a 487 MB log, and the
+  same wrong text when rx-python read the cache rx-go had written.
+  Rebuilding now makes one pass in offset order, so the byte offset
+  addresses the line and the line number is counted along the way: the
+  same search takes 1.7 seconds and returns exactly what a fresh scan
+  returns. Caches written by earlier versions are discarded rather than
+  read back wrong (trace cache version 3, matched in rx-python). A
+  cache hit on a compressed file rebuilds through its decompressor,
+  which had been reading the compressed bytes as if they were text.
+- Building the context windows compared every match against every
+  context line, which is quadratic on a large result set; the lines are
+  now looked up by number.
 - Line numbers on a file large enough to be split across chunks were
   the line's position inside its chunk, not inside the file: a match on
   line 255,437 of a 487 MB log was reported as line 30,627, and

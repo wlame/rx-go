@@ -59,77 +59,6 @@ func TestGetCompressedCacheInfo_Miss(t *testing.T) {
 	}
 }
 
-// TestReadLineWindow_Boundary exercises the reader with start/end that
-// falls near EOF, covering the truncation branch.
-func TestReadLineWindow_Boundary(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "boundary.log")
-	content := "line1\nline2\nline3\nline4\nline5\n"
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	// Ask for a window around line 3 with ±1 context → should get lines 2-4.
-	lines, matchedIdx, startLine, err := readLineWindow(p, 3, 1, 1, false)
-	if err != nil {
-		t.Fatalf("readLineWindow: %v", err)
-	}
-	if len(lines) < 3 {
-		t.Errorf("expected >= 3 lines, got %d: %v", len(lines), lines)
-	}
-	if startLine != 2 {
-		t.Errorf("startLine: got %d, want 2", startLine)
-	}
-	if matchedIdx < 0 {
-		t.Errorf("matchedIdx: got %d, want >= 0", matchedIdx)
-	}
-}
-
-// TestReadLineWindow_NearStart tests near-start-of-file truncation.
-func TestReadLineWindow_NearStart(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "a.log")
-	_ = os.WriteFile(p, []byte("one\ntwo\nthree\n"), 0o644)
-
-	// Ask for context 5 around line 1 — should truncate to startLine=1.
-	lines, _, startLine, err := readLineWindow(p, 1, 5, 1, false)
-	if err != nil {
-		t.Fatalf("readLineWindow: %v", err)
-	}
-	if startLine != 1 {
-		t.Errorf("startLine: got %d, want 1 (truncated)", startLine)
-	}
-	if len(lines) == 0 {
-		t.Error("expected non-empty result at boundary")
-	}
-}
-
-// TestReadLineWindow_InvalidTarget rejects target < 1.
-func TestReadLineWindow_InvalidTarget(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "a.log")
-	_ = os.WriteFile(p, []byte("one\n"), 0o644)
-	_, _, _, err := readLineWindow(p, 0, 0, 0, false)
-	if err == nil {
-		t.Error("expected error for target < 1")
-	}
-}
-
-// TestReadSourceLine covers the exported source-line reader.
-func TestReadSourceLine(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "a.log")
-	content := "first\nsecond\nthird\n"
-	_ = os.WriteFile(p, []byte(content), 0o644)
-	got, err := ReadSourceLine(p, 2, false)
-	if err != nil {
-		t.Fatalf("ReadSourceLine: %v", err)
-	}
-	if got != "second" {
-		t.Errorf("line 2: got %q, want %q", got, "second")
-	}
-}
-
 // TestParsePaths covers the convenience wrapper (0% coverage otherwise).
 func TestParsePaths(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
@@ -642,7 +571,7 @@ func TestSaveCache_DirectoryCreatesParent(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "nested", "deeper")
 	p := filepath.Join(nested, "cache.json")
-	data := &rxtypes.TraceCacheData{Version: 2, SourcePath: "/tmp/x"}
+	data := &rxtypes.TraceCacheData{Version: TraceCacheVersion, SourcePath: "/tmp/x"}
 	if err := SaveCache(p, data); err != nil {
 		t.Fatalf("SaveCache: %v", err)
 	}
@@ -661,7 +590,7 @@ func TestSaveCache_ReadOnlyDir(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(dir, 0o755) }()
 	p := filepath.Join(dir, "cant-write.json")
-	data := &rxtypes.TraceCacheData{Version: 2, SourcePath: "/tmp/x"}
+	data := &rxtypes.TraceCacheData{Version: TraceCacheVersion, SourcePath: "/tmp/x"}
 	err := SaveCache(p, data)
 	if err == nil {
 		t.Errorf("expected error writing to read-only dir")
@@ -704,7 +633,7 @@ func TestIsCacheValid_WrongPatternHash(t *testing.T) {
 	}
 	srcInfo, _ := os.Stat(src)
 	data := &rxtypes.TraceCacheData{
-		Version:          2,
+		Version:          TraceCacheVersion,
 		SourcePath:       src,
 		SourceSizeBytes:  srcInfo.Size(),
 		SourceModifiedAt: srcInfo.ModTime().Local().Format("2006-01-02T15:04:05.000000"),
@@ -730,7 +659,7 @@ func TestIsCacheValid_WrongPatternHash(t *testing.T) {
 func TestSaveCache_Direct(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	data := &rxtypes.TraceCacheData{
-		Version:    2,
+		Version:    TraceCacheVersion,
 		SourcePath: "/tmp/fake.log",
 		Matches: []rxtypes.TraceCacheMatch{
 			{PatternIndex: 0, Offset: 100, LineNumber: 1},
@@ -770,30 +699,6 @@ func TestComputePatternsHash_StabilityMulti(t *testing.T) {
 			t.Errorf("hash(patterns=%v, flags=%v): got %s, want %s",
 				tc.patterns, tc.flags, got, tc.want)
 		}
-	}
-}
-
-// TestReadLineWindow_FarFromStart uses the default code path (no index
-// hint) when target is far from the start.
-func TestReadLineWindow_FarFromStart(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "big.log")
-	var sb strings.Builder
-	for i := 1; i <= 500; i++ {
-		fmt.Fprintf(&sb, "row %d\n", i)
-	}
-	_ = os.WriteFile(p, []byte(sb.String()), 0o644)
-
-	lines, _, _, err := readLineWindow(p, 400, 2, 2, false)
-	if err != nil {
-		t.Fatalf("readLineWindow: %v", err)
-	}
-	if len(lines) != 5 {
-		t.Errorf("expected 5 lines (±2 around 400), got %d: %v", len(lines), lines)
-	}
-	// Line 400 = "row 400" at position 2 (zero-indexed) in the slice.
-	if lines[2] != "row 400" {
-		t.Errorf("center line: got %q, want 'row 400'", lines[2])
 	}
 }
 
