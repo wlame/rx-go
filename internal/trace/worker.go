@@ -91,8 +91,14 @@ func (NoopHookFirer) OnMatch(context.Context, string, MatchInfo) {}
 // per-match range-containment check at the accept point, no
 // cross-worker coordination and no post-merge dedup pass.
 type MatchRaw struct {
-	Offset       int64
-	LineNumber   int
+	Offset     int64
+	LineNumber int
+	// AbsoluteLine is the line's number in the whole file when the
+	// scanner knew it, and 0 when it did not. The chunked path leaves
+	// it 0 and the engine derives the number from the per-chunk
+	// newline counts; the seekable path fills it in from the per-frame
+	// counts, which are the only way to place a frame in the file.
+	AbsoluteLine int
 	LineText     string
 	Submatches   []rxtypes.Submatch
 	PatternIDs   []string // all pattern IDs (assigned by engine post-hoc)
@@ -101,9 +107,10 @@ type MatchRaw struct {
 
 // ContextRaw mirrors MatchRaw for context lines.
 type ContextRaw struct {
-	Offset     int64
-	LineNumber int
-	LineText   string
+	Offset       int64
+	LineNumber   int
+	AbsoluteLine int // see MatchRaw.AbsoluteLine; 0 when unknown
+	LineText     string
 }
 
 // ChunkRequest is one unit of work for ProcessChunk.

@@ -31,7 +31,12 @@ import (
 
 // Version is the schema version of UnifiedFileIndex. Bump when the
 // on-disk JSON changes shape in a way that old readers can't handle.
-const Version = 2
+// Version 3: checkpoints in a compressed file's index name the line that
+// starts at the recorded offset. rx-python's version 2 named the line
+// before it, so every lookup in such an index landed one line late.
+// Indexes written earlier are rebuilt rather than read. Must stay in
+// lockstep with rx-python's UNIFIED_INDEX_VERSION.
+const Version = 3
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp

@@ -127,6 +127,10 @@ func ProcessSeekable(
 
 	batchMatches := make([][]MatchRaw, len(batches))
 	batchContexts := make([][]ContextRaw, len(batches))
+	// Per-frame newline counts, gathered as the frames are decompressed
+	// for the scan. They are what places a frame in the file: the lines
+	// of every frame before it are the lines that precede it.
+	batchFrameLines := make([][]frameLines, len(batches))
 
 	workers := workerLimit()
 	// R5-B3: cooperative cancel on max_results cap. Same pattern as
@@ -176,11 +180,12 @@ func ProcessSeekable(
 				// Queued batch saw cancel before starting — skip entirely.
 				return nil
 			}
-			m, c, berr := scanFrameBatch(
+			m, c, counted, berr := scanFrameBatch(
 				gctx, path, tbl, frameIdxs,
 				patternIDs, patternOrder, rgExtraArgs,
 				contextBefore, contextAfter,
 			)
+			batchFrameLines[bi] = counted
 			if berr != nil {
 				if errors.Is(berr, context.Canceled) {
 					// Cooperative cancel — swallow and publish any
@@ -223,6 +228,7 @@ func ProcessSeekable(
 	for _, c := range batchContexts {
 		contexts = append(contexts, c...)
 	}
+	numberFramesAgainstTheFile(tbl, batchFrameLines, matches, contexts)
 
 	// Stabilize order across parallel batches (Python parity).
 	sort.SliceStable(matches, func(i, j int) bool {
@@ -300,6 +306,91 @@ var decompressFrameForBatch = func(dec *frameDecoder, frame seekable.FrameInfo) 
 // Parity: rx-python/src/rx/trace_compressed.py::process_seekable_zstd_frame_batch
 // and another-rx-go/internal/engine/compressed.go:315-395 (the
 // reference io.Pipe implementation we ported from).
+
+// numberFramesAgainstTheFile turns frame-relative line numbers into the
+// file's own, in place.
+//
+// Every frame that was decompressed counted its newlines on the way
+// past, so the frames before a frame give the lines before it: frame 0
+// starts at line 1, and each frame after it starts one line after its
+// predecessor's last. A frame that never got read breaks the chain, and
+// the matches in every frame after it keep the unknown marker rather
+// than a number counted from the wrong place — that is what a cap
+// leaves behind when it stops the scan early.
+func numberFramesAgainstTheFile(
+	tbl *seekable.SeekTable,
+	batches [][]frameLines,
+	matches []MatchRaw,
+	contexts []ContextRaw,
+) {
+	if tbl == nil || tbl.NumFrames == 0 {
+		return
+	}
+	counted := make([]int, tbl.NumFrames)
+	known := make([]bool, tbl.NumFrames)
+	for _, batch := range batches {
+		for _, fl := range batch {
+			if fl.frameIdx >= 0 && fl.frameIdx < tbl.NumFrames {
+				counted[fl.frameIdx] = fl.lines
+				known[fl.frameIdx] = true
+			}
+		}
+	}
+
+	// First line of each frame, for as long as the chain holds.
+	firstLine := make([]int, tbl.NumFrames)
+	line := 1
+	for i := 0; i < tbl.NumFrames; i++ {
+		if !known[i] {
+			break
+		}
+		firstLine[i] = line
+		line += counted[i]
+	}
+
+	frameOf := func(offset int64) int {
+		// The frame whose decompressed range holds this offset.
+		lo, hi := 0, tbl.NumFrames-1
+		found := -1
+		for lo <= hi {
+			mid := (lo + hi) / 2
+			f := tbl.Frames[mid]
+			switch {
+			case offset < f.DecompressedOffset:
+				hi = mid - 1
+			case offset >= f.DecompressedOffset+f.DecompressedSize:
+				lo = mid + 1
+			default:
+				found = mid
+				lo, hi = 1, 0
+			}
+		}
+		return found
+	}
+
+	for i := range matches {
+		frame := frameOf(matches[i].Offset)
+		if frame < 0 || firstLine[frame] == 0 {
+			continue
+		}
+		matches[i].AbsoluteLine = firstLine[frame] + matches[i].LineNumber - 1
+	}
+	for i := range contexts {
+		frame := frameOf(contexts[i].Offset)
+		if frame < 0 || firstLine[frame] == 0 {
+			continue
+		}
+		contexts[i].AbsoluteLine = firstLine[frame] + contexts[i].LineNumber - 1
+	}
+}
+
+// frameLines is one frame's newline count, measured while the frame was
+// decompressed for the scan.
+type frameLines struct {
+	frameIdx int
+	lines    int
+}
+
 func scanFrameBatch(
 	ctx context.Context,
 	path string,
@@ -309,7 +400,7 @@ func scanFrameBatch(
 	patternOrder []string,
 	rgExtraArgs []string,
 	contextBefore, contextAfter int,
-) (matches []MatchRaw, contexts []ContextRaw, err error) {
+) (matches []MatchRaw, contexts []ContextRaw, counted []frameLines, err error) {
 	// Stage 9 Round 2 S6: gated helpers — CLI mode skips collection.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
@@ -327,7 +418,7 @@ func scanFrameBatch(
 	// it single-threaded in the writer goroutine here.
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("scanFrameBatch: open %s: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("scanFrameBatch: open %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -467,11 +558,11 @@ func scanFrameBatch(
 		if errors.As(runErr, &ex) {
 			code := ex.ExitCode()
 			if code != 0 && code != 1 {
-				return nil, nil, fmt.Errorf("rg exit %d: %s",
+				return nil, nil, nil, fmt.Errorf("rg exit %d: %s",
 					code, strings.TrimSpace(stderr.String()))
 			}
 		} else if !errors.Is(runErr, context.Canceled) {
-			return nil, nil, fmt.Errorf("rg run: %w", runErr)
+			return nil, nil, nil, fmt.Errorf("rg run: %w", runErr)
 		}
 	}
 
@@ -480,7 +571,20 @@ func scanFrameBatch(
 	// outer errgroup was canceled because a sibling batch failed) can
 	// abort the StreamEvents loop. See Stage 8 Reviewer 2 High #9.
 	matches, contexts = remapBatchEvents(ctx, stdout.Bytes(), locs, patternOrder)
-	return matches, contexts, nil
+	return matches, contexts, countedFrames(locs), nil
+}
+
+// countedFrames reports the newline count measured for each frame the
+// writer got through. A frame the writer never reached counted nothing
+// and is left out, so the caller can tell "zero lines" from "not read".
+func countedFrames(locs []frameLoc) []frameLines {
+	out := make([]frameLines, 0, len(locs))
+	for _, loc := range locs {
+		if loc.lineCount > 0 {
+			out = append(out, frameLines{frameIdx: loc.frameIdx, lines: loc.lineCount})
+		}
+	}
+	return out
 }
 
 // matchesFromPartialBatch reads whatever ripgrep managed to write
@@ -496,9 +600,9 @@ func matchesFromPartialBatch(
 	out []byte,
 	locs []frameLoc,
 	patternOrder []string,
-) ([]MatchRaw, []ContextRaw, error) {
+) ([]MatchRaw, []ContextRaw, []frameLines, error) {
 	matches, contexts := remapBatchEvents(context.WithoutCancel(ctx), out, locs, patternOrder)
-	return matches, contexts, context.Canceled
+	return matches, contexts, countedFrames(locs), context.Canceled
 }
 
 // remapBatchEvents parses the rg --json stream emitted for a batch of

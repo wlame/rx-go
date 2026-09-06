@@ -168,3 +168,47 @@ func TestResolveCountsLinesFromTheEndOfACompressedFile(t *testing.T) {
 		t.Fatalf("samples[%q] = %v", key, got)
 	}
 }
+
+// TestResolveReportsTheByteOffsetOfACompressedLine pins the offset a
+// compressed file reports for a line.
+//
+// It is a position in the decompressed stream, which is the coordinate
+// system a search reports its matches in, so `samples` and `trace` name
+// the same byte for the same line. Reporting -1 left the two surfaces
+// unable to talk about the same place in the file.
+func TestResolveReportsTheByteOffsetOfACompressedLine(t *testing.T) {
+	plain, compressed := writeGzipFixture(t, 500)
+	spec, err := ParseCSV("250")
+	if err != nil {
+		t.Fatalf("ParseCSV: %v", err)
+	}
+
+	fromPlain, err := Resolve(Request{Path: plain, Lines: spec, IndexLoader: NoIndex})
+	if err != nil {
+		t.Fatalf("resolve plain: %v", err)
+	}
+	fromGzip, err := Resolve(Request{Path: compressed, Lines: spec, IndexLoader: NoIndex})
+	if err != nil {
+		t.Fatalf("resolve gzip: %v", err)
+	}
+
+	if fromGzip.Lines["250"] != fromPlain.Lines["250"] {
+		t.Fatalf("gzip reports line 250 at byte %d, the plain file at %d",
+			fromGzip.Lines["250"], fromPlain.Lines["250"])
+	}
+	if fromGzip.Lines["250"] <= 0 {
+		t.Fatalf("no byte offset reported: %v", fromGzip.Lines)
+	}
+	// And the offset really is where that line starts.
+	raw, err := os.ReadFile(plain) //nolint:gosec // fixture path from t.TempDir
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	want := 0
+	for i := 1; i < 250; i++ {
+		want += bytes.IndexByte(raw[want:], '\n') + 1
+	}
+	if int(fromGzip.Lines["250"]) != want {
+		t.Fatalf("offset %d, counting the text gives %d", fromGzip.Lines["250"], want)
+	}
+}
