@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -85,6 +86,21 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		AfterContext:  req.AfterContext,
 		Samples:       map[string][]string{},
 	}
+	// A compressed file has its own path: there is nothing to seek to,
+	// so the stream is read once and the wanted lines are kept. Doing
+	// this here rather than in a caller is what keeps `rx samples` and
+	// GET /v1/samples answering the same way — the CLI used to send a
+	// compressed file down the plain-text path and print its bytes.
+	if format, _ := compression.DetectFromPath(req.Path); format != compression.FormatNone {
+		resp.IsCompressed = true
+		name := string(format)
+		resp.CompressionFormat = &name
+		if err := resolveCompressedLines(req, format, resp); err != nil {
+			return nil, err
+		}
+		return resp, nil
+	}
+
 	switch req.Mode() {
 	case OffsetsMode:
 		if err := resolveOffsets(req, resp); err != nil {

@@ -24,12 +24,14 @@ package index
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
 	"github.com/wlame/rx-go/internal/analyzer"
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -81,6 +83,11 @@ func GetIndexStepBytes() int64 {
 	return threshold / 50
 }
 
+// ErrCompressedSource is returned when a line index is asked of a
+// compressed file. Decompress it first, or search it directly — rx
+// reads compressed files without an index.
+var ErrCompressedSource = errors.New("cannot build a line index for a compressed file")
+
 // Build reads sourcePath and constructs a UnifiedFileIndex. It records
 // the current mtime + size into the index so IsValidForSource can later
 // detect changes.
@@ -96,6 +103,15 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	}
 	if info.IsDir() {
 		return nil, fmt.Errorf("build: %s is a directory", sourcePath)
+	}
+	// A line index maps line numbers to byte offsets in the file it
+	// describes. Over a compressed file those offsets address
+	// compressed bytes, which name no line and cannot be seeked to as
+	// text: the index would be checkpoints into noise, and the stats
+	// built alongside it would describe the container rather than the
+	// log. Refusing says so instead of producing both.
+	if format, _ := compression.DetectFromPath(sourcePath); format != compression.FormatNone {
+		return nil, fmt.Errorf("%w: %s is %s-compressed", ErrCompressedSource, sourcePath, format)
 	}
 
 	step := opts.StepBytes

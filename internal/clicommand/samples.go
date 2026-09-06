@@ -182,6 +182,12 @@ func runSamples(out io.Writer, p samplesParams) error {
 	}
 	resp, err := samples.Resolve(req)
 	if err != nil {
+		// Asking for a byte offset in a compressed file is a usage
+		// mistake, and the HTTP route answers it with a 400 for the
+		// same reason.
+		if errors.Is(err, samples.ErrOffsetsOnCompressed) {
+			return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+		}
 		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
 	}
 
