@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A file named on the command line that cannot be read reported "Files
+  skipped: 1", no matches and exit 0 — a search that claimed success
+  without reading anything. It now exits 4 (access denied) with the path
+  in the message. An unreadable file inside a directory being scanned is
+  still skipped. A response with nothing to search also carries its
+  request id and the paths it was given, instead of an empty id and a
+  null path.
 - `cat file | rx pattern -` exited 1 without a message and
   `rx pattern < file` returned an empty result: stdin was never
   implemented, only rejected, and the rejection was swallowed. Piped

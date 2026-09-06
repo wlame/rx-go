@@ -232,16 +232,34 @@ func runTrace(out io.Writer, p traceParams) error {
 		validated = append(validated, v)
 	}
 
-	// Existence check. We only do this once per path; the engine itself
-	// tolerates "stat failed" silently (for directories that become
-	// unreadable mid-scan), but the CLI must fail loudly on typos.
+	// Existence and readability checks. The engine tolerates a file it
+	// cannot open by listing it as skipped, which is right for one
+	// unreadable file inside a directory being scanned. A path the user
+	// named is different: silently reporting "0 matches" for a file
+	// nobody could read is an answer to a question that was never
+	// asked, so it fails here with the exit code the contract gives it.
 	for _, f := range validated {
-		if _, statErr := os.Stat(f); statErr != nil {
+		info, statErr := os.Stat(f)
+		if statErr != nil {
 			if os.IsNotExist(statErr) {
 				return exitWithError(os.Stderr, ExitFileNotFound, "path not found: %s", f)
 			}
+			if os.IsPermission(statErr) {
+				return exitWithError(os.Stderr, ExitAccessDenied, "permission denied: %s", f)
+			}
 			return exitWithError(os.Stderr, ExitGenericError, "%s: %s", f, statErr.Error())
 		}
+		if info.IsDir() {
+			continue
+		}
+		handle, openErr := os.Open(f)
+		if openErr != nil {
+			if os.IsPermission(openErr) {
+				return exitWithError(os.Stderr, ExitAccessDenied, "permission denied: %s", f)
+			}
+			return exitWithError(os.Stderr, ExitGenericError, "%s: %s", f, openErr.Error())
+		}
+		_ = handle.Close()
 	}
 
 	// Fire the engine.
