@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -233,9 +234,9 @@ func installSlogCapture(t *testing.T) *slogCapture {
 // that a file was truncated / corrupted — only an empty result set.
 //
 // After the fix, the error surfaces as a slog.Warn record including
-// the file path, compression format, and the underlying Read error.
-// The call itself still returns nil error with empty results, matching
-// Python's "log warning and move on" behavior.
+// the file path, compression format, and the underlying Read error,
+// and the call returns ErrIncompleteStream alongside whatever it read.
+// Returning nil there made a half-read archive look like a whole one.
 func TestProcessCompressed_CorruptStreamLogsWarning(t *testing.T) {
 	requireRipgrep(t)
 	cap := installSlogCapture(t)
@@ -252,13 +253,15 @@ func TestProcessCompressed_CorruptStreamLogsWarning(t *testing.T) {
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
-	// The call itself must not fail — we're matching Python's
-	// degrade-on-corruption contract.
-	if err != nil {
-		t.Fatalf("ProcessCompressed returned error, want nil (degrade-gracefully): %v", err)
+	// The call reports the truncation rather than passing a partial
+	// read off as a complete one.
+	if !errors.Is(err, ErrIncompleteStream) {
+		t.Fatalf("ProcessCompressed err = %v, want ErrIncompleteStream", err)
 	}
-	// Matches may be empty or partial; what we assert is ONLY that
-	// the corruption was logged.
+	// This fixture is corrupted nine bytes in, so there is no readable
+	// prefix to return; what matters here is that the failure is
+	// reported. TestProcessCompressed_TruncatedStreamKeepsWhatItRead
+	// covers the case where a prefix does decompress.
 	_ = matches
 
 	warns := cap.recordsWithLevel(slog.LevelWarn)
@@ -329,5 +332,40 @@ func TestEngine_Run_Gzip(t *testing.T) {
 	// Files map should map f1 to the gzip path.
 	if resp.Files["f1"] != p {
 		t.Errorf("Files[f1] = %q, want %q", resp.Files["f1"], p)
+	}
+}
+
+// TestProcessCompressed_TruncatedStreamKeepsWhatItRead pins the other
+// half of the contract: an archive cut off part way through still hands
+// back the matches that decompressed cleanly, together with
+// ErrIncompleteStream. Throwing that data away would lose real matches;
+// returning it without the error would call a partial search complete.
+func TestProcessCompressed_TruncatedStreamKeepsWhatItRead(t *testing.T) {
+	requireRipgrep(t)
+
+	// Large enough that several io.Copy buffers of output reach rg
+	// before the stream runs out.
+	body := bytes.Repeat([]byte("alpha error line\nbeta\ngamma\n"), 200000)
+	whole := writeGzipFile(t, body)
+	raw, err := os.ReadFile(whole) //nolint:gosec // fixture path from t.TempDir
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	truncated := filepath.Join(t.TempDir(), "truncated.gz")
+	if err := os.WriteFile(truncated, raw[:len(raw)/2], 0o600); err != nil {
+		t.Fatalf("write truncated fixture: %v", err)
+	}
+
+	matches, _, _, err := ProcessCompressed(
+		context.Background(),
+		truncated, compression.FormatGzip,
+		map[string]string{"p1": "error"}, []string{"p1"},
+		nil, 0, 0, nil,
+	)
+	if !errors.Is(err, ErrIncompleteStream) {
+		t.Fatalf("err = %v, want ErrIncompleteStream", err)
+	}
+	if len(matches) == 0 {
+		t.Fatal("no matches returned from the prefix that decompressed cleanly")
 	}
 }

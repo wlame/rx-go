@@ -24,6 +24,13 @@ import (
 // compatibility with tests and downstream packages that assert on it.
 var ErrUnsupportedCompression = errors.New("unsupported compression format")
 
+// ErrIncompleteStream reports that a compressed file ended before its
+// decompressor expected it to — a truncated archive, or one corrupted
+// past the point rx reached. ProcessCompressed returns it together with
+// the matches it did read, so a caller can report both what was found
+// and the fact that the file was not searched to the end.
+var ErrIncompleteStream = errors.New("compressed stream ended early")
+
 // ProcessCompressed runs the full scan pipeline for a non-seekable
 // compressed file: read file → pure-Go decompressor pipe → rg --json.
 //
@@ -61,6 +68,10 @@ func ProcessCompressed(
 	contextBefore, contextAfter int,
 	maxResults *int,
 ) (matches []MatchRaw, contexts []ContextRaw, elapsed time.Duration, err error) {
+	// incomplete is set when the decompressor stops early. It travels
+	// back as the returned error while the matches travel back beside
+	// it, so the caller can keep the data and still know it is partial.
+	var incomplete error
 	start := time.Now()
 	// Stage 9 Round 2 S6: gated helpers — CLI mode skips collection.
 	prometheus.IncActiveWorkers()
@@ -252,12 +263,17 @@ func ProcessCompressed(
 			"format", string(format),
 			"error", copyErr.Error(),
 		)
+		incomplete = fmt.Errorf("%w: %s: %w", ErrIncompleteStream, path, copyErr)
 	}
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 		return nil, nil, elapsed, streamErr
 	}
 
-	return outMatches, outContexts, elapsed, nil
+	// The matches read before the stream broke are real, so they are
+	// returned alongside the error. A truncated archive used to produce
+	// a partial result that looked complete; the caller now has both the
+	// data and the fact that there is more it could not reach.
+	return outMatches, outContexts, elapsed, incomplete
 }
 
 // isCopyTerminationNoise reports whether an error from the io.Copy

@@ -338,8 +338,13 @@ func (e *Engine) RunWithOptions(
 				if errors.Is(cerr, ErrInvalidPattern) {
 					return nil, cerr
 				}
+				// A stream that ended early still yielded real matches,
+				// so the file is named as incomplete but its matches are
+				// kept. Any other error means nothing was read.
 				skipped = append(skipped, b.path)
-				continue
+				if !errors.Is(cerr, ErrIncompleteStream) {
+					continue
+				}
 			}
 			// The whole file goes through one ripgrep, so the line
 			// numbers it reports are the file's own. Reporting them as
