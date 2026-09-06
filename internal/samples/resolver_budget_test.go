@@ -404,3 +404,58 @@ func TestBudget_FullResolverFlow_LinesRange(t *testing.T) {
 	t.Logf("full Resolve read %d bytes for range 150-%d",
 		bytesRead, endVal)
 }
+
+// TestBudget_ManyOffsets_OnePassOverTheFile pins the cost of asking
+// about several byte offsets at once.
+//
+// The viewer asks exactly this way: a capped search leaves it holding a
+// batch of match offsets whose line numbers it wants. Resolving them
+// one at a time read the whole file once per offset, so twenty matches
+// in a multi-gigabyte log meant twenty passes.
+func TestBudget_ManyOffsets_OnePassOverTheFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "many.log")
+	var content []byte
+	for i := 1; i <= 5000; i++ {
+		content = append(content, []byte(fmt.Sprintf("line %d of the log\n", i))...)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// Twenty offsets spread over the file, the last one near the end.
+	var spec []OffsetOrRange
+	var want []int64
+	for i := 1; i <= 20; i++ {
+		line := i * 250
+		off := int64(0)
+		for n := 1; n < line; n++ {
+			off += int64(len(fmt.Sprintf("line %d of the log\n", n)))
+		}
+		spec = append(spec, OffsetOrRange{Start: off})
+		want = append(want, int64(line))
+	}
+
+	counter := withCountingOpen(t)
+	resp, err := Resolve(Request{Path: path, Offsets: spec, IndexLoader: NoIndex})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	read := counter.Load()
+
+	for i, v := range spec {
+		key := strconv.FormatInt(v.Start, 10)
+		if resp.Offsets[key] != want[i] {
+			t.Fatalf("offset %d resolved to line %d, want %d", v.Start, resp.Offsets[key], want[i])
+		}
+	}
+
+	// One pass plus the windows read around each offset. Twenty passes
+	// would be twenty times the file.
+	size := int64(len(content))
+	if read > 3*size {
+		t.Fatalf("read %d bytes for a %d byte file: that is %.1f passes, not one",
+			read, size, float64(read)/float64(size))
+	}
+	t.Logf("read %d bytes for a %d byte file resolving %d offsets", read, size, len(spec))
+}

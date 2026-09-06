@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -118,7 +119,27 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 // Byte-offset mode
 // ============================================================================
 
-// resolveOffsets dispatches byte-offset single values and ranges.
+// window is one byte-offset request being collected as the file goes by.
+type window struct {
+	key     string
+	start   int64
+	end     int64 // byte range end, or -1 for a single offset
+	line    int64
+	started bool
+	done    bool
+	after   int
+	collect []string
+}
+
+// resolveOffsets answers every byte offset in the request from one
+// sequential pass over the file.
+//
+// A caller with a batch of match offsets — which is how the viewer asks
+// after a capped search — used to pay a full scan per offset, once to
+// find the line and again to read the window around it. The pass here
+// resolves the line numbers and collects the windows together, keeping
+// the last few lines in a ring so a window that reaches backwards is
+// already in hand.
 func resolveOffsets(req Request, resp *rxtypes.SamplesResponse) error {
 	fi, err := os.Stat(req.Path)
 	if err != nil {
@@ -126,58 +147,204 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse) error {
 	}
 	fileSize := fi.Size()
 
+	windows := make([]*window, 0, len(req.Offsets))
 	for _, v := range req.Offsets {
-		if v.IsRange() {
-			// Range mode: collect every line overlapping [start, *end].
-			startLine, err := lineNumberForOffset(req.Path, v.Start)
-			if err != nil {
-				return err
-			}
-			endLine, err := lineNumberForOffset(req.Path, *v.End)
-			if err != nil {
-				return err
-			}
-			lines, _, err := readLineRange(req.Path, startLine, endLine)
-			if err != nil {
-				return err
-			}
-			key := v.Key()
-			resp.Samples[key] = lines
-			// Offsets[key] = start line number (Python parity).
-			resp.Offsets[key] = startLine
-			continue
-		}
-
-		// Single offset: resolve negative, then ±context window.
 		start := v.Start
 		if start < 0 {
+			// Python parity: a negative offset counts back from the end
+			// and the response reports the resolved positive value.
 			start = fileSize + start
 			if start < 0 {
 				start = 0
 			}
 		}
-		lineNum, err := lineNumberForOffset(req.Path, start)
-		if err != nil {
-			return err
+		w := &window{key: strconv.FormatInt(start, 10), start: start, end: -1}
+		if v.IsRange() {
+			w.key, w.end = v.Key(), *v.End
 		}
-		startLine := lineNum - int64(req.BeforeContext)
-		if startLine < 1 {
-			startLine = 1
+		windows = append(windows, w)
+		resp.Samples[w.key] = []string{}
+	}
+	sort.SliceStable(windows, func(i, j int) bool { return windows[i].start < windows[j].start })
+
+	var idx *rxtypes.UnifiedFileIndex
+	if req.IndexLoader != nil {
+		idx, _ = req.IndexLoader(req.Path)
+	}
+	// The pass may start at a checkpoint before the first offset, as
+	// long as it leaves room for the leading context.
+	startOffset, startLine := int64(0), int64(1)
+	if idx != nil && len(windows) > 0 {
+		startOffset, startLine = checkpointBefore(idx, windows[0].start, req.BeforeContext)
+	}
+
+	f, err := openFileForSamples(req.Path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	if startOffset > 0 {
+		if _, seekErr := f.Seek(startOffset, io.SeekStart); seekErr != nil {
+			return seekErr
 		}
-		endLine := lineNum + int64(req.AfterContext)
-		lines, _, err := readLineRange(req.Path, startLine, endLine)
-		if err != nil {
-			return err
+	}
+
+	before := newLineRing(req.BeforeContext)
+	r := bufio.NewReaderSize(f, readBufferFor(windows[len(windows)-1].start-startOffset))
+	pos, lineNum, next := startOffset, startLine, 0
+	for {
+		raw, readErr := r.ReadString('\n')
+		if len(raw) == 0 && readErr != nil {
+			break
 		}
-		// Python parity: key is the RESOLVED positive offset, not the
-		// user's signed input (samples.py line 557:
-		// `offset_to_line[str(start)] = line_num` where `start` has
-		// been reassigned).
-		key := strconv.FormatInt(start, 10)
-		resp.Samples[key] = lines
-		resp.Offsets[key] = lineNum
+		text := stripNewline(raw)
+		end := pos + int64(len(raw))
+
+		// Start every window whose offset falls on this line.
+		for next < len(windows) && windows[next].start < end {
+			w := windows[next]
+			w.started, w.line = true, lineNum
+			resp.Offsets[w.key] = lineNum
+			if w.end < 0 {
+				w.collect = append(w.collect, before.lines()...)
+				w.after = req.AfterContext
+			}
+			next++
+		}
+
+		for _, w := range windows {
+			if !w.started || w.done {
+				continue
+			}
+			if lineNum < w.line {
+				continue
+			}
+			w.collect = append(w.collect, text)
+			switch {
+			case w.end >= 0:
+				// A byte range ends on the line holding its end offset.
+				if w.end < end {
+					w.done = true
+				}
+			case lineNum > w.line:
+				w.after--
+				if w.after <= 0 {
+					w.done = true
+				}
+			case req.AfterContext == 0:
+				w.done = true
+			}
+		}
+
+		before.push(text)
+		pos, lineNum = end, lineNum+1
+		if readErr != nil {
+			break
+		}
+		if next >= len(windows) && allWindowsDone(windows) {
+			break
+		}
+	}
+
+	for _, w := range windows {
+		if !w.started {
+			// The offset is past the end of the file; Python reports the
+			// last line for it rather than nothing.
+			resp.Offsets[w.key] = lineNum - 1
+			continue
+		}
+		resp.Samples[w.key] = w.collect
 	}
 	return nil
+}
+
+// allWindowsDone reports whether every started window has all its lines.
+func allWindowsDone(windows []*window) bool {
+	for _, w := range windows {
+		if w.started && !w.done {
+			return false
+		}
+	}
+	return true
+}
+
+// readBufferFor sizes the read buffer to the span a pass will cover.
+//
+// A pass over a large file wants a big buffer to keep the syscall count
+// down; a request that stops a few kilobytes in wants a small one,
+// because whatever the buffer holds past the answer is read for
+// nothing. The bounded-read tests measure exactly that overshoot.
+func readBufferFor(span int64) int {
+	const smallBuffer, largeBuffer = 4 * 1024, 64 * 1024
+	if span > 512*1024 {
+		return largeBuffer
+	}
+	return smallBuffer
+}
+
+// checkpointBefore returns the index checkpoint to start a pass from so
+// that `context` lines are available before `offset`, and the line
+// number that checkpoint names.
+func checkpointBefore(
+	idx *rxtypes.UnifiedFileIndex,
+	offset int64,
+	context int,
+) (byteOffset, line int64) {
+	pick := -1
+	for i, entry := range idx.LineIndex {
+		if entry.ByteOffset > offset {
+			break
+		}
+		pick = i
+	}
+	// Step back one checkpoint when the window reaches behind the
+	// offset, so the leading context is inside the pass.
+	if pick > 0 && context > 0 {
+		pick--
+	}
+	if pick < 0 {
+		return 0, 1
+	}
+	return idx.LineIndex[pick].ByteOffset, idx.LineIndex[pick].LineNumber
+}
+
+// lineRing remembers the last n lines read, which is what a window that
+// reaches backwards needs.
+type lineRing struct {
+	buf  []string
+	next int
+	size int
+}
+
+func newLineRing(n int) *lineRing {
+	if n < 0 {
+		n = 0
+	}
+	return &lineRing{buf: make([]string, n)}
+}
+
+func (r *lineRing) push(text string) {
+	if len(r.buf) == 0 {
+		return
+	}
+	r.buf[r.next] = text
+	r.next = (r.next + 1) % len(r.buf)
+	if r.size < len(r.buf) {
+		r.size++
+	}
+}
+
+// lines returns the remembered lines in file order, oldest first.
+func (r *lineRing) lines() []string {
+	if r.size == 0 {
+		return nil
+	}
+	out := make([]string, 0, r.size)
+	start := (r.next - r.size + len(r.buf)) % len(r.buf)
+	for i := 0; i < r.size; i++ {
+		out = append(out, r.buf[(start+i)%len(r.buf)])
+	}
+	return out
 }
 
 // ============================================================================
@@ -450,34 +617,82 @@ func chooseSeekOrigin(idx *rxtypes.UnifiedFileIndex, targetLine int64) (offset, 
 }
 
 // lineNumberForOffset returns the 1-based line number containing offset.
-// Linear scan from byte 0 — byte-offset mode is rarely called enough
-// that an index lookup isn't necessary (the index is keyed by line,
-// not byte, so a reverse lookup would require a different data structure).
 func lineNumberForOffset(path string, offset int64) (int64, error) {
-	f, err := os.Open(path)
+	lines, err := lineNumbersForOffsets(path, []int64{offset}, nil)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = f.Close() }()
+	return lines[offset], nil
+}
 
-	br := bufio.NewReader(f)
-	var (
-		pos     int64 = 0
-		lineNum int64 = 1
-	)
-	for {
-		line, err := br.ReadString('\n')
-		next := pos + int64(len(line))
-		if offset >= pos && offset < next {
-			return lineNum, nil
-		}
-		if err != nil {
-			// EOF with offset beyond EOF → clamp to last line.
-			return lineNum, nil
-		}
-		pos = next
-		lineNum++
+// lineNumbersForOffsets resolves every offset in one pass.
+//
+// The offsets are sorted and answered as the file goes by, so asking
+// about twenty matches costs one read rather than twenty. That is how
+// the viewer asks: a capped search leaves it with a handful of offsets
+// whose line numbers it wants at once, and a scan per offset turned
+// that into twenty reads of the same multi-gigabyte file.
+//
+// An index shortens the pass further, since the checkpoint before the
+// lowest offset is a known line at a known byte. Without one the pass
+// starts at the beginning, which is the only place a line count can
+// start from.
+func lineNumbersForOffsets(
+	path string,
+	offsets []int64,
+	idx *rxtypes.UnifiedFileIndex,
+) (map[int64]int64, error) {
+	out := make(map[int64]int64, len(offsets))
+	if len(offsets) == 0 {
+		return out, nil
 	}
+	sorted := append([]int64(nil), offsets...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	// Nearest checkpoint at or before the first offset we need.
+	startOffset, startLine := int64(0), int64(1)
+	if idx != nil {
+		for _, entry := range idx.LineIndex {
+			if entry.ByteOffset > sorted[0] {
+				break
+			}
+			startOffset, startLine = entry.ByteOffset, entry.LineNumber
+		}
+	}
+
+	f, err := openFileForSamples(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	if startOffset > 0 {
+		if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+
+	br := bufio.NewReaderSize(f, readBufferFor(sorted[len(sorted)-1]-startOffset))
+	pos, lineNum, next := startOffset, startLine, 0
+	for next < len(sorted) {
+		line, readErr := br.ReadString('\n')
+		end := pos + int64(len(line))
+		for next < len(sorted) && sorted[next] < end {
+			if sorted[next] >= pos {
+				out[sorted[next]] = lineNum
+			}
+			next++
+		}
+		if readErr != nil {
+			// Past the end of the file: every remaining offset is on the
+			// last line, which is what a single lookup used to report.
+			for ; next < len(sorted); next++ {
+				out[sorted[next]] = lineNum
+			}
+			break
+		}
+		pos, lineNum = end, lineNum+1
+	}
+	return out, nil
 }
 
 // countLines returns the number of '\n' bytes + 1 if the final chunk

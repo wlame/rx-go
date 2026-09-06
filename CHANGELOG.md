@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /v1/samples` with several byte offsets read the whole file once
+  per offset, and again to collect each window: twenty offsets on a
+  multi-gigabyte log meant more than twenty passes. That is how the
+  viewer resolves the line numbers of a capped search's matches. The
+  offsets are now answered in one pass that keeps the last few lines in
+  hand for the windows that reach backwards — twenty offsets on a
+  100 KB fixture read 100 KB, where they used to read 1.2 MB.
 - A match reported a different line number depending on how the file was
   stored. A search of a `.gz` called the line unknown even though
   ripgrep had read the whole file in one pass, and a search of a
