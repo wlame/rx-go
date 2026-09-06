@@ -233,9 +233,13 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 		fmt.Fprintf(&b, "Files skipped: %d\n", len(resp.SkippedFiles))
 	}
 
+	// The count is the pieces the files were divided into, which is
+	// what got scanned in parallel — chunks for a plain file, frames
+	// for a seekable one. Calling it a worker count made a 137-frame
+	// archive claim 137 workers on a six-core machine.
 	chunked, totalChunks := chunkStats(resp.FileChunks)
 	if chunked > 0 {
-		fmt.Fprintf(&b, "Parallel workers: %d (%d file(s) chunked)\n", totalChunks, chunked)
+		fmt.Fprintf(&b, "Parallel chunks: %d (%d file(s) chunked)\n", totalChunks, chunked)
 	}
 
 	fmt.Fprintf(&b, "Matches: %d\n", len(resp.Matches))

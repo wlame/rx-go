@@ -414,7 +414,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 				// error the caller can recognize instead of being folded
 				// into "this file was skipped".
 				if isRegexParseError(msg) {
-					return ChunkResult{Elapsed: elapsed}, fmt.Errorf("%w: %s", ErrInvalidPattern, msg)
+					return ChunkResult{Elapsed: elapsed}, invalidPatternError(msg, patternIDs, patternOrder)
 				}
 				return ChunkResult{Elapsed: elapsed}, fmt.Errorf("rg exit %d: %s", code, msg)
 			}
@@ -652,6 +652,49 @@ func isRegexParseError(stderr string) bool {
 	lowered := strings.ToLower(stderr)
 	return strings.Contains(lowered, "regex parse error") ||
 		strings.Contains(lowered, "error parsing regex")
+}
+
+// invalidPatternError reports a pattern ripgrep refused, in terms of
+// what the caller typed.
+//
+// rg compiles the patterns it is given as one alternation, so a pattern
+// of `(bad` comes back as a complaint about `(?:(bad)` with the caret
+// pointing into a wrapper the caller never wrote. The reason rg gives
+// is worth keeping; the wrapper is not.
+func invalidPatternError(stderr string, patternIDs map[string]string, patternOrder []string) error {
+	reason := regexFailureReason(stderr)
+	patterns := make([]string, 0, len(patternOrder))
+	for _, pid := range patternOrder {
+		patterns = append(patterns, strconv.Quote(patternIDs[pid]))
+	}
+	switch len(patterns) {
+	case 0:
+		return fmt.Errorf("%w: %s", ErrInvalidPattern, reason)
+	case 1:
+		return fmt.Errorf("%w %s: %s", ErrInvalidPattern, patterns[0], reason)
+	default:
+		return fmt.Errorf("%w: %s (patterns: %s)",
+			ErrInvalidPattern, reason, strings.Join(patterns, ", "))
+	}
+}
+
+// regexFailureReason pulls the explanation out of ripgrep's parse
+// error, which ends with a line of the form "error: unclosed group".
+// Anything unrecognized falls back to the whole message on one line, so
+// no detail is lost when rg changes its wording.
+func regexFailureReason(stderr string) string {
+	reason := ""
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSpace(line)
+		if after, found := strings.CutPrefix(line, "error: "); found {
+			reason = after
+		}
+	}
+	if reason != "" {
+		return reason
+	}
+	compact := strings.Join(strings.Fields(stderr), " ")
+	return strings.TrimPrefix(compact, "rg: ")
 }
 
 // newlineBytes is the separator the chunk counter looks for. Declared

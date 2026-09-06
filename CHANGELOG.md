@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx serve` on a fresh machine installed no viewer at all: rx-viewer
+  v0.3.0 was published on 2026-09-03 while both backends only accepted
+  `0.2.0 <= v < 0.3.0`, so the bundle was refused and `/` fell back to
+  the API docs. The window now reaches `< 0.4.0`, and rx-viewer's own
+  release checklist requires both backends to accept a minor before it
+  ships.
+- The scan summary called the number of pieces a file was split into a
+  worker count, so a 137-frame archive reported "Parallel workers: 137"
+  on a six-core machine. It reads "Parallel chunks" now, in both
+  backends.
+- A pattern ripgrep refuses is reported as the caller typed it:
+  `invalid regex pattern "(bad": unclosed group` rather than a complaint
+  about `(?:(bad)`, which is the alternation ripgrep wraps the patterns
+  in and a group the caller never opened.
 - A file named on the command line that cannot be read reported "Files
   skipped: 1", no matches and exit 0 — a search that claimed success
   without reading anything. It now exits 4 (access denied) with the path
