@@ -22,9 +22,13 @@ import (
 // ============================================================================
 
 // TraceCacheVersion pins the on-disk schema. Bump when the JSON shape
-// changes in a backward-incompatible way. Must stay in lockstep with
+// changes in a backward-incompatible way, or when the meaning of a
+// field changes: version 3 is where line_number became the line's
+// number in the file rather than in the chunk that found it, so caches
+// written before it are discarded rather than read back wrong. Must
+// stay in lockstep with
 // rx-python/src/rx/trace_cache.py::TRACE_CACHE_VERSION.
-const TraceCacheVersion = 2
+const TraceCacheVersion = 3
 
 // matchingFlags are the subset of ripgrep flags that change WHICH
 // lines match. Any flag not in this set doesn't affect cache validity.

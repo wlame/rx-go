@@ -87,26 +87,6 @@ func TestFilterIncompatibleRgArgs(t *testing.T) {
 	}
 }
 
-func TestReadSourceLine_FindsExactLine(t *testing.T) {
-	content := "line one\nline two\nline three\n"
-	p := mustWriteFile(t, []byte(content))
-	got, err := ReadSourceLine(p, 2, false)
-	if err != nil {
-		t.Fatalf("ReadSourceLine: %v", err)
-	}
-	if got != "line two" {
-		t.Errorf("got %q, want %q", got, "line two")
-	}
-}
-
-func TestReadSourceLine_OutOfRange(t *testing.T) {
-	p := mustWriteFile(t, []byte("only line\n"))
-	_, err := ReadSourceLine(p, 42, false)
-	if err == nil {
-		t.Error("want error for out-of-range line, got nil")
-	}
-}
-
 func TestWorkerLimit_Precedence(t *testing.T) {
 	t.Setenv("RX_WORKERS", "7")
 	if got := workerLimit(); got != 7 {

@@ -7,206 +7,288 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
-// ReconstructMatchData rebuilds a full rxtypes.Match + its surrounding
-// context lines from a minimal TraceCacheMatch entry.
+// ReconstructRequest describes one cache hit to rebuild.
+type ReconstructRequest struct {
+	SourcePath    string
+	Cached        []rxtypes.TraceCacheMatch
+	Patterns      []string
+	FileID        string
+	RgExtraArgs   []string
+	ContextBefore int
+	ContextAfter  int
+	UseIndex      bool
+}
+
+// ReconstructFromCache rebuilds full matches and their context lines
+// from the minimal records a trace cache holds.
 //
-// The cache only stores (pattern_index, offset, line_number). Everything
-// else — line text, submatches — must be recomputed from the source
-// file. We re-use the unified index to jump directly to the right byte
-// range (checkpoint-based bisect) so cache hits stay fast.
+// The cache stores only (pattern_index, offset, line_number) per match.
+// The line text, the submatches and the surrounding lines have to come
+// from the source again, and the byte offset is what addresses them.
+// The offset is also the only field that cannot be stale: the cache is
+// keyed on the source's size and mtime, so an offset still points at
+// the same bytes, while a stored line number is only as good as the
+// version that wrote it. Line numbers are therefore counted during this
+// pass rather than trusted from the file.
+//
+// One sequential pass serves every match in the cache, so a hit on a
+// file with thousands of matches costs about one read of the file
+// instead of one read per match. With an index present the pass starts
+// at the checkpoint before the first match rather than at byte 0.
+//
+// A compressed source is read through its decompressor from the start:
+// the offsets in the cache address the decompressed stream, which is
+// also what the scan that filled the cache measured.
 //
 // Parity: rx-python/src/rx/trace_cache.py::reconstruct_match_data.
-func ReconstructMatchData(
-	sourcePath string,
-	cached rxtypes.TraceCacheMatch,
-	patterns []string,
-	patternIDs map[string]string,
-	fileID string,
-	rgExtraArgs []string,
-	contextBefore, contextAfter int,
-	useIndex bool,
-) (rxtypes.Match, []rxtypes.ContextLine, error) {
-	if cached.PatternIndex < 0 || cached.PatternIndex >= len(patterns) {
-		return rxtypes.Match{}, nil, fmt.Errorf(
-			"reconstruct: pattern_index %d out of range (have %d patterns)",
-			cached.PatternIndex, len(patterns))
+func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.ContextLine, error) {
+	if len(req.Cached) == 0 {
+		return nil, nil, nil
 	}
-	pattern := patterns[cached.PatternIndex]
-	pid := fmt.Sprintf("p%d", cached.PatternIndex+1)
+	cached := append([]rxtypes.TraceCacheMatch(nil), req.Cached...)
+	sort.SliceStable(cached, func(i, j int) bool { return cached[i].Offset < cached[j].Offset })
 
-	// Pull context lines around the matched line from the source file.
-	// We ask for one target line number; the helper returns the window
-	// [line-before, line, line+after]. For non-indexed files we fall
-	// back to a linear scan (matches Python).
-	windowLines, matchedIdx, startLine, err := readLineWindow(
-		sourcePath,
-		int(cached.LineNumber),
-		contextBefore,
-		contextAfter,
-		useIndex,
-	)
+	src, err := openReconstructSource(req, cached[0].Offset)
 	if err != nil {
-		return rxtypes.Match{}, nil, err
+		return nil, nil, err
 	}
-	var matchedLine string
-	if matchedIdx >= 0 && matchedIdx < len(windowLines) {
-		matchedLine = windowLines[matchedIdx]
-	}
+	defer func() { _ = src.close() }()
 
-	// Re-derive submatches by running the stored pattern against the
-	// matched line. Ignore-case is the only flag that changes matching.
-	subs := submatchesFromPattern(pattern, matchedLine, hasFlag(rgExtraArgs, "-i", "--ignore-case"))
+	ignoreCase := hasFlag(req.RgExtraArgs, "-i", "--ignore-case")
+	matches := make([]rxtypes.Match, 0, len(cached))
+	var ctxLines []rxtypes.ContextLine
+	emitted := map[int]bool{} // context line numbers already emitted
 
-	// Build the Match. LineText is a pointer so we can emit JSON `null`
-	// when Python would; on cache hits we always have the string, so
-	// take its address.
-	lineNum := cached.LineNumber
-	lineText := matchedLine
-	absLine := int(cached.LineNumber) // known on cache hits (complete scans only)
+	before := newLineRing(req.ContextBefore)
+	afterWanted := 0
+	next := 0 // index into cached
 
-	m := rxtypes.Match{
-		Pattern:            pid,
-		File:               fileID,
-		Offset:             cached.Offset,
-		RelativeLineNumber: ptrInt(int(lineNum)),
-		AbsoluteLineNumber: absLine,
-		LineText:           &lineText,
-		Submatches:         subs,
-	}
-
-	// Build context lines. Every line in the window becomes a
-	// ContextLine; the matched line is included (per Python semantics).
-	// Only the matched line's AbsoluteOffset is known; other context
-	// lines get -1 (same as Python).
-	ctxLines := make([]rxtypes.ContextLine, 0, len(windowLines))
-	for i, text := range windowLines {
-		ctxLineNum := startLine + i
-		off := int64(-1)
-		if i == matchedIdx {
-			off = cached.Offset
-		}
-		ctxLines = append(ctxLines, rxtypes.ContextLine{
-			RelativeLineNumber: ctxLineNum,
-			AbsoluteLineNumber: ctxLineNum,
-			LineText:           text,
-			AbsoluteOffset:     off,
-		})
-	}
-
-	return m, ctxLines, nil
-}
-
-// readLineWindow returns the window of lines [targetLine-contextBefore,
-// targetLine+contextAfter] from sourcePath, the index of the target
-// line within the window, and the starting line number of the window.
-//
-// Implementation strategy:
-//
-//  1. If useIndex and we have an index loaded, use FindNearestCheckpoint
-//     to jump to the nearest checkpoint at or before targetLine, then
-//     scan forward line-by-line until we reach the window.
-//  2. Otherwise (no index available, or useIndex=false), do a linear
-//     scan from byte 0 counting newlines.
-//
-// Near-start-of-file truncation: if targetLine - contextBefore < 1,
-// the window starts at line 1 and matchedIdx shrinks accordingly.
-func readLineWindow(
-	sourcePath string,
-	targetLine, contextBefore, contextAfter int,
-	useIndex bool,
-) (lines []string, matchedIdx, startLine int, err error) {
-	if targetLine < 1 {
-		return nil, -1, 0, fmt.Errorf("readLineWindow: target line %d < 1", targetLine)
-	}
-
-	// Open the source file. bufio.Scanner iterates by line; we give it
-	// a generous buffer so multi-MB log lines don't trip the default
-	// 64 KB limit.
-	f, err := os.Open(sourcePath)
-	if err != nil {
-		return nil, -1, 0, fmt.Errorf("readLineWindow: open %s: %w", sourcePath, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	// Target window bounds.
-	startLine = targetLine - contextBefore
-	if startLine < 1 {
-		startLine = 1
-	}
-	endLine := targetLine + contextAfter
-
-	// ====================================================================
-	// Strategy 1: index-assisted jump
-	// ====================================================================
-	//
-	// At M3 we wire this path conservatively — if the index is absent
-	// or can't resolve a checkpoint, fall back to a linear scan. When
-	// M2's index builder lands real line-index entries (M3+ work), this
-	// hot path activates transparently.
-	if useIndex {
-		if idx, ldErr := index.LoadForSource(sourcePath); ldErr == nil && idx != nil {
-			cp := index.FindNearestCheckpoint(idx, int64(startLine))
-			if cp.LineNumber > 0 {
-				// Seek to the checkpoint and scan forward.
-				if _, sErr := f.Seek(cp.ByteOffset, io.SeekStart); sErr == nil {
-					lines, matchedIdx = scanLines(f, int(cp.LineNumber), startLine, endLine, targetLine)
-					return lines, matchedIdx, startLine, nil
-				}
-			}
-		}
-	}
-
-	// ====================================================================
-	// Strategy 2: linear scan from byte 0
-	// ====================================================================
-	lines, matchedIdx = scanLines(f, 1, startLine, endLine, targetLine)
-	return lines, matchedIdx, startLine, nil
-}
-
-// scanLines scans from the current reader position, treating the first
-// line of output as having line number `currentLine`. It collects lines
-// whose line numbers fall in [startLine, endLine], returning them plus
-// the index of the `targetLine` within the returned slice.
-//
-// If EOF hits before reaching startLine, returns an empty slice.
-// If EOF hits mid-window, returns whatever was collected (the caller
-// treats short windows as "end of file" — same as Python).
-func scanLines(r io.Reader, currentLine, startLine, endLine, targetLine int) ([]string, int) {
-	sc := bufio.NewScanner(r)
-	const maxLineBytes = 16 * 1024 * 1024 // match rgjson buffer
-	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-
-	var lines []string
-	matchedIdx := -1
-	ln := currentLine
-	for sc.Scan() {
-		if ln > endLine {
+	r := bufio.NewReaderSize(src.reader, 256*1024)
+	pos, line := src.startOffset, src.startLine
+	for next < len(cached) || afterWanted > 0 {
+		raw, readErr := r.ReadBytes('\n')
+		if len(raw) == 0 && readErr != nil {
 			break
 		}
-		if ln >= startLine {
-			text := sc.Text()
-			lines = append(lines, text)
-			if ln == targetLine {
-				matchedIdx = len(lines) - 1
+		text := trimTrailingNewline(string(raw))
+		end := pos + int64(len(raw))
+
+		if afterWanted > 0 && !emitted[line] {
+			emitted[line] = true
+			ctxLines = append(ctxLines, rxtypes.ContextLine{
+				RelativeLineNumber: line,
+				AbsoluteLineNumber: line,
+				LineText:           text,
+				AbsoluteOffset:     -1,
+			})
+			afterWanted--
+		}
+
+		// Every cached record whose offset falls inside this line.
+		first := next
+		for next < len(cached) && cached[next].Offset < end {
+			next++
+		}
+		if next > first {
+			for _, prev := range before.lines() {
+				if emitted[prev.number] {
+					continue
+				}
+				emitted[prev.number] = true
+				ctxLines = append(ctxLines, rxtypes.ContextLine{
+					RelativeLineNumber: prev.number,
+					AbsoluteLineNumber: prev.number,
+					LineText:           prev.text,
+					AbsoluteOffset:     -1,
+				})
+			}
+			emitted[line] = true
+			for _, cm := range cached[first:next] {
+				m, mErr := matchFromCached(cm, text, line, req, ignoreCase)
+				if mErr != nil {
+					continue
+				}
+				matches = append(matches, m)
+			}
+			if req.ContextAfter > afterWanted {
+				afterWanted = req.ContextAfter
 			}
 		}
-		ln++
+
+		before.push(line, text)
+		pos, line = end, line+1
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				return matches, ctxLines, fmt.Errorf("reconstruct %s: %w", req.SourcePath, readErr)
+			}
+			break
+		}
 	}
-	// ignore sc.Err: on a partial file we return whatever we have.
-	return lines, matchedIdx
+	return matches, ctxLines, nil
 }
 
-// submatchesFromPattern re-runs the Python-style regex against the line
-// and returns a slice of Submatch byte-position records, sorted by start.
+// matchFromCached turns one cached record plus the text of the line it
+// points into a full match.
+func matchFromCached(
+	cm rxtypes.TraceCacheMatch,
+	text string,
+	line int,
+	req ReconstructRequest,
+	ignoreCase bool,
+) (rxtypes.Match, error) {
+	if cm.PatternIndex < 0 || cm.PatternIndex >= len(req.Patterns) {
+		return rxtypes.Match{}, fmt.Errorf(
+			"reconstruct: pattern_index %d out of range (have %d patterns)",
+			cm.PatternIndex, len(req.Patterns))
+	}
+	lineText := text
+	return rxtypes.Match{
+		Pattern:            fmt.Sprintf("p%d", cm.PatternIndex+1),
+		File:               req.FileID,
+		Offset:             cm.Offset,
+		RelativeLineNumber: ptrInt(line),
+		AbsoluteLineNumber: line,
+		LineText:           &lineText,
+		Submatches:         submatchesFromPattern(req.Patterns[cm.PatternIndex], text, ignoreCase),
+	}, nil
+}
+
+// ============================================================================
+// Reading the source
+// ============================================================================
+
+// reconstructSource is the stream a reconstruction pass reads, plus the
+// file position and line number that stream starts at.
+type reconstructSource struct {
+	reader      io.Reader
+	close       func() error
+	startOffset int64
+	startLine   int
+}
+
+// openReconstructSource opens the source for a reconstruction pass and
+// positions it so the first cached match is reached with room to spare
+// for its leading context.
+func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstructSource, error) {
+	f, err := os.Open(req.SourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("reconstruct: open %s: %w", req.SourcePath, err)
+	}
+
+	// A compressed source is read through its decompressor from the
+	// start: cached offsets address the decompressed stream, and there
+	// is no cheap way into the middle of it.
+	if format, _ := compression.DetectFromPath(req.SourcePath); format != compression.FormatNone {
+		dec, dErr := compression.NewReader(f, format)
+		if dErr != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("reconstruct: decompress %s: %w", req.SourcePath, dErr)
+		}
+		return &reconstructSource{
+			reader:    dec,
+			close:     func() error { _ = dec.Close(); return f.Close() },
+			startLine: 1,
+		}, nil
+	}
+
+	src := &reconstructSource{reader: f, close: f.Close, startLine: 1}
+	if !req.UseIndex {
+		return src, nil
+	}
+	// Start one checkpoint earlier than the one holding the first
+	// match, so the lines before it are available as leading context.
+	idx, idxErr := index.LoadForSource(req.SourcePath)
+	if idxErr != nil || idx == nil || len(idx.LineIndex) == 0 {
+		return src, nil
+	}
+	pick := -1
+	for i, entry := range idx.LineIndex {
+		if entry.ByteOffset > firstOffset {
+			break
+		}
+		pick = i
+	}
+	if pick > 0 {
+		pick--
+	}
+	if pick < 0 {
+		return src, nil
+	}
+	entry := idx.LineIndex[pick]
+	if _, sErr := f.Seek(entry.ByteOffset, io.SeekStart); sErr != nil {
+		return src, nil //nolint:nilerr // a failed seek only costs a longer scan
+	}
+	src.startOffset, src.startLine = entry.ByteOffset, int(entry.LineNumber)
+	return src, nil
+}
+
+// ============================================================================
+// Leading-context ring
+// ============================================================================
+
+// ringLine is one remembered line: its number and its text.
+type ringLine struct {
+	number int
+	text   string
+}
+
+// lineRing remembers the last n lines read, which is what a match needs
+// for its leading context. A ring keeps that bounded no matter how big
+// the file is.
+type lineRing struct {
+	buf  []ringLine
+	next int
+	size int
+}
+
+func newLineRing(n int) *lineRing {
+	if n < 0 {
+		n = 0
+	}
+	return &lineRing{buf: make([]ringLine, n)}
+}
+
+func (r *lineRing) push(number int, text string) {
+	if len(r.buf) == 0 {
+		return
+	}
+	r.buf[r.next] = ringLine{number: number, text: text}
+	r.next = (r.next + 1) % len(r.buf)
+	if r.size < len(r.buf) {
+		r.size++
+	}
+}
+
+// lines returns the remembered lines in file order, oldest first.
+func (r *lineRing) lines() []ringLine {
+	if r.size == 0 {
+		return nil
+	}
+	out := make([]ringLine, 0, r.size)
+	start := (r.next - r.size + len(r.buf)) % len(r.buf)
+	for i := 0; i < r.size; i++ {
+		out = append(out, r.buf[(start+i)%len(r.buf)])
+	}
+	return out
+}
+
+// ============================================================================
+// Submatches
+// ============================================================================
+
+// submatchesFromPattern re-runs the pattern against the line and returns
+// the byte positions of every hit, sorted by start.
 //
-// The flags logic exactly mirrors identify.go::compileRegex — if we
-// change matching flags in one place we update both.
+// The flags logic mirrors identify.go::compileRegex — if we change
+// matching flags in one place we update both.
 func submatchesFromPattern(pattern, line string, ignoreCase bool) []rxtypes.Submatch {
 	if ignoreCase {
 		pattern = "(?i)" + pattern
@@ -229,24 +311,6 @@ func submatchesFromPattern(pattern, line string, ignoreCase bool) []rxtypes.Subm
 
 // ptrInt helper — returns &v.
 func ptrInt(v int) *int { return &v }
-
-// ReadSourceLine fetches exactly one line by number from the source
-// file, without context. Used by GetContextByLines-style callers that
-// only need the matched line itself. Currently unused within M3 but
-// kept here to avoid duplicating the index-jump logic when M5 wires
-// up the HTTP samples endpoint.
-//
-// We leave it exported so downstream modules can re-use it.
-func ReadSourceLine(sourcePath string, lineNumber int, useIndex bool) (string, error) {
-	lines, idx, _, err := readLineWindow(sourcePath, lineNumber, 0, 0, useIndex)
-	if err != nil {
-		return "", err
-	}
-	if idx < 0 || idx >= len(lines) {
-		return "", errors.New("readSourceLine: line not found")
-	}
-	return lines[idx], nil
-}
 
 // largeFileThresholdBytes returns the size in bytes at which a file
 // triggers unified-index + trace cache. Pulls from config so tests can
