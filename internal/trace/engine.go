@@ -237,20 +237,13 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 			fileChunkCounts[fileID] = len(tasks)
-			// Single-chunk flag: when a file lives in exactly ONE chunk,
-			// the ripgrep output's relative line number IS the absolute
-			// line number (no chunk offset to add). Stage 9 Round 2 R1-B2
-			// fix: Python's single-chunk path computes this correctly;
-			// Go must match so the CLI JSON output carries real line
-			// numbers instead of -1 sentinels.
-			singleChunk := len(tasks) == 1
 			// Pass the REMAINING cap (opts.MaxResults minus already-collected
 			// matches) so ProcessAllChunks can cooperatively cancel as
 			// soon as this file alone contributes enough to close the
 			// overall budget. remainingResults returns nil when no cap
-			// was set at all. Stage 9 Round 5 R5-B2 fix.
+			// was set at all.
 			remaining := remainingResults(opts.MaxResults, len(allMatches))
-			allChunkMatches, allChunkContexts, perr := ProcessAllChunks(
+			chunkResults, perr := ProcessAllChunks(
 				ctx, tasks, patternIDs, patternOrder,
 				opts.RgExtraArgs, opts.ContextBefore, opts.ContextAfter,
 				remaining,
@@ -264,18 +257,34 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
-			// Flatten + identify.
-			for _, chunkMatches := range allChunkMatches {
-				for _, rm := range chunkMatches {
+			// Turn ripgrep's chunk-relative line numbers into file
+			// absolute ones. Chunks are newline-aligned, so the
+			// newlines counted while feeding the chunks before this one
+			// are exactly the lines that precede it: chunk 0 starts at
+			// line 1, and every later chunk starts one line after its
+			// predecessor's last. A chunk canceled part-way through
+			// (the cap fired) counted only part of its newlines, so
+			// every chunk after it reports an unknown line number
+			// rather than a wrong one.
+			startLine := 1
+			numbered := true
+			for _, res := range chunkResults {
+				for _, rm := range res.Matches {
+					absLine := -1
+					if numbered {
+						absLine = startLine + rm.LineNumber - 1
+					}
 					matchedIDs := IdentifyMatchingPatterns(
 						rm.LineText, rm.Submatches,
 						patternIDs, patternOrder, opts.RgExtraArgs,
 					)
 					for _, pid := range matchedIDs {
 						m := toMatch(pid, fileID, rm)
-						if singleChunk && m.RelativeLineNumber != nil {
-							// Single-chunk: absolute == relative. Python parity.
-							m.AbsoluteLineNumber = *m.RelativeLineNumber
+						m.AbsoluteLineNumber = absLine
+						if absLine > 0 {
+							// rx-python reports the absolute number in
+							// both fields once it knows it.
+							m.RelativeLineNumber = ptrInt(absLine)
 						}
 						allMatches = append(allMatches, m)
 						cacheCandidates[b.path] = append(cacheCandidates[b.path], m)
@@ -285,26 +294,26 @@ func (e *Engine) RunWithOptions(
 						})
 					}
 				}
-			}
-			for _, chunkContexts := range allChunkContexts {
-				for _, rc := range chunkContexts {
-					absLine := -1
-					if singleChunk {
-						// Context lines share the same rule: in single-chunk
-						// files the chunker's "line number" already IS the
-						// file's absolute line number.
-						absLine = rc.LineNumber
+				for _, rc := range res.Contexts {
+					lineNum, absLine := rc.LineNumber, -1
+					if numbered {
+						absLine = startLine + rc.LineNumber - 1
+						lineNum = absLine
 					}
 					allContexts = append(allContexts, contextWithFile{
 						fileID: fileID,
 						ctx: rxtypes.ContextLine{
-							RelativeLineNumber: rc.LineNumber,
+							RelativeLineNumber: lineNum,
 							AbsoluteLineNumber: absLine,
 							LineText:           rc.LineText,
 							AbsoluteOffset:     rc.Offset,
 						},
 					})
 				}
+				if !res.Complete {
+					numbered = false
+				}
+				startLine += int(res.Newlines)
 			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, countMatchesForFile(allMatches, fileID))
 		case "compressed":
@@ -451,6 +460,13 @@ func (e *Engine) RunWithOptions(
 	// -------------------------------------------------------------------
 	// Phase 4: sort, truncate, finalize
 	// -------------------------------------------------------------------
+	// A canceled chunk leaves the chunks after it without a line
+	// number. That only happens when a cap fired, so the offsets left
+	// over are few; an existing index answers them from the nearest
+	// checkpoint. Files with no index keep the unknown marker rather
+	// than paying for a full pass.
+	resolveUnknownLineNumbers(fileIDs, allMatches, allContexts)
+
 	sort.SliceStable(allMatches, func(i, j int) bool {
 		if allMatches[i].File != allMatches[j].File {
 			return allMatches[i].File < allMatches[j].File

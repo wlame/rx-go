@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -105,6 +106,37 @@ type ContextRaw struct {
 	LineText   string
 }
 
+// ChunkRequest is one unit of work for ProcessChunk.
+type ChunkRequest struct {
+	Task          FileTask
+	PatternIDs    map[string]string
+	PatternOrder  []string
+	RgExtraArgs   []string
+	ContextBefore int
+	ContextAfter  int
+	// Budget is the shared match cap for the whole scan, or nil when
+	// the caller set no cap. See MatchBudget.
+	Budget *MatchBudget
+}
+
+// ChunkResult is what one chunk scan produces.
+type ChunkResult struct {
+	Matches  []MatchRaw
+	Contexts []ContextRaw
+	// Newlines counts the '\n' bytes in the chunk. Chunks are
+	// newline-aligned, so summing this over the chunks before a chunk
+	// gives the number of lines before it — which is what turns
+	// ripgrep's chunk-relative line numbers into file-absolute ones
+	// without a second pass over the file.
+	Newlines int64
+	// Complete is true when the whole chunk reached ripgrep. A chunk
+	// canceled part-way through (a cap fired, the request was
+	// aborted) stops early, so its Newlines is a partial count and the
+	// chunks after it cannot be numbered from it.
+	Complete bool
+	Elapsed  time.Duration
+}
+
 // ProcessChunk runs `rg --json` over a single chunk of a file, feeding
 // the chunk bytes in via stdin using os.File.ReadAt (Decision 5.1:
 // native chunking, no `dd` subprocess). It parses the rg event stream,
@@ -127,14 +159,13 @@ type ContextRaw struct {
 // that would be a chunker bug, not something to patch at merge time.
 //
 // elapsed is time.Since(start) measured around the whole chunk pipeline.
-func ProcessChunk(
-	ctx context.Context,
-	task FileTask,
-	patternIDs map[string]string,
-	patternOrder []string,
-	rgExtraArgs []string,
-	contextBefore, contextAfter int,
-) (matches []MatchRaw, contexts []ContextRaw, elapsed time.Duration, err error) {
+func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err error) {
+	// Locals for the fields the pipeline below reads repeatedly.
+	task := req.Task
+	patternIDs, patternOrder := req.PatternIDs, req.PatternOrder
+	rgExtraArgs := req.RgExtraArgs
+	contextBefore, contextAfter := req.ContextBefore, req.ContextAfter
+
 	start := time.Now()
 	// Stage 9 Round 2 S6: gate all metric updates behind the package
 	// enabled switch — CLI-mode callers pay no cost here.
@@ -175,12 +206,12 @@ func ProcessChunk(
 	// stdin pipe carries the chunk bytes from our ReadAt loop into rg.
 	rgStdin, err := rgCmd.StdinPipe()
 	if err != nil {
-		return nil, nil, time.Since(start), fmt.Errorf("ProcessChunk: rg stdin pipe: %w", err)
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: rg stdin pipe: %w", err)
 	}
 	// stdout is the rg --json event stream we parse.
 	rgStdout, err := rgCmd.StdoutPipe()
 	if err != nil {
-		return nil, nil, time.Since(start), fmt.Errorf("ProcessChunk: rg stdout pipe: %w", err)
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: rg stdout pipe: %w", err)
 	}
 	// stderr captured to a buffered string — surfaces rg errors
 	// (invalid regex, etc.) when the worker returns an error.
@@ -188,7 +219,7 @@ func ProcessChunk(
 	rgCmd.Stderr = &stderrBuf
 
 	if startErr := rgCmd.Start(); startErr != nil {
-		return nil, nil, time.Since(start), fmt.Errorf("ProcessChunk: rg start: %w", startErr)
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: rg start: %w", startErr)
 	}
 
 	// Open the source file. ReadAt is goroutine-safe and doesn't move
@@ -199,7 +230,7 @@ func ProcessChunk(
 		_ = rgStdin.Close()
 		_ = rgStdout.Close()
 		_ = rgCmd.Wait()
-		return nil, nil, time.Since(start), fmt.Errorf("ProcessChunk: open %s: %w", task.FilePath, err)
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: open %s: %w", task.FilePath, err)
 	}
 	defer func() { _ = src.Close() }()
 
@@ -214,20 +245,47 @@ func ProcessChunk(
 	// event-parse errors. Both must finish before we Wait() on rg.
 	g, gctx := errgroup.WithContext(ctx)
 
-	// Goroutine 1: pump chunk bytes into rg stdin.
+	// Goroutine 1: pump chunk bytes into rg stdin, counting newlines on
+	// the way past. The count costs nothing extra — these bytes are
+	// already in hand — and it is what lets the engine report absolute
+	// line numbers for a chunked file without reading it twice.
+	//
+	// Both counters are written here and read after g.Wait() below,
+	// which is the happens-before edge that makes plain variables safe.
+	var (
+		newlines int64
+		copied   int64
+	)
 	g.Go(func() error {
 		defer func() { _ = rgStdin.Close() }()
 		// 64 KB copy buffer is a good tradeoff — larger wastes memory
 		// per concurrent worker; smaller makes more syscalls.
 		buf := make([]byte, 64*1024)
-		_, copyErr := io.CopyBuffer(rgStdin, section, buf)
-		// If the caller canceled, we might get "broken pipe" back
-		// from rgStdin.Write as rg exits early. Swallow that — it's a
-		// clean shutdown, not a real error.
-		if copyErr != nil && !isBrokenPipe(copyErr) && gctx.Err() == nil {
-			return fmt.Errorf("stdin copy: %w", copyErr)
+		for {
+			n, readErr := section.Read(buf)
+			if n > 0 {
+				newlines += int64(bytes.Count(buf[:n], newlineBytes))
+				copied += int64(n)
+				if _, writeErr := rgStdin.Write(buf[:n]); writeErr != nil {
+					// rg exits early on cancellation, which surfaces
+					// here as a broken pipe. That is a clean shutdown,
+					// not a failure.
+					if isBrokenPipe(writeErr) || gctx.Err() != nil {
+						return nil
+					}
+					return fmt.Errorf("stdin copy: %w", writeErr)
+				}
+			}
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					return nil
+				}
+				if gctx.Err() != nil {
+					return nil
+				}
+				return fmt.Errorf("stdin copy: %w", readErr)
+			}
 		}
-		return nil
 	})
 
 	// Goroutine 2: parse rg --json events and collect matches.
@@ -285,6 +343,11 @@ func ProcessChunk(
 					// narrows this down post-hoc per Python parity.
 					PatternIDs: append([]string(nil), patternOrder...),
 				})
+				// Charge the shared cap as the match arrives, so the
+				// worker that spends the last of it stops every
+				// sibling immediately instead of at the end of its
+				// chunk.
+				req.Budget.Charge()
 			case RgEventContext:
 				if ev.Context == nil {
 					return nil
@@ -315,7 +378,14 @@ func ProcessChunk(
 	groupErr := g.Wait()
 	waitErr := rgCmd.Wait()
 
-	elapsed = time.Since(start)
+	elapsed := time.Since(start)
+	result := ChunkResult{
+		Matches:  mu.matches,
+		Contexts: mu.contexts,
+		Newlines: newlines,
+		Complete: copied == task.Count,
+		Elapsed:  elapsed,
+	}
 
 	// rg exits 1 when no matches found — that's NOT an error for us.
 	// Exit 2 is a real error (bad regex, etc.).
@@ -332,7 +402,7 @@ func ProcessChunk(
 		// expected and we return context.Canceled so the errgroup
 		// signaling works correctly.
 		if ctx.Err() != nil {
-			return mu.matches, mu.contexts, elapsed, ctx.Err()
+			return result, ctx.Err()
 		}
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) {
@@ -344,19 +414,19 @@ func ProcessChunk(
 				// error the caller can recognize instead of being folded
 				// into "this file was skipped".
 				if isRegexParseError(msg) {
-					return nil, nil, elapsed, fmt.Errorf("%w: %s", ErrInvalidPattern, msg)
+					return ChunkResult{Elapsed: elapsed}, fmt.Errorf("%w: %s", ErrInvalidPattern, msg)
 				}
-				return nil, nil, elapsed, fmt.Errorf("rg exit %d: %s", code, msg)
+				return ChunkResult{Elapsed: elapsed}, fmt.Errorf("rg exit %d: %s", code, msg)
 			}
 		} else if !errors.Is(waitErr, context.Canceled) {
-			return nil, nil, elapsed, fmt.Errorf("rg wait: %w", waitErr)
+			return ChunkResult{Elapsed: elapsed}, fmt.Errorf("rg wait: %w", waitErr)
 		}
 	}
 	if groupErr != nil && !errors.Is(groupErr, context.Canceled) {
-		return nil, nil, elapsed, groupErr
+		return ChunkResult{Elapsed: elapsed}, groupErr
 	}
 
-	return mu.matches, mu.contexts, elapsed, nil
+	return result, nil
 }
 
 // ProcessAllChunks runs ProcessChunk over every task in parallel,
@@ -410,61 +480,27 @@ func ProcessAllChunks(
 	rgExtraArgs []string,
 	contextBefore, contextAfter int,
 	maxResults *int,
-) ([][]MatchRaw, [][]ContextRaw, error) {
-	allMatches := make([][]MatchRaw, len(tasks))
-	allContexts := make([][]ContextRaw, len(tasks))
+) ([]ChunkResult, error) {
+	results := make([]ChunkResult, len(tasks))
 	if len(tasks) == 0 {
-		return allMatches, allContexts, nil
+		return results, nil
 	}
 
 	workers := workerLimit()
-	// Derive an explicit cancel so the tally goroutine can terminate
-	// in-flight workers when the cap is reached. errgroup.WithContext
-	// gives us cancel-on-error; we need cancel-on-success-too.
+	// Derive an explicit cancel so the budget can terminate in-flight
+	// workers when the cap is reached. errgroup.WithContext gives us
+	// cancel-on-error; we need cancel-on-success-too.
 	gctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	g, gctx := errgroup.WithContext(gctx)
 	g.SetLimit(workers)
 
-	// tally is buffered so workers never block on send. Size = len(tasks)
-	// is the theoretical maximum (one send per chunk); in practice most
-	// writes complete instantly as the goroutine drains concurrently.
-	tally := make(chan int, len(tasks))
-	// done signals the accumulator to exit. Closed exactly once via
-	// defer below.
-	done := make(chan struct{})
-	// capHit records whether the cap fired — used by the caller to
-	// distinguish cooperative-cancel from external-cancel when
-	// classifying errors returned from g.Wait().
-	var capHit bool
-	go func() {
-		defer close(done)
-		total := 0
-		for {
-			select {
-			case n, ok := <-tally:
-				if !ok {
-					return
-				}
-				total += n
-				if maxResults != nil && total >= *maxResults {
-					// Fire cancel exactly once — further writes to tally
-					// still succeed (channel is buffered) and will be
-					// drained by this loop until the channel closes.
-					if !capHit {
-						capHit = true
-						cancel()
-					}
-				}
-			case <-gctx.Done():
-				// Outer ctx canceled — drain remaining sends so blocked
-				// workers (if any) can return. The buffered channel
-				// means they won't actually be blocked, but we still
-				// need to exit cleanly when Wait returns below.
-				return
-			}
-		}
-	}()
+	// One budget shared by every worker on this file. Nil when the
+	// caller set no cap, in which case charging it is a no-op.
+	var budget *MatchBudget
+	if maxResults != nil {
+		budget = NewMatchBudget(*maxResults, cancel)
+	}
 
 	for i := range tasks {
 		i := i // capture for closure
@@ -477,64 +513,47 @@ func ProcessAllChunks(
 			if err := gctx.Err(); err != nil {
 				return nil
 			}
-			matches, contexts, _, err := ProcessChunk(
-				gctx, task, patternIDs, patternOrder,
-				rgExtraArgs, contextBefore, contextAfter,
-			)
+			res, err := ProcessChunk(gctx, ChunkRequest{
+				Task:          task,
+				PatternIDs:    patternIDs,
+				PatternOrder:  patternOrder,
+				RgExtraArgs:   rgExtraArgs,
+				ContextBefore: contextBefore,
+				ContextAfter:  contextAfter,
+				Budget:        budget,
+			})
+			// Record whatever the chunk produced either way: a chunk
+			// canceled by the cap still holds the matches it found
+			// before the cancel, and its Complete flag tells the
+			// caller its newline count is partial.
+			results[i] = res
 			if err != nil {
-				// context.Canceled from rg subprocess being killed by
+				// context.Canceled from rg being killed by
 				// exec.CommandContext on our cancel() is an EXPECTED
 				// termination — cooperative cancel on max_results cap,
-				// not a failure. Swallow here so g.Wait doesn't return
-				// it as the error. Partial per-chunk results (matches)
-				// may still be populated; we record them below.
+				// not a failure. Swallow it so g.Wait doesn't report it.
 				if errors.Is(err, context.Canceled) {
-					// Still publish any matches we collected before
-					// cancellation — the cap-tally loop can count
-					// them, though at this point it won't change the
-					// outcome since cancel has already fired.
-					allMatches[i] = matches
-					allContexts[i] = contexts
-					select {
-					case tally <- len(matches):
-					default:
-						// Channel is sized len(tasks); this cannot
-						// overflow under normal conditions. `default`
-						// is a defensive no-op.
-					}
 					return nil
 				}
 				return err
-			}
-			allMatches[i] = matches
-			allContexts[i] = contexts
-			// Publish match count to the accumulator. Non-blocking
-			// because tally is buffered at len(tasks).
-			select {
-			case tally <- len(matches):
-			default:
 			}
 			return nil
 		})
 	}
 	waitErr := g.Wait()
-	// Close tally so the accumulator goroutine exits. Must happen AFTER
-	// Wait so we don't close while workers are still writing.
-	close(tally)
-	<-done
 
 	// Classify the final error. Three shapes:
-	//  a) nil                — all good
-	//  b) context.Canceled + capHit  — cooperative cancel, swallow (not an error)
-	//  c) context.Canceled + !capHit — external cancel (outer ctx), surface
-	//  d) other              — real error (bad regex, I/O), surface
-	if waitErr != nil && errors.Is(waitErr, context.Canceled) && capHit {
-		return allMatches, allContexts, nil
+	//  a) nil                        — all good
+	//  b) context.Canceled + cap spent — cooperative cancel, swallow
+	//  c) context.Canceled, cap unspent — external cancel (outer ctx), surface
+	//  d) other                      — real error (bad regex, I/O), surface
+	if waitErr != nil && errors.Is(waitErr, context.Canceled) && budget.Exhausted() {
+		return results, nil
 	}
 	if waitErr != nil {
-		return allMatches, allContexts, waitErr
+		return results, waitErr
 	}
-	return allMatches, allContexts, nil
+	return results, nil
 }
 
 // workerLimit returns the effective concurrency cap.
@@ -634,3 +653,7 @@ func isRegexParseError(stderr string) bool {
 	return strings.Contains(lowered, "regex parse error") ||
 		strings.Contains(lowered, "error parsing regex")
 }
+
+// newlineBytes is the separator the chunk counter looks for. Declared
+// once so the per-buffer count in ProcessChunk allocates nothing.
+var newlineBytes = []byte{'\n'}

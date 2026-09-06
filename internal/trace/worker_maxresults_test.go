@@ -80,7 +80,7 @@ func TestProcessAllChunks_MaxResultsCancelsSiblings(t *testing.T) {
 	tasks := splitIntoTasks(path, size, numChunks)
 
 	maxResults := 5
-	allMatches, _, err := ProcessAllChunks(
+	allMatchesResults, err := ProcessAllChunks(
 		context.Background(), tasks,
 		map[string]string{"p1": "MATCH"}, []string{"p1"},
 		nil, 0, 0,
@@ -89,6 +89,7 @@ func TestProcessAllChunks_MaxResultsCancelsSiblings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessAllChunks: %v", err)
 	}
+	allMatches := chunkMatches(allMatchesResults)
 
 	totalMatches := 0
 	chunksThatCompleted := 0
@@ -132,7 +133,7 @@ func TestProcessAllChunks_CanceledContextSkipsEveryChunk(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	allMatches, _, err := ProcessAllChunks(
+	allMatchesResults, err := ProcessAllChunks(
 		ctx, tasks,
 		map[string]string{"p1": "MATCH"}, []string{"p1"},
 		nil, 0, 0,
@@ -142,7 +143,7 @@ func TestProcessAllChunks_CanceledContextSkipsEveryChunk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessAllChunks: %v", err)
 	}
-	for i, slot := range allMatches {
+	for i, slot := range chunkMatches(allMatchesResults) {
 		if len(slot) > 0 {
 			t.Fatalf("chunk %d returned %d matches on an already-canceled "+
 				"context — the skip fast-path did not fire", i, len(slot))
@@ -160,7 +161,7 @@ func TestProcessAllChunks_NilMaxResultsScansEverything(t *testing.T) {
 	path, size := writeAllMatchingFile(t, "full-scan.txt", 1_000)
 	tasks := splitIntoTasks(path, size, numChunks)
 
-	allMatches, _, err := ProcessAllChunks(
+	allMatchesResults, err := ProcessAllChunks(
 		context.Background(), tasks,
 		map[string]string{"p1": "MATCH"}, []string{"p1"},
 		nil, 0, 0,
@@ -169,6 +170,7 @@ func TestProcessAllChunks_NilMaxResultsScansEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessAllChunks: %v", err)
 	}
+	allMatches := chunkMatches(allMatchesResults)
 	total := 0
 	for _, s := range allMatches {
 		total += len(s)
@@ -192,7 +194,7 @@ func TestProcessAllChunks_MaxResultsLargerThanFile(t *testing.T) {
 	tasks := []FileTask{{TaskID: 0, FilePath: path, Offset: 0, Count: size}}
 
 	limit := 100_000
-	allMatches, _, err := ProcessAllChunks(
+	allMatchesResults, err := ProcessAllChunks(
 		context.Background(), tasks,
 		map[string]string{"p1": "MATCH"}, []string{"p1"},
 		nil, 0, 0,
@@ -201,6 +203,7 @@ func TestProcessAllChunks_MaxResultsLargerThanFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessAllChunks: %v", err)
 	}
+	allMatches := chunkMatches(allMatchesResults)
 	if len(allMatches[0]) != 500 {
 		t.Fatalf("got %d matches, want 500", len(allMatches[0]))
 	}
