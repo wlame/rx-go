@@ -59,18 +59,24 @@ func TestWorker_RangeContainmentDedup(t *testing.T) {
 		task0 := FileTask{TaskID: 0, FilePath: path, Offset: 0, Count: 6000}
 		task1 := FileTask{TaskID: 1, FilePath: path, Offset: 6000, Count: 6000}
 
-		matches0, _, _, err := ProcessChunk(
-			context.Background(), task0, patterns, order, nil, 0, 0,
-		)
+		res0, err := ProcessChunk(context.Background(), ChunkRequest{
+			Task:         task0,
+			PatternIDs:   patterns,
+			PatternOrder: order,
+		})
 		if err != nil {
 			t.Fatalf("ProcessChunk task0: %v", err)
 		}
-		matches1, _, _, err := ProcessChunk(
-			context.Background(), task1, patterns, order, nil, 0, 0,
-		)
+		matches0 := res0.Matches
+		res1, err := ProcessChunk(context.Background(), ChunkRequest{
+			Task:         task1,
+			PatternIDs:   patterns,
+			PatternOrder: order,
+		})
 		if err != nil {
 			t.Fatalf("ProcessChunk task1: %v", err)
 		}
+		matches1 := res1.Matches
 
 		assertDisjointUnion(t, matches0, matches1, 1000, 12)
 	})
@@ -114,18 +120,24 @@ func TestWorker_RangeContainmentDedup(t *testing.T) {
 		task0 := FileTask{TaskID: 0, FilePath: path, Offset: 0, Count: 7000}
 		task1 := FileTask{TaskID: 1, FilePath: path, Offset: 5000, Count: 7000}
 
-		matches0, _, _, err := ProcessChunk(
-			context.Background(), task0, patterns, order, nil, 0, 0,
-		)
+		res0, err := ProcessChunk(context.Background(), ChunkRequest{
+			Task:         task0,
+			PatternIDs:   patterns,
+			PatternOrder: order,
+		})
 		if err != nil {
 			t.Fatalf("ProcessChunk task0: %v", err)
 		}
-		matches1, _, _, err := ProcessChunk(
-			context.Background(), task1, patterns, order, nil, 0, 0,
-		)
+		matches0 := res0.Matches
+		res1, err := ProcessChunk(context.Background(), ChunkRequest{
+			Task:         task1,
+			PatternIDs:   patterns,
+			PatternOrder: order,
+		})
 		if err != nil {
 			t.Fatalf("ProcessChunk task1: %v", err)
 		}
+		matches1 := res1.Matches
 
 		// Both workers kept matches strictly inside THEIR OWN ranges.
 		for _, m := range matches0 {
@@ -151,13 +163,14 @@ func TestWorker_RangeContainmentDedup(t *testing.T) {
 			t.Fatalf("CreateFileTasks: %v", err)
 		}
 
-		allMatches, _, err := ProcessAllChunks(
+		allMatchesResults, err := ProcessAllChunks(
 			context.Background(), tasks,
 			patterns, order, nil, 0, 0, nil,
 		)
 		if err != nil {
 			t.Fatalf("ProcessAllChunks: %v", err)
 		}
+		allMatches := chunkMatches(allMatchesResults)
 
 		var total []MatchRaw
 		for _, slot := range allMatches {

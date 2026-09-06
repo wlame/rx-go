@@ -3,6 +3,7 @@ package output
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -242,8 +243,9 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 	if len(resp.Matches) > 0 {
 		b.WriteString("\nMatches (file:line:offset [pattern]):\n")
 		for _, m := range resp.Matches {
-			fmt.Fprintf(&b, "  %s:%d:%d [%s]\n",
-				resp.Files[m.File], matchDisplayLine(m), m.Offset, resp.Patterns[m.Pattern])
+			fmt.Fprintf(&b, "  %s:%s:%d [%s]\n",
+				resp.Files[m.File], formatLineNumber(matchDisplayLine(m)),
+				m.Offset, resp.Patterns[m.Pattern])
 		}
 	}
 
@@ -253,17 +255,26 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 	return b.String()
 }
 
-// matchDisplayLine is the line number to print: the absolute one when the
-// backend knows it, otherwise the chunk-relative one, otherwise -1.
-// rx-python's to_cli picks the same way.
+// matchDisplayLine is the line number to print: the one the scan
+// resolved against the whole file, or 0 when it could not. A chunk
+// scanned under a cap can leave a match unnumbered, and the number
+// ripgrep gave it counts from the start of its chunk — printing that
+// as if it were a file line is how a search points a reader at the
+// wrong line.
 func matchDisplayLine(m rxtypes.Match) int {
-	if m.AbsoluteLineNumber != -1 {
+	if m.AbsoluteLineNumber >= 1 {
 		return m.AbsoluteLineNumber
 	}
-	if m.RelativeLineNumber != nil {
-		return *m.RelativeLineNumber
+	return 0
+}
+
+// formatLineNumber renders a line number for the human output, marking
+// an unresolved one rather than inventing a value for it.
+func formatLineNumber(n int) string {
+	if n < 1 {
+		return "?"
 	}
-	return -1
+	return strconv.Itoa(n)
 }
 
 // chunkStats reports how many files were split and the total chunk count.

@@ -31,12 +31,13 @@ func TestProcessChunk_SingleChunkMatchesAllLines(t *testing.T) {
 	patterns := map[string]string{"p1": "error"}
 	order := []string{"p1"}
 
-	matches, _, _, err := ProcessChunk(
-		context.Background(), task, patterns, order, nil, 0, 0,
-	)
+	res, err := ProcessChunk(context.Background(), ChunkRequest{
+		Task: task, PatternIDs: patterns, PatternOrder: order,
+	})
 	if err != nil {
 		t.Fatalf("ProcessChunk: %v", err)
 	}
+	matches := res.Matches
 	if len(matches) != 2 {
 		t.Fatalf("want 2 matches, got %d: %+v", len(matches), matches)
 	}
@@ -62,18 +63,16 @@ func TestProcessChunk_NoMatches(t *testing.T) {
 	content := []byte("no interesting content\nhere at all\n")
 	p := mustWriteFile(t, content)
 
-	matches, _, _, err := ProcessChunk(
-		context.Background(),
-		FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))},
-		map[string]string{"p1": "nomatchpossible"},
-		[]string{"p1"},
-		nil, 0, 0,
-	)
+	res, err := ProcessChunk(context.Background(), ChunkRequest{
+		Task:         FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))},
+		PatternIDs:   map[string]string{"p1": "nomatchpossible"},
+		PatternOrder: []string{"p1"},
+	})
 	if err != nil {
 		t.Fatalf("ProcessChunk: %v", err)
 	}
-	if len(matches) != 0 {
-		t.Errorf("want 0 matches, got %d", len(matches))
+	if len(res.Matches) != 0 {
+		t.Errorf("want 0 matches, got %d", len(res.Matches))
 	}
 }
 
@@ -90,14 +89,15 @@ func TestProcessChunk_DedupFilter(t *testing.T) {
 	p := mustWriteFile(t, content)
 
 	task0 := FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: 24} // covers "alpha\nbeta" with boundary after "beta\n"
-	matches, _, _, err := ProcessChunk(
-		context.Background(), task0,
-		map[string]string{"p1": "error"}, []string{"p1"},
-		nil, 0, 0,
-	)
+	res, err := ProcessChunk(context.Background(), ChunkRequest{
+		Task:         task0,
+		PatternIDs:   map[string]string{"p1": "error"},
+		PatternOrder: []string{"p1"},
+	})
 	if err != nil {
 		t.Fatalf("ProcessChunk: %v", err)
 	}
+	matches := res.Matches
 	// task0 must see exactly the 2 matches whose absolute offset is in [0, 24).
 	// Line 1 starts at offset 0 (within range).
 	// Line 2 starts at offset 12 (within range; 24-12=12 bytes remaining,
@@ -121,17 +121,16 @@ func TestProcessChunk_IncompatibleArgsAreFiltered(t *testing.T) {
 	p := mustWriteFile(t, content)
 	// We can't easily verify the exact argv, but we CAN verify that
 	// passing these doesn't blow up and still returns the match.
-	matches, _, _, err := ProcessChunk(
-		context.Background(),
-		FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))},
-		map[string]string{"p1": "hello"},
-		[]string{"p1"},
-		[]string{"--byte-offset", "--only-matching"},
-		0, 0,
-	)
+	res, err := ProcessChunk(context.Background(), ChunkRequest{
+		Task:         FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))},
+		PatternIDs:   map[string]string{"p1": "hello"},
+		PatternOrder: []string{"p1"},
+		RgExtraArgs:  []string{"--byte-offset", "--only-matching"},
+	})
 	if err != nil {
 		t.Fatalf("ProcessChunk: %v", err)
 	}
+	matches := res.Matches
 	if len(matches) != 1 {
 		t.Fatalf("want 1 match, got %d", len(matches))
 	}
@@ -151,7 +150,7 @@ func TestProcessAllChunks_PreservesTaskOrdering(t *testing.T) {
 		{TaskID: 1, FilePath: p, Offset: 12, Count: 11}, // beta error\n
 		{TaskID: 2, FilePath: p, Offset: 23, Count: int64(len(content)) - 23},
 	}
-	allMatches, _, err := ProcessAllChunks(
+	allMatchesResults, err := ProcessAllChunks(
 		context.Background(), tasks,
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil, // no max_results cap
@@ -159,6 +158,7 @@ func TestProcessAllChunks_PreservesTaskOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessAllChunks: %v", err)
 	}
+	allMatches := chunkMatches(allMatchesResults)
 	if len(allMatches) != len(tasks) {
 		t.Fatalf("len(allMatches) = %d, want %d", len(allMatches), len(tasks))
 	}
@@ -214,4 +214,14 @@ func TestIdentifyMatchingPatterns_EmptyOnStaleCache(t *testing.T) {
 	if len(got) != 0 {
 		t.Errorf("got %v, want []", got)
 	}
+}
+
+// chunkMatches flattens per-chunk results into the per-chunk match
+// slices the boundary and cap assertions are written against.
+func chunkMatches(results []ChunkResult) [][]MatchRaw {
+	out := make([][]MatchRaw, len(results))
+	for i, r := range results {
+		out[i] = r.Matches
+	}
+	return out
 }

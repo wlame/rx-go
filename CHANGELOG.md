@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Line numbers on a file large enough to be split across chunks were
+  the line's position inside its chunk, not inside the file: a match on
+  line 255,437 of a 487 MB log was reported as line 30,627, and
+  `absolute_line_number` was the -1 "unknown" marker. The workers now
+  count newlines in the bytes they already stream to ripgrep, which
+  gives every chunk its first line number and every match its real one
+  at no extra I/O. When a `--max-results` cap cancels a chunk part-way
+  the count cannot continue, and those matches keep the unknown marker
+  and resolve against the file's index when one exists — rather than
+  reporting a chunk-relative number as if it were a file line. The
+  human output prints `?` for a line number that stayed unknown.
+
 ## [0.2.0] - 2026-09-03
 
 ### Added
