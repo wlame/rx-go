@@ -180,6 +180,14 @@ func runTrace(out io.Writer, p traceParams) error {
 		return err
 	}
 
+	// Piped input, either named as "-" or arriving with no path at all.
+	if spooled, cleanup, sErr := spoolStdinFor(filePaths); sErr != nil {
+		return exitWithError(os.Stderr, ExitGenericError, "%s", sErr.Error())
+	} else if cleanup != nil {
+		defer cleanup()
+		filePaths = spooled
+	}
+
 	// Ripgrep binary lookup. Missing rg is a 1 exit with clear error.
 	if _, rgErr := exec.LookPath("rg"); rgErr != nil {
 		return exitWithError(os.Stderr, ExitGenericError, "ripgrep (rg) is not installed or not on PATH")
@@ -302,14 +310,85 @@ func resolveTracePositionals(p traceParams) ([]string, []string, error) {
 	if len(explicit) == 0 && !stdinIsPipe() {
 		explicit = []string{"."}
 	}
-	// Expand "-" → "/dev/stdin" for future stdin support; not
-	// implemented in M6, so we reject it with a clear error.
-	for _, e := range explicit {
-		if e == "-" {
-			return nil, nil, fmt.Errorf("stdin input ('-') is not yet supported in rx-go")
+	return patterns, explicit, nil
+}
+
+// spoolStdinFor resolves the path list against piped input. It returns
+// the paths to search and a cleanup function when stdin was spooled, or
+// a nil cleanup when there was nothing to read.
+//
+// "-" anywhere in the list means "read stdin here"; an empty list with a
+// pipe on stdin means the same. Stdin that carries nothing falls back to
+// the current directory, which is what rx-python does.
+func spoolStdinFor(filePaths []string) ([]string, func(), error) {
+	named := false
+	for _, p := range filePaths {
+		if p == "-" {
+			named = true
+			break
 		}
 	}
-	return patterns, explicit, nil
+	piped := len(filePaths) == 0 && stdinIsPipe()
+	if !named && !piped {
+		return filePaths, nil, nil
+	}
+
+	spooled, cleanup, err := spoolStdin()
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]string, 0, len(filePaths)+1)
+	for _, p := range filePaths {
+		if p != "-" {
+			out = append(out, p)
+		}
+	}
+	if spooled != "" {
+		out = append(out, spooled)
+	}
+	if len(out) == 0 && !named {
+		// A pipe that carried nothing and no path either: search here,
+		// the same as a bare `rx pattern`. When "-" was named the empty
+		// input is the whole request, and searching the current
+		// directory instead would be a surprise measured in gigabytes.
+		out = []string{"."}
+	}
+	return out, cleanup, nil
+}
+
+// spoolStdin writes piped input to a temporary file and returns its
+// path plus the cleanup that removes it.
+//
+// The engine addresses matches by byte offset in a file it can re-read,
+// which a pipe cannot offer: chunking, the samples resolver and the
+// cache all seek. Spooling buys all of that for the cost of one copy,
+// and it is what rx-python does, down to the `rx_stdin_` prefix that
+// shows up as the searched path in the output.
+//
+// Returns an empty path when stdin carried nothing, which the caller
+// reads as "no input, fall back to the current directory".
+func spoolStdin() (path string, cleanup func(), err error) {
+	tmp, err := os.CreateTemp("", "rx_stdin_*.txt")
+	if err != nil {
+		return "", nil, fmt.Errorf("reading stdin: %w", err)
+	}
+	remove := func() { _ = os.Remove(tmp.Name()) }
+
+	written, copyErr := io.Copy(tmp, os.Stdin)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		remove()
+		return "", nil, fmt.Errorf("reading stdin: %w", copyErr)
+	}
+	if closeErr != nil {
+		remove()
+		return "", nil, fmt.Errorf("reading stdin: %w", closeErr)
+	}
+	if written == 0 {
+		remove()
+		return "", func() {}, nil
+	}
+	return tmp.Name(), remove, nil
 }
 
 // defaultSamplesContext is the window --samples asks for when no explicit

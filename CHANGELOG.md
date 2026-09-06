@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cat file | rx pattern -` exited 1 without a message and
+  `rx pattern < file` returned an empty result: stdin was never
+  implemented, only rejected, and the rejection was swallowed. Piped
+  input is now spooled to a temporary file and searched, the way
+  rx-python does it, so byte offsets, context lines and `--samples` all
+  work on it; the file is removed when the search ends. An explicit `-`
+  with empty input searches nothing rather than falling back to the
+  current directory.
 - `rx samples file.gz --lines=100` printed raw compressed bytes. The
   decompressing path existed only inside the HTTP handler, so the CLI
   sent a compressed file down the plain-file reader; the same command

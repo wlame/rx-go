@@ -59,6 +59,11 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 - With **one or more `-e` flags**: every positional argument is a path.
 - With **no paths** and stdin is not a pipe: defaults to `.` (current
   directory).
+- With **`-` as a path**, or with no paths and a pipe on stdin: the
+  piped input is spooled to a temporary file and searched, and the
+  output names that file. The file is removed when the search ends.
+  A `-` whose input is empty searches nothing and reports no matches,
+  rather than falling back to the current directory.
 - Unknown flags like `-i`, `-w`, `--case-sensitive` parse without
   error (cobra treats them as unknown) so scripts that pass ripgrep
   flags don't fail. Flags `rx` itself recognizes are documented in
