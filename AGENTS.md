@@ -145,29 +145,48 @@ Data flow for `rx trace "pattern" big.log`:
 
 ## Design contracts you must preserve
 
-1. **Bounded reads.** No code path reads more bytes than the request needs,
+1. **One line numbering, everywhere.** A line number in any rx answer is
+   the line's 1-based position in the file's text, counted from the
+   first line. It means the same thing in a match, in a context line, in
+   an index checkpoint, in an anomaly range, in `samples`, over HTTP and
+   in the viewer, and it does not depend on how the file is stored:
+   plain, gzipped and seekable-zstd copies of one log answer
+   identically. The companion rule holds for bytes: an offset is a
+   position in the file's text, which for a compressed file is its
+   decompressed stream — the same coordinate `trace` reports and
+   `samples` accepts. `samples --lines=N` and `samples --offsets=B` are
+   inverses of each other on any file.
+
+   The number is derived, never guessed. Chunk workers count newlines in
+   the bytes they already read, frame scans count them as frames are
+   decompressed, and a pass cut short by a `--max-results` cap leaves
+   `absolute_line_number` at -1 rather than reporting a number counted
+   from the wrong place. `relative_line_number` carries the same value
+   whenever it is known, and only a cut-short scan leaves it
+   chunk-relative. Do not add a surface that numbers lines its own way.
+2. **Bounded reads.** No code path reads more bytes than the request needs,
    except `rx index` (new index), `rx trace` without `--max-results`, and
    `rx compress`. Every new file-reading path gets a budget test that uses
    `counting.InjectOpen` and asserts the byte count.
-2. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
+3. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
    Never add `omitempty` to a schema-documented wire field; use explicit nulls.
    Go-only extensions go under `go_extras`.
-3. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
+4. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
    the server starts; later registration panics; readers are lock-free. Do not
    add a mutex. Stateful detectors register a factory with
    `RegisterLineDetector`, never a shared instance with `Register`.
-4. **Sandbox on every path.** Every HTTP handler and every CLI command that
+5. **Sandbox on every path.** Every HTTP handler and every CLI command that
    receives a path, including output paths, calls
    `paths.ValidatePathWithinRoots` before touching the filesystem.
-5. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
+6. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
    link-local, RFC 1918, CGNAT, multicast and unspecified addresses, and
    resolves DNS at validation time. Do not weaken it. Redirects must be refused
    or re-validated.
-6. **Metrics are off by default.** Wrap every new metric call behind the
+7. **Metrics are off by default.** Wrap every new metric call behind the
    enable gate. Never use `r.URL.Path` as a label; use the chi route pattern.
-7. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
+8. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
    through `internal/webapi/run_detached.go::runDetached`.
-8. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
+9. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
    2 usage error, 3 file not found, 4 access denied, 5 interrupted. They must
    match rx-python.
 
