@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx samples file.gz --lines=100` printed raw compressed bytes. The
+  decompressing path existed only inside the HTTP handler, so the CLI
+  sent a compressed file down the plain-file reader; the same command
+  against `GET /v1/samples` answered correctly. Both now call one
+  resolver, which streams the file through its decompressor and returns
+  the same lines the plain file would. Byte offsets on a compressed
+  file are refused on both surfaces, with exit code 2 on the CLI and
+  400 over HTTP.
+- `rx index file.zst` built a line index over the compressed bytes and
+  reported statistics about them: a 600 MB log came back as 209,365
+  lines with a "mixed" line ending. Indexing a compressed file is now
+  refused with an explanation, on the CLI and on `POST /v1/index`
+  (400), because a byte offset into compressed data names no line.
 - `--max-results` waited for a whole chunk to finish before it counted,
   so a cap could not stop a scan any earlier than the first chunk's
   completion: `--max-results=1` took 7.8 seconds on an 8.2 GB log and
