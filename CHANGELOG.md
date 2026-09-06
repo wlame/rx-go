@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A search of a seekable-zstd file never returned when anything stopped
+  it early: `--max-results` on a 55 MB `.zst` hung indefinitely, and the
+  same request over HTTP held the handler open and blocked shutdown. The
+  frames are fed to ripgrep through a pipe whose only reader is
+  ripgrep's own stdin, so once ripgrep was killed the writer blocked on
+  a write nobody would ever read. The reader is now closed before the
+  scan waits for the writer, and a ripgrep killed by a cap is read as
+  the cancellation it is rather than as a crash that made the file
+  unreadable — the capped search returns exactly the requested number of
+  matches in about half a second.
 - A trace cache hit returned the wrong lines and took minutes. The
   cache stores a byte offset and a line number per match; the line
   number was the one counted inside a chunk, and rebuilding read "line
