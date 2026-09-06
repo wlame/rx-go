@@ -116,7 +116,12 @@ func (e *Engine) RunWithOptions(
 	// -------------------------------------------------------------------
 	filePaths, scannedDirs, skipped := expandPaths(paths, !opts.NoRecursive)
 	if len(filePaths) == 0 {
+		// Nothing to search still answers with the request it was
+		// given: an empty request id and a null path made a skipped
+		// file indistinguishable from a malformed response.
 		return &rxtypes.TraceResponse{
+			RequestID:    opts.RequestID,
+			Path:         emptyIfNilStrings(append([]string(nil), paths...)),
 			Patterns:     patternIDsMap(patterns),
 			Files:        map[string]string{},
 			Matches:      []rxtypes.Match{},
