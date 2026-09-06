@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A match reported a different line number depending on how the file was
+  stored. A search of a `.gz` called the line unknown even though
+  ripgrep had read the whole file in one pass, and a search of a
+  seekable `.zst` reported the line's position inside its frame — line
+  24,014 of a 600 MB log came back as 407. Both now report the line's
+  place in the file: the frames count their newlines as they are
+  decompressed for the scan, which is what places each frame in the
+  file, and a frame the scan never reached leaves its matches unnumbered
+  rather than numbered from the wrong place. The same log stored plain,
+  gzipped and as seekable zstd now answers identically, match for match.
+- `rx samples --lines=N` on a compressed file reports the byte offset of
+  that line in the decompressed stream instead of -1. That is the
+  coordinate system a search reports its matches in, so the two surfaces
+  name the same byte for the same line.
+- The unified index format is version 3, matching rx-python, where the
+  checkpoints in a compressed file's index used to name the line before
+  the one that starts at the recorded offset. Indexes written earlier
+  are rebuilt on first use.
 - `rx serve` on a fresh machine installed no viewer at all: rx-viewer
   v0.3.0 was published on 2026-09-03 while both backends only accepted
   `0.2.0 <= v < 0.3.0`, so the bundle was refused and `/` fell back to

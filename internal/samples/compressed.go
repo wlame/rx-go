@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -19,10 +20,6 @@ import (
 // decompressed stream, which cannot be seeked to. Line numbers work.
 var ErrOffsetsOnCompressed = errors.New(
 	"byte offsets are not supported for compressed files; use lines instead")
-
-// maxCompressedLineBytes bounds one line read out of a decompressed
-// stream. Same 64 MB ceiling the HTTP path used before this moved.
-const maxCompressedLineBytes = 64 * 1024 * 1024
 
 // resolveCompressedLines answers a line-mode request by streaming the
 // file through its decompressor once, keeping only the lines the
@@ -62,6 +59,10 @@ func resolveCompressedLines(
 	type window struct {
 		key        string
 		start, end int64
+		// line is the line the caller asked about, which is the one
+		// whose byte offset the response reports. A range asks about
+		// no single line and leaves it zero.
+		line int64
 	}
 	windows := make([]window, 0, len(req.Lines))
 	for _, v := range req.Lines {
@@ -86,7 +87,9 @@ func resolveCompressedLines(
 			start = 1
 		}
 		key := strconv.FormatInt(line, 10)
-		windows = append(windows, window{key: key, start: start, end: line + int64(req.AfterContext)})
+		windows = append(windows, window{
+			key: key, start: start, end: line + int64(req.AfterContext), line: line,
+		})
 		// Pre-populate so a window past the end of the file still
 		// appears in the response, empty.
 		resp.Samples[key] = []string{}
@@ -104,18 +107,41 @@ func resolveCompressedLines(
 	}
 	defer func() { _ = dec.Close() }()
 
-	sc := bufio.NewScanner(dec)
-	sc.Buffer(make([]byte, 64*1024), maxCompressedLineBytes)
-	var lineNum int64
-	for sc.Scan() {
-		lineNum++
-		for _, w := range windows {
-			if lineNum >= w.start && lineNum <= w.end {
-				resp.Samples[w.key] = append(resp.Samples[w.key], sc.Text())
+	// The byte offsets recorded here are positions in the decompressed
+	// stream, which is the coordinate system a search of the same file
+	// reports its matches in. Reporting -1 left the two surfaces
+	// speaking different languages about the same line.
+	r := bufio.NewReaderSize(dec, 256*1024)
+	var lineNum, pos int64
+	for {
+		raw, readErr := r.ReadBytes('\n')
+		if len(raw) > 0 {
+			lineNum++
+			text := trimNewline(string(raw))
+			for _, w := range windows {
+				if lineNum >= w.start && lineNum <= w.end {
+					resp.Samples[w.key] = append(resp.Samples[w.key], text)
+				}
+				if lineNum == w.line {
+					resp.Lines[w.key] = pos
+				}
 			}
+			pos += int64(len(raw))
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return readErr
 		}
 	}
-	return sc.Err()
+}
+
+// trimNewline drops the line terminator a reader keeps, so the text
+// matches what the plain-file resolver returns for the same line.
+func trimNewline(s string) string {
+	s = strings.TrimSuffix(s, "\n")
+	return strings.TrimSuffix(s, "\r")
 }
 
 // streamCountLines decompresses the file and counts its lines without

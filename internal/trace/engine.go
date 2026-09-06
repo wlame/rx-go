@@ -341,6 +341,10 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
+			// The whole file goes through one ripgrep, so the line
+			// numbers it reports are the file's own. Reporting them as
+			// unknown made a search of a .gz look less informative than
+			// the same search of the text inside it.
 			for _, rm := range rawMatches {
 				matchedIDs := IdentifyMatchingPatterns(
 					rm.LineText, rm.Submatches,
@@ -348,6 +352,9 @@ func (e *Engine) RunWithOptions(
 				)
 				for _, pid := range matchedIDs {
 					m := toMatch(pid, fileID, rm)
+					if rm.LineNumber >= 1 {
+						m.AbsoluteLineNumber = rm.LineNumber
+					}
 					allMatches = append(allMatches, m)
 					opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
 						Pattern: patternIDs[pid], Offset: m.Offset,
@@ -356,11 +363,15 @@ func (e *Engine) RunWithOptions(
 				}
 			}
 			for _, rc := range rawContexts {
+				absLine := -1
+				if rc.LineNumber >= 1 {
+					absLine = rc.LineNumber
+				}
 				allContexts = append(allContexts, contextWithFile{
 					fileID: fileID,
 					ctx: rxtypes.ContextLine{
 						RelativeLineNumber: rc.LineNumber,
-						AbsoluteLineNumber: -1,
+						AbsoluteLineNumber: absLine,
 						LineText:           rc.LineText,
 						AbsoluteOffset:     rc.Offset,
 					},
@@ -389,6 +400,11 @@ func (e *Engine) RunWithOptions(
 				fm = map[int64]int{}
 				frameIndexByOffset[b.path] = fm
 			}
+			// Frames carry their own line numbering, which the scan
+			// turns into the file's by counting the lines of the frames
+			// before each one. A frame the scan never reached leaves
+			// its matches unnumbered rather than numbered from the
+			// wrong place.
 			for _, rm := range rawMatches {
 				matchedIDs := IdentifyMatchingPatterns(
 					rm.LineText, rm.Submatches,
@@ -396,6 +412,10 @@ func (e *Engine) RunWithOptions(
 				)
 				for _, pid := range matchedIDs {
 					m := toMatch(pid, fileID, rm)
+					if rm.AbsoluteLine >= 1 {
+						m.AbsoluteLineNumber = rm.AbsoluteLine
+						m.RelativeLineNumber = ptrInt(rm.AbsoluteLine)
+					}
 					allMatches = append(allMatches, m)
 					compressedCacheCandidates[b.path] = append(compressedCacheCandidates[b.path], m)
 					opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
@@ -405,11 +425,15 @@ func (e *Engine) RunWithOptions(
 				}
 			}
 			for _, rc := range rawContexts {
+				lineNum, absLine := rc.LineNumber, -1
+				if rc.AbsoluteLine >= 1 {
+					lineNum, absLine = rc.AbsoluteLine, rc.AbsoluteLine
+				}
 				allContexts = append(allContexts, contextWithFile{
 					fileID: fileID,
 					ctx: rxtypes.ContextLine{
-						RelativeLineNumber: rc.LineNumber,
-						AbsoluteLineNumber: -1,
+						RelativeLineNumber: lineNum,
+						AbsoluteLineNumber: absLine,
 						LineText:           rc.LineText,
 						AbsoluteOffset:     rc.Offset,
 					},
