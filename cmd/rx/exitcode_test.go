@@ -121,8 +121,14 @@ func TestExitCode_InvalidRegexIsTwo(t *testing.T) {
 			if code != 2 {
 				t.Errorf("exit code: got %d, want 2 (stderr: %s)", code, stderr)
 			}
-			if !strings.Contains(stderr, "regex parse error") {
-				t.Errorf("stderr should carry ripgrep's message: %s", stderr)
+			// The message names the pattern as it was typed, and
+			// keeps ripgrep's reason without the alternation ripgrep
+			// wraps the patterns in.
+			if !strings.Contains(stderr, `"`+pattern+`"`) {
+				t.Errorf("stderr should name the pattern: %s", stderr)
+			}
+			if strings.Contains(stderr, "(?:") {
+				t.Errorf("stderr leaks ripgrep's wrapper: %s", stderr)
 			}
 			if strings.Contains(stdout, "No matches") {
 				t.Errorf("a bad pattern must not report success: %s", stdout)
