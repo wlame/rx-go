@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A truncated or corrupted archive was searched as far as it could be
+  read and the result was handed back as if it were complete. The
+  decompression error was logged and then discarded, so a half-readable
+  `.gz` reported its partial matches with nothing skipped. Such a file
+  is now named in `skipped_files` while its matches are still returned,
+  so the answer says both what was found and that the file was not read
+  to the end.
+
 - An index left behind by an older rx was read with today's rules. A
   version 2 index names the line *before* the byte offset it records,
   so `rx samples --lines=2500000` on a 226 MB log answered with line
