@@ -18,9 +18,14 @@ import (
 // The viewer is a 0.x product, where a minor bump is allowed to break
 // compatibility, so the window is one minor line wide rather than one
 // major.
+//
+// Widen this when a viewer release is cut: the window names the
+// releases this backend has been checked against, so a viewer published
+// after it is refused and `rx serve` comes up with no interface at all.
+// Both backends and the viewer's release checklist carry the same rule.
 const (
 	MinViewerVersion          = "0.2.0"
-	MaxViewerVersionExclusive = "0.3.0"
+	MaxViewerVersionExclusive = "0.4.0"
 )
 
 // viewerVersionCompatible reports whether a viewer release may be

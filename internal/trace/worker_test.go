@@ -2,6 +2,7 @@ package trace
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"sort"
 	"strings"
@@ -224,4 +225,39 @@ func chunkMatches(results []ChunkResult) [][]MatchRaw {
 		out[i] = r.Matches
 	}
 	return out
+}
+
+// TestInvalidPatternErrorNamesThePatternAsTyped pins the wording for a
+// pattern ripgrep refuses.
+//
+// ripgrep compiles the patterns it is given as one alternation and
+// reports the failure against that, so a pattern of `(bad` came back as
+// a complaint about `(?:(bad)` with a caret under a group the caller
+// never opened.
+func TestInvalidPatternErrorNamesThePatternAsTyped(t *testing.T) {
+	stderr := "rg: regex parse error:\n    (?:(bad)\n    ^\nerror: unclosed group"
+
+	single := invalidPatternError(stderr, map[string]string{"p1": "(bad"}, []string{"p1"})
+	if got, want := single.Error(), `invalid regex pattern "(bad": unclosed group`; got != want {
+		t.Errorf("single pattern: got %q, want %q", got, want)
+	}
+	if !errors.Is(single, ErrInvalidPattern) {
+		t.Error("the error no longer identifies as ErrInvalidPattern")
+	}
+
+	several := invalidPatternError(stderr,
+		map[string]string{"p1": "ok", "p2": "(bad"}, []string{"p1", "p2"})
+	if got, want := several.Error(),
+		`invalid regex pattern: unclosed group (patterns: "ok", "(bad")`; got != want {
+		t.Errorf("several patterns: got %q, want %q", got, want)
+	}
+}
+
+// TestRegexFailureReasonFallsBackToTheWholeMessage keeps an unexpected
+// ripgrep message readable rather than dropping it.
+func TestRegexFailureReasonFallsBackToTheWholeMessage(t *testing.T) {
+	got := regexFailureReason("rg: something\n  entirely new\n")
+	if got != "something entirely new" {
+		t.Errorf("got %q", got)
+	}
 }
