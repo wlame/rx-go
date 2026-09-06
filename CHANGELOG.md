@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--max-results` waited for a whole chunk to finish before it counted,
+  so a cap could not stop a scan any earlier than the first chunk's
+  completion: `--max-results=1` took 7.8 seconds on an 8.2 GB log and
+  6.4 seconds on a 6.7 GB one, where ripgrep's own `-m1` returns at
+  once. Every worker now charges a shared budget as each match arrives,
+  and the match that spends the last of it cancels its siblings
+  immediately. The same two searches take 0.05 seconds, and the counts a
+  cap returns are unchanged.
 - A search of a seekable-zstd file never returned when anything stopped
   it early: `--max-results` on a 55 MB `.zst` hung indefinitely, and the
   same request over HTTP held the handler open and blocked shutdown. The
