@@ -163,7 +163,11 @@ Data flow for `rx trace "pattern" big.log`:
    `absolute_line_number` at -1 rather than reporting a number counted
    from the wrong place. `relative_line_number` carries the same value
    whenever it is known, and only a cut-short scan leaves it
-   chunk-relative. Do not add a surface that numbers lines its own way.
+   chunk-relative. A capped search of a plain file meets that more often
+   than one of a compressed file, because a frame carries its own line
+   count while a chunk stops part-way; the caller resolves what it needs
+   through `samples --offsets=…`, which answers a whole batch in one
+   pass. Do not add a surface that numbers lines its own way.
 2. **Bounded reads.** No code path reads more bytes than the request needs,
    except `rx index` (new index), `rx trace` without `--max-results`, and
    `rx compress`. Every new file-reading path gets a budget test that uses
