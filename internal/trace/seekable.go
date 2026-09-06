@@ -436,14 +436,33 @@ func scanFrameBatch(
 	// writer's pw.Write, and the writer aborts cleanly.
 	runErr := rgCmd.Run()
 
-	// Wait for the writer to finish. After Run returns, writerDone
-	// closes very quickly (either the writer already finished and
-	// closed pw, or rg's exit caused pw.Write to error out — both
-	// paths terminate the goroutine). This barrier establishes a
-	// happens-before edge for locs[i].lineCount reads below.
+	// Close the read half before waiting for the writer.
+	//
+	// An io.Pipe write blocks until someone reads it, and the only
+	// reader is the copy exec.Cmd runs into rg's stdin. When rg exits
+	// early — killed because a max_results cap fired, or because the
+	// request was canceled — that copy stops, and a writer part-way
+	// through a frame would block on pw.Write forever, taking the
+	// <-writerDone below with it. Closing pr makes that Write return
+	// io.ErrClosedPipe instead, which the writer treats as "the reader
+	// is gone" and exits. Run has already returned here, so exec is
+	// finished with pr and this cannot race it.
+	_ = pr.Close()
+
+	// Wait for the writer to finish. After Run returns and pr is
+	// closed, writerDone closes promptly on every path. This barrier
+	// establishes a happens-before edge for locs[i].lineCount below.
 	<-writerDone
 
 	if runErr != nil {
+		// A canceled context trumps every other reading of rg's exit.
+		// exec.CommandContext kills rg on cancel, which arrives here as
+		// a signal exit (code -1) — expected when a cap fired or the
+		// request was abandoned, and not a reason to call the file
+		// unreadable. The chunked path classifies it the same way.
+		if cErr := ctx.Err(); cErr != nil {
+			return matchesFromPartialBatch(ctx, stdout.Bytes(), locs, patternOrder)
+		}
 		var ex *exec.ExitError
 		if errors.As(runErr, &ex) {
 			code := ex.ExitCode()
@@ -462,6 +481,24 @@ func scanFrameBatch(
 	// abort the StreamEvents loop. See Stage 8 Reviewer 2 High #9.
 	matches, contexts = remapBatchEvents(ctx, stdout.Bytes(), locs, patternOrder)
 	return matches, contexts, nil
+}
+
+// matchesFromPartialBatch reads whatever ripgrep managed to write
+// before it was killed and hands it back alongside context.Canceled.
+// ProcessSeekable keeps those matches and treats the error as the
+// cooperative cancel it is, so a cap that fires mid-batch still returns
+// the matches the batch had already found.
+//
+// The parse runs on a context stripped of the cancellation, since the
+// output is already buffered and the only thing left to do is read it.
+func matchesFromPartialBatch(
+	ctx context.Context,
+	out []byte,
+	locs []frameLoc,
+	patternOrder []string,
+) ([]MatchRaw, []ContextRaw, error) {
+	matches, contexts := remapBatchEvents(context.WithoutCancel(ctx), out, locs, patternOrder)
+	return matches, contexts, context.Canceled
 }
 
 // remapBatchEvents parses the rg --json stream emitted for a batch of
