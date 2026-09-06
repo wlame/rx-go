@@ -24,7 +24,6 @@ package index
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,11 +82,6 @@ func GetIndexStepBytes() int64 {
 	return threshold / 50
 }
 
-// ErrCompressedSource is returned when a line index is asked of a
-// compressed file. Decompress it first, or search it directly — rx
-// reads compressed files without an index.
-var ErrCompressedSource = errors.New("cannot build a line index for a compressed file")
-
 // Build reads sourcePath and constructs a UnifiedFileIndex. It records
 // the current mtime + size into the index so IsValidForSource can later
 // detect changes.
@@ -104,15 +98,6 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	if info.IsDir() {
 		return nil, fmt.Errorf("build: %s is a directory", sourcePath)
 	}
-	// A line index maps line numbers to byte offsets in the file it
-	// describes. Over a compressed file those offsets address
-	// compressed bytes, which name no line and cannot be seeked to as
-	// text: the index would be checkpoints into noise, and the stats
-	// built alongside it would describe the container rather than the
-	// log. Refusing says so instead of producing both.
-	if format, _ := compression.DetectFromPath(sourcePath); format != compression.FormatNone {
-		return nil, fmt.Errorf("%w: %s is %s-compressed", ErrCompressedSource, sourcePath, format)
-	}
 
 	step := opts.StepBytes
 	if step <= 0 {
@@ -127,6 +112,23 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		// Close error ignored — file was opened read-only.
 		_ = f.Close()
 	}()
+
+	// A compressed file is indexed through its decompressor, so the
+	// line numbers and byte offsets describe the text inside it. Read
+	// straight off the compressed bytes and the checkpoints would
+	// address compressed noise and the statistics would describe the
+	// container: a 600 MB log came back as 209,365 lines with a "mixed"
+	// line ending. rx-python indexes the same content the same way.
+	var source io.Reader = f
+	format, _ := compression.DetectFromPath(sourcePath)
+	if format != compression.FormatNone {
+		dec, dErr := compression.NewReader(f, format)
+		if dErr != nil {
+			return nil, fmt.Errorf("decompress %s: %w", sourcePath, dErr)
+		}
+		defer func() { _ = dec.Close() }()
+		source = dec
+	}
 
 	// Wire up the analyzer coordinator when --analyze is on. One
 	// coordinator per scan; today the builder is sequential so that's
@@ -153,7 +155,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// (Python parity — see rx-python/src/rx/unified_index.py::build_index).
 	// Anomaly detection is gated at the call site (opts.Analyze controls
 	// whether coord is non-nil).
-	stats, err := walkLines(f, step, coord)
+	stats, err := walkLines(source, step, coord)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +168,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		SourceSizeBytes:   info.Size(),
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds:  time.Since(started).Seconds(),
-		FileType:          rxtypes.FileTypeText, // compressed detection left to caller
+		FileType:          rxtypes.FileTypeText,
 		IsText:            true,
 		LineIndex:         stats.LineIndex,
 		IndexStepBytes:    ptrInt64(step),
@@ -199,6 +201,19 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// Line-ending detection runs off a prefix sample (first 64 KB) so
 	// large files don't pay O(n). Python behaves the same.
 	idx.LineEnding = ptrString(stats.LineEnding)
+
+	// A compressed source records what it is and how much text it
+	// holds; the index's own offsets are positions in that text.
+	if format != compression.FormatNone {
+		name := string(format)
+		idx.CompressionFormat = &name
+		idx.FileType = rxtypes.FileTypeCompressed
+		idx.DecompressedSizeBytes = ptrInt64(stats.TotalBytes)
+		if info.Size() > 0 && stats.TotalBytes > 0 {
+			ratio := float64(stats.TotalBytes) / float64(info.Size())
+			idx.CompressionRatio = &ratio
+		}
+	}
 
 	// Finalize analyzer output. When opts.Analyze is true, build a
 	// FlushContext from the line-stats accumulator and hand it to every
@@ -281,6 +296,11 @@ type walkStats struct {
 	LineStats lineStatsSnapshot
 
 	LineEnding string
+
+	// TotalBytes is the number of bytes the walk read. For a plain file
+	// that is its size; for a compressed one it is the size of the text
+	// inside it, which is what the index's offsets are measured in.
+	TotalBytes int64
 }
 
 // walkLines streams through r, emitting line-index checkpoints and
@@ -438,6 +458,7 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 	}
 
 	stats.LineCount = currentLine
+	stats.TotalBytes = currentOffset
 
 	// Snapshot the accumulator. finish() copies the reservoir internally
 	// so repeated calls are safe; we call it exactly once.
