@@ -17,11 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same lines the plain file would. Byte offsets on a compressed
   file are refused on both surfaces, with exit code 2 on the CLI and
   400 over HTTP.
-- `rx index file.zst` built a line index over the compressed bytes and
+- `rx index file.gz` built a line index over the compressed bytes and
   reported statistics about them: a 600 MB log came back as 209,365
-  lines with a "mixed" line ending. Indexing a compressed file is now
-  refused with an explanation, on the CLI and on `POST /v1/index`
-  (400), because a byte offset into compressed data names no line.
+  lines with a "mixed" line ending, and the checkpoints addressed
+  compressed noise. A compressed file is now read through its
+  decompressor, so the line numbers, offsets and statistics describe the
+  text inside it, and the index records the compression format and the
+  decompressed size. Both backends now report the same line count for
+  the same file. A seekable `.zst` still gets byte-step checkpoints
+  rather than rx-python's frame table (ticket 23).
 - `--max-results` waited for a whole chunk to finish before it counted,
   so a cap could not stop a scan any earlier than the first chunk's
   completion: `--max-results=1` took 7.8 seconds on an 8.2 GB log and

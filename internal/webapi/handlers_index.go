@@ -11,7 +11,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/analyzer"
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -117,16 +116,6 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 			return nil, ErrNotFound(fmt.Sprintf("File not found: %s", req.Path))
 		}
 		return nil, ErrForbidden(err.Error())
-	}
-
-	// A line index over compressed bytes describes the container, not
-	// the log inside it. Refuse here rather than starting a task that
-	// can only fail, so the caller learns why with the request it made.
-	if format, _ := compression.DetectFromPath(validated); format != compression.FormatNone {
-		return nil, ErrBadRequest(fmt.Sprintf(
-			"Cannot build a line index for a compressed file: %s is %s-compressed",
-			req.Path, format,
-		))
 	}
 
 	// File-size threshold check. Request-provided threshold (MB) wins
