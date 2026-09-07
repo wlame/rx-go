@@ -45,6 +45,20 @@ configurable via [`RX_LARGE_FILE_MB`](../configuration.md) or the
 Mode flags have a priority order: `--delete` > `--info` > build.
 
 
+### Global flags
+
+Two flags are declared on the root command, so every subcommand accepts
+them and they may be written before or after the subcommand name:
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--hidden` | `bool` | `RX_HIDDEN` or `false` | Include entries whose name starts with a dot |
+| `--search-root` | `string[]` | `RX_SEARCH_ROOTS` or no sandbox | Restrict file access to this directory (repeatable) |
+
+A path outside every configured root exits 4. A root that does not exist
+is a usage error and exits 2. With neither the flag nor the variable set
+there is no sandbox. See [Security](../concepts/security.md).
+
 ## Output
 
 `rx index` prints one line per indexed file. With `--analyze` the
