@@ -39,6 +39,7 @@ func registerCompressHandlers(s *Server, api huma.API) {
 		Summary:     "Compress file to seekable zstd format (background task)",
 		Description: "Creates a background task that encodes the file to .zst. Poll /v1/tasks/{id} for progress. The input path and the effective output path are both validated against --search-root.",
 		Tags:        []string{"Operations"},
+		Responses:   sandboxResponses(api),
 	}, func(_ context.Context, in *postCompressInput) (*postCompressOutput, error) {
 		return createCompressTask(s, in.Body)
 	})
