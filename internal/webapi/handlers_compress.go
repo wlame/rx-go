@@ -12,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/tasks"
@@ -233,11 +234,28 @@ func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 		"time_seconds":      elapsed,
 	}
 
-	// Build an index if requested. For M5, we register the compressed
-	// file in the index cache so GET /v1/index can find it; full
-	// checkpoint building is deferred (same rationale as runIndexTask).
+	// Index the file just written, so a later `samples --lines=N` on it
+	// decompresses one frame instead of the whole stream. A failure is
+	// reported rather than fatal: the compressed file is correct and
+	// usable, and POST /v1/index can build the index later.
+	//
+	// `index_built` used to be set to true without an index being built,
+	// which told the caller something that was not so.
 	if job.BuildIndex {
-		result["index_built"] = true
+		idx, idxErr := index.Build(job.OutputPath, index.BuildOptions{})
+		switch {
+		case idxErr != nil:
+			result["index_error"] = idxErr.Error()
+		default:
+			if _, saveErr := index.Save(idx); saveErr != nil {
+				result["index_error"] = saveErr.Error()
+				break
+			}
+			result["index_built"] = true
+			if idx.LineCount != nil {
+				result["total_lines"] = *idx.LineCount
+			}
+		}
 	}
 
 	result["cli_command"] = BuildCLICommand("compress", map[string]any{

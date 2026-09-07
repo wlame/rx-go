@@ -33,6 +33,8 @@ import (
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/prometheus"
+	"github.com/wlame/rx-go/internal/seekable"
+	"github.com/wlame/rx-go/internal/seekableindex"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -104,6 +106,15 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		step = GetIndexStepBytes()
 	}
 
+	// A seekable .zst is indexed by its frames rather than by a byte
+	// step: the frame table is the whole point of the format, and a
+	// checkpoint that names a frame lets a lookup decompress that one
+	// frame instead of the stream up to it. rx-python indexes the same
+	// file the same way, and the cache is shared.
+	if seekable.IsSeekable(sourcePath) {
+		return buildSeekable(sourcePath, info, started)
+	}
+
 	f, err := os.Open(sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", sourcePath, err)
@@ -170,6 +181,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	if fp, fpErr := SourceFingerprint(sourcePath); fpErr == nil {
 		fingerprint = &fp
 	}
+	permissions, owner := FileOwnership(info)
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
 		SourcePath:        sourcePath,
@@ -182,6 +194,8 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		BuildTimeSeconds:  time.Since(started).Seconds(),
 		FileType:          rxtypes.FileTypeText,
 		IsText:            true,
+		Permissions:       permissions,
+		Owner:             owner,
 		LineIndex:         stats.LineIndex,
 		IndexStepBytes:    ptrInt64(step),
 		AnalysisPerformed: opts.Analyze,
@@ -559,3 +573,63 @@ func hasNonWhitespace(s []byte) bool {
 func ptrInt64(n int64) *int64       { return &n }
 func ptrFloat64(v float64) *float64 { return &v }
 func ptrString(s string) *string    { return &s }
+
+// buildSeekable indexes a seekable-zstd file from its frame table.
+//
+// The other file types are walked line by line and checkpointed every
+// `index_step_bytes`; this one is walked frame by frame, because a
+// frame is the unit a later lookup can decompress on its own. The
+// difference shows in the index: `file_type` is `seekable_zstd`, the
+// checkpoints carry a frame number, and `frames` holds the line range
+// of each frame.
+//
+// The line-length statistics the text path collects are deliberately
+// absent, as they are in rx-python: they would mean a second pass over
+// the decompressed stream for numbers nothing on the seekable path
+// reads.
+func buildSeekable(sourcePath string, info os.FileInfo, started time.Time) (*rxtypes.UnifiedFileIndex, error) {
+	frames, err := seekableindex.Build(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+
+	inode, changedAt := SourceIdentityFields(info)
+	var fingerprint *string
+	if fp, fpErr := SourceFingerprint(sourcePath); fpErr == nil {
+		fingerprint = &fp
+	}
+
+	format := "zstd"
+	frameList := frames.Frames
+	permissions, owner := FileOwnership(info)
+	idx := &rxtypes.UnifiedFileIndex{
+		Version:           Version,
+		SourcePath:        sourcePath,
+		SourceModifiedAt:  formatMtime(info.ModTime()),
+		SourceSizeBytes:   info.Size(),
+		SourceInode:       inode,
+		SourceChangedAt:   changedAt,
+		SourceFingerprint: fingerprint,
+		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		BuildTimeSeconds:  time.Since(started).Seconds(),
+		FileType:          rxtypes.FileTypeSeekableZstd,
+		CompressionFormat: &format,
+		// A compressed container is not text, whatever it holds. This is
+		// what rx-python records for the same file, and the flag
+		// describes the bytes on disk rather than the stream inside.
+		IsText:                false,
+		Permissions:           permissions,
+		Owner:                 owner,
+		LineIndex:             frames.LineIndex,
+		DecompressedSizeBytes: ptrInt64(frames.DecompressedSizeBytes),
+		FrameCount:            &frames.FrameCount,
+		FrameSizeTarget:       ptrInt64(frames.FrameSizeTarget),
+		Frames:                &frameList,
+		LineCount:             ptrInt64(frames.LineCount),
+	}
+	if info.Size() > 0 && frames.DecompressedSizeBytes > 0 {
+		ratio := float64(frames.DecompressedSizeBytes) / float64(info.Size())
+		idx.CompressionRatio = &ratio
+	}
+	return idx, nil
+}

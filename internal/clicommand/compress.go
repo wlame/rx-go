@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/seekable"
 )
 
@@ -80,7 +81,7 @@ func NewCompressCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().IntVarP(&level, "level", "l", 3, "zstd compression level (1-22)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing output")
 	cmd.Flags().BoolVar(&buildIdx, "build-index", true,
-		"Build line index after compression (not implemented in this backend; reports index_error)")
+		"Build line index after compression")
 	cmd.Flags().BoolVar(&noIndex, "no-index", false, "Skip building line index after compression")
 	cmd.Flags().IntVar(&workers, "workers", 1, "Parallel workers for encoding (1-N)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format (Python-compatible wrapper)")
@@ -311,16 +312,25 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	entry["frame_count"] = len(tbl.Frames)
 	entry["compression_ratio"] = ratio
 
-	// Indexing the .zst afterwards needs a frame-aware index builder,
-	// which this backend does not have yet: rx-python writes a v2
-	// UnifiedFileIndex with per-frame line boundaries, and producing a
-	// file both backends can read is more than a wrapper around the
-	// existing line indexer. Report it instead of silently skipping, so
-	// `--build-index` never claims work it did not do. The `index_error`
-	// key is the one rx-python already uses for a failed index build.
+	// Index the file just written, so `samples --lines=N` on it can
+	// decompress one frame instead of walking the stream. A failure here
+	// is reported rather than fatal: the compressed file is correct and
+	// usable, and `rx index` can build the index later. The
+	// `index_error` key is the one rx-python uses for the same case.
 	if p.buildIdx {
-		entry["index_error"] = "index building after compress is not implemented in this backend; " +
-			"run `rx index` on the .zst instead"
+		idx, idxErr := index.Build(outputPath, index.BuildOptions{})
+		if idxErr != nil {
+			entry["index_error"] = idxErr.Error()
+			return entry, false
+		}
+		if _, saveErr := index.Save(idx); saveErr != nil {
+			entry["index_error"] = saveErr.Error()
+			return entry, false
+		}
+		entry["index"] = map[string]any{
+			"line_count":  derefInt64(idx.LineCount),
+			"frame_count": derefInt(idx.FrameCount),
+		}
 	}
 
 	return entry, false
@@ -384,4 +394,13 @@ func ParseFrameSize(s string) (int64, error) {
 		return 0, fmt.Errorf("frame-size %q: %w", s, err)
 	}
 	return v, nil
+}
+
+// derefInt is derefInt64 for the frame count, which the schema types as
+// a plain int.
+func derefInt(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
