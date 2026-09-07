@@ -9,7 +9,7 @@ import (
 )
 
 // --color takes the same three values in both backends, and an
-// unrecognised one is a usage error rather than a silent fall back to
+// unrecognized one is a usage error rather than a silent fall back to
 // auto — a typo that quietly does the opposite of what was asked is
 // worse than a refusal.
 

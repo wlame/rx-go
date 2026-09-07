@@ -93,7 +93,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Override lines after")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&colorFlag, "color", "auto",
-		"Colorize output: 'always', 'never', or 'auto' (colour only on a terminal)")
+		"Colorize output: 'always', 'never', or 'auto' (color only on a terminal)")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output (Python-compat alias for --color=never)")
 	cmd.Flags().StringVarP(&regex, "regex", "r", "", "Highlight matches of this regex in context lines (requires color)")
 	return cmd
