@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -290,13 +291,7 @@ func checkpointBefore(
 	offset int64,
 	context int,
 ) (byteOffset, line int64) {
-	pick := -1
-	for i, entry := range idx.LineIndex {
-		if entry.ByteOffset > offset {
-			break
-		}
-		pick = i
-	}
+	pick := index.CheckpointIndexForOffset(idx, offset)
 	// Step back one checkpoint when the window reaches behind the
 	// offset, so the leading context is inside the pass.
 	if pick > 0 && context > 0 {
@@ -607,11 +602,8 @@ func chooseSeekOrigin(idx *rxtypes.UnifiedFileIndex, targetLine int64) (offset, 
 	if idx == nil || len(idx.LineIndex) == 0 {
 		return 0, 1
 	}
-	for i := len(idx.LineIndex) - 1; i >= 0; i-- {
-		entry := idx.LineIndex[i]
-		if entry.LineNumber <= targetLine {
-			return entry.ByteOffset, entry.LineNumber
-		}
+	if entry := index.FindNearestCheckpoint(idx, targetLine); entry.LineNumber > 0 {
+		return entry.ByteOffset, entry.LineNumber
 	}
 	return 0, 1
 }
@@ -652,10 +644,7 @@ func lineNumbersForOffsets(
 	// Nearest checkpoint at or before the first offset we need.
 	startOffset, startLine := int64(0), int64(1)
 	if idx != nil {
-		for _, entry := range idx.LineIndex {
-			if entry.ByteOffset > sorted[0] {
-				break
-			}
+		if entry := index.FindNearestCheckpointForOffset(idx, sorted[0]); entry.LineNumber > 0 {
 			startOffset, startLine = entry.ByteOffset, entry.LineNumber
 		}
 	}

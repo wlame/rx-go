@@ -209,13 +209,7 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 	if idxErr != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return src, nil
 	}
-	pick := -1
-	for i, entry := range idx.LineIndex {
-		if entry.ByteOffset > firstOffset {
-			break
-		}
-		pick = i
-	}
+	pick := index.CheckpointIndexForOffset(idx, firstOffset)
 	if pick > 0 {
 		pick--
 	}

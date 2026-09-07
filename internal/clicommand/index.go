@@ -298,6 +298,14 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			result.Skipped = append(result.Skipped, path)
 			continue
 		}
+		// A binary file has no lines to index. rx-python has always
+		// skipped these; rx-go indexed them and produced a checkpoint
+		// list that described nothing, which is also why the summary
+		// line "below threshold or not text" was only half true.
+		if !index.IsTextFile(path) {
+			result.Skipped = append(result.Skipped, path)
+			continue
+		}
 
 		// R3-B2 FIX — Honor --force=false by consulting the cache first.
 		// Python's rx-python/src/rx/indexer.py checks `load_index()` then
