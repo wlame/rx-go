@@ -44,9 +44,9 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `--no-color` | `bool` | `false` | Disable ANSI colors |
 | `--debug` | `bool` | `false` | Write `.debug_*` artifacts for post-mortem |
 | `--request-id` | `string` | auto (UUID v7) | Custom request ID for log correlation |
-| `--hook-on-file` | `string` | — | Webhook URL, fired per file |
-| `--hook-on-match` | `string` | — | Webhook URL, fired per match (requires `--max-results`) |
-| `--hook-on-complete` | `string` | — | Webhook URL, fired once per invocation |
+| `--hook-on-file` | `string` | `RX_HOOK_ON_FILE_URL` | Webhook URL, fired per file |
+| `--hook-on-match` | `string` | `RX_HOOK_ON_MATCH_URL` | Webhook URL, fired per match (requires `--max-results`) |
+| `--hook-on-complete` | `string` | `RX_HOOK_ON_COMPLETE_URL` | Webhook URL, fired once per invocation |
 | `--no-cache` | `bool` | `false` | Don't consult or write the trace cache |
 | `--no-index` | `bool` | `false` | Don't consult the unified line index |
 | `-r`, `--recursive` | `bool` | `true` | Recurse into subdirectories (default; present for compatibility) |
@@ -243,7 +243,20 @@ before each match, which is more expensive on the first access.
 !!! tip "Use `--max-results` with hooks"
     When `--hook-on-match` is set, `rx` requires `--max-results` to be
     set as well. A 1-million-match scan with an uncapped per-match hook
-    would flood your webhook endpoint.
+    would flood your webhook endpoint. Without it the command exits 2
+    before scanning anything.
+
+!!! note "Hooks on the command line resolve the way they do over HTTP"
+    `RX_HOOK_ON_FILE_URL`, `RX_HOOK_ON_MATCH_URL` and
+    `RX_HOOK_ON_COMPLETE_URL` configure the same three hooks without a
+    flag, and a flag overrides the variable for that run.
+    `RX_DISABLE_CUSTOM_HOOKS=true` makes the flags inert and leaves only
+    the environment values, which is how an operator pins the targets a
+    shared host may call.
+
+    The queue is drained before the process exits, so a webhook that was
+    still in flight when the scan finished is still delivered. An
+    `on_complete` hook does not fire when the scan itself failed.
 
 !!! warning "Hook URLs are validated"
     `--hook-on-file`, `--hook-on-match` and `--hook-on-complete` go

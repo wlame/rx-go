@@ -197,14 +197,30 @@ func runTrace(out io.Writer, p traceParams) error {
 		return exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
 	}
 
+	// The flags and RX_HOOK_ON_*_URL resolve the same way they do over
+	// HTTP, so RX_DISABLE_CUSTOM_HOOKS switches the flags off here too.
+	hookOverrides := hooks.HookOverrides{
+		OnFileURL:     hookOverride(p.hookOnFile),
+		OnMatchURL:    hookOverride(p.hookOnMatch),
+		OnCompleteURL: hookOverride(p.hookOnComplete),
+	}
+	hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), hookOverrides)
+
 	// SECURITY: hook URLs from the command line get the same guard the
 	// HTTP layer applies to hook_on_* query parameters — scheme
 	// allowlist, no credentials, and no loopback / link-local /
 	// private / CGNAT target.
-	for _, u := range []string{p.hookOnFile, p.hookOnMatch, p.hookOnComplete} {
-		if hookErr := hooks.ValidateURL(u); hookErr != nil {
-			return exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
-		}
+	if hookErr := hooks.ValidateConfig(hookConfig); hookErr != nil {
+		return exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
+	}
+
+	// A match hook without a cap is a request for one HTTP call per
+	// matching line, which on a log file is millions. The HTTP layer
+	// refuses the same combination.
+	if hookConfig.HasMatchHook() && p.maxResults <= 0 {
+		return exitWithError(os.Stderr, ExitUsageError,
+			"--max-results is required when --hook-on-match is configured.\n"+
+				"This prevents accidentally triggering millions of HTTP calls.")
 	}
 
 	// Validate paths against sandbox only if one is configured. The CLI
@@ -270,14 +286,45 @@ func runTrace(out io.Writer, p traceParams) error {
 		maxPtr = &m
 	}
 
-	resp, err := engine.RunWithOptions(context.Background(), validated, patterns, trace.Options{
+	requestID := requestIDOrNew(p.requestID)
+
+	// Declared before the dispatcher so the deferred on_complete can
+	// read the response the engine is about to produce.
+	var resp *rxtypes.TraceResponse
+
+	// The dispatcher owns a worker pool and a queue, so it exists only
+	// when something is actually configured; otherwise the engine keeps
+	// its no-hook fast path. Close drains the queue and Wait blocks until
+	// the workers have finished, which is what stops a queued webhook
+	// from being lost when the process exits.
+	var firer trace.HookFirer = trace.NoopHookFirer{}
+	if hookConfig.HasAny() {
+		dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{
+			Env:              hooks.HookEnvFromEnv(),
+			RequestOverrides: hookOverrides,
+			RequestID:        requestID,
+		})
+		defer func() {
+			dispatcher.Close()
+			dispatcher.Wait()
+		}()
+		firer = dispatcher
+		defer func() {
+			if resp != nil {
+				dispatcher.OnComplete(resp)
+			}
+		}()
+	}
+
+	resp, err = engine.RunWithOptions(context.Background(), validated, patterns, trace.Options{
 		MaxResults:    maxPtr,
 		ContextBefore: resolveBefore(p),
 		ContextAfter:  resolveAfter(p),
 		NoCache:       p.noCache,
 		NoIndex:       p.noIndex,
 		NoRecursive:   p.noRecursive,
-		RequestID:     requestIDOrNew(p.requestID),
+		HookFirer:     firer,
+		RequestID:     requestID,
 	})
 	if err != nil {
 		// A pattern ripgrep cannot compile is a usage error, and rg's own
@@ -292,6 +339,16 @@ func runTrace(out io.Writer, p traceParams) error {
 		return writeTraceJSON(out, resp)
 	}
 	return writeTraceHuman(out, resp, p)
+}
+
+// hookOverride turns a flag value into the pointer HookOverrides wants.
+// An empty flag means "not given", so env keeps whatever it configured;
+// only a URL the user actually typed overrides it.
+func hookOverride(flagValue string) *string {
+	if flagValue == "" {
+		return nil
+	}
+	return &flagValue
 }
 
 // requestIDOrNew returns the user's --request-id, or a fresh UUID v7.
