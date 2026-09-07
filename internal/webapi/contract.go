@@ -15,4 +15,4 @@ package webapi
 // rx-python declares the same value (`src/rx/contract.py`) and the two must
 // be changed together, in the same task, with a changelog entry in both.
 // `rx-viewer` reads it from /health.
-const ContractVersion = "1.0"
+const ContractVersion = "1.1"
