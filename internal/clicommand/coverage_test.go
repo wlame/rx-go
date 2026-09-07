@@ -594,26 +594,35 @@ func TestSamplesCommand_RegexHighlight(t *testing.T) {
 	}
 }
 
-// TestShouldColorize exercises all three branches of the flag-driven
-// color resolver.
+// TestShouldColorize exercises every branch of the flag-driven color
+// resolver.
 func TestShouldColorize(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("RX_NO_COLOR", "")
 	var buf bytes.Buffer
-	if !shouldColorize("always", &buf) {
-		t.Errorf("always should return true even for buffer writer")
+
+	if got, err := shouldColorize("always", &buf); err != nil || !got {
+		t.Errorf("always: got (%v, %v), want (true, nil) even for a buffer", got, err)
 	}
-	if shouldColorize("never", &buf) {
-		t.Errorf("never should return false")
+	if got, err := shouldColorize("never", &buf); err != nil || got {
+		t.Errorf("never: got (%v, %v), want (false, nil)", got, err)
 	}
-	// Auto on a buffer should default to the colorDecision result
-	// (which is true for non-*os.File).
-	if !shouldColorize("", &buf) {
-		t.Errorf("auto on bytes.Buffer should return true")
+	// A buffer is not a terminal, so auto is plain text.
+	for _, flag := range []string{"auto", ""} {
+		if got, err := shouldColorize(flag, &buf); err != nil || got {
+			t.Errorf("%q on a buffer: got (%v, %v), want (false, nil)", flag, got, err)
+		}
 	}
+	if _, err := shouldColorize("sometimes", &buf); err == nil {
+		t.Errorf("sometimes: got nil error, want a usage error")
+	}
+
 	t.Setenv("NO_COLOR", "1")
-	if shouldColorize("", &buf) {
+	if got, _ := shouldColorize("auto", &buf); got {
 		t.Errorf("auto should respect NO_COLOR")
+	}
+	if got, _ := shouldColorize("always", &buf); !got {
+		t.Errorf("always should win over NO_COLOR")
 	}
 }
 

@@ -44,15 +44,19 @@ func colorDecision(noColorFlag bool, stdout io.Writer) bool {
 		return false
 	}
 	// Respect TTY: only emit colors when stdout is a real terminal.
-	// Falls back to "enabled" when we can't tell (file-backed writer in tests).
-	if f, ok := stdout.(*os.File); ok {
-		if fi, err := f.Stat(); err == nil {
-			if (fi.Mode() & os.ModeCharDevice) == 0 {
-				return false
-			}
-		}
+	// Anything that is not one — a redirect, a pipe, or a writer that is
+	// not a file at all — gets plain text, because escape sequences in a
+	// file the user will read back are corruption, not decoration.
+	// rx-python decides the same way, through sys.stdout.isatty().
+	f, ok := stdout.(*os.File)
+	if !ok {
+		return false
 	}
-	return true
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 // stdinIsPipe reports whether os.Stdin looks like a piped / redirected
