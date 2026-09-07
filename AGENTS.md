@@ -63,6 +63,25 @@ This repo is the **flagship backend** of a product with three active repos:
    an ordering of work, not of support: a feature that lands here and not there
    is unfinished, and rule 2 applies without exception.
 
+## JSON object key order is not part of the contract
+
+Two backends can return the same document with its object keys in a
+different order, and that is not a defect. An object is unordered by
+definition, every conformant parser gives the same result, and Go's
+`encoding/json` always sorts map keys lexicographically — so a wire body
+built from a `map[string]T` cannot carry any other order, whatever
+rx-python does.
+
+Compare parsed documents, not bytes. `samples --offsets=20000,1000` is
+the case that shows it: rx-go's JSON lists `"1000"` before `"20000"`,
+rx-python lists them in request order, and the two documents are equal.
+
+Where order *is* visible to a person it is contract, and both backends
+sort it the same way: human `samples` output goes in numeric order of
+the position, with a range sorting by its left-hand value
+(`rx-go/internal/output/samples.go::keyLess`,
+`rx-python/src/rx/models.py::sample_key_order`).
+
 ## Quick orientation
 
 | Where | What |
