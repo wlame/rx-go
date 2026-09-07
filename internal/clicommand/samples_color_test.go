@@ -50,7 +50,7 @@ func TestSamplesColor_AcceptedValues(t *testing.T) {
 			var buf bytes.Buffer
 			err := runSamples(&buf, samplesParams{
 				path:      path,
-				lines:     "5",
+				lines:     []string{"5"},
 				ctxLines:  3,
 				colorFlag: tc.flag,
 			})
@@ -70,7 +70,7 @@ func TestSamplesColor_UnknownValueIsAUsageError(t *testing.T) {
 	var buf bytes.Buffer
 	err := runSamples(&buf, samplesParams{
 		path:      path,
-		lines:     "5",
+		lines:     []string{"5"},
 		ctxLines:  3,
 		colorFlag: "sometimes",
 	})
