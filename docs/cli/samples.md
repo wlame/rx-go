@@ -55,9 +55,18 @@ the `2K+1`-line window around N.
 | `-B`, `--before` | `int` | `0` | Lines before (overrides `--context`) |
 | `-A`, `--after` | `int` | `0` | Lines after (overrides `--context`) |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
-| `--color` | `string` | auto | Force color: `always`, `never`, or empty (auto) |
-| `--no-color` | `bool` | `false` | Alias for `--color=never` |
+| `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
+| `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
 | `-r`, `--regex` | `string` | — | Highlight matches of this regex in context lines (requires color) |
+
+`-b` also answers to `--byte-offset` and `-l` to `--line-offset`, the
+spellings rx-python has always used, so a script written against either
+backend runs against both.
+
+`auto` colours only when stdout is a terminal, and `NO_COLOR` or
+`RX_NO_COLOR` in the environment turns it off. `--color=always` wins over
+both, so a redirect still gets the sequences. An unrecognised value is a
+usage error (exit 2) rather than a silent fall back to `auto`.
 
 ### Address syntax
 
