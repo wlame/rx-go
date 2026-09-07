@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx index` indexed binary files that rx-python skips, so the same
+  directory produced two different sets of indexes. It now applies the
+  same rule rx-python does — a NUL byte in the first 8 KiB means binary —
+  which also makes the summary line "below threshold or not text" true.
+- `POST /v1/index` with `analyze: true` refused a file below the size
+  threshold with 400, while `rx index --analyze` indexes it. Analysis now
+  bypasses the threshold on both surfaces.
+- `rx samples` accepts `--line-offset` and `--byte-offset`, the names
+  rx-python uses, alongside `--lines` and `--offsets`.
+
+### Changed
+
+- The five hand-rolled checkpoint lookups now call the binary search in
+  the index package, which was tested but unused. One implementation
+  instead of five, and O(log n) instead of a linear scan per lookup.
+
 - A truncated or corrupted archive was searched as far as it could be
   read and the result was handed back as if it were complete. The
   decompression error was logged and then discarded, so a half-readable

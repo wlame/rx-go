@@ -58,12 +58,11 @@ func resolveLinesFromIndex(path string, offsets []int64) map[int64]int {
 	}
 	sort.Slice(wanted, func(i, j int) bool { return wanted[i] < wanted[j] })
 
-	// Nearest checkpoint at or before the first offset we need.
+	// Nearest checkpoint at or before the first offset we need. The
+	// binary search in the index package is the single implementation of
+	// this lookup; five hand-rolled linear scans used to answer it.
 	startLine, startOffset := int64(1), int64(0)
-	for _, entry := range idx.LineIndex {
-		if entry.ByteOffset > wanted[0] {
-			break
-		}
+	if entry := index.FindNearestCheckpointForOffset(idx, wanted[0]); entry.LineNumber > 0 {
 		startLine, startOffset = entry.LineNumber, entry.ByteOffset
 	}
 

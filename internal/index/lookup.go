@@ -49,3 +49,21 @@ func FindNearestCheckpointForOffset(idx *rxtypes.UnifiedFileIndex, target int64)
 	}
 	return idx.LineIndex[i-1]
 }
+
+// CheckpointIndexForOffset returns the position in idx.LineIndex of the
+// last checkpoint whose ByteOffset is <= target, or -1 when there is
+// none.
+//
+// FindNearestCheckpointForOffset returns the entry itself, which is what
+// most callers want. This variant returns the position because two
+// callers need to step back one checkpoint from it, so that the leading
+// context of the first match is inside the pass they are about to make.
+func CheckpointIndexForOffset(idx *rxtypes.UnifiedFileIndex, target int64) int {
+	if idx == nil || len(idx.LineIndex) == 0 {
+		return -1
+	}
+	i := sort.Search(len(idx.LineIndex), func(i int) bool {
+		return idx.LineIndex[i].ByteOffset > target
+	})
+	return i - 1
+}
