@@ -21,6 +21,18 @@ any command that performs regex search.
 `rx` itself has no shared-library dependencies and no bundled
 `libzstd`. The statically-linked binary is ~13 MB.
 
+### What `rx` does *not* need
+
+`ripgrep` is the only external tool. In particular there is no need for
+`zstd`, `t2sz`, `gzip`, `xz` or `bzip2` on `PATH`: every compressed
+format rx reads or writes is handled inside the binary. A machine with
+only `rg` can create a seekable `.zst`, index it, search it and read
+lines out of it.
+
+rx-python is the same in this respect — it decompresses through the
+`zstandard` package, which installs with it — so the two backends have
+the same one dependency.
+
 ## Install `ripgrep` first
 
 === "Linux (apt)"
