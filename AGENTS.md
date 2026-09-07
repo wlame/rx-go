@@ -168,12 +168,23 @@ Data flow for `rx trace "pattern" big.log`:
    count while a chunk stops part-way; the caller resolves what it needs
    through `samples --offsets=…`, which answers a whole batch in one
    pass. Do not add a surface that numbers lines its own way.
-2. **An index is an accelerator, never a source of truth.** Every answer
-   rx gives must be identical whether or not an index exists. An index
-   only changes how fast the answer is reached, so any code path that
-   consults one must produce the same result when it does not. The
-   regression harness builds each answer twice, once with the cache empty
-   and once with a freshly built index, and compares them.
+2. **An index is an accelerator, never a source of truth.** No value rx
+   reports may depend on whether an index exists. An index only changes
+   how fast the answer is reached, so any code path that consults one
+   must report the same thing when it does not. The regression harness
+   builds each answer twice, once with the cache empty and once with a
+   freshly built index, and compares them.
+
+   There is exactly one thing an index does change, and it is *whether* a
+   line number is known rather than *what* it is. A scan cut short by
+   `--max-results` never read the bytes before the chunk that won, so
+   numbering its matches means reading them now — gigabytes, to answer a
+   search that stopped early on purpose. Without an index those matches
+   keep `absolute_line_number` -1; with one the count starts at the
+   nearest checkpoint and is cheap, so it is done. Both backends behave
+   the same way, and a caller that wants the number regardless asks
+   `samples --offsets=…`, which answers a whole batch in one pass. A
+   number rx does report is identical either way.
 
    An index is used only when it still describes the file it was built
    from. That means the format version matches exactly — an index from
@@ -185,9 +196,10 @@ Data flow for `rx trace "pattern" big.log`:
    filesystem whose ctime does not move. Catching that needs a
    whole-file hash, which costs more than rebuilding the index.
 
-   Bump `index.Version` and rx-python's `UNIFIED_INDEX_VERSION` together
-   whenever the on-disk shape or the meaning of a field changes. The two
-   backends share one cache directory.
+   Bump the two version constants together whenever the on-disk shape or
+   the meaning of a field changes — `index.Version` in rx-go and
+   `UNIFIED_INDEX_VERSION` in rx-python. The two backends share one cache
+   directory.
 3. **Bounded reads.** No code path reads more bytes than the request needs,
    except `rx index` (new index), `rx trace` without `--max-results`, and
    `rx compress`. Every new file-reading path gets a budget test that uses
