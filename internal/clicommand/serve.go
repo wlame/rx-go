@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
@@ -100,8 +101,13 @@ func runServe(out io.Writer, p serveParams) error {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 
-	// Resolve + apply search roots. Default: CWD.
+	// Resolve + apply search roots. The flag wins, then RX_SEARCH_ROOTS
+	// — which is how a parent rx passes its own sandbox down — and the
+	// current directory is the last resort.
 	rootsToSet := p.searchRoots
+	if len(rootsToSet) == 0 {
+		rootsToSet = config.GetPathSepEnv("RX_SEARCH_ROOTS")
+	}
 	if len(rootsToSet) == 0 {
 		cwd, err := os.Getwd()
 		if err != nil {

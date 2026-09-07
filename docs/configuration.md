@@ -76,7 +76,7 @@ Both are overridden by explicit `--color=always`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_SEARCH_ROOTS` | — | Path-separator-delimited list of directories. Automatically exported by `rx serve` from the `--search-root` flags. Also consumed by any child processes. |
+| `RX_SEARCH_ROOTS` | — | Path-separator-delimited list of directories. Read by every subcommand as the environment form of `--search-root`, which overrides it. Exported by `rx serve` from the roots it resolved, so a child process inherits the same sandbox. |
 
 See [concepts/security](concepts/security.md).
 

@@ -65,13 +65,34 @@ considered inside `/var/log` — a common false-positive trap.
 ### When validation runs
 
 - `rx serve`: on every file-accepting endpoint
-- CLI: on every path argument when `RX_SEARCH_ROOTS` is set or roots
-  have been configured
+- CLI: on every path argument, including output paths, when
+  `--search-root` or `RX_SEARCH_ROOTS` names at least one root
 
-When no roots are configured (typical CLI default), no validation
-runs. The sandbox is opt-in for CLI and on-by-default for
-`rx serve` (which defaults to the current working directory as the
-sole root).
+When no roots are configured (the CLI default), no validation runs. The
+sandbox is opt-in for the CLI and on by default for `rx serve`, which
+falls back to `RX_SEARCH_ROOTS` and then to the current working
+directory.
+
+### Switching the sandbox on from the CLI
+
+`--search-root` is accepted by every subcommand, repeats to name several
+roots, and may be written before or after the subcommand:
+
+```bash
+rx compress app.log --output=/tmp/app.zst --search-root=/var/log
+rx --search-root=/var/log --search-root=/srv/data trace error /srv/data/app.log
+RX_SEARCH_ROOTS=/var/log rx samples /var/log/app.log --lines=100
+```
+
+The flag wins over `RX_SEARCH_ROOTS`. A root that does not exist, or is
+not a directory, is a usage error (exit code 2) rather than a silent
+"no sandbox" — a caller who asked to be confined and was not would never
+find out. A path outside every root is exit code 4.
+
+`rx serve` keeps its own `--search-root`, whose default is the current
+directory rather than "no sandbox", and publishes the roots it resolved
+in `RX_SEARCH_ROOTS` so any process it spawns inherits the same
+confinement.
 
 ### Write paths are validated too
 

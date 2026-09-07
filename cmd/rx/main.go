@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"slices"
@@ -174,8 +175,19 @@ func newRootCmd() *cobra.Command {
 	var includeHidden bool
 	root.PersistentFlags().BoolVar(&includeHidden, "hidden", config.GetBoolEnv("RX_HIDDEN", false),
 		"Include hidden files and directories (names starting with a dot)")
-	root.PersistentPreRun = func(_ *cobra.Command, _ []string) {
+
+	// The --search-root sandbox is persistent for the same reason: a
+	// confined rx is a property of the process, not of one subcommand.
+	// `serve` declares its own --search-root because its default is the
+	// current directory rather than "no sandbox"; a local flag shadows
+	// the persistent one, so the two never both bind.
+	var searchRoots []string
+	root.PersistentFlags().StringArrayVar(&searchRoots, "search-root", nil,
+		"Restrict file access to this directory (repeatable; default: no sandbox)")
+
+	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
 		paths.SetIncludeHidden(includeHidden)
+		return installSearchRoots(searchRoots)
 	}
 
 	root.AddCommand(clicommand.NewTraceCommand(os.Stdout))
@@ -184,6 +196,32 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(clicommand.NewCompressCommand(os.Stdout))
 	root.AddCommand(clicommand.NewServeCommand(os.Stdout, appVersion))
 	return root
+}
+
+// installSearchRoots applies the --search-root sandbox for this process.
+//
+// The flag wins over RX_SEARCH_ROOTS, which is how `rx serve` passes the
+// sandbox down to any subprocess it spawns. With neither set there is no
+// sandbox at all: every path check reports ErrNoSearchRootsConfigured and
+// the commands treat that as "allow", which is what an ordinary CLI
+// invocation relies on.
+//
+// A root that does not exist is a usage error rather than a silent
+// no-sandbox: a caller who asked to be confined and was not would never
+// find out.
+func installSearchRoots(flagRoots []string) error {
+	roots := flagRoots
+	if len(roots) == 0 {
+		roots = config.GetPathSepEnv("RX_SEARCH_ROOTS")
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+	if err := paths.SetSearchRoots(roots); err != nil {
+		return clicommand.NewExitError(clicommand.ExitUsageError,
+			fmt.Errorf("search roots: %w", err))
+	}
+	return nil
 }
 
 // preprocessArgs rewrites os.Args[1:] so that bare `rx "pattern" file.log`

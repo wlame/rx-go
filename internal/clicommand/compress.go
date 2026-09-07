@@ -160,13 +160,16 @@ func runCompress(out io.Writer, p compressParams) error {
 	}
 
 	result := compressResult{Files: []map[string]any{}}
-	anyFailure := false
+	failures, denials := 0, 0
 
 	for _, inputPath := range p.paths {
-		entry := compressOneFile(inputPath, p, frameBytes, workers)
+		entry, denied := compressOneFile(inputPath, p, frameBytes, workers)
 		result.Files = append(result.Files, entry)
 		if ok, _ := entry["success"].(bool); !ok {
-			anyFailure = true
+			failures++
+			if denied {
+				denials++
+			}
 		}
 	}
 
@@ -180,7 +183,15 @@ func runCompress(out io.Writer, p compressParams) error {
 		writeCompressHuman(out, result)
 	}
 
-	if anyFailure {
+	// A run whose every failure was the sandbox refusing a path reports
+	// access denied; a run that also hit a real encode error reports the
+	// generic code, because "access denied" would then be only half the
+	// story.
+	if failures > 0 {
+		if denials == failures {
+			return NewExitError(ExitAccessDenied,
+				errors.New("one or more files were outside the search roots"))
+		}
 		return errors.New("one or more files failed to compress")
 	}
 	return nil
@@ -190,7 +201,9 @@ func runCompress(out io.Writer, p compressParams) error {
 // Python-compatible JSON entry for the `files` array. Errors are
 // reported per-entry (success=false + error), matching Python's
 // behavior: the loop does not abort on the first failure.
-func compressOneFile(inputPath string, p compressParams, frameBytes int64, workers int) map[string]any {
+// The second return value reports whether the failure was the sandbox
+// refusing a path, which the caller turns into exit code 4.
+func compressOneFile(inputPath string, p compressParams, frameBytes int64, workers int) (map[string]any, bool) {
 	entry := map[string]any{
 		"input":             inputPath,
 		"action":            "compress",
@@ -204,17 +217,17 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 
 	if _, err := sandboxCheck(inputPath); err != nil {
 		entry["error"] = err.Error()
-		return entry
+		return entry, true
 	}
 
 	info, err := os.Stat(inputPath)
 	if err != nil {
 		entry["error"] = err.Error()
-		return entry
+		return entry, false
 	}
 	if info.IsDir() {
 		entry["error"] = fmt.Sprintf("path is a directory: %s", inputPath)
-		return entry
+		return entry, false
 	}
 
 	// Resolve output path. Precedence (Python parity):
@@ -240,28 +253,28 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	validatedOutput, err := sandboxCheck(outputPath)
 	if err != nil {
 		entry["error"] = err.Error()
-		return entry
+		return entry, true
 	}
 	outputPath = validatedOutput
 
 	if _, existsErr := os.Stat(outputPath); existsErr == nil && !p.force {
 		entry["error"] = fmt.Sprintf(
 			"output file already exists: %s (use --force to overwrite)", outputPath)
-		return entry
+		return entry, false
 	}
 
 	// Encode.
 	src, err := os.Open(inputPath)
 	if err != nil {
 		entry["error"] = err.Error()
-		return entry
+		return entry, false
 	}
 	defer func() { _ = src.Close() }()
 
 	dst, err := os.Create(outputPath)
 	if err != nil {
 		entry["error"] = err.Error()
-		return entry
+		return entry, false
 	}
 	defer func() { _ = dst.Close() }()
 
@@ -273,11 +286,11 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	tbl, err := enc.Encode(context.Background(), src, info.Size(), dst)
 	if err != nil {
 		entry["error"] = fmt.Sprintf("encode: %s", err.Error())
-		return entry
+		return entry, false
 	}
 	if err := dst.Sync(); err != nil {
 		entry["error"] = fmt.Sprintf("fsync: %s", err.Error())
-		return entry
+		return entry, false
 	}
 
 	outInfo, _ := os.Stat(outputPath)
@@ -310,7 +323,7 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 			"run `rx index` on the .zst instead"
 	}
 
-	return entry
+	return entry, false
 }
 
 // writeCompressHuman — plain-text (non-JSON) summary. One line per file.
