@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace --hook-on-file`, `--hook-on-match` and `--hook-on-complete`
+  did nothing. The flags were declared, copied into the trace parameters
+  and never read again, so a script that notified CI under rx-python
+  silently notified nobody under rx-go — with no error and no log line.
+  They now build a dispatcher, fire the same payloads rx-python sends,
+  honour `RX_HOOK_ON_*_URL` and `RX_DISABLE_CUSTOM_HOOKS`, and drain the
+  queue before the process exits. `--hook-on-match` without
+  `--max-results` exits 2 with the message rx-python prints, rather than
+  offering one HTTP call per matching line.
+
 - `rx index` indexed binary files that rx-python skips, so the same
   directory produced two different sets of indexes. It now applies the
   same rule rx-python does — a NUL byte in the first 8 KiB means binary —
