@@ -14,32 +14,44 @@ import (
 // representation in Go code. Go's encoding/json has no idiom for
 // "serialize a struct as a positional array", so we implement it here.
 //
-// For seekable-zstd files Python extends this to a 3-tuple
-// [line, decompressed_offset, frame_index]. If we ever need that, add
-// a second optional field with a conditional marshaller. For now the
-// 2-tuple is what the spec requires.
+// A seekable-zstd checkpoint carries a third element: the index of the
+// frame holding that line. It is what lets a lookup decompress one
+// frame instead of walking the stream, and rx-python has always written
+// it, so FrameIndex is a pointer — nil for a plain file, where the
+// entry must stay two elements because both backends read them
+// positionally.
 type LineIndexEntry struct {
 	LineNumber int64
 	ByteOffset int64
+	FrameIndex *int
 }
 
-// MarshalJSON emits the 2-element array form: [lineNumber, byteOffset].
+// MarshalJSON emits [lineNumber, byteOffset], or
+// [lineNumber, byteOffset, frameIndex] when the entry names a frame.
 func (e LineIndexEntry) MarshalJSON() ([]byte, error) {
+	if e.FrameIndex != nil {
+		return json.Marshal([3]int64{e.LineNumber, e.ByteOffset, int64(*e.FrameIndex)})
+	}
 	return json.Marshal([2]int64{e.LineNumber, e.ByteOffset})
 }
 
-// UnmarshalJSON accepts either a 2-element array [line, offset] or a
-// 3-element array [line, offset, frameIndex] (third element silently
-// dropped — we don't model frame index in this type yet).
+// UnmarshalJSON accepts either form. A third element becomes FrameIndex;
+// a longer array is a format we do not know, and reading its first two
+// elements as if we did would produce a wrong answer silently.
 func (e *LineIndexEntry) UnmarshalJSON(data []byte) error {
 	var arr []int64
 	if err := json.Unmarshal(data, &arr); err != nil {
 		return fmt.Errorf("LineIndexEntry: expected JSON array, got %s: %w", data, err)
 	}
-	if len(arr) < 2 {
-		return fmt.Errorf("LineIndexEntry: expected at least 2 elements, got %d", len(arr))
+	if len(arr) < 2 || len(arr) > 3 {
+		return fmt.Errorf("LineIndexEntry: expected 2 or 3 elements, got %d", len(arr))
 	}
 	e.LineNumber = arr[0]
 	e.ByteOffset = arr[1]
+	e.FrameIndex = nil
+	if len(arr) == 3 {
+		frame := int(arr[2])
+		e.FrameIndex = &frame
+	}
 	return nil
 }

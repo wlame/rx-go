@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rx compress --build-index` builds the index it always promised. The
+  flag defaults to true in both backends; here it reported
+  `index_error: "not implemented in this backend"`, so a `.zst` written
+  by rx-go had no index and every lookup in it walked the stream, while
+  the same file written by rx-python was indexed. `POST /v1/compress`
+  said `index_built: true` without building one, which was worse — it
+  told the caller something that was not so.
+
+- `rx index` and `POST /v1/index` index a seekable `.zst` by its frames
+  rather than skipping it. The index records which lines each frame
+  holds, and it is the file rx-python writes for the same input: same
+  fields, same checkpoints, same frame table, so either backend reads
+  the other's.
+
+- `rx samples --lines=N` on a seekable `.zst` with an index decompresses
+  the frame holding the line and the one before it, rather than the whole
+  archive. Two frames whatever the file's size. Without an index it still
+  streams — an index only ever makes the answer faster.
+
+- An index now records `permissions` and `owner`, which rx-python has
+  always recorded and rx-go left null.
+
 - The 403 body for a path outside every `--search-root` is published as
   `SandboxError` in the OpenAPI document, and every path-accepting route
   declares the response. The shape itself is unchanged; it was only ever
@@ -53,6 +75,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory.
 
 ### Fixed
+
+- `rx samples` on a plain file that ends with a newline reported an empty
+  extra line after the last one. The final zero-length read is the end of
+  the file, not a line; the compressed paths and rx-python have always
+  known that, so the three storage forms of one log disagreed about their
+  own last line.
 
 - `rx trace --hook-on-file`, `--hook-on-match` and `--hook-on-complete`
   did nothing. The flags were declared, copied into the trace parameters

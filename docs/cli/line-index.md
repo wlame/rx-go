@@ -273,12 +273,23 @@ cache entry is valid as long as the source file hasn't changed. See
     `skipped` list of the JSON output and the command still exits 0.
     Scripts that check exit codes won't break on small files.
 
-!!! warning "Compressed files need special handling"
-    Indexing a `.zst` file only works when it's a *seekable* zstd — one
-    produced by [`rx compress`](compress.md). Plain zstd, gzip, bzip2,
-    and xz files don't have random access, so their "indexes" just
-    point at the compressed stream start. Line-number lookups then fall
-    back to streaming decompression.
+!!! note "A seekable `.zst` is indexed by its frames"
+    A *seekable* zstd — one produced by [`rx compress`](compress.md) —
+    is indexed frame by frame rather than by a byte step. The index
+    records which lines each frame holds, so
+    `rx samples big.log.zst --lines=25000` decompresses the frame that
+    holds line 25,000 instead of the whole stream. `file_type` is
+    `seekable_zstd`, the checkpoints carry a frame number, and `frames`
+    holds each frame's line range.
+
+    `rx compress` builds this index for you unless you pass
+    `--no-index`.
+
+!!! warning "Other compressed formats have no random access"
+    gzip, bzip2, xz and plain (non-seekable) zstd are indexed through
+    their decompressor, so the line numbers and byte offsets describe
+    the text inside — but a lookup still streams from the start,
+    because the format offers nowhere else to begin.
 
 ## See also
 
