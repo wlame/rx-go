@@ -182,3 +182,51 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		prometheus.RecordHTTPResponse(r.Method, endpoint, sr.status)
 	})
 }
+
+// securityHeaders is the table of response headers every route carries.
+//
+// The viewer renders untrusted content by definition — the log lines it
+// displays are attacker-influenced in many deployments — and these three
+// protections cannot be expressed in the SPA's meta tag, because a
+// browser ignores them there:
+//
+//   - frame-ancestors / X-Frame-Options: nothing otherwise stops the
+//     viewer being framed, so a page on another origin could overlay it
+//     and harvest clicks.
+//   - X-Content-Type-Options: without it a browser may re-guess a
+//     response's type and execute a log file as script.
+//   - Referrer-Policy: a filesystem path in the query string would
+//     otherwise travel to any host the user navigates to next.
+//
+// The header CSP carries only what a meta tag cannot. The full policy
+// stays in the meta tag, which is the artifact that knows what Monaco
+// needs — one copy, and a stricter header would intersect with it into
+// something that breaks the editor.
+//
+// `serve` binds loopback by default, which limits exposure but does not
+// remove it: users run it behind a reverse proxy, and a browser tab on
+// any site can reach 127.0.0.1.
+//
+// rx-python sends the same table (`src/rx/web.py`).
+var securityHeaders = map[string]string{
+	"Content-Security-Policy": "frame-ancestors 'none'",
+	"X-Frame-Options":         "DENY",
+	"X-Content-Type-Options":  "nosniff",
+	"Referrer-Policy":         "no-referrer",
+}
+
+// securityHeadersMiddleware sets securityHeaders on every response.
+//
+// Set before the handler runs, so they are present whatever the handler
+// writes — including a 404 from the SPA fallback and a panic turned into
+// a 500, which are exactly the responses a hardening check would
+// otherwise miss.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		for name, value := range securityHeaders {
+			header.Set(name, value)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
