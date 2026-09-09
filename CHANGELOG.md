@@ -82,6 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` printed plain text and ignored its own `--no-color`, while
+  rx-python colourised the same output — so the two produced different
+  text for the same search the moment a terminal was involved. It now
+  emits rx-python's sequences in rx-python's places, byte for byte, and
+  gained `--color=always|never|auto` so the choice is testable and means
+  the same thing as it does on `rx samples`.
+
 - `rx samples` on a plain file that ends with a newline reported an empty
   extra line after the last one. The final zero-length read is the end of
   the file, not a line; the compressed paths and rx-python have always
