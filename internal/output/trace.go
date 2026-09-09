@@ -198,6 +198,11 @@ type TraceFormatOptions struct {
 	// window, which prints the matched lines on their own. `--samples`
 	// and `--context=0` together mean exactly that.
 	ShowContext bool
+	// Colorize emits the ANSI sequences rx-python emits, in the same
+	// places. The context section stays plain in both backends: those
+	// lines are file content, and coloring them would compete with the
+	// match highlighting rather than help it.
+	Colorize bool
 }
 
 // FormatTraceCLI renders a trace response for a terminal.
@@ -210,27 +215,32 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 		return ""
 	}
 	var b strings.Builder
+	c := palette(opts.Colorize)
 
-	fmt.Fprintf(&b, "Request ID: %s\n", resp.RequestID)
-	fmt.Fprintf(&b, "Path: %s\n", strings.Join(resp.Path, ", "))
+	fmt.Fprintf(&b, "%sRequest ID:%s %s\n", c.grey, c.reset, resp.RequestID)
+	fmt.Fprintf(&b, "%sPath:%s %s%s%s\n",
+		c.grey, c.reset, c.boldCyan, strings.Join(resp.Path, ", "), c.reset)
 
 	if len(resp.Patterns) == 1 {
 		for _, pattern := range resp.Patterns {
-			fmt.Fprintf(&b, "Pattern: %s\n", pattern)
+			fmt.Fprintf(&b, "%sPattern:%s %s%s%s\n", c.grey, c.reset, c.boldMagenta, pattern, c.reset)
 		}
 	} else {
-		fmt.Fprintf(&b, "Patterns (%d):\n", len(resp.Patterns))
+		fmt.Fprintf(&b, "%sPatterns (%d):%s\n", c.grey, len(resp.Patterns), c.reset)
 		for _, id := range sortedKeys(resp.Patterns) {
-			fmt.Fprintf(&b, "  %s: %s\n", id, resp.Patterns[id])
+			fmt.Fprintf(&b, "  %s%s%s: %s%s%s\n",
+				c.blue, id, c.reset, c.magenta, resp.Patterns[id], c.reset)
 		}
 	}
 
-	fmt.Fprintf(&b, "Time: %.3fs\n", resp.Time)
+	fmt.Fprintf(&b, "%sTime:%s %s%.3fs%s\n", c.grey, c.reset, c.yellow, resp.Time, c.reset)
 	if len(resp.ScannedFiles) > 0 {
-		fmt.Fprintf(&b, "Files scanned: %d\n", len(resp.ScannedFiles))
+		fmt.Fprintf(&b, "%sFiles scanned:%s %s%d%s\n",
+			c.grey, c.reset, c.green, len(resp.ScannedFiles), c.reset)
 	}
 	if len(resp.SkippedFiles) > 0 {
-		fmt.Fprintf(&b, "Files skipped: %d\n", len(resp.SkippedFiles))
+		fmt.Fprintf(&b, "%sFiles skipped:%s %s%d%s\n",
+			c.grey, c.reset, c.grey, len(resp.SkippedFiles), c.reset)
 	}
 
 	// The count is the pieces the files were divided into, which is
@@ -239,17 +249,22 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 	// archive claim 137 workers on a six-core machine.
 	chunked, totalChunks := chunkStats(resp.FileChunks)
 	if chunked > 0 {
-		fmt.Fprintf(&b, "Parallel chunks: %d (%d file(s) chunked)\n", totalChunks, chunked)
+		fmt.Fprintf(&b, "%sParallel chunks:%s %s%d%s %s(%d file(s) chunked)%s\n",
+			c.grey, c.reset, c.cyan, totalChunks, c.reset, c.grey, chunked, c.reset)
 	}
 
-	fmt.Fprintf(&b, "Matches: %d\n", len(resp.Matches))
+	fmt.Fprintf(&b, "%sMatches:%s %s%d%s\n", c.grey, c.reset, c.boldGreen, len(resp.Matches), c.reset)
 
 	if len(resp.Matches) > 0 {
-		b.WriteString("\nMatches (file:line:offset [pattern]):\n")
+		fmt.Fprintf(&b, "\n%sMatches (file:line:offset [pattern]):%s\n", c.grey, c.reset)
 		for _, m := range resp.Matches {
-			fmt.Fprintf(&b, "  %s:%s:%d [%s]\n",
-				resp.Files[m.File], formatLineNumber(matchDisplayLine(m)),
-				m.Offset, resp.Patterns[m.Pattern])
+			fmt.Fprintf(&b, "  %s%s%s%s:%s%s%s%s%s:%s%s%d%s %s[%s%s%s%s%s]%s\n",
+				c.cyan, resp.Files[m.File], c.reset,
+				c.grey, c.reset,
+				c.yellow, formatLineNumber(matchDisplayLine(m)), c.reset,
+				c.grey, c.reset,
+				c.lightGrey, m.Offset, c.reset,
+				c.grey, c.reset, c.magenta, resp.Patterns[m.Pattern], c.reset, c.grey, c.reset)
 		}
 	}
 
@@ -300,4 +315,36 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// tracePalette holds the sequences one render uses. Building it once,
+// with empty strings when color is off, keeps a single format string per
+// line instead of an if/else pair around each.
+type tracePalette struct {
+	reset, grey, lightGrey   string
+	cyan, boldCyan, blue     string
+	yellow, green, boldGreen string
+	magenta, boldMagenta     string
+}
+
+// palette returns the sequences to emit, or empty strings when color is
+// off. The values are rx-python's, sequence for sequence
+// (models.py::TraceResponse.to_cli).
+func palette(colorize bool) tracePalette {
+	if !colorize {
+		return tracePalette{}
+	}
+	return tracePalette{
+		reset:       ColorReset,
+		grey:        ColorGrey,
+		lightGrey:   ColorLightGrey,
+		cyan:        ColorCyan,
+		boldCyan:    ColorBoldCyan,
+		blue:        ColorBlue,
+		yellow:      ColorYellow,
+		green:       ColorGreen,
+		boldGreen:   ColorBoldGreen,
+		magenta:     ColorMagenta,
+		boldMagenta: ColorBoldMagenta,
+	}
 }

@@ -41,7 +41,8 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `-B`, `--before` | `int` | `0` | Lines before each match (overrides `--context`) |
 | `-A`, `--after` | `int` | `0` | Lines after each match (overrides `--context`) |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
-| `--no-color` | `bool` | `false` | Disable ANSI colors |
+| `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
+| `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
 | `--debug` | `bool` | `false` | Write `.debug_*` artifacts for post-mortem |
 | `--request-id` | `string` | auto (UUID v7) | Custom request ID for log correlation |
 | `--hook-on-file` | `string` | `RX_HOOK_ON_FILE_URL` | Webhook URL, fired per file |
@@ -51,6 +52,22 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `--no-index` | `bool` | `false` | Don't consult the unified line index |
 | `-r`, `--recursive` | `bool` | `true` | Recurse into subdirectories (default; present for compatibility) |
 | `--no-recursive` | `bool` | `false` | Stop at top-level directory entries |
+
+### Colour
+
+`auto` colours only when stdout is a terminal, and `NO_COLOR` or
+`RX_NO_COLOR` in the environment turns it off. `--color=always` wins over
+both, so a redirect still gets the sequences. An unrecognised value is a
+usage error (exit 2).
+
+The header labels are grey, the path bold cyan, the pattern bold magenta,
+the time yellow and the match count bold green; a match line colours its
+file, line, offset and pattern separately. rx-python emits the same
+sequences in the same places.
+
+Context lines are deliberately plain in both backends: they are file
+content, and colouring them would compete with the match highlighting
+rather than help it.
 
 ### Pattern and path resolution
 
