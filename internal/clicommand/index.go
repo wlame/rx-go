@@ -282,6 +282,13 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 
 	// Hoisted out of the per-file loop: the window size only depends on
 	// CLI flag and env precedence, not on the path. Compute once.
+	// A negative window is a mistake the caller made, not a way to spell
+	// "not set" — 0 already does that — so it is refused rather than
+	// silently replaced by the default. POST /v1/index refuses it too.
+	if p.analyzeWindowLines < 0 {
+		return exitWithError(os.Stderr, ExitUsageError,
+			"--analyze-window-lines must be positive, or 0 to use the default")
+	}
 	windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
 
 	for _, path := range filesToIndex {

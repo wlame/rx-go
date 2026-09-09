@@ -160,6 +160,11 @@ multi-line patterns getting truncated:
 rx index /var/log/app.log --analyze --analyze-window-lines=512
 ```
 
+A negative value is a usage error (exit 2 on the CLI, 400 over HTTP),
+because 0 and an absent flag already mean "use the default". rx-python
+accepts the same flag and the same request field, with the same
+precedence and the same refusal.
+
 The resolver precedence is URL param > CLI flag > `RX_ANALYZE_WINDOW_LINES`
 env var > default (128). Values outside `[1, 2048]` are clamped.
 

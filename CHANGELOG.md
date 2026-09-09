@@ -47,6 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `analyze_window_lines` in a `POST /v1/index` body is now an explicit
+  optional integer rather than an int that omitempty hid: absent, null
+  and 0 all mean "use the default", and the field appears in the schema.
+  A negative value is refused with 400 before a task is created, rather
+  than accepted and then failing a task the client is polling.
+  `--analyze-window-lines=-5` is likewise exit 2. rx-python accepts the
+  same field and the same flag now, so the contract test no longer needs
+  to tolerate the difference.
+
 - `rx samples --offsets` and `--lines` repeat as well as taking a
   comma-separated list, so `-b 100 -b 200` names both positions. It used
   to keep only the last value, which is the quiet kind of wrong: the

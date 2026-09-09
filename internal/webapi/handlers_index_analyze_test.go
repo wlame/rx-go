@@ -49,7 +49,7 @@ func TestIndexPost_AnalyzeWindowLinesField_RoundTrip(t *testing.T) {
 		Path:               big,
 		Threshold:          intPtr(1),
 		Analyze:            true,
-		AnalyzeWindowLines: 256,
+		AnalyzeWindowLines: intPtr(256),
 	})
 	resp, err := http.Post(ts.URL+"/v1/index", "application/json", bytes.NewReader(body))
 	if err != nil {
