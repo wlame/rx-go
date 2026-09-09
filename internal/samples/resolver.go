@@ -264,9 +264,13 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse) error {
 
 	for _, w := range windows {
 		if !w.started {
-			// The offset is past the end of the file; Python reports the
-			// last line for it rather than nothing.
-			resp.Offsets[w.key] = lineNum - 1
+			// The offset is past the end of the file, so there is no
+			// line at it. Reporting the file's last line was a number
+			// counted from the wrong place; -1 is what the line
+			// numbering contract spells "asked but unknown", and it is
+			// what a line number past the last line already answers.
+			resp.Offsets[w.key] = -1
+			resp.Samples[w.key] = nil
 			continue
 		}
 		resp.Samples[w.key] = w.collect
@@ -441,6 +445,15 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 				target = 1
 			}
 		}
+		// Line 0 is not a line: they are numbered from 1. Asking for it
+		// used to return the window that clamping produced, which
+		// answered a question nobody asked.
+		if target < 1 {
+			key := strconv.FormatInt(target, 10)
+			resp.Lines[key] = -1
+			resp.Samples[key] = nil
+			continue
+		}
 		startLine := target - int64(req.BeforeContext)
 		if startLine < 1 {
 			startLine = 1
@@ -461,6 +474,16 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 		// `line_to_offset[str(start)] = byte_offset_val` where `start`
 		// has already been reassigned to the positive value).
 		key := strconv.FormatInt(target, 10)
+		// A line the file does not have — past the last one, or line 0
+		// of an empty file — is asked-but-unknown, which the line
+		// numbering contract spells -1 with a null sample. Reporting
+		// offset 0 for line 1 of an empty file claimed a line that is
+		// not there.
+		if len(lines) == 0 {
+			resp.Lines[key] = -1
+			resp.Samples[key] = nil
+			continue
+		}
 		resp.Samples[key] = lines
 		// resp.Lines[key] holds the offset of line `target` — the line
 		// the caller asked about, not the context window's first line.
