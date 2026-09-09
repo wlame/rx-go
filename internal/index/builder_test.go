@@ -177,10 +177,9 @@ func TestBuild_AnalyzeStatistics(t *testing.T) {
 	}
 }
 
-// TestBuild_LineLengthStats_ComputedWithoutAnalyze covers Stage 9
-// Round 2 R1-B10: Python always populates line_length stats (max/avg/
-// median/p95/p99/stddev/max_line_number/max_byte_offset) regardless of
-// the --analyze flag. The --analyze flag only gates anomaly detection
+// TestBuild_LineLengthStats_ComputedWithoutAnalyze: Python always
+// populates line_length stats (max/avg/median/p95/p99/stddev/
+// max_line_number/max_byte_offset) regardless of the --analyze flag. The --analyze flag only gates anomaly detection
 // and prefix-pattern work, not the basic line-length scan.
 //
 // Previous Go behavior: stats were gated on Analyze=true, producing
@@ -261,8 +260,8 @@ func TestBuild_EmptyLineCount(t *testing.T) {
 	}
 }
 
-// TestBuild_LineEndingSample_OvershootsAt64K_PythonParity covers Stage 8
-// Reviewer 1 High #4: Python appends whole lines to the line-ending
+// TestBuild_LineEndingSample_OvershootsAt64K_PythonParity :
+// Python appends whole lines to the line-ending
 // sample until `len(sample) >= 64 KB`, potentially overshooting by up
 // to one line. Go previously truncated the last line at byte-granularity
 // to fit exactly into the 64 KB budget, which could drop trailing \r\n

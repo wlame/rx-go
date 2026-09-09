@@ -1,6 +1,6 @@
 package clicommand
 
-// Test for R3-B1: rx compress --output-dir=DIR parity with Python.
+// rx compress --output-dir=DIR parity with Python.
 //
 // Python's rx compress accepts --output-dir; output file is written as
 // {output-dir}/{basename}.zst (with any compression suffix stripped).

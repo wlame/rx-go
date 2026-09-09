@@ -146,7 +146,9 @@ func writeLineSection(b *bytes.Buffer, resp *rxtypes.SamplesResponse, colorize b
 //
 // `secondary` is int64 because it may carry a file byte offset on
 // files >2 GB (see rxtypes.SamplesResponse.Lines field widening;
-// Stage 8 Finding 14). When `secondary` is a line number the int64
+//
+//	When `secondary` is a line number the int64
+//
 // type is overkill but harmless.
 func buildHeader(path, key string, secondary int64, mainKey string, colorize bool, offsetMode bool) string {
 	// Ranges (key contains a dash). Python's check is `if '-' in key`.

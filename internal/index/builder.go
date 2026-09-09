@@ -162,7 +162,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// terminated by the platform's preferred newline. In Go, bufio's
 	// ReadSlice('\n') gives the same slice-including-terminator view.
 	//
-	// Stage 9 Round 2 R1-B10: the walk always collects line-length stats
+	// the walk always collects line-length stats
 	// (Python parity — see rx-python/src/rx/unified_index.py::build_index).
 	// Anomaly detection is gated at the call site (opts.Analyze controls
 	// whether coord is non-nil).
@@ -202,10 +202,9 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	}
 
 	// Fill stats. Python always populates line_count/empty_line_count
-	// AND the line-length aggregates, regardless of --analyze (Stage 9
-	// Round 2 R1-B10 fix). The only fields gated on --analyze are
-	// anomaly detection and prefix pattern fields (both Python-only at
-	// v1 of rx-go).
+	// AND the line-length aggregates, regardless of --analyze. The only
+	// fields gated on --analyze are anomaly detection and prefix pattern
+	// fields (both Python-only at v1 of rx-go).
 	//
 	// Post-Welford/reservoir refactor: the accumulator always returns a
 	// zero-valued snapshot for empty input, so the previous
@@ -297,7 +296,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		idx.AnomalySummary = summary
 	}
 
-	// Stage 9 Round 2 S6: gated helper — CLI mode skips observation.
+	// gated helper — CLI mode skips observation.
 	prometheus.ObserveIndexBuildDuration(time.Since(started))
 	return idx, nil
 }
@@ -425,10 +424,9 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 		// A previous Go version truncated the last line at byte
 		// granularity (`take = min(lineLen, remaining)`), which could
 		// drop trailing CR/LF bytes that Python would have captured.
-		// That broke line-ending detection for files whose ending-
-		// style transition happened right around the 64 KB boundary
-		// (see Stage 8 Reviewer 1 High #4 / Finding 6). The fix is to
-		// append the WHOLE line and accept the overshoot.
+		// That broke line-ending detection for files whose ending-style
+		// transition happened right around the 64 KB boundary. The whole
+		// line is appended now and the overshoot accepted.
 		if !sampleComplete {
 			lineEndingSample = append(lineEndingSample, line...)
 			if len(lineEndingSample) >= 65536 {
@@ -443,7 +441,7 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 		// Unlike the pre-refactor code, the accumulator now handles BOTH
 		// paths (analyze / non-analyze) with the same call — Python's
 		// behavior is that line_length aggregates are populated regardless
-		// of --analyze (Stage 9 Round 2 R1-B10), so there is no reason to
+		// of --analyze, so there is no reason to
 		// bypass the accumulator when analyze==false.
 		stripped := stripLineEnd(line)
 		contentLen := len(stripped)

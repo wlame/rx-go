@@ -399,8 +399,8 @@ func TestSamples_LineRange_FourLines(t *testing.T) {
 	}
 }
 
-// TestSamples_LinesMapReportsRequestedLineOffset covers Stage 9 Round 2
-// R1-B5: the `lines` map in the response must contain the byte offset
+// TestSamples_LinesMapReportsRequestedLineOffset :
+// the `lines` map in the response must contain the byte offset
 // of the REQUESTED line (v.Start), not the start of the context window
 // (v.Start - before). The frontend rx-viewer uses this to drive
 // "Copy absolute offset" and "load-more" chunk boundaries — wrong
@@ -829,9 +829,9 @@ func TestTraceEndpoint_SandboxViolation(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_RAMFieldsPopulated_Linux covers Stage 9 Round 2
-// R1-B9: /health's ram_total_gb / ram_available_gb / ram_percent_used
-// were always null in Round 1. The Linux path parses /proc/meminfo to
+// TestHealthEndpoint_RAMFieldsPopulated_Linux :
+// /health's ram_total_gb / ram_available_gb / ram_percent_used
+// used to be null. The Linux path parses /proc/meminfo to
 // populate real numbers (psutil parity at the values level; not the
 // exact implementation).
 //
@@ -870,8 +870,8 @@ func TestHealthEndpoint_RAMFieldsPopulated_Linux(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_NEWLINE_SYMBOL_NotOverEscaped covers Stage 9
-// Round 2 R1-B9: Go's NEWLINE_SYMBOL constant was being double-escaped
+// TestHealthEndpoint_NEWLINE_SYMBOL_NotOverEscaped: Go's
+// NEWLINE_SYMBOL constant used to be double-escaped
 // relative to Python's repr() — the on-wire value read as '\\n' (two
 // literal backslashes then n) when Python emits '\n' (one backslash,
 // then n) matching the character's repr.
@@ -946,8 +946,8 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 }
 
-// TestMetricsMiddleware_UsesChiRoutePattern covers Stage 8 Reviewer 3
-// High #11: the metricsMiddleware was using r.URL.Path directly,
+// TestMetricsMiddleware_UsesChiRoutePattern covers
+// the metricsMiddleware was using r.URL.Path directly,
 // producing a cardinality explosion when path parameters (like task_id)
 // are present. Every unique /v1/tasks/{id} GET created a new label
 // value in the Prometheus registry.

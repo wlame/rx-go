@@ -1,14 +1,14 @@
-// Stage 9 Round 5 — byte-budget tests for the samples resolver.
+// — byte-budget tests for the samples resolver.
 //
 // These tests exist to pin down the BOUNDED-READ CONTRACT: every
 // resolver code path must read no more of the source file than the
 // result requires (plus small overshoot for I/O buffering).
 //
 // They complement the correctness tests in resolver_test.go. The bug
-// R5-B1 (loop break unreachable for range requests) passed every
-// correctness test cleanly — the output was right, it just read the
-// ENTIRE file to produce a 1000-line slice. That kind of regression
-// is only caught by asserting on byte traffic.
+// they exist for — an unreachable loop break on a range request —
+// passed every correctness test cleanly: the output was right, it just
+// read the ENTIRE file to produce a 1000-line slice. That kind of
+// regression is only caught by asserting on byte traffic.
 //
 // The tests use internal/testutil/counting to intercept the file
 // opens via the openFileForSamples seam. Production code is unchanged;
@@ -115,14 +115,14 @@ func makeLargeFixture(t *testing.T, numLines int) (path string, totalBytes int64
 	return path, st.Size()
 }
 
-// TestBudget_LinesRangeRequest_StopsAtEndLine is the headline R5-B1
+// TestBudget_LinesRangeRequest_StopsAtEndLine is the headline
 // regression guard. A range request for lines 100..200 on a 10,000-line
 // fixture must read ONLY the bytes needed for those lines plus small
 // buffering overshoot — NOT the rest of the file.
 //
-// With the pre-R5-B1 bug: the loop would read the entire file (~1.5 MB
-// for a 10k-line fixture, ~1.3 GB for the user's real file).
-// Post-fix: the loop breaks once currentLine > endLine.
+// Before the loop break was reachable, it read the whole file: ~1.5 MB
+// for this fixture, ~1.3 GB for the log that surfaced it. The loop now
+// breaks once currentLine > endLine.
 func TestBudget_LinesRangeRequest_StopsAtEndLine(t *testing.T) {
 	// NOT t.Parallel — these tests share the package-level
 	// openFileForSamples seam. Making them parallel would race on the
@@ -163,7 +163,7 @@ func TestBudget_LinesRangeRequest_StopsAtEndLine(t *testing.T) {
 	got := counter.Load()
 
 	if got > budget {
-		t.Fatalf("R5-B1 regression: read %d bytes, budget %d (file is %d bytes, %.1f%% read)",
+		t.Fatalf("read %d bytes, budget %d (file is %d bytes, %.1f%% read)",
 			got, budget, totalBytes, 100.0*float64(got)/float64(totalBytes))
 	}
 	// Sanity: we shouldn't read drastically less than expected either
@@ -327,7 +327,7 @@ func TestBudget_ByteOffsetRange_StopsAtEndOffset(t *testing.T) {
 // TestBudget_LinesRangeNoIndex_FullScanExpected documents the WORST
 // CASE: a range request without an index must still be bounded by
 // endLine * avgLineBytes (it scans from the top). This confirms the
-// ABSENCE of the R5-B1 bug in the no-index path: even without the
+// loop break is reachable on the no-index path too: even without an
 // index, we STOP at endLine.
 func TestBudget_LinesRangeNoIndex_FullScanExpected(t *testing.T) {
 	// NOT t.Parallel — these tests share the package-level

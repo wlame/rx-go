@@ -146,11 +146,11 @@ func recoverMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 // both report endpoint="/v1/tasks/{task_id}" — one time series instead
 // of N.
 //
-// Before Stage 8's fix, this middleware used r.URL.Path directly despite
+// Previously this middleware used r.URL.Path directly despite
 // the comment claiming otherwise. That made long-running servers
 // accumulate unbounded label values, slowing /metrics scrapes and
 // causing Prometheus itself to enforce its cardinality limit by
-// dropping metrics. See Stage 8 Reviewer 3 High #11.
+// dropping metrics..
 //
 // Fallback behavior: chi.RouteContext MAY be nil or return "" if the
 // route didn't match any registered pattern (e.g. 404 static file).

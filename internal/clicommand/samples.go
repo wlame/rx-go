@@ -27,10 +27,9 @@ import (
 //	rx samples PATH --lines=-1 --before=2 --after=5
 //	rx samples PATH --lines=100 --regex 'error.*' --color=always
 //
-// Exactly one of --offsets / --lines is required. Stage 9 Round 2
-// rework: both modes now dispatch to internal/samples.Resolve which is
+// Exactly one of --offsets / --lines is required. // rework: both modes now dispatch to internal/samples.Resolve which is
 // shared with the HTTP handler — no more divergence between CLI and
-// HTTP behavior (R1-B4 / R1-B5 root cause).
+// HTTP behavior.
 //
 // Colored output:
 //
@@ -57,7 +56,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 		Short: "Get context lines around byte offsets or line numbers in a file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Stage 9 Round 2 R1-B11: --no-color is the Python-compat
+			// --no-color is the Python-compat
 			// bool flag — when set it overrides --color.
 			if noColor {
 				colorFlag = "never"
@@ -75,7 +74,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 			})
 		},
 	}
-	// Python-compatible short aliases (Stage 9 Round 2 R1-B11):
+	// Python-compatible short aliases:
 	//   -b → --offsets, -l → --lines, -c → --context, -r → --regex
 	//   -B → --before (already Python), -A → --after (already Python)
 	//   --no-color → suppress ANSI output
@@ -121,7 +120,7 @@ type samplesParams struct {
 }
 
 // runSamples dispatches the CLI request to the shared samples.Resolve
-// implementation. Stage 9 Round 2 U rework: replaces the divergent
+// implementation. replaces the divergent
 // in-line implementation with the shared resolver.
 func runSamples(out io.Writer, p samplesParams) error {
 	// Mode mutual exclusion.

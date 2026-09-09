@@ -9,7 +9,7 @@
 //     by max_results)
 //   - on_complete — fired once per full trace request
 //
-// Per user decision 6.9.2 (2026-04-18), the Go port is
+// the Go port is
 // FIRE-AND-FORGET. No retry, no backoff, no acknowledgement: a single
 // HTTP POST per event with a 3 s timeout. If the POST fails, log a
 // warning and move on. Implementation uses a buffered channel +
@@ -222,7 +222,7 @@ func defaultResolveHost(ctx context.Context, host string) ([]net.IP, error) {
 // Parity: Python uses HttpUrl from pydantic. httpx accepts http/https;
 // we match that.
 //
-// SSRF PROTECTION LAYERS (Stage 8 Finding 15 + R2M4 + R2M5):
+// SSRF PROTECTION LAYERS:
 //
 // URLs pointing at loopback addresses (127.x / ::1 / "localhost"),
 // link-local space (169.254.x including the AWS IMDS 169.254.169.254),

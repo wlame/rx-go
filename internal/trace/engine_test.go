@@ -10,8 +10,8 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
-// TestEngine_Run_SingleChunk_AbsoluteLineNumberPopulated covers Stage 9
-// Round 2 R1-B2: single-chunk scans (file < MIN_CHUNK_SIZE_MB) must
+// TestEngine_Run_SingleChunk_AbsoluteLineNumberPopulated: a
+// single-chunk scan (file < MIN_CHUNK_SIZE_MB) must
 // emit real `absolute_line_number` values, not -1. Python's single-chunk
 // path computes it correctly; Go must match.
 //
@@ -98,8 +98,8 @@ func TestEngine_Run_NoMatchesProducesEmptyMatchesSlice(t *testing.T) {
 	}
 }
 
-// TestEngine_Run_AllNullableSlices_NonNilForJSONParity covers Stage 8
-// Reviewer 2 High #8: previously, Matches was explicitly normalized to
+// TestEngine_Run_AllNullableSlices_NonNilForJSONParity :
+// previously, Matches was explicitly normalized to
 // []rxtypes.Match{} but other nullable slices (ScannedFiles,
 // SkippedFiles) could leak as nil → serialize as null in JSON. The
 // frontend iterates these fields and can crash on null.

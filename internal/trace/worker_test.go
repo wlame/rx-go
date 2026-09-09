@@ -78,7 +78,7 @@ func TestProcessChunk_NoMatches(t *testing.T) {
 }
 
 // TestProcessChunk_DedupFilter validates the core correctness property
-// from user decision 6.9.5: matches OUTSIDE the task range must be
+// matches OUTSIDE the task range must be
 // dropped. We simulate this by pointing two tasks at the same file
 // with overlapping ranges and confirming each reports the correct
 // disjoint set.

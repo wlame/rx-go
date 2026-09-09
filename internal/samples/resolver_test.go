@@ -26,7 +26,7 @@ func writeFixture(t *testing.T) string {
 }
 
 // TestResolve_LinesMode_SingleWithContext covers the most common path
-// (single line, context window). Verifies Stage 9 Round 2 R1-B5: the
+// (single line, context window). the
 // lines[key] byte offset must be the offset of the REQUESTED line,
 // not the context window's first line.
 func TestResolve_LinesMode_SingleWithContext(t *testing.T) {
@@ -79,7 +79,7 @@ func TestResolve_LinesMode_RangeEmitsNegativeOneOffset(t *testing.T) {
 	}
 }
 
-// TestResolve_OffsetsMode_SingleByte covers Stage 9 Round 2 R1-B4: byte
+// TestResolve_OffsetsMode_SingleByte byte
 // offset dispatch must resolve to the line containing the offset (not
 // treat the value as a line number). Line 10 starts at byte 81 — an
 // offset of 85 falls inside line 10.
@@ -130,7 +130,7 @@ func TestResolve_OffsetsMode_ByteRange(t *testing.T) {
 	}
 }
 
-// TestResolve_MultiRange covers the Stage 9 Round 2 R1-B4 user design:
+// TestResolve_MultiRange covers the design:
 // multiple ranges in a single call. Every key must appear in the
 // response with its own sample slice.
 func TestResolve_MultiRange(t *testing.T) {

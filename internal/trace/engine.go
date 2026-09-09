@@ -34,7 +34,7 @@ type Options struct {
 	NoIndex       bool // true = don't consult the unified index
 	// NoRecursive controls directory expansion: when false (the
 	// zero-value default), `rx trace <dir>` walks the full subtree
-	// (Python parity starting Stage 9 Round 2 S5). Setting true limits
+	// (Python parity). Setting true limits
 	// expansion to the top-level entries — CLI `--no-recursive` sets
 	// this flag. Passing a single file is unaffected.
 	NoRecursive bool
@@ -128,7 +128,7 @@ func (e *Engine) RunWithOptions(
 			ScannedFiles: []string{},
 			// emptyIfNilStrings coerces a nil slice to []string{} so
 			// the JSON marshaller emits `[]` instead of `null`. Python
-			// emits `[]` for empty lists; see Stage 8 Reviewer 2 High #8.
+			// emits `[]` for empty lists.
 			SkippedFiles: emptyIfNilStrings(skipped),
 			MaxResults:   opts.MaxResults,
 			Time:         time.Since(start).Seconds(),
@@ -544,14 +544,14 @@ func (e *Engine) RunWithOptions(
 	// Phase 6: response assembly
 	// -------------------------------------------------------------------
 	elapsed := time.Since(start)
-	// Stage 9 Round 2 S6: gated helper — no-op in CLI mode.
+	// gated helper — no-op in CLI mode.
 	prometheus.AddMatchesFound(len(allMatches))
 
 	// All nullable slice fields must serialize as [] (not null) when
 	// empty — the JSON contract says they're arrays. nil slices
 	// marshal as null in Go, breaking frontend iteration expectations.
-	// Centralize via emptyIfNilStrings for consistency. See Stage 8
-	// Reviewer 2 High #8.
+	// Centralize via emptyIfNilStrings for consistency. .
+	//
 	resp := &rxtypes.TraceResponse{
 		RequestID:    opts.RequestID,
 		Path:         emptyIfNilStrings(append([]string(nil), paths...)),
@@ -593,7 +593,7 @@ type contextWithFile struct {
 
 // expandPaths splits input paths into (files, dirs-scanned, skipped).
 //
-// Stage 9 Round 2 S5 + R1-B7 fix: recursive defaults to TRUE (Python
+// recursive defaults to TRUE (Python
 // parity). When recursive is false (CLI `--no-recursive`), only the
 // top-level directory entries are scanned.
 //

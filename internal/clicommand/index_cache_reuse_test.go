@@ -1,6 +1,6 @@
 package clicommand
 
-// Test for R3-B2: rx index without --force must honor the cache and NOT
+// rx index without --force must honor the cache and NOT
 // rebuild on every call. Python's rx-python/src/rx/indexer.py::_index_single_file
 // calls load_index() first; only rebuilds when the cache is missing or stale.
 //
@@ -45,7 +45,7 @@ func writeIndexableFile(t *testing.T, dir, name string) string {
 	return p
 }
 
-// TestIndex_ReusesCacheWhenNotForced is the R3-B2 regression test.
+// TestIndex_ReusesCacheWhenNotForced is the regression test.
 func TestIndex_ReusesCacheWhenNotForced(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("inode check is POSIX-only")

@@ -30,8 +30,8 @@ type postCompressOutput struct {
 // registerCompressHandlers mounts POST /v1/compress.
 //
 // Matches rx-python/src/rx/web.py:1716-1787. Creates a background task
-// that encodes a file to seekable-zstd using the native Go encoder
-// (per user decision 5.4 / 5.14 — no external t2sz binary).
+// that encodes a file to seekable-zstd using the native Go encoder, so
+// no external tool is needed.
 func registerCompressHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "compress",
@@ -117,7 +117,7 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 	// Wrap the detached task in the panic-recovery helper so a runtime
 	// panic inside seekable.Encode (malformed input, corrupt buffer,
 	// etc.) marks the task Failed without bringing down the HTTP
-	// server. See Stage 8 Reviewer 3 High #1.
+	// server..
 	mgr := s.cfg.TaskManager
 	logger := s.cfg.Logger
 	job := compressJob{
