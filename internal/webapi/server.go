@@ -80,11 +80,14 @@ func NewServer(cfg Config) *Server {
 
 	// ------------------------------------------------------------------
 	// Middleware ordering matters for propagation.
+	//   security  → response headers a meta tag cannot carry; first, so
+	//               they are present on every response including a panic
 	//   requestID → populates ctx, emits X-Request-ID header
 	//   logger    → reads requestID from ctx; logs method/path/status
 	//   recover   → converts panics to 500 + structured log
 	//   metrics   → rx_http_responses_total
 	// ------------------------------------------------------------------
+	router.Use(securityHeadersMiddleware)
 	router.Use(requestIDMiddleware)
 	router.Use(loggingMiddleware(cfg.Logger))
 	router.Use(recoverMiddleware(cfg.Logger))

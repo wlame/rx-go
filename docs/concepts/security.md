@@ -34,6 +34,41 @@ it downloads is the one it expected. Those are the surfaces below.
 Each is described below. At the end, we cover the threat model and
 known limitations.
 
+## Security response headers
+
+Every response from `rx serve` carries these:
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | `frame-ancestors 'none'` |
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `no-referrer` |
+
+The viewer renders untrusted content by definition — the log lines it
+displays are attacker-influenced in many deployments — and a browser
+**ignores these three in a meta tag**, so the SPA cannot set them itself:
+
+- without `frame-ancestors` (or its older equivalent `X-Frame-Options`)
+  nothing stops the viewer being framed, so a page on another origin can
+  overlay it and harvest clicks;
+- without `nosniff` a browser may re-guess a response's type and execute
+  a log file as script;
+- without a referrer policy a filesystem path in the query string travels
+  to any host the user navigates to next.
+
+The header CSP carries **only** `frame-ancestors`. The full policy stays
+in the SPA's meta tag, which is the artifact that knows what Monaco
+needs; the two intersect, so a stricter header would break the editor.
+The `/docs` page huma serves sets a fuller policy of its own, which also
+denies framing.
+
+`serve` binds loopback by default, which limits exposure but does not
+remove it: users run it behind a reverse proxy, and a browser tab on any
+site can reach `127.0.0.1`.
+
+rx-python sends the same table.
+
 ## Path sandbox (`--search-root`)
 
 ### What it does
