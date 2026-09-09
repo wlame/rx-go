@@ -25,7 +25,7 @@ import (
 //	rx compress PATH --force
 //	rx compress PATH --json             (Python wrapper shape)
 //
-// JSON wrapper (Stage 9 Round 2 S4 rule — match Python's shape exactly):
+// JSON wrapper:
 //
 //	{"files": [{
 //	   "input":             "/path/to/input.log",
@@ -72,8 +72,8 @@ func NewCompressCommand(out io.Writer) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "Output .zst path (default: PATH.zst)")
-	// --output-dir added for R3-B1 parity with Python:
-	// rx-python/src/rx/cli/compress.py accepts --output-dir=DIR and writes
+	// --output-dir exists for parity with rx-python:
+	// src/rx/cli/compress.py accepts --output-dir=DIR and writes
 	// {dir}/{basename}.zst (auto-creating DIR via os.makedirs(exist_ok=True)).
 	// Mutually exclusive with --output.
 	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Output directory (uses source filename with .zst extension)")

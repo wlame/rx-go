@@ -35,8 +35,8 @@ func TestRequestedLogLevelName_EnvFallbackWhenUnset(t *testing.T) {
 	}
 }
 
-// TestRequestedLogLevelName_ReflectsSetValue covers Stage 8 Reviewer 3
-// High #13: when the server wires the actual configured log level via
+// TestRequestedLogLevelName_ReflectsSetValue covers
+// when the server wires the actual configured log level via
 // SetRequestedLogLevel, /health reports THAT value rather than an
 // env-var echo that may be out of date.
 func TestRequestedLogLevelName_ReflectsSetValue(t *testing.T) {

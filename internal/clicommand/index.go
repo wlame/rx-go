@@ -31,7 +31,7 @@ import (
 //	rx index PATH --analyze      # full analysis (builds anomaly data)
 //	rx index PATH --json         # JSON output
 //
-// JSON output shape (Python-compatible per Stage 9 Round 2 S3 user rule):
+// JSON output shape (Python-compatible per ):
 //
 //	{
 //	  "indexed": [{path, file_type, size_bytes, created_at, ...}],
@@ -231,7 +231,7 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 // runIndexBuild runs the real line-offset index builder and writes the
 // result to the cache for each path in p.paths.
 //
-// Python-parity behavior (Stage 9 Round 2 S3 user decision):
+// Python-parity behavior:
 //   - Below-threshold files → `skipped` list, exit 0 (NOT an error).
 //   - Nonexistent files → `errors` list, exit 1 AFTER processing all.
 //   - Directory expansion → collect files under each dir (recursive when --recursive).
@@ -300,7 +300,8 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			})
 			continue
 		}
-		// Below-threshold skip — Python parity for R1-B8 / S3.
+		// Below-threshold files are skipped rather than indexed, and the
+		// command still exits 0; rx-python does the same.
 		if !p.analyze && info.Size() < thresholdBytes {
 			result.Skipped = append(result.Skipped, path)
 			continue
@@ -314,12 +315,11 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			continue
 		}
 
-		// R3-B2 FIX — Honor --force=false by consulting the cache first.
-		// Python's rx-python/src/rx/indexer.py checks `load_index()` then
-		// `needs_rebuild()` before calling the builder. The Go port was
-		// rebuilding unconditionally, which made `rx index` non-idempotent
-		// and wasted CPU on warm calls (see Stage 9 Round 3 bbreaking-warm
-		// benchmark: Go 687 ms vs Python 438 ms before this fix).
+		// Honor --force=false by consulting the cache first.
+		// rx-python's indexer checks `load_index()` then `needs_rebuild()`
+		// before calling the builder. Rebuilding unconditionally made
+		// `rx index` non-idempotent and cost a full rebuild on every warm
+		// call — measured at 687 ms against rx-python's 438 ms.
 		//
 		// LoadForSource returns:
 		//   (idx, nil)              → cache hit, valid

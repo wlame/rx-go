@@ -20,7 +20,7 @@ import (
 //  3. If a test or advanced embedder mutates the level at runtime,
 //     they call SetRequestedLogLevel to keep /health honest.
 //
-// This is a minimal fix for Stage 8 Reviewer 3 High #13: the previous
+// This is a minimal fix for the previous
 // implementation was a Python-style "read env var" shortcut that
 // ignored runtime state changes.
 

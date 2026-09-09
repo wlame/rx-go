@@ -71,10 +71,10 @@ func TestTraceResponse_FieldOrder(t *testing.T) {
 	t.Parallel()
 	// Struct field order determines JSON key order. This test pins the
 	// order to match Python's Pydantic emission — if someone reorders
-	// struct fields they must update both this test and the Stage 9
+	// struct fields they must update both this test and the
 	// parity fixture.
 	//
-	// Stage 9 Round 2 S2 user decision: schema-documented fields must
+	// schema-documented fields must
 	// emit explicit null when unset. omitempty is only acceptable for
 	// fields that are "extensions" NOT part of the advertised schema.
 	// Python emits file_chunks/context_lines/before_context/after_context/
@@ -170,7 +170,7 @@ func TestSamplesResponse_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	// Stage 9 Round 2 S2: schema-documented fields must emit null when
+	// schema-documented fields must emit null when
 	// unset. Python emits both compression_format and cli_command as
 	// null on a default SamplesResponse; Go must match.
 	if !strings.Contains(string(data), `"compression_format":null`) {
@@ -191,7 +191,7 @@ func TestSamplesResponse_JSON(t *testing.T) {
 
 func TestUnifiedFileIndex_NullableSchemaFields(t *testing.T) {
 	t.Parallel()
-	// Stage 9 Round 2 S2: frames / anomalies / anomaly_summary are
+	// frames / anomalies / anomaly_summary are
 	// documented schema fields on Python's UnifiedFileIndex. They must
 	// emit null when unset (NOT be omitted). Python emits all three as
 	// null on a default text-file index.
@@ -306,7 +306,7 @@ func TestTreeEntry_NullablePointers(t *testing.T) {
 
 func TestTreeResponse_NullableTotals(t *testing.T) {
 	t.Parallel()
-	// Stage 9 Round 2 S2: total_size / total_size_human are documented
+	// total_size / total_size_human are documented
 	// schema fields. When absent they must emit null (was omitempty).
 	// Verified against Python's TreeResponse().model_dump() which emits
 	// both as null for search-root entries.
@@ -474,7 +474,7 @@ func TestHealthResponse_MissingPythonPackages(t *testing.T) {
 func TestCompressRequest_Defaults(t *testing.T) {
 	t.Parallel()
 	// Verify the JSON shape — important for POST /v1/compress.
-	// Stage 9 Round 2 S2: documented schema fields must emit explicit
+	// documented schema fields must emit explicit
 	// null when unset. Python emits output_path as null and force as
 	// false always, so Go must match.
 	r := CompressRequest{

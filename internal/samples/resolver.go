@@ -462,9 +462,8 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 		// has already been reassigned to the positive value).
 		key := strconv.FormatInt(target, 10)
 		resp.Samples[key] = lines
-		// resp.Lines[key] = offset of line `target` (the REQUESTED
-		// line), not the context window's first line. Stage 9 Round 2
-		// R1-B5 fix lives in this single assignment.
+		// resp.Lines[key] holds the offset of line `target` — the line
+		// the caller asked about, not the context window's first line.
 		resp.Lines[key] = targetOffset
 	}
 	return nil
@@ -500,11 +499,10 @@ var openFileForSamples = func(path string) (readSeekCloser, error) {
 //
 // When idx is non-nil and has a checkpoint at-or-before startLine, we
 // seek to that checkpoint first instead of scanning from byte 0. This
-// is the "index-aware seek" path called for in Stage 9 Round 2 R1-B4
-// user design: line-offset queries get O(1) seek-to-chunk when the
+// is the "index-aware seek" path called for in // user design: line-offset queries get O(1) seek-to-chunk when the
 // unified index is cached.
 //
-// # Bounded-read contract (Stage 9 Round 5)
+// # Bounded-read contract
 //
 // This function MUST stop reading as soon as it has produced its
 // result. In particular the loop terminates once currentLine > endLine,
@@ -512,7 +510,7 @@ var openFileForSamples = func(path string) (readSeekCloser, error) {
 // we haven't passed yet. The range-only path (readLineRangeWithIndex)
 // passes targetLine = -1 to signal "no offset needed"; the target
 // sentinel check below MUST treat that as "nothing to wait for". See
-// R5-B1: the original condition `targetOffset >= 0` kept the loop
+// the original condition `targetOffset >= 0` kept the loop
 // running to EOF on every range request because a -1 targetLine
 // never matches currentLine, so targetOffset stayed -1 forever and
 // the break was unreachable. This caused a 225× slowdown on large
@@ -551,7 +549,7 @@ func readLinesWithTarget(
 	// needTarget is TRUE when the caller requested a specific line's
 	// byte offset (single-line mode); FALSE when they only need the
 	// range content (passed targetLine < 0). This boolean is the
-	// Stage 9 Round 5 fix: the break condition below must not wait for
+	// the break condition below must not wait for
 	// a target that will never be found when none was requested.
 	needTarget := targetLine >= 0
 
@@ -582,7 +580,8 @@ func readLinesWithTarget(
 		// targetLine was requested, we've already captured its offset.
 		// When needTarget is false (range-only path), the second clause
 		// is automatically satisfied and we break immediately once past
-		// endLine — this is the core of the R5-B1 fix.
+		// endLine. Without that break a range request read the whole
+		// file to produce a slice of it.
 		pastRange := currentLine > endLine
 		haveTargetOrDontNeedIt := !needTarget || targetOffset >= 0
 		if pastRange && haveTargetOrDontNeedIt {

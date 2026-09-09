@@ -34,7 +34,7 @@ var ErrIncompleteStream = errors.New("compressed stream ended early")
 // ProcessCompressed runs the full scan pipeline for a non-seekable
 // compressed file: read file → pure-Go decompressor pipe → rg --json.
 //
-// STATIC-BINARY CONSOLIDATION (Stage 8 Finding 4):
+// STATIC-BINARY CONSOLIDATION:
 //
 // Prior to consolidation this function shelled out to external
 // `gzip -d -c`, `xz -d -c`, `bzip2 -d -c`, or `zstd -d -c` binaries
@@ -73,7 +73,7 @@ func ProcessCompressed(
 	// it, so the caller can keep the data and still know it is partial.
 	var incomplete error
 	start := time.Now()
-	// Stage 9 Round 2 S6: gated helpers — CLI mode skips collection.
+	// gated helpers — CLI mode skips collection.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
 	defer func() {

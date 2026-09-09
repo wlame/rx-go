@@ -73,7 +73,7 @@ type Match struct {
 
 // TraceResponse is the full response shape for GET /v1/trace.
 //
-// Stage 9 Round 2 S2 user rule: every schema-documented field must emit
+// every schema-documented field must emit
 // an explicit null when unset — omitempty is only acceptable for fields
 // that are "extensions" NOT part of the advertised schema. All fields
 // below are documented in rx-python/src/rx/models.py::TraceResponse and

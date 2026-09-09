@@ -123,7 +123,7 @@ func TestLoad_NotFound(t *testing.T) {
 }
 
 func TestIsValidForSource_MtimeBased(t *testing.T) {
-	// Per user decision 6.9.1, invalidation is mtime-based. Write a
+	// invalidation is mtime-based. Write a
 	// source file, stat it, construct an index with that mtime, then:
 	//   1. Valid immediately.
 	//   2. Touch the file (new mtime) → invalid.
@@ -255,7 +255,7 @@ func TestFormatMtime_MatchesPythonLayout(t *testing.T) {
 }
 
 // TestFormatMtime_WholeSecond_OmitsFractionalSuffix is the parity test for
-// the Stage 8 Blocker finding. Python's datetime.isoformat() emits
+// the mtime-format finding. Python's datetime.isoformat() emits
 // "2024-01-01T10:00:00" (no .000000 suffix) when microseconds are 0.
 // rx-python's unified_index.py uses isoformat() directly. If Go emits
 // "2024-01-01T10:00:00.000000" for the same mtime, caches cross-invalidate

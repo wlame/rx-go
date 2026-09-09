@@ -263,8 +263,7 @@ var (
 
 var (
 	// HookCallsTotal counts webhook POSTs with kind (on_file|on_match|on_complete)
-	// and status (success|failure) labels. Per user decision 6.9.2,
-	// rx-go dispatches webhooks fire-and-forget; a single failed HTTP
+	// and status (success|failure) labels. // rx-go dispatches webhooks fire-and-forget; a single failed HTTP
 	// call bumps status="failure".
 	HookCallsTotal = factory.NewCounterVec(
 		prometheus.CounterOpts{

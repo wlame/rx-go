@@ -97,6 +97,10 @@ lint:
 tidy-check:
     go mod tidy -diff
 
+# Fail when a comment cites the process that produced the code (CI gate)
+scaffolding-check:
+    ./scripts/no-build-scaffolding.sh
+
 # Copy the golden OpenAPI document to docs/, where it is published
 spec-sync:
     cp internal/webapi/testdata/openapi.golden.json docs/api/openapi.json
@@ -145,7 +149,7 @@ cover:
 # ── aggregates ───────────────────────────────────────────────────────────
 
 # Exactly what GitHub CI enforces, in the same order
-ci: fmt-check vet lint tidy-check spec-check test-race docs-build
+ci: fmt-check vet lint tidy-check scaffolding-check spec-check test-race docs-build
 
 # The full pre-push battery
 check: ci cover build vuln

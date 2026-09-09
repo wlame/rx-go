@@ -213,8 +213,8 @@ func TestDispatcher_ImplementsTraceHookFirer(t *testing.T) {
 	d.Wait()
 }
 
-// TestDispatcher_EnqueueAfterClose_NoPanic covers Stage 8 Reviewer 2
-// High #5: the dispatcher's Close() uses a sync.Once to close the
+// TestDispatcher_EnqueueAfterClose_NoPanic covers
+// the dispatcher's Close() uses a sync.Once to close the
 // queue channel. Before the fix, a subsequent enqueue() call would
 // attempt `d.queue <- ev` on a closed channel and panic ("send on
 // closed channel"). This scenario is realistic because the trace

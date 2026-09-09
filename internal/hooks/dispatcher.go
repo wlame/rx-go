@@ -25,7 +25,7 @@ import (
 // Dispatcher enqueues hook events onto a buffered channel and dispatches
 // them from a pool of worker goroutines. Implements trace.HookFirer.
 //
-// Fire-and-forget semantics (user decision 6.9.2): Enqueue returns as
+// Fire-and-forget semantics: Enqueue returns as
 // soon as the event is on the channel. If the channel is full (pool
 // drained), we drop the event, log a warning, and bump a metric —
 // better to drop a notification than block the search pipeline.
@@ -146,7 +146,7 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 // chance to fire, matching user intent for "fire-and-forget but don't
 // drop pre-queued events at shutdown".
 //
-// ORDERING NOTE (Stage 8 High #5 fix): we flip the `closed` flag
+// ORDERING NOTE: we flip the `closed` flag
 // BEFORE closing the channel. Any enqueue() call that races with
 // Close will either:
 //
@@ -338,7 +338,7 @@ func (d *Dispatcher) recordFailure(kind string, err error, start time.Time, requ
 // drop the event and log a warning — fire-and-forget means we
 // absolutely MUST NOT block the trace pipeline on a slow webhook.
 //
-// POST-CLOSE GUARD (Stage 8 High #5): if Close() has already been
+// POST-CLOSE GUARD: if Close() has already been
 // called, short-circuit. This handles the race where a trace engine's
 // still-running goroutine fires an OnFile / OnMatch after the HTTP
 // layer has shut down the dispatcher. Without the guard, the `case
