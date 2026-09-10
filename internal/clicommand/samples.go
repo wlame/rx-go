@@ -80,6 +80,14 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	//   --no-color → suppress ANSI output
 	cmd.Flags().StringVarP(&offsets, "offsets", "b", "", "Comma-separated byte offsets or ranges")
 	cmd.Flags().StringVarP(&lines, "lines", "l", "", "Comma-separated 1-based line numbers or ranges")
+	// rx-python spells these --byte-offset and --line-offset. Both
+	// spellings work in both backends so a command written for either one
+	// runs on the other, which is what the drop-in-replacement contract
+	// asks for. The aliases are hidden so --help stays one name per flag.
+	cmd.Flags().StringVar(&offsets, "byte-offset", "", "Alias for --offsets (rx-python spelling)")
+	cmd.Flags().StringVar(&lines, "line-offset", "", "Alias for --lines (rx-python spelling)")
+	_ = cmd.Flags().MarkHidden("byte-offset")
+	_ = cmd.Flags().MarkHidden("line-offset")
 	cmd.Flags().IntVarP(&ctxLines, "context", "c", 3, "Context lines before AND after")
 	cmd.Flags().IntVarP(&beforeCtx, "before", "B", 0, "Override lines before")
 	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Override lines after")

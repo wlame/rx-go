@@ -547,6 +547,35 @@ func TestIndex_PostBelowThreshold(t *testing.T) {
 	}
 }
 
+// TestIndex_PostAnalyzeIgnoresThreshold pins the API to what
+// `rx index --analyze` does. Analysis indexes any file regardless of
+// size; applying the size threshold to an analyze request made the CLI
+// and the API give different answers about the same file.
+func TestIndex_PostAnalyzeIgnoresThreshold(t *testing.T) {
+	root := t.TempDir()
+	f := filepath.Join(root, "small.log")
+	if err := os.WriteFile(f, []byte("alpha\nbeta\ngamma\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+
+	ts := newTestServer(t)
+	body, _ := json.Marshal(rxtypes.IndexRequest{Path: f, Analyze: true})
+	resp, err := http.Post(ts.URL+"/v1/index", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status: got %d, want 200", resp.StatusCode)
+	}
+}
+
 // TestErrorEnvelope_Format checks that handler-returned errors come out
 // as {"detail":"..."} not huma's default shape.
 func TestErrorEnvelope_Format(t *testing.T) {

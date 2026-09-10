@@ -121,15 +121,24 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 	// File-size threshold check. Request-provided threshold (MB) wins
 	// over env default; converting MB→bytes here keeps the task payload
 	// in native units.
+	//
+	// An analyze request indexes any file, which is what
+	// `rx index --analyze` does. Applying the threshold to it made the
+	// CLI and the API disagree about the same file.
 	thresholdBytes := int64(config.LargeFileMB()) * 1024 * 1024
 	if req.Threshold != nil {
 		thresholdBytes = int64(*req.Threshold) * 1024 * 1024
 	}
-	if info.Size() < thresholdBytes {
+	if !req.Analyze && info.Size() < thresholdBytes {
 		return nil, ErrBadRequest(fmt.Sprintf(
 			"File size %d bytes is below threshold %d bytes",
 			info.Size(), thresholdBytes,
 		))
+	}
+	// A binary file has no lines to index, and rx-python refuses one
+	// here too.
+	if !index.IsTextFile(validated) {
+		return nil, ErrBadRequest(fmt.Sprintf("%s is not a text file", req.Path))
 	}
 
 	task, isNew := s.cfg.TaskManager.Create(validated, "index")
