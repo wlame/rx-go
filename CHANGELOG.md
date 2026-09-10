@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples --offsets` and `--lines` repeat as well as taking a
+  comma-separated list, so `-b 100 -b 200` names both positions. It used
+  to keep only the last value, which is the quiet kind of wrong: the
+  command succeeded and answered a question nobody asked. rx-python
+  accepts both spellings too now.
+
 - `rx samples --color` accepts `auto` as well as the empty string, and
   refuses anything else with exit 2 instead of silently falling back to
   auto detection. rx-python's `--color` now takes the same three values,

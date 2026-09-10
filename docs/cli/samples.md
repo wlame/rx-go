@@ -76,8 +76,15 @@ Both `--offsets` and `--lines` accept the same grammar:
 - Range: `100-200`
 - Negative (line mode only): `-1` means "last line", `-10` means "10th from the end"
 - Multiple, comma-separated: `100,500,1000-1050,-5`
+- Multiple, by repeating the flag: `-b 100 -b 500`, which may be mixed
+  with the comma form
 
 No whitespace is permitted between commas or hyphens.
+
+Several positions are answered from one pass over the file, so asking
+about twenty of them costs about what asking about one costs. The viewer
+relies on that: a capped search leaves it with a batch of match offsets
+whose line numbers it wants at once.
 
 ### Global flags
 

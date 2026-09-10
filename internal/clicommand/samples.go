@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -41,8 +42,8 @@ import (
 // codes when colors are active; it's ignored when output is plain.
 func NewSamplesCommand(out io.Writer) *cobra.Command {
 	var (
-		offsets    string
-		lines      string
+		offsets    []string
+		lines      []string
 		ctxLines   int
 		beforeCtx  int
 		afterCtx   int
@@ -78,14 +79,22 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	//   -b → --offsets, -l → --lines, -c → --context, -r → --regex
 	//   -B → --before (already Python), -A → --after (already Python)
 	//   --no-color → suppress ANSI output
-	cmd.Flags().StringVarP(&offsets, "offsets", "b", "", "Comma-separated byte offsets or ranges")
-	cmd.Flags().StringVarP(&lines, "lines", "l", "", "Comma-separated 1-based line numbers or ranges")
+	// Both spellings of "several positions" work: a comma-separated list
+	// in one flag, and the flag repeated. rx-python takes the repeated
+	// form and this took the comma-separated one, so a command that named
+	// several positions ran against exactly one backend — and the
+	// repeated form here silently kept only the last value, which is the
+	// worse of the two failures.
+	cmd.Flags().StringArrayVarP(&offsets, "offsets", "b", nil,
+		"Byte offsets or ranges; comma-separated, or repeat the flag")
+	cmd.Flags().StringArrayVarP(&lines, "lines", "l", nil,
+		"1-based line numbers or ranges; comma-separated, or repeat the flag")
 	// rx-python spells these --byte-offset and --line-offset. Both
 	// spellings work in both backends so a command written for either one
 	// runs on the other, which is what the drop-in-replacement contract
 	// asks for. The aliases are hidden so --help stays one name per flag.
-	cmd.Flags().StringVar(&offsets, "byte-offset", "", "Alias for --offsets (rx-python spelling)")
-	cmd.Flags().StringVar(&lines, "line-offset", "", "Alias for --lines (rx-python spelling)")
+	cmd.Flags().StringArrayVar(&offsets, "byte-offset", nil, "Alias for --offsets (rx-python spelling)")
+	cmd.Flags().StringArrayVar(&lines, "line-offset", nil, "Alias for --lines (rx-python spelling)")
 	_ = cmd.Flags().MarkHidden("byte-offset")
 	_ = cmd.Flags().MarkHidden("line-offset")
 	cmd.Flags().IntVarP(&ctxLines, "context", "c", 3, "Context lines before AND after")
@@ -101,8 +110,8 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 
 type samplesParams struct {
 	path       string
-	offsets    string
-	lines      string
+	offsets    []string
+	lines      []string
 	ctxLines   int
 	beforeCtx  int
 	afterCtx   int
@@ -116,7 +125,7 @@ type samplesParams struct {
 // in-line implementation with the shared resolver.
 func runSamples(out io.Writer, p samplesParams) error {
 	// Mode mutual exclusion.
-	if (p.offsets == "") == (p.lines == "") {
+	if (len(p.offsets) == 0) == (len(p.lines) == 0) {
 		return exitWithError(os.Stderr, ExitUsageError,
 			"must provide exactly one of --offsets or --lines")
 	}
@@ -142,10 +151,10 @@ func runSamples(out io.Writer, p samplesParams) error {
 		parsedOffsets []samples.OffsetOrRange
 		parsedLines   []samples.OffsetOrRange
 	)
-	if p.offsets != "" {
-		parsedOffsets, err = samples.ParseCSV(p.offsets)
+	if len(p.offsets) > 0 {
+		parsedOffsets, err = samples.ParseCSV(strings.Join(p.offsets, ","))
 	} else {
-		parsedLines, err = samples.ParseCSV(p.lines)
+		parsedLines, err = samples.ParseCSV(strings.Join(p.lines, ","))
 	}
 	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
