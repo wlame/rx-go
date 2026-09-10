@@ -51,7 +51,7 @@ func TestIndexPost_WindowLinesIsOptional(t *testing.T) {
 	ts := newServerWithRipgrep(t)
 
 	// Each case gets its own file: two index tasks for one path collide
-	// with 409, which is correct behaviour and not what this is testing.
+	// with 409, which is correct behavior and not what this is testing.
 	cases := map[string]string{
 		"given":   `,"analyze_window_lines":50`,
 		"omitted": ``,
