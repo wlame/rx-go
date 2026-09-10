@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The line-length percentile definition is documented in
+  `docs/concepts/analyzers.md`: linear interpolation over the sorted
+  sample, the sample standard deviation, exact below 10,000 lines and
+  within 2% above it, where rx-go samples. A shared fixture asserts the
+  same numbers in both repos.
+
 - `rx compress --build-index` builds the index it always promised. The
   flag defaults to true in both backends; here it reported
   `index_error: "not implemented in this backend"`, so a `.zst` written

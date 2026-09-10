@@ -206,6 +206,43 @@ concurrency contract are documented in `internal/analyzer/` source.
 - **The `severity_scale` is stable** — you can build UI around the 4
   levels today
 
+## Line-length statistics
+
+Every index carries `line_length_max`, `avg`, `median`, `p95`, `p99` and
+`stddev`, whether or not `--analyze` was passed. Both backends compute
+them the same way, because the index file is written by one and read by
+the other.
+
+**The percentile definition is linear interpolation over the sorted
+sample** — the one Python's `statistics.quantiles(method="inclusive")`
+computes. For a sample of `n` values sorted ascending, the value at
+quantile `q` sits at position `q * (n - 1)` counting from zero, and a
+fractional position interpolates between its two neighbours. With two
+lines of 2 and 4 bytes the median is 3, not 2 or 4.
+
+`stddev` is the **sample** standard deviation, dividing by `n - 1`.
+
+`avg` and `stddev` see every line: rx-go accumulates them with Welford's
+method, rx-python sums directly, and the two agree to within floating
+point's last few bits.
+
+### Above 10,000 lines the percentiles are estimates
+
+rx-go keeps a reservoir of 10,000 uniformly-chosen line lengths rather
+than all of them, so the memory cost of indexing a 100 GB log does not
+grow with the file. Below that count the reservoir holds every line and
+the percentiles are exact. Above it they are estimates from a sample,
+and the two backends are **not** looking at the same lines.
+
+The guarantee there is a tolerance, not equality: **within 2% of the
+true value**, measured worst case at 1% across six seeds on a 60,000-line
+file. `max`, `avg` and `stddev` stay exact whatever the line count.
+
+A comparison of the two backends' indexes should assert the tolerance
+above 10,000 lines and exact agreement below it. The shared fixture for
+the exact case is `testdata/line-lengths.log` here and
+`tests/data/line-lengths.log` in rx-python; both assert the same numbers.
+
 ## Related concepts
 
 - [Caching](caching.md) — analyzer cache layout
