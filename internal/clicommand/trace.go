@@ -43,6 +43,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		afterCtx       int
 		jsonOutput     bool
 		noColor        bool
+		colorFlag      string
 		debugMode      bool
 		requestID      string
 		hookOnFile     string
@@ -71,6 +72,11 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 			UnknownFlags: true,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// --no-color is the older spelling and wins, so a script
+			// that already passes it keeps working.
+			if noColor {
+				colorFlag = "never"
+			}
 			return runTrace(out, traceParams{
 				args:        args,
 				paths:       inputPaths,
@@ -87,7 +93,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 				beforeSet:      cmd.Flags().Changed("before"),
 				afterSet:       cmd.Flags().Changed("after"),
 				jsonOutput:     jsonOutput,
-				noColor:        noColor,
+				colorFlag:      colorFlag,
 				debug:          debugMode,
 				requestID:      requestID,
 				hookOnFile:     hookOnFile,
@@ -114,7 +120,9 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().IntVarP(&beforeCtx, "before", "B", 0, "Number of lines before match (for --samples)")
 	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Number of lines after match (for --samples)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
-	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output")
+	cmd.Flags().StringVar(&colorFlag, "color", "auto",
+		"Colorize output: 'always', 'never', or 'auto' (color only on a terminal)")
+	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output (alias for --color=never)")
 	cmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode (creates .debug_* files)")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "Custom request ID (auto-generated if not provided)")
 	cmd.Flags().StringVar(&hookOnFile, "hook-on-file", "", "URL to call when file scan completes")
@@ -146,7 +154,7 @@ type traceParams struct {
 	beforeCtx      int
 	afterCtx       int
 	jsonOutput     bool
-	noColor        bool
+	colorFlag      string
 	debug          bool
 	requestID      string
 	ctxSet         bool
@@ -516,11 +524,16 @@ func writeTraceJSON(out io.Writer, resp any) error {
 // match list as "file:line:offset [pattern]", and — when context was
 // asked for — the context section built by internal/output.
 func writeTraceHuman(out io.Writer, resp *rxtypes.TraceResponse, p traceParams) error {
+	colorize, err := shouldColorize(p.colorFlag, out)
+	if err != nil {
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+	}
 	before, after := resolveBefore(p), resolveAfter(p)
 	_, _ = fmt.Fprint(out, output.FormatTraceCLI(resp, output.TraceFormatOptions{
 		Before:      before,
 		After:       after,
 		ShowContext: p.showSamples || p.ctxSet || p.beforeSet || p.afterSet,
+		Colorize:    colorize,
 	}))
 	return nil
 }

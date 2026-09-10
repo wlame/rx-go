@@ -249,6 +249,10 @@ Data flow for `rx trace "pattern" big.log`:
 ## Coding standards
 
 - Follow the repo's existing style; `gofmt -s` and `goimports` clean; lint clean.
+- **US spelling in Go code**, comments included: the `misspell` linter is
+  a `just ci` gate, so "colour", "behaviour" and "unrecognised" fail the
+  build. Prose in `docs/` and `CHANGELOG.md` is not linted and may use
+  either.
 - `context.Context` first on any function that does I/O; errors wrapped with
   `%w` when the wrap adds information; godoc on every exported symbol.
 - Comments are more generous than typical Go, on purpose: explain the Go idiom,
