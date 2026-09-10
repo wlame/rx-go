@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -280,4 +281,56 @@ func TestStaleIndexIsRebuiltRatherThanTrusted(t *testing.T) {
 		t.Fatal("the rebuilt index does not validate against its own source")
 	}
 	_ = time.Now
+}
+
+// TestConcurrentSavesLeaveOneIntactIndex covers several writers racing on
+// one cache path. Save writes to a temp file and renames it into place,
+// so a reader sees either the previous index or the new one, never half
+// of one.
+func TestConcurrentSavesLeaveOneIntactIndex(t *testing.T) {
+	cacheDir := t.TempDir()
+	t.Setenv("RX_CACHE_DIR", cacheDir)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "busy.log")
+	writeNumberedFile(t, src, 20000)
+
+	var wg sync.WaitGroup
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			idx, err := Build(src, BuildOptions{})
+			if err != nil {
+				t.Errorf("Build: %v", err)
+				return
+			}
+			if _, err := Save(idx); err != nil {
+				t.Errorf("Save: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	// No temp files survive a completed race.
+	leftovers, err := filepath.Glob(filepath.Join(cacheDir, "rx", "indexes", ".tmp-*"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(leftovers) != 0 {
+		t.Errorf("temp files left behind: %v", leftovers)
+	}
+
+	got, err := LoadForSource(src)
+	if err != nil {
+		t.Fatalf("LoadForSource after the race: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no usable index after concurrent saves")
+	}
+	if got.LineCount == nil || *got.LineCount != 20000 {
+		t.Errorf("line_count = %v, want 20000", got.LineCount)
+	}
+	if len(got.LineIndex) == 0 {
+		t.Error("the surviving index has no checkpoints")
+	}
 }
