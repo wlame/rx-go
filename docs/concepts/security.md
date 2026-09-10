@@ -48,6 +48,28 @@ rx serve --search-root=/var/log --search-root=/var/data/exports
 Any path that resolves outside all configured roots is rejected with
 `403 path_outside_search_root` (HTTP) or exit code 4 (CLI).
 
+The HTTP body is the `SandboxError` shape, published in the OpenAPI
+document and identical in both backends:
+
+```json
+{
+  "detail": "path_outside_search_root",
+  "error": "path_outside_search_root",
+  "message": "path \"/outside/x.log\" is not within any configured --search-root",
+  "path": "/outside/x.log",
+  "roots": ["/srv/data", "/var/log"]
+}
+```
+
+`error` is the stable machine code to branch on; `detail` repeats it so a
+client that reads only that key still gets something comparable. `roots`
+is sorted, so the flag order the operator used does not change the body.
+
+The other two refusals — a hidden entry, and a directory the process
+cannot read — keep the ordinary `{"detail": "..."}` envelope, because the
+fix for them is different: `--hidden`, or file permissions, not another
+root.
+
 ### How validation works
 
 For each user-supplied path:

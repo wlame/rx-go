@@ -466,6 +466,54 @@
         ],
         "type": "object"
       },
+      "SandboxError": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "examples": [
+              "https://example.com/schemas/SandboxError.json"
+            ],
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "detail": {
+            "description": "Machine code, repeated from error for single-key clients.",
+            "type": "string"
+          },
+          "error": {
+            "description": "Stable machine code: always path_outside_search_root.",
+            "type": "string"
+          },
+          "message": {
+            "description": "Human-readable explanation naming the refused path.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The path that was refused, as the caller supplied it.",
+            "type": "string"
+          },
+          "roots": {
+            "description": "The configured search roots, sorted.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "detail",
+          "error",
+          "message",
+          "path",
+          "roots"
+        ],
+        "type": "object"
+      },
       "SeverityRange": {
         "additionalProperties": false,
         "properties": {
@@ -979,15 +1027,15 @@
             },
             "description": "OK"
           },
-          "default": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/SandboxError"
                 }
               }
             },
-            "description": "Error"
+            "description": "Path outside every configured --search-root"
           }
         },
         "summary": "Compress file to seekable zstd format (background task)",
@@ -1060,15 +1108,15 @@
             },
             "description": "OK"
           },
-          "default": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/SandboxError"
                 }
               }
             },
-            "description": "Error"
+            "description": "Path outside every configured --search-root"
           }
         },
         "summary": "Get cached index data for a file",
@@ -1100,15 +1148,15 @@
             },
             "description": "OK"
           },
-          "default": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/SandboxError"
                 }
               }
             },
-            "description": "Error"
+            "description": "Path outside every configured --search-root"
           }
         },
         "summary": "Build line index for file (background task)",
@@ -1216,15 +1264,15 @@
             },
             "description": "OK"
           },
-          "default": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/SandboxError"
                 }
               }
             },
-            "description": "Error"
+            "description": "Path outside every configured --search-root"
           }
         },
         "summary": "Get context lines around byte offsets or line numbers",
@@ -1399,15 +1447,15 @@
             },
             "description": "OK"
           },
-          "default": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/SandboxError"
                 }
               }
             },
-            "description": "Error"
+            "description": "Path outside every configured --search-root"
           }
         },
         "summary": "Search file for regex patterns (supports multiple patterns)",
@@ -1446,15 +1494,15 @@
             },
             "description": "OK"
           },
-          "default": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/SandboxError"
                 }
               }
             },
-            "description": "Error"
+            "description": "Path outside every configured --search-root"
           }
         },
         "summary": "List directory contents",

@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // ============================================================================
@@ -149,16 +152,12 @@ func ErrInternal(detail string) huma.StatusError {
 // clients that expect a single "detail" key; the rest is additional
 // structured info the new Go-native frontend can lean on.
 
-// sandboxError is the wire type for path-sandbox rejections.
-//
-// ErrorCode is JSON-tagged "error" — the Go field is named ErrorCode
-// (not Error) to avoid colliding with the error interface method.
+// sandboxError carries the published SandboxError body and the status
+// that goes with it. The body itself is rxtypes.SandboxError, so the
+// schema in the OpenAPI document and the bytes on the wire cannot drift
+// apart, and rx-python mirrors one shape rather than two.
 type sandboxError struct {
-	Detail    string   `json:"detail"`
-	ErrorCode string   `json:"error"`
-	Message   string   `json:"message"`
-	Path      string   `json:"path"`
-	Roots     []string `json:"roots"`
+	rxtypes.SandboxError
 }
 
 // Error implements the error interface.
@@ -167,16 +166,42 @@ func (e *sandboxError) Error() string { return e.Message }
 // GetStatus implements huma.StatusError.
 func (e *sandboxError) GetStatus() int { return http.StatusForbidden }
 
-// NewSandboxError returns a huma.StatusError representing a
-// paths.ErrPathOutsideRoots with the Go-idiomatic structured body.
+// NewSandboxError returns a huma.StatusError carrying the SandboxError
+// body for a paths.ErrPathOutsideRoots.
+//
+// The roots are sorted: the operator's flag order is not something a
+// client should have to know about, and sorting is what lets the two
+// backends return byte-identical bodies for the same configuration.
 func NewSandboxError(perr *paths.ErrPathOutsideRoots) huma.StatusError {
-	msg := fmt.Sprintf("path %q is not within any configured --search-root", perr.Path)
-	return &sandboxError{
-		Detail:    "path_outside_search_root",
-		ErrorCode: "path_outside_search_root",
-		Message:   msg,
+	roots := append([]string(nil), perr.Roots...)
+	sort.Strings(roots)
+	return &sandboxError{rxtypes.SandboxError{
+		Detail:    rxtypes.SandboxErrorCode,
+		ErrorCode: rxtypes.SandboxErrorCode,
+		Message:   fmt.Sprintf("path %q is not within any configured --search-root", perr.Path),
 		Path:      perr.Path,
-		Roots:     append([]string(nil), perr.Roots...),
+		Roots:     roots,
+	}}
+}
+
+// sandboxResponses is the OpenAPI "403" entry every path-accepting
+// operation declares, so the refusal shape is published rather than only
+// implemented. Registering the schema through the API's own registry
+// means the document names it once and the operations $ref it.
+//
+// Call it once per operation registration:
+//
+//	huma.Register(api, huma.Operation{..., Responses: sandboxResponses(api)}, handler)
+func sandboxResponses(api huma.API) map[string]*huma.Response {
+	registry := api.OpenAPI().Components.Schemas
+	schema := registry.Schema(reflect.TypeOf(rxtypes.SandboxError{}), true, "SandboxError")
+	return map[string]*huma.Response{
+		"403": {
+			Description: "Path outside every configured --search-root",
+			Content: map[string]*huma.MediaType{
+				"application/json": {Schema: schema},
+			},
+		},
 	}
 }
 

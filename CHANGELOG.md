@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The 403 body for a path outside every `--search-root` is published as
+  `SandboxError` in the OpenAPI document, and every path-accepting route
+  declares the response. The shape itself is unchanged; it was only ever
+  implemented, never described, so a client could not generate a type for
+  it. rx-python now returns the same five fields instead of a single
+  prose `detail`, which is what makes one error panel work against both
+  backends. Contract version 1.1.
+
+### Changed
+
+- The `roots` list in a sandbox refusal is sorted. The operator's flag
+  order is not something a client should have to know about, and sorting
+  is what lets the two backends return identical bodies for the same
+  configuration.
+
 - `--search-root` is now a persistent flag: every subcommand accepts it,
   it repeats to name several roots, and `RX_SEARCH_ROOTS` is its
   environment form. Until now the sandbox could only be switched on by
