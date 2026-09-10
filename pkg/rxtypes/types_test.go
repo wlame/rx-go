@@ -204,7 +204,7 @@ func TestUnifiedFileIndex_NullableSchemaFields(t *testing.T) {
 		BuildTimeSeconds:  0.5,
 		FileType:          FileTypeText,
 		IsText:            true,
-		LineIndex:         []LineIndexEntry{{1, 0}},
+		LineIndex:         []LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
 		AnalysisPerformed: false,
 		// Frames / Anomalies / AnomalySummary deliberately unset — these
 		// are schema fields documented in rx-python/src/rx/models.py and
@@ -238,7 +238,7 @@ func TestUnifiedFileIndex_MinimalRoundTrip(t *testing.T) {
 		BuildTimeSeconds:  0.5,
 		FileType:          FileTypeText,
 		IsText:            true,
-		LineIndex:         []LineIndexEntry{{1, 0}, {100, 4096}},
+		LineIndex:         []LineIndexEntry{{LineNumber: 1}, {LineNumber: 100, ByteOffset: 4096}},
 		AnalysisPerformed: false,
 	}
 	data, err := json.Marshal(src)

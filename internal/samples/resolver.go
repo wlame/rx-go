@@ -3,6 +3,7 @@ package samples
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -97,6 +99,19 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		resp.IsCompressed = true
 		name := string(format)
 		resp.CompressionFormat = &name
+		// A seekable .zst with a frame index can decompress just the
+		// frames holding the wanted lines. Without an index it streams
+		// like any other archive: the answer is the same, only slower,
+		// which is what an index is for.
+		if len(req.Offsets) == 0 && seekable.IsSeekable(req.Path) {
+			err := resolveSeekableLines(req, resp)
+			if err == nil {
+				return resp, nil
+			}
+			if !errors.Is(err, errNoFrameIndex) {
+				return nil, err
+			}
+		}
 		if err := resolveCompressedLines(req, format, resp); err != nil {
 			return nil, err
 		}
@@ -548,7 +563,11 @@ func readLinesWithTarget(
 			targetOffset = offset
 		}
 		line, readErr := br.ReadString('\n')
-		if currentLine >= startLine && currentLine <= endLine {
+		// A file that ends with a newline gives one final zero-length
+		// read. That is the end of the file, not an empty last line:
+		// appending it invented a line the file does not have, which is
+		// what the compressed paths and rx-python have always known.
+		if len(line) > 0 && currentLine >= startLine && currentLine <= endLine {
 			lines = append(lines, stripNewline(line))
 		}
 		offset += int64(len(line))

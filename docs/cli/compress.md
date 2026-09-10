@@ -38,8 +38,8 @@ seekable zstd.
 | `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB` |
 | `-l`, `--level` | `int` | `3` | zstd level: `1` (fast) .. `22` (slowest, smallest) |
 | `-f`, `--force` | `bool` | `false` | Overwrite existing output |
-| `--build-index` | `bool` | `true` | Not implemented in this backend: reports `index_error` and writes no index. Run `rx index` on the `.zst` instead |
-| `--no-index` | `bool` | `false` | Turns `--build-index` off, silencing that report |
+| `--build-index` | `bool` | `true` | Build the frame index for the `.zst` that was written |
+| `--no-index` | `bool` | `false` | Turns `--build-index` off |
 | `--workers` | `int` | `1` | Parallel encoder goroutines (1..N) |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 
@@ -264,3 +264,23 @@ decoders ignore it.
 - [`rx samples`](samples.md) — random-access reads on compressed files
 - [`rx index`](line-index.md) — build a line index after compression
 - [api/endpoints/compress](../api/endpoints/compress.md) — compression over HTTP
+
+## The index it builds
+
+With `--build-index` (the default) the `.zst` is indexed as soon as it is
+written, and the JSON reports what was built:
+
+```json
+"index": { "line_count": 50000, "frame_count": 38 }
+```
+
+The index is a frame table: which lines each zstd frame holds. That is
+what lets `rx samples big.log.zst --lines=25000` decompress one frame
+rather than the whole stream, and it is written to the shared cache under
+`~/.cache/rx/indexes/`, so rx-python reads it and the other way round.
+
+A failure to index is reported as `index_error` and does not fail the
+command: the compressed file is correct and usable, and `rx index` can
+build the index later.
+
+`--no-index` writes no index and reports neither key.

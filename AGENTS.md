@@ -93,6 +93,7 @@ the position, with a range sorting by its left-hand value
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
 | `internal/index/` | Line-offset index builder, stats (Welford + reservoir), on-disk store |
 | `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; format detection; pooled decoders |
+| `internal/seekableindex/` | Frame → line-range index for a seekable `.zst`; the format rx-python defines |
 | `internal/analyzer/` | Detector registry (Freeze barrier) and 9 detectors under `detectors/` |
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
