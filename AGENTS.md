@@ -168,29 +168,49 @@ Data flow for `rx trace "pattern" big.log`:
    count while a chunk stops part-way; the caller resolves what it needs
    through `samples --offsets=…`, which answers a whole batch in one
    pass. Do not add a surface that numbers lines its own way.
-2. **Bounded reads.** No code path reads more bytes than the request needs,
+2. **An index is an accelerator, never a source of truth.** Every answer
+   rx gives must be identical whether or not an index exists. An index
+   only changes how fast the answer is reached, so any code path that
+   consults one must produce the same result when it does not. The
+   regression harness builds each answer twice, once with the cache empty
+   and once with a freshly built index, and compares them.
+
+   An index is used only when it still describes the file it was built
+   from. That means the format version matches exactly — an index from
+   another version is treated as absent, not read with today's rules —
+   and every identity field it carries still matches: size, mtime, inode,
+   ctime, and a digest of the size plus the first and last 64 KiB. The
+   one case this does not catch is an edit confined to the middle of a
+   large file that also preserves the byte count and the mtime, on a
+   filesystem whose ctime does not move. Catching that needs a
+   whole-file hash, which costs more than rebuilding the index.
+
+   Bump `index.Version` and rx-python's `UNIFIED_INDEX_VERSION` together
+   whenever the on-disk shape or the meaning of a field changes. The two
+   backends share one cache directory.
+3. **Bounded reads.** No code path reads more bytes than the request needs,
    except `rx index` (new index), `rx trace` without `--max-results`, and
    `rx compress`. Every new file-reading path gets a budget test that uses
    `counting.InjectOpen` and asserts the byte count.
-3. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
+4. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
    Never add `omitempty` to a schema-documented wire field; use explicit nulls.
    Go-only extensions go under `go_extras`.
-4. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
+5. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
    the server starts; later registration panics; readers are lock-free. Do not
    add a mutex. Stateful detectors register a factory with
    `RegisterLineDetector`, never a shared instance with `Register`.
-5. **Sandbox on every path.** Every HTTP handler and every CLI command that
+6. **Sandbox on every path.** Every HTTP handler and every CLI command that
    receives a path, including output paths, calls
    `paths.ValidatePathWithinRoots` before touching the filesystem.
-6. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
+7. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
    link-local, RFC 1918, CGNAT, multicast and unspecified addresses, and
    resolves DNS at validation time. Do not weaken it. Redirects must be refused
    or re-validated.
-7. **Metrics are off by default.** Wrap every new metric call behind the
+8. **Metrics are off by default.** Wrap every new metric call behind the
    enable gate. Never use `r.URL.Path` as a label; use the chi route pattern.
-8. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
+9. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
    through `internal/webapi/run_detached.go::runDetached`.
-9. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
+10. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
    2 usage error, 3 file not found, 4 access denied, 5 interrupted. They must
    match rx-python.
 
