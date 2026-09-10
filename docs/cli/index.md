@@ -30,12 +30,23 @@ assumed.
 
 ## Global flags
 
-`rx` itself has no global flags other than cobra's built-ins:
+These are persistent flags on the root command: every subcommand accepts
+them, and they may be written before or after the subcommand name.
 
-| Flag | Behaviour |
-|------|-----------|
-| `--help`, `-h` | Print help for the current command and exit |
-| `--version` | Print the version string (`rx version 2.2.1-go`) and exit |
+| Flag | Default | Behaviour |
+|------|---------|-----------|
+| `--hidden` | `RX_HIDDEN` or `false` | Include entries whose name starts with a dot, the way `rg --hidden` does |
+| `--search-root` | `RX_SEARCH_ROOTS` or no sandbox | Restrict file access to this directory; repeatable |
+| `--help`, `-h` | — | Print help for the current command and exit |
+| `--version` | — | Print the version string (`rx version 2.2.1-go`) and exit |
+
+`--search-root` confines every path a command touches, including the
+destination `rx compress` writes. A path outside all roots exits 4; a
+root that does not exist is a usage error and exits 2. `rx serve`
+declares its own `--search-root`, whose default is the current directory
+rather than "no sandbox", and exports the roots it resolved in
+`RX_SEARCH_ROOTS` so a child process inherits them. See
+[Security](../concepts/security.md).
 
 Every subcommand has its own set of flags documented on its page.
 

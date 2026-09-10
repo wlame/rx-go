@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--search-root` is now a persistent flag: every subcommand accepts it,
+  it repeats to name several roots, and `RX_SEARCH_ROOTS` is its
+  environment form. Until now the sandbox could only be switched on by
+  `rx serve`, so `rx compress in.log --output=/etc/cron.d/x` could not be
+  confined by any flag and the security document described a control the
+  binary did not offer. A path outside every root exits 4; a root that
+  does not exist is a usage error rather than a silent "no sandbox". With
+  neither the flag nor the variable set nothing changes. `rx serve` keeps
+  its own flag and now falls back to `RX_SEARCH_ROOTS` before the current
+  directory.
+
 ### Fixed
 
 - `rx index` indexed binary files that rx-python skips, so the same
