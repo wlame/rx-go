@@ -138,16 +138,24 @@ type AnomalyRangeResult struct {
 
 // IndexRequest is the body for POST /v1/index (background task).
 //
-// AnalyzeWindowLines is the optional sliding-window size used by the
-// analyzer coordinator when Analyze=true. Zero / missing means "not
-// set" — the server falls through to analyzer.ResolveWindowLines
-// precedence (CLI flag → env var → compiled-in default).
+// AnalyzeWindowLines is the optional sliding-window size the analyzer's
+// detectors see when Analyze=true. Null or 0 means "not set" — the
+// server falls through to analyzer.ResolveWindowLines precedence (env
+// var → compiled-in default). A negative value is a mistake the caller
+// made rather than a way to spell "not set", so it is refused.
+//
+// It is a pointer with omitempty, the shape Threshold beside it uses:
+// on a request body that is how a field says "may be omitted", and huma
+// marks it optional in the schema accordingly. The design contract's ban
+// on omitempty is about response fields, where a reader has to be able
+// to tell an absent key from a null one; nothing reads a request back.
+// rx-python declares the same field as `int | None`.
 type IndexRequest struct {
 	Path               string `json:"path"`
 	Force              bool   `json:"force,omitempty"`
 	Analyze            bool   `json:"analyze,omitempty"`
-	Threshold          *int   `json:"threshold,omitempty"`            // MB; nil = use env default
-	AnalyzeWindowLines int    `json:"analyze_window_lines,omitempty"` // 0 = use resolver default
+	Threshold          *int   `json:"threshold,omitempty"` // MB; nil = use env default
+	AnalyzeWindowLines *int   `json:"analyze_window_lines,omitempty"`
 }
 
 // IndexResponse is the body returned by GET /v1/index (synchronous)

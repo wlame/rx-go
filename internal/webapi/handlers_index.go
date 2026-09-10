@@ -97,6 +97,15 @@ func registerIndexHandlers(s *Server, api huma.API) {
 // createIndexTask is the heavy-lifting half of POST /v1/index, split out
 // so integration tests can drive it without a full HTTP round-trip.
 func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput, err error) {
+	// A negative window is a mistake the caller made, not a way to spell
+	// "not set" — 0 and null already do that — so it is refused rather
+	// than silently replaced by the default. rx-python refuses it too,
+	// with the same message.
+	if req.AnalyzeWindowLines != nil && *req.AnalyzeWindowLines < 0 {
+		return nil, ErrBadRequest(
+			"analyze_window_lines must be positive, or 0 to use the default")
+	}
+
 	// Only an indexing request that asks for analysis belongs in the
 	// analyze counter; a plain index build is not an analyze request.
 	// Counted from one deferred site so every return path is covered.
@@ -225,7 +234,7 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 	// wins; if unset (zero), the resolver falls through to the env var
 	// and then the compiled-in default. The CLI flag doesn't apply in
 	// the HTTP path, so we pass cliFlag=0.
-	windowLines := analyzer.ResolveWindowLines(0, req.AnalyzeWindowLines)
+	windowLines := analyzer.ResolveWindowLines(0, derefWindowLines(req.AnalyzeWindowLines))
 
 	// Populate detectors from the global registry when Analyze is on.
 	// LineDetectorSnapshot returns FRESH instances per call — per-build
@@ -350,4 +359,13 @@ func unifiedIndexToDict(idx *rxtypes.UnifiedFileIndex) map[string]any {
 		out["anomalies"] = nil
 	}
 	return out
+}
+
+// derefWindowLines turns the optional request field into the int the
+// resolver takes, where 0 means "not set".
+func derefWindowLines(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
 }
