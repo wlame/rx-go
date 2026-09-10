@@ -92,7 +92,8 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().IntVarP(&beforeCtx, "before", "B", 0, "Override lines before")
 	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Override lines after")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
-	cmd.Flags().StringVar(&colorFlag, "color", "", "Colorize output: 'always', 'never', or '' (auto)")
+	cmd.Flags().StringVar(&colorFlag, "color", "auto",
+		"Colorize output: 'always', 'never', or 'auto' (colour only on a terminal)")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output (Python-compat alias for --color=never)")
 	cmd.Flags().StringVarP(&regex, "regex", "r", "", "Highlight matches of this regex in context lines (requires color)")
 	return cmd
@@ -205,33 +206,39 @@ func runSamples(out io.Writer, p samplesParams) error {
 		return enc.Encode(resp)
 	}
 
-	colorize := shouldColorize(p.colorFlag, out)
+	colorize, colorErr := shouldColorize(p.colorFlag, out)
+	if colorErr != nil {
+		return exitWithError(os.Stderr, ExitUsageError, "%s", colorErr.Error())
+	}
 	rendered := output.FormatSamplesCLI(resp, colorize, p.regex)
 	_, _ = fmt.Fprintln(out, rendered)
 	return nil
 }
 
-// shouldColorize returns true if ANSI codes should be emitted for the
-// given flag value and writer. Semantics:
+// shouldColorize decides whether to emit ANSI codes, given the --color
+// value and the writer. Semantics:
 //
-//	"always" → always color (unless RX_NO_COLOR / NO_COLOR set)
-//	"never"  → never color
-//	""       → auto: color if `out` is os.Stdout / os.Stderr attached to
-//	           a TTY. For non-*os.File writers (typical in tests),
-//	           return false so golden-file comparisons are plain text
-//	           unless --color=always is passed.
+//	"always"       → always color, even into a pipe
+//	"never"        → never color
+//	"auto" or ""   → color only when `out` is a terminal, and not when
+//	                 NO_COLOR or RX_NO_COLOR is set
 //
-// Env overrides NO_COLOR and RX_NO_COLOR disable color unconditionally —
-// this matches rx-python's colorDecision. --color=always can still
-// override env when explicitly set, matching most modern CLI tools
-// (e.g. GNU ls --color=always).
-func shouldColorize(flag string, out io.Writer) bool {
+// "" is the historical spelling of "auto" and stays accepted. Anything
+// else is a usage error rather than a silent fall back to auto: a typo
+// that quietly does the opposite of what was asked is worse than a
+// refusal, and rx-python's click.Choice refuses it too.
+//
+// --color=always wins over NO_COLOR and RX_NO_COLOR, which is what GNU
+// ls and most modern tools do — the flag is the more specific
+// instruction.
+func shouldColorize(flag string, out io.Writer) (bool, error) {
 	switch flag {
 	case "always":
-		return true
+		return true, nil
 	case "never":
-		return false
+		return false, nil
+	case "auto", "":
+		return colorDecision(false, out), nil
 	}
-	// Auto-detect path honors NO_COLOR / RX_NO_COLOR.
-	return colorDecision(false, out)
+	return false, fmt.Errorf("--color must be 'always', 'never' or 'auto', got %q", flag)
 }

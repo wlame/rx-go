@@ -235,10 +235,11 @@ func TestColorDecision(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("RX_NO_COLOR", "")
 	var buf bytes.Buffer
-	// With a non-*os.File writer, colorDecision falls through to true
-	// (enabled). Verify that behavior holds.
-	if got := colorDecision(false, &buf); !got {
-		t.Errorf("bytes.Buffer writer should default to color-enabled")
+	// A buffer is not a terminal, so it gets plain text. Escape
+	// sequences in something the user will read back are corruption,
+	// not decoration, and rx-python decides the same way.
+	if colorDecision(false, &buf) {
+		t.Errorf("a non-terminal writer should not get color")
 	}
 	if colorDecision(true, &buf) {
 		t.Errorf("--no-color flag should disable")

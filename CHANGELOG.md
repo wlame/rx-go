@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples --color` accepts `auto` as well as the empty string, and
+  refuses anything else with exit 2 instead of silently falling back to
+  auto detection. rx-python's `--color` now takes the same three values,
+  so the flag means one thing across the two backends.
+
+- Colour auto-detection treats a writer that is not a terminal as "no
+  colour", where it used to emit sequences when it could not tell. That
+  only showed up for a non-file writer, which in practice means a test,
+  but the rule now says what the documentation always claimed and what
+  rx-python does.
+
 - The `roots` list in a sandbox refusal is sorted. The operator's flag
   order is not something a client should have to know about, and sorting
   is what lets the two backends return identical bodies for the same
