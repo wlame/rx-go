@@ -28,10 +28,9 @@ import (
 //   - --max-results caps result count.
 //   - --json switches to JSON output.
 //   - --no-cache and --no-index disable caching.
-//   - Unknown flags (-i, -w, -A N, --case-sensitive, ...) pass through
-//     to ripgrep via rg_extra_args. This is click's allow_extra_args=True
-//     behavior; cobra needs explicit DisableFlagParsing=false and
-//     FParseErrWhitelist.UnknownFlags=true to allow it.
+//   - ripgrep's matching flags (-i, -w, -x, -F, -P) are accepted under
+//     ripgrep's own spelling; see ripgrepMatchingFlags. Any other flag is
+//     a usage error, exit 2.
 func NewTraceCommand(out io.Writer) *cobra.Command {
 	var (
 		inputPaths     []string
@@ -57,6 +56,9 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		// behavior for users who want top-level-only scans.
 		recursive   bool
 		noRecursive bool
+		// matchingFlagSet[i] records whether ripgrepMatchingFlags[i] was
+		// given; cobra writes each bool when it parses the flag.
+		matchingFlagSet = make([]bool, len(ripgrepMatchingFlags))
 	)
 
 	cmd := &cobra.Command{
@@ -66,11 +68,6 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 			"If PATH is not specified, searches the current directory.\n" +
 			"Use '-' as PATH or pipe input to search stdin.\n" +
 			"For multiple patterns, use -e/--regexp multiple times.",
-		FParseErrWhitelist: cobra.FParseErrWhitelist{
-			// Mirror click's allow_extra_args: unknown flags like -i
-			// become ripgrep passthroughs instead of parse errors.
-			UnknownFlags: true,
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// --no-color is the older spelling and wins, so a script
 			// that already passes it keeps working.
@@ -106,6 +103,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 				// We silence the unused warning by passing through.
 				recursive:   recursive,
 				noRecursive: noRecursive,
+				rgFlags:     selectedRipgrepFlags(matchingFlagSet),
 			})
 		},
 	}
@@ -137,8 +135,51 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		"Recurse into subdirectories (default: true; Python-compat flag)")
 	cmd.Flags().BoolVar(&noRecursive, "no-recursive", false,
 		"Stop at top-level directory entries (Go-specific escape hatch)")
+	for i, f := range ripgrepMatchingFlags {
+		cmd.Flags().BoolVarP(&matchingFlagSet[i], f.long, f.short, false, f.usage)
+	}
 
 	return cmd
+}
+
+// ripgrepMatchingFlag is one ripgrep option that changes which lines
+// match, exposed on `rx trace` under ripgrep's own spelling.
+type ripgrepMatchingFlag struct {
+	long  string // long name without dashes, as ripgrep spells it
+	short string // one-letter name without the dash; also what rg is given
+	usage string
+}
+
+// ripgrepMatchingFlags is the whole set of ripgrep options `rx trace`
+// accepts. Each one the user gives reaches ripgrep as "-" + short, on
+// every path: plain chunks, compressed streams, seekable frames, and the
+// trace-cache key.
+//
+// SECURITY: the set is closed on purpose. ripgrep also has options that
+// run a program (--pre), change the output the JSON parser reads
+// (--count, --files) or let a match cross the newline-aligned chunk
+// boundaries (--multiline). Forwarding unknown flags would hand all of
+// them to anyone who can shape a command line, so an unknown flag is a
+// usage error instead.
+var ripgrepMatchingFlags = []ripgrepMatchingFlag{
+	{long: "ignore-case", short: "i", usage: "Match case-insensitively (ripgrep -i)"},
+	{long: "word-regexp", short: "w", usage: "Match only whole words (ripgrep -w)"},
+	{long: "line-regexp", short: "x", usage: "Match only whole lines (ripgrep -x)"},
+	{long: "fixed-strings", short: "F", usage: "Treat every pattern as literal text (ripgrep -F)"},
+	{long: "pcre2", short: "P", usage: "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)"},
+}
+
+// selectedRipgrepFlags returns the ripgrep arguments for the matching
+// flags that are set, in table order, so two commands that differ only
+// in the order their flags were typed send ripgrep the same arguments.
+func selectedRipgrepFlags(set []bool) []string {
+	out := []string{}
+	for i, on := range set {
+		if on {
+			out = append(out, "-"+ripgrepMatchingFlags[i].short)
+		}
+	}
+	return out
 }
 
 // traceParams bundles the resolved flag/arg state. Keeping a dedicated
@@ -170,6 +211,9 @@ type traceParams struct {
 	// Python scripts that pass -r continue to parse cleanly.
 	recursive   bool
 	noRecursive bool
+	// rgFlags are the ripgrep matching flags the user gave, already in
+	// ripgrep's spelling ("-i", "-w").
+	rgFlags []string
 }
 
 // runTrace resolves positionals → [pattern, paths...], then dispatches
@@ -326,6 +370,7 @@ func runTrace(out io.Writer, p traceParams) error {
 
 	resp, err = engine.RunWithOptions(context.Background(), validated, patterns, trace.Options{
 		MaxResults:    maxPtr,
+		RgExtraArgs:   p.rgFlags,
 		ContextBefore: resolveBefore(p),
 		ContextAfter:  resolveAfter(p),
 		NoCache:       p.noCache,
