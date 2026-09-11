@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Security response headers on every route: `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+  a `Content-Security-Policy` of `frame-ancestors 'none'`. The viewer
+  renders untrusted content by definition, and a browser ignores these
+  three in the meta tag the SPA carries, so they have to come from the
+  server. The header CSP carries only what a meta tag cannot; the full
+  policy stays in the meta tag, which is the artifact that knows what
+  Monaco needs. rx-python sends the same table.
+
 - The line-length percentile definition is documented in
   `docs/concepts/analyzers.md`: linear interpolation over the sorted
   sample, the sample standard deviation, exact below 10,000 lines and
