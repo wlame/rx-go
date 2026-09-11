@@ -126,7 +126,27 @@ The builder:
   during construction. On a 260 MB source, peak memory is around
   256 MB RSS.
 
-### When to build
+### `rx samples` builds one for you
+
+A lookup in a large or compressed file builds an index if none is cached,
+so the *second* lookup is fast — which is the case an index exists for.
+The build runs without `--analyze`: anomaly detection is a separate
+feature, nothing on the lookup path reads its output, and a full pass to
+answer one line is work nobody asked for.
+
+`--no-index` (or `RX_NO_INDEX=1`) turns it off for a caller that wants
+the read to leave nothing behind; the lookup then streams, which is
+slower and gives the same answer. `GET /v1/samples` behaves the same way
+and reads the same variable — there is no query parameter for it, because
+the decision belongs to whoever runs the server rather than to a caller.
+
+A plain file is only indexed once it reaches the large-file threshold. A
+compressed one is indexed whatever its size, because without an index
+every lookup in it decompresses from the start.
+
+rx-python does the same on both surfaces.
+
+### When to build one yourself
 
 Build an index when:
 

@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
@@ -52,6 +54,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 		colorFlag  string // "", "always", "never"
 		noColor    bool
 		regex      string
+		noIndex    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "samples PATH",
@@ -73,6 +76,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 				jsonOutput: jsonOutput,
 				colorFlag:  colorFlag,
 				regex:      regex,
+				noIndex:    noIndex || config.GetBoolEnv("RX_NO_INDEX", false),
 			})
 		},
 	}
@@ -106,6 +110,8 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 		"Colorize output: 'always', 'never', or 'auto' (color only on a terminal)")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output (Python-compat alias for --color=never)")
 	cmd.Flags().StringVarP(&regex, "regex", "r", "", "Highlight matches of this regex in context lines (requires color)")
+	cmd.Flags().BoolVar(&noIndex, "no-index", false,
+		"Do not build or use a line index (also RX_NO_INDEX)")
 	return cmd
 }
 
@@ -119,6 +125,7 @@ type samplesParams struct {
 	jsonOutput bool
 	colorFlag  string
 	regex      string
+	noIndex    bool
 }
 
 // runSamples dispatches the CLI request to the shared samples.Resolve
@@ -178,6 +185,20 @@ func runSamples(out io.Writer, p samplesParams) error {
 	// (nil, nil) as "no index — fall back to linear scan", so we
 	// swallow the not-found error to match that contract and keep
 	// "index missing" non-fatal.
+	// A second lookup in a multi-gigabyte file is the case an index
+	// exists for, so one is built when the file is worth it and none is
+	// cached. `--no-index` opts out for a caller that wants the read to
+	// leave nothing behind. rx-python builds on the same path, and the
+	// answer is identical either way — an index only changes how fast it
+	// is reached.
+	//
+	// Analysis is deliberately not run: it is a different feature,
+	// nothing on this path reads its output, and a full anomaly pass to
+	// answer one line is work nobody asked for.
+	if !p.noIndex {
+		buildIndexForSamples(p.path, info.Size())
+	}
+
 	loader := func(path string) (*rxtypes.UnifiedFileIndex, error) {
 		idx, loadErr := index.LoadForSource(path)
 		if loadErr != nil {
@@ -300,4 +321,29 @@ func sortedPositionKeys(m map[string]int64) []string {
 		return keys[i] < keys[j]
 	})
 	return keys
+}
+
+// buildIndexForSamples builds and stores a line index for path when one
+// would help and none is cached.
+//
+// A failure is deliberately silent: the index is an accelerator, the
+// answer is the same without it, and refusing to read a file because its
+// index could not be written would be the wrong trade. The caller has
+// asked for lines, not for an index.
+func buildIndexForSamples(path string, size int64) {
+	if existing, err := index.LoadForSource(path); err == nil && existing != nil {
+		return
+	}
+	// A compressed file always benefits: without an index every lookup
+	// decompresses from the start. A plain file only pays for itself
+	// once it is big enough that a scan is worth avoiding, which is the
+	// same threshold `rx index` uses.
+	if !compression.IsCompressed(path) && size < int64(config.LargeFileMB())*1024*1024 {
+		return
+	}
+	idx, err := index.Build(path, index.BuildOptions{})
+	if err != nil {
+		return
+	}
+	_, _ = index.Save(idx)
 }
