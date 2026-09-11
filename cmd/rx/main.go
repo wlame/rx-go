@@ -96,6 +96,13 @@ func main() {
 	// explicit call covers every path out of this function.
 	interrupted := ctx.Err() != nil
 	stop()
+	// Commands print their own failures; what reaches here unprinted is
+	// cobra's own (an unknown flag, a missing argument) or an error built
+	// outside a command, such as a search root that does not exist. An
+	// interrupt prints nothing: the user already knows why it stopped.
+	if err != nil && !interrupted && !clicommand.IsReported(err) {
+		clicommand.PrintError(os.Stderr, err.Error())
+	}
 	os.Exit(exitCodeFor(err, interrupted))
 }
 
@@ -119,8 +126,8 @@ func exitCodeFor(err error, interrupted bool) int {
 	if errors.As(err, &exitErr) {
 		return exitErr.Code
 	}
-	// cobra's own flag-parsing failures are usage errors; it has already
-	// printed the message.
+	// cobra's own flag-parsing failures are usage errors; main prints
+	// their message, since SilenceErrors keeps cobra from doing it.
 	if isUsageError(err) {
 		return clicommand.ExitUsageError
 	}
