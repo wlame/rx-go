@@ -757,6 +757,7 @@
             ]
           },
           "modified_at": {
+            "format": "date-time",
             "type": [
               "string",
               "null"

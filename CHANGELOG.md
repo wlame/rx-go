@@ -62,6 +62,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `GET /v1/tree` renders `modified_at` as RFC 3339 in UTC with exactly
+  six fractional digits — `2026-09-06T00:53:24.438322Z`. It used to be
+  `time.RFC3339Nano`, which reports nanoseconds and trims trailing
+  zeros, so a file whose mtime landed on a whole second rendered
+  `…:24Z` while its neighbour rendered `…:24.438322650Z`, and neither
+  matched rx-python's `2026-09-06T00:53:24.438323` — a naive local time
+  with no timezone at all.
+
+  Six digits because Python's `datetime` holds microseconds and no
+  finer. Both backends truncate rather than round, which is what put
+  them one microsecond apart on the same file once the shape agreed.
+  `/v1/tree` is now byte-identical between them.
+
+  `source_modified_at` and `created_at` in an index are unchanged: they
+  are cache format, both backends already write the same naive local
+  form, and changing them would invalidate every index on disk.
+
 - `cli_command` renders the command rx-python renders. The two
   backends produced two different strings for the same request — rx-go
   put the path last and wrote `--lines 2`, rx-python put the path first

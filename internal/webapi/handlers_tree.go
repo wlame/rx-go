@@ -207,7 +207,7 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 	if err != nil {
 		return entry // best-effort — still emit the name + path
 	}
-	mtime := info.ModTime().UTC().Format(time.RFC3339Nano)
+	mtime := formatWireTimestamp(info.ModTime())
 	entry.ModifiedAt = &mtime
 
 	if isDir {
@@ -280,4 +280,26 @@ func looksLikeTextFile(path string) bool {
 		}
 	}
 	return true
+}
+
+// wireTimestampLayout is RFC 3339 in UTC with exactly six fractional
+// digits.
+//
+// Six because Python's datetime cannot hold nanoseconds, so rx-python
+// could not match a finer rendering. Fixed rather than trimmed because
+// Go's RFC3339Nano drops trailing zeros by design: a file whose mtime
+// lands on a whole second rendered "…:24Z" while its neighbor rendered
+// "…:24.438324Z", so two entries in one listing had different shapes.
+const wireTimestampLayout = "2006-01-02T15:04:05.000000Z"
+
+// formatWireTimestamp renders a time for a response body.
+//
+// Every timestamp that goes on the wire goes through here, so a new
+// field cannot pick a different rendering. It is deliberately NOT used
+// for the index's source_modified_at and created_at: those are cache
+// format, owned by rx-python, and carry a naive local time that both
+// backends already agree on — changing them would invalidate every
+// index on disk.
+func formatWireTimestamp(t time.Time) string {
+	return t.UTC().Format(wireTimestampLayout)
 }

@@ -6,12 +6,14 @@ package rxtypes
 // (e.g. Size is nil for directories; ChildrenCount is nil for files).
 // The frontend uses this polymorphism to decide which columns to render.
 type TreeEntry struct {
-	Name              string  `json:"name"`
-	Path              string  `json:"path"`
-	Type              string  `json:"type"` // "file" | "directory"
-	Size              *int64  `json:"size"`
-	SizeHuman         *string `json:"size_human"`
-	ModifiedAt        *string `json:"modified_at"`
+	Name      string  `json:"name"`
+	Path      string  `json:"path"`
+	Type      string  `json:"type"` // "file" | "directory"
+	Size      *int64  `json:"size"`
+	SizeHuman *string `json:"size_human"`
+	// ModifiedAt is RFC 3339 in UTC with six fractional digits, e.g.
+	// "2026-09-06T00:53:24.438322Z". rx-python renders the same string.
+	ModifiedAt        *string `json:"modified_at" format:"date-time"`
 	IsText            *bool   `json:"is_text"`
 	IsCompressed      *bool   `json:"is_compressed"`
 	CompressionFormat *string `json:"compression_format"`
