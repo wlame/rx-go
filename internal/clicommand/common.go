@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/wlame/rx-go/internal/paths"
 )
@@ -95,8 +97,29 @@ func NewExitError(code int, err error) *ExitError {
 // Discarding it would leave the process exiting 1.
 func exitWithError(w io.Writer, code int, format string, args ...any) *ExitError {
 	msg := fmt.Sprintf(format, args...)
-	_, _ = fmt.Fprintf(w, "Error: %s\n", msg)
+	_, _ = fmt.Fprintf(w, "Error: %s\n", capitalizeFirst(msg))
 	return NewExitError(code, errors.New(msg))
+}
+
+// capitalizeFirst upper-cases the first letter of a message for display.
+//
+// Go error strings are lower case by convention, and the wrapped error
+// keeps that form — it is what `errors.Is` callers and the HTTP layer
+// see. What a person reads after "Error: " is a sentence, and rx-python
+// capitalizes it, so the two backends printed the same message in two
+// different cases for the same mistake.
+//
+// Only the first rune changes, so "rg" and other lower-case identifiers
+// further into the message are left alone.
+func capitalizeFirst(msg string) string {
+	if msg == "" {
+		return msg
+	}
+	first, size := utf8.DecodeRuneInString(msg)
+	if !unicode.IsLower(first) {
+		return msg
+	}
+	return string(unicode.ToUpper(first)) + msg[size:]
 }
 
 // sandboxCheck validates a user-supplied path against the --search-root
