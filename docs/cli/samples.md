@@ -68,6 +68,22 @@ backend runs against both.
 both, so a redirect still gets the sequences. An unrecognised value is a
 usage error (exit 2) rather than a silent fall back to `auto`.
 
+### A position the file does not have
+
+A line past the last one, line 0, or a byte offset past the last byte is
+answered rather than refused: `-1` in `lines`/`offsets`, `null` in
+`samples`, and the reason on stderr. The command exits 0 and every other
+position in the same request is still answered — one bad number in
+`--lines=1000,1500000` must not throw away the good one, and `--json`
+would otherwise have nothing to return.
+
+Exit 2 is reserved for a malformed argument: `--lines=abc`, or a reversed
+range like `--lines=50-10`.
+
+`-1` is the same "asked but unknown" convention a capped search uses for
+a match it could not number. rx-python answers identically, on plain,
+gzipped and seekable-zstd files alike.
+
 ### Address syntax
 
 Both `--offsets` and `--lines` accept the same grammar:

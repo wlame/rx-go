@@ -94,6 +94,12 @@ func answerOneWindow(
 		first, last = want.Start, *want.End
 	} else {
 		line := want.Start
+		if line == 0 {
+			// Line 0 is not a line: they are numbered from 1.
+			resp.Samples["0"] = nil
+			resp.Lines["0"] = -1
+			return nil
+		}
 		if line < 0 {
 			// A negative line counts back from the last one. The index
 			// knows the count, so this costs nothing here.
@@ -111,14 +117,19 @@ func answerOneWindow(
 		reported = line
 	}
 
-	// Pre-populate so a window past the end of the file still appears in
-	// the response, empty.
-	resp.Samples[key] = []string{}
+	// Pre-populate as unknown, so a window past the end of the file
+	// still appears in the response with the -1 and null the plain-file
+	// path reports for the same question.
+	resp.Samples[key] = nil
 	resp.Lines[key] = -1
 
 	lines, offsets, err := readLinesFromFrames(req.Path, frames, table, decoder, first, last)
 	if err != nil {
 		return err
+	}
+	if len(lines) == 0 {
+		// Nothing was collected, so the position is not in the file.
+		return nil
 	}
 	resp.Samples[key] = lines
 	if reported > 0 {

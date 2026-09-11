@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -208,6 +210,16 @@ func runSamples(out io.Writer, p samplesParams) error {
 		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
 	}
 
+	// A position with no line behind it is answered as -1, and a person
+	// reading the terminal is told why. It goes to stderr so --json
+	// output stays parseable, and it is emitted for both output modes:
+	// a script redirecting stdout still sees the reason.
+	//
+	// The command still succeeds. The other positions in the same
+	// request were answered, and throwing them away over one bad number
+	// would make a batch useless.
+	warnAboutMissingPositions(os.Stderr, resp)
+
 	if p.jsonOutput {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -249,4 +261,43 @@ func shouldColorize(flag string, out io.Writer) (bool, error) {
 		return colorDecision(false, out), nil
 	}
 	return false, fmt.Errorf("--color must be 'always', 'never' or 'auto', got %q", flag)
+}
+
+// warnAboutMissingPositions names every requested position the file does
+// not have — a line past the last one, line 0, or a byte offset past the
+// last byte.
+//
+// The answer already says so — -1 in the number map, null in samples —
+// but a person reading the terminal should not have to know that
+// convention to understand why a line came back empty. rx-python prints
+// the same sentence.
+func warnAboutMissingPositions(w io.Writer, resp *rxtypes.SamplesResponse) {
+	for _, key := range sortedPositionKeys(resp.Lines) {
+		if resp.Lines[key] == -1 && !strings.Contains(key, "-") {
+			_, _ = fmt.Fprintf(w, "Warning: line %s is not in the file.\n", key)
+		}
+	}
+	for _, key := range sortedPositionKeys(resp.Offsets) {
+		if resp.Offsets[key] == -1 && !strings.Contains(key, "-") {
+			_, _ = fmt.Fprintf(w, "Warning: offset %s is not in the file.\n", key)
+		}
+	}
+}
+
+// sortedPositionKeys orders the keys numerically, so the warnings come
+// out in the order a reader expects rather than in map order.
+func sortedPositionKeys(m map[string]int64) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, aErr := strconv.ParseInt(strings.SplitN(keys[i], "-", 2)[0], 10, 64)
+		b, bErr := strconv.ParseInt(strings.SplitN(keys[j], "-", 2)[0], 10, 64)
+		if aErr == nil && bErr == nil && a != b {
+			return a < b
+		}
+		return keys[i] < keys[j]
+	})
+	return keys
 }

@@ -113,6 +113,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx samples --offsets=B` past the end of the file reported the file's
+  last line, which is a number counted from the wrong place. It now
+  reports `-1` with a null sample, the same way a line number past the
+  last line already answered, and the same way rx-python answers both.
+  Line 0 and an empty file's line 1 answer that way too, on the plain,
+  gzipped and seekable-zstd paths alike.
+
+- `rx samples` prints the reason to stderr when a requested position is
+  not in the file, so a person reading the terminal does not have to know
+  the -1 convention to understand an empty answer. stdout stays
+  parseable.
+
 - `rx trace` printed plain text and ignored its own `--no-color`, while
   rx-python colourised the same output — so the two produced different
   text for the same search the moment a terminal was involved. It now

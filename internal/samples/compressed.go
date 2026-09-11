@@ -76,6 +76,13 @@ func resolveCompressedLines(
 		// A negative line counts back from the last one, and the key
 		// reports the line it resolved to.
 		line := v.Start
+		if line == 0 {
+			// Line 0 is not a line: they are numbered from 1. Answered
+			// as unknown, the same way the plain-file path answers it.
+			resp.Samples["0"] = nil
+			resp.Lines["0"] = -1
+			continue
+		}
 		if line < 0 {
 			line = totalLines + line + 1
 			if line < 1 {
@@ -92,7 +99,11 @@ func resolveCompressedLines(
 		})
 		// Pre-populate so a window past the end of the file still
 		// appears in the response, empty.
-		resp.Samples[key] = []string{}
+		// Pre-populate as unknown; the pass below fills in whatever the
+		// file actually has. A line it never reaches keeps -1 and null,
+		// which is what the plain-file path reports for a position past
+		// the end.
+		resp.Samples[key] = nil
 		resp.Lines[key] = -1
 	}
 
