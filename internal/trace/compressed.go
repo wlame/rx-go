@@ -119,7 +119,7 @@ func ProcessCompressed(
 	defer cancel()
 
 	// Build rg argv same way as ProcessChunk.
-	rgArgs := []string{"--json", "--no-heading", "--color=never"}
+	rgArgs := newRgArgs()
 	if contextBefore > 0 {
 		rgArgs = append(rgArgs, "-B", strconv.Itoa(contextBefore))
 	}
