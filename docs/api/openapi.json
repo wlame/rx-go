@@ -4,15 +4,6 @@
       "ApiError": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/ApiError.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "detail": {
             "type": "string"
           }
@@ -54,15 +45,6 @@
       "CompressRequest": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/CompressRequest.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "build_index": {
             "type": "boolean"
           },
@@ -167,15 +149,6 @@
       "DetectorsResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/DetectorsResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "categories": {
             "description": "The categories the registered detectors report under.",
             "items": {
@@ -217,15 +190,6 @@
       "HealthResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/HealthResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "app_version": {
             "type": "string"
           },
@@ -305,15 +269,6 @@
       "IndexRequest": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/IndexRequest.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "analyze": {
             "type": "boolean"
           },
@@ -391,15 +346,6 @@
       "SamplesResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/SamplesResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "after_context": {
             "format": "int64",
             "type": "integer"
@@ -469,15 +415,6 @@
       "SandboxError": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/SandboxError.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "detail": {
             "description": "Machine code, repeated from error for single-key clients.",
             "type": "string"
@@ -589,15 +526,6 @@
       "TaskResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/TaskResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "message": {
             "type": "string"
           },
@@ -629,15 +557,6 @@
       "TaskStatusResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/TaskStatusResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "completed_at": {
             "type": [
               "string",
@@ -688,15 +607,6 @@
       "TraceResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/TraceResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "after_context": {
             "format": "int64",
             "type": [
@@ -894,15 +804,6 @@
       "TreeResponse": {
         "additionalProperties": false,
         "properties": {
-          "$schema": {
-            "description": "A URL to the JSON Schema for this object.",
-            "examples": [
-              "https://example.com/schemas/TreeResponse.json"
-            ],
-            "format": "uri",
-            "readOnly": true,
-            "type": "string"
-          },
           "entries": {
             "items": {
               "$ref": "#/components/schemas/TreeEntry"

@@ -11,6 +11,7 @@ package webapi
 // tests hold rx-go to it.
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -60,6 +61,38 @@ func TestResponseBody_HasNoTrailingNewline(t *testing.T) {
 			if strings.HasSuffix(body, "\n") {
 				t.Errorf("%s (status %d): body ends with a newline; the last 40 bytes are %q",
 					route.path, status, body[max(0, len(body)-40):])
+			}
+		})
+	}
+}
+
+// huma's default config installs a link transformer that puts a
+// `$schema` field in every response body. rx-python emits no such key,
+// it is declared nowhere in pkg/rxtypes, and a strict decoder —
+// DisallowUnknownFields, a pydantic model with extra='forbid' — rejects
+// the whole document over it. It was also the last thing standing
+// between the two backends and byte-identical bodies.
+func TestResponseBody_CarriesNoSchemaKey(t *testing.T) {
+	ts := newTestServer(t)
+
+	routes := []string{
+		"/health",
+		"/v1/detectors",
+		// An error envelope goes through a different code path than a
+		// success body and grew the key too.
+		"/v1/samples?path=&lines=1",
+	}
+
+	for _, route := range routes {
+		t.Run(route, func(t *testing.T) {
+			_, body := readBody(t, ts.URL+route)
+
+			var decoded map[string]any
+			if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+				t.Fatalf("%s: decode %q: %v", route, body, err)
+			}
+			if value, present := decoded["$schema"]; present {
+				t.Errorf("%s: body carries $schema = %v", route, value)
 			}
 		})
 	}

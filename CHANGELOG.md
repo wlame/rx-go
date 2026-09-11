@@ -62,6 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Response bodies no longer carry a `$schema` field. huma's default
+  configuration installs a link transformer that adds one to every body;
+  rx-python emits no such key, it was declared nowhere in `pkg/rxtypes`,
+  and a strict decoder — `DisallowUnknownFields`, a pydantic model with
+  `extra='forbid'` — rejected the whole document over it. Dropping the
+  transformer removes the field from the OpenAPI schemas as well, so the
+  viewer's generated types no longer declare it.
+
+  With this and the trailing newline gone, `GET /v1/index` on an
+  unindexed file and the 403 sandbox envelope are byte-identical between
+  the two backends, and `GET /v1/samples` differs only in
+  `cli_command`.
+
+  The `Link` header the same transformer emitted goes with it; nothing
+  consumed it. `/schemas/*.json` still serves.
+
 - `rx index --threshold=0` indexes every file instead of falling back
   to `RX_LARGE_FILE_MB`. Zero meant "use the env default" on this
   surface and "no threshold" on `POST /v1/index` and in rx-python, so
