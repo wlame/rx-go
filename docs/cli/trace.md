@@ -167,6 +167,21 @@ Produces structured JSON capped at 100 matches. Use `--max-results`
 whenever you plan to stream the output downstream — it bounds memory use
 and prevents a runaway scan from filling the pipe.
 
+### The matches a capped search returns are arbitrary
+
+Chunks are scanned in parallel and the cap is filled by whichever workers
+finish first, so two runs of the same capped search may return different
+matches, and they are not necessarily the first N in the file. `rg -mN`
+returns the first N because it does not parallelise; rx trades that for
+the speed, and the trade is deliberate.
+
+If you need the first N in file order, run without a cap and take the
+first N of the result, or use `rg -mN` directly.
+
+rx-python behaves the same way, and stops its workers as soon as the cap
+is met — a capped search does not leave a scan of the rest of the file
+running in either backend.
+
 ### Early-termination on `--max-results`
 
 When `--max-results` is set to a non-zero value, `rx` stops scanning as
