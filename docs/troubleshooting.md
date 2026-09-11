@@ -289,6 +289,9 @@ Lower the threshold per-invocation:
 rx index /tmp/small.log --threshold=1
 ```
 
+`--threshold=0` indexes every file whatever its size. Leaving the flag
+off is how you ask for the `RX_LARGE_FILE_MB` default.
+
 Or globally:
 
 ```bash

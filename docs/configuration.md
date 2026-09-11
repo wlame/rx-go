@@ -53,7 +53,7 @@ See [concepts/chunking](concepts/chunking.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LARGE_FILE_MB` | `50` | Minimum file size (MB) to be indexed automatically. Below-threshold files are skipped by `rx index` unless `--analyze` is set or `--threshold=N` is supplied. |
+| `RX_LARGE_FILE_MB` | `50` | Minimum file size (MB) to be indexed automatically. Below-threshold files are skipped by `rx index` unless `--analyze` is set or `--threshold=N` is supplied. `--threshold=0` indexes every file; omitting the flag uses this variable. |
 
 ## Cache control
 

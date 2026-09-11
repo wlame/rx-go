@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx index --threshold=0` indexes every file instead of falling back
+  to `RX_LARGE_FILE_MB`. Zero meant "use the env default" on this
+  surface and "no threshold" on `POST /v1/index` and in rx-python, so
+  the same number meant two things inside one backend, and a script
+  asking to index everything got an empty `indexed` list and exit 0 —
+  a silence that reads like "there was nothing to do". "Use the
+  default" is now spelled by leaving the flag off, which is what an
+  absent flag already meant.
+
 - Response bodies no longer end with a newline. Go's
   `json.Encoder.Encode` terminates every value with one and huma's
   default JSON format uses an Encoder, so no rx-go response was ever

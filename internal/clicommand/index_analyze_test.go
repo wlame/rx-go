@@ -1,77 +1,36 @@
 package clicommand
 
-// Tests for the `--analyze-window-lines` CLI flag added in Task 6.
+// Tests for the `--analyze-window-lines` CLI flag: that it parses into
+// indexParams, that leaving it off keeps the 0 the resolver reads as
+// "not set", and that an index built with it succeeds end to end. What
+// the window size does to the detectors is covered by
+// internal/index/builder_analyze_test.go.
 //
-// Coverage:
-//   - Flag parses and round-trips into the indexParams struct (captured
-//     via a test-only fork of runIndex that records the params).
-//   - The zero default (no flag supplied) leaves analyzeWindowLines at 0
-//     so the resolver can fall through to env / default.
-//   - End-to-end: a file indexed with `--analyze --analyze-window-lines=N`
-//     produces a valid cache — we don't instrument the coordinator here,
-//     that's covered by internal/index/builder_analyze_test.go; we only
-//     verify the flag doesn't break the command.
-//
-// Why we capture params via a sibling constructor rather than overriding
-// runIndex: the exported NewIndexCommand hard-codes `runIndex` as its
-// RunE target. To avoid rewriting the command just for tests, the test
-// builds its own minimal cobra command that reuses the flag wiring.
+// The params are captured through the real constructor, because the flag
+// table is the thing under test: a test-local copy of it stops testing
+// the command as soon as one flag changes shape, which is how
+// `--threshold` came to be an int in one place and a *int in the other.
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/spf13/cobra"
 )
 
-// captureIndexParams builds a cobra command with the exact same flag
-// definitions as NewIndexCommand but swaps RunE for a capture closure.
-// Returns the indexParams the command observed after Execute.
+// captureIndexParams runs the real `rx index` command with its real
+// flags and returns the indexParams they produced, without indexing
+// anything.
 func captureIndexParams(t *testing.T, args []string) indexParams {
 	t.Helper()
 
-	var (
-		captured           indexParams
-		force              bool
-		showInfo           bool
-		deleteFlag         bool
-		jsonOutput         bool
-		recursive          bool
-		analyze            bool
-		threshold          int
-		analyzeWindowLines int
-	)
-
-	cmd := &cobra.Command{
-		Use:  "index PATH [PATH ...]",
-		Args: cobra.MinimumNArgs(1),
-		RunE: func(_ *cobra.Command, cmdArgs []string) error {
-			captured = indexParams{
-				paths:              cmdArgs,
-				force:              force,
-				showInfo:           showInfo,
-				delete:             deleteFlag,
-				jsonOutput:         jsonOutput,
-				recursive:          recursive,
-				analyze:            analyze,
-				threshold:          threshold,
-				analyzeWindowLines: analyzeWindowLines,
-			}
-			return nil
-		},
-	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "")
-	cmd.Flags().BoolVarP(&showInfo, "info", "i", false, "")
-	cmd.Flags().BoolVarP(&deleteFlag, "delete", "d", false, "")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "")
-	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "")
-	cmd.Flags().BoolVarP(&analyze, "analyze", "a", false, "")
-	cmd.Flags().IntVar(&threshold, "threshold", 0, "")
-	cmd.Flags().IntVar(&analyzeWindowLines, "analyze-window-lines", 0, "")
-
+	var captured indexParams
+	cmd := newIndexCommand(io.Discard, func(_ io.Writer, p indexParams) error {
+		captured = p
+		return nil
+	})
 	cmd.SetArgs(args)
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
