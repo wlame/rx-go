@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -62,7 +61,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 	}
 	defer func() { _ = src.close() }()
 
-	ignoreCase := hasFlag(req.RgExtraArgs, "-i", "--ignore-case")
+	flags := matchFlagsFrom(req.RgExtraArgs)
 	matches := make([]rxtypes.Match, 0, len(cached))
 	var ctxLines []rxtypes.ContextLine
 	emitted := map[int]bool{} // context line numbers already emitted
@@ -112,7 +111,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 			}
 			emitted[line] = true
 			for _, cm := range cached[first:next] {
-				m, mErr := matchFromCached(cm, text, line, req, ignoreCase)
+				m, mErr := matchFromCached(cm, text, line, req, flags)
 				if mErr != nil {
 					continue
 				}
@@ -142,7 +141,7 @@ func matchFromCached(
 	text string,
 	line int,
 	req ReconstructRequest,
-	ignoreCase bool,
+	flags matchFlags,
 ) (rxtypes.Match, error) {
 	if cm.PatternIndex < 0 || cm.PatternIndex >= len(req.Patterns) {
 		return rxtypes.Match{}, fmt.Errorf(
@@ -157,7 +156,7 @@ func matchFromCached(
 		RelativeLineNumber: ptrInt(line),
 		AbsoluteLineNumber: line,
 		LineText:           &lineText,
-		Submatches:         submatchesFromPattern(req.Patterns[cm.PatternIndex], text, ignoreCase),
+		Submatches:         submatchesFromPattern(req.Patterns[cm.PatternIndex], text, flags),
 	}, nil
 }
 
@@ -281,13 +280,13 @@ func (r *lineRing) lines() []ringLine {
 // submatchesFromPattern re-runs the pattern against the line and returns
 // the byte positions of every hit, sorted by start.
 //
-// The flags logic mirrors identify.go::compileRegex — if we change
-// matching flags in one place we update both.
-func submatchesFromPattern(pattern, line string, ignoreCase bool) []rxtypes.Submatch {
-	if ignoreCase {
-		pattern = "(?i)" + pattern
-	}
-	re, err := regexp.Compile(pattern)
+// The pattern is compiled by compileLikeRipgrep, the same way
+// identification compiles it, so a rebuilt submatch covers the text rg
+// matched under the request's -i, -w, -x and -F. A pattern Go cannot
+// compile (PCRE2 under -P) yields no submatches; the match itself is
+// still reported, because the cache recorded which pattern it was.
+func submatchesFromPattern(pattern, line string, flags matchFlags) []rxtypes.Submatch {
+	re, err := compileLikeRipgrep(pattern, flags)
 	if err != nil {
 		return nil
 	}
