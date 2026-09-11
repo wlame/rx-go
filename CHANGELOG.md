@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A test says stdout carries nothing but the JSON document whenever
+  `--json` is passed — for every subcommand that takes the flag, and for
+  a plain file, a gzip member and a seekable zstd. rx-python printed a
+  progress note next to its JSON writer with nothing in the code saying
+  the stream was reserved; rx-go never did, and now cannot start.
+
 - Security response headers on every route: `X-Frame-Options: DENY`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
   a `Content-Security-Policy` of `frame-ancestors 'none'`. The viewer
