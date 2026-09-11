@@ -160,7 +160,7 @@ When the task completes, its `result` field contains:
   "total_lines":       null,
   "index_built":       false,
   "time_seconds":      12.34,
-  "cli_command":       "rx compress --input-path=/var/log/audit-2026-03.log --output-path=/var/log/audit-2026-03.log.zst --frame-size=4M --compression-level=3"
+  "cli_command":       "rx compress /var/log/audit-2026-03.log --output=/var/log/audit-2026-03.log.zst --frame-size=4M --level=3"
 }
 ```
 

@@ -62,6 +62,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `cli_command` renders the command rx-python renders. The two
+  backends produced two different strings for the same request — rx-go
+  put the path last and wrote `--lines 2`, rx-python put the path first
+  and wrote `-l 2` — so what the viewer showed a user depended on which
+  backend the operator installed, and one of the two taught the space
+  form of a long flag that the project's own docs were corrected away
+  from.
+
+  The rendering is now `rx <subcommand> <positionals...>
+  <--long=value...>`, with the value quoted after the `=` when it needs
+  it. `GET /v1/index` also gains `--info --json`, without which the
+  rendered command builds an index instead of reading one.
+
+  With this, `GET /v1/samples` on the same file is byte-identical
+  between the two backends. The cases live in
+  `testdata/cli-commands.json`, which rx-python holds a copy of at
+  `tests/data/cli-commands.json`; a change made on one side and not the
+  other fails on the other.
+
 - Response bodies no longer carry a `$schema` field. huma's default
   configuration installs a link transformer that adds one to every body;
   rx-python emits no such key, it was declared nowhere in `pkg/rxtypes`,
