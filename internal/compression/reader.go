@@ -16,12 +16,12 @@ import (
 // seekable-zstd read linearly), and xz. FormatNone returns src wrapped
 // as a pass-through closer.
 //
-// SINGLE-STATIC-BINARY MANDATE (decision 5.15, Stage 8 Finding 4):
+// SINGLE-STATIC-BINARY MANDATE :
 //
 // All decoders are pure Go — no subprocess fork for `gzip -d`,
 // `xz -d`, `bzip2 -d`, or `zstd -d`. This keeps the rx binary usable
 // on distroless / busybox containers that lack those external tools.
-// Prior to Stage 8 the webapi layer used pure-Go readers but the
+// Previously the webapi layer used pure-Go readers but the
 // trace engine shelled out; consolidating both through this helper
 // enforces the mandate uniformly.
 //

@@ -105,9 +105,8 @@ func TestValidateURL(t *testing.T) {
 	}
 }
 
-// TestValidateURL_RejectsInternalTargetsWithoutOptIn covers Stage 8
-// Reviewer 2 High #15 / Finding 15: webhook URLs pointing at
-// loopback, link-local, or RFC1918 private address space are a
+// TestValidateURL_RejectsInternalTargetsWithoutOptIn: webhook URLs
+// pointing at loopback, link-local, or RFC1918 private address space are a
 // classic SSRF vector. A malicious user could configure a hook URL
 // like http://169.254.169.254/latest/meta-data/iam/security-credentials/
 // and receive AWS IMDS secrets over the wire as the hook fires.

@@ -62,7 +62,7 @@ func TestParseCSV_Ranges(t *testing.T) {
 	}
 }
 
-// TestParseCSV_MultiRangeMixed — Stage 9 Round 2 R1-B4 user design:
+// TestParseCSV_MultiRangeMixed
 // a single call can mix singles and ranges like "200-350,450-600,1000".
 func TestParseCSV_MultiRangeMixed(t *testing.T) {
 	got, err := ParseCSV("200-350,450-600,1000")

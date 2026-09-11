@@ -126,10 +126,9 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			after = in.AfterContext
 		}
 
-		// Parse the offsets/lines spec via the shared parser. Stage 9
-		// Round 2 U rework: both CLI and HTTP delegate to
-		// internal/samples.ParseCSV so the range syntax
-		// (100,200-300,-5) stays identical across entry points.
+		// Parse the offsets/lines spec via the shared parser: both CLI
+		// and HTTP delegate to internal/samples.ParseCSV so the range
+		// syntax (100,200-300,-5) stays identical across entry points.
 		var (
 			parsedOffsets []samples.OffsetOrRange
 			parsedLines   []samples.OffsetOrRange
@@ -187,7 +186,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		}
 
 		// cli_command equivalent. Use resolved values (after defaults).
-		// CLICommand is *string per Stage 9 Round 2 S2 rule (null vs
+		// CLICommand is *string per (null vs
 		// empty string distinction); &cli wraps the builder output.
 		cli := BuildCLICommand("samples", map[string]any{
 			"path":           validated,

@@ -84,8 +84,7 @@ type UnifiedFileIndex struct {
 	// Seekable-zstd specific
 	FrameCount      *int   `json:"frame_count"`
 	FrameSizeTarget *int64 `json:"frame_size_target"`
-	// Frames: nullable schema field per Python model. Stage 9 Round 2 S2
-	// rule — documented schema fields must emit null (or their value),
+	// Frames: nullable schema field per Python model. // rule — documented schema fields must emit null (or their value),
 	// never be absent. Using a typed `*[]FrameLineInfo` pointer gives us
 	// three distinct states (nil = "null", empty = "[]", populated = [...])
 	// matching Python's Optional[list[FrameLineInfo]] = None semantics.

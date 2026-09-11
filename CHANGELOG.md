@@ -56,6 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Comments no longer cite the review process that produced the code. 174
+  references to stages, rounds, reviewers, findings and numbered
+  decisions are gone from 63 files, along with two test files named after
+  a finding. The plan documents they pointed at do not exist in any
+  repository, so `// See Stage 8 Reviewer 2 High #6.` read as if there
+  were somewhere to look. Where a citation carried a real constraint the
+  constraint was written out; where it was only a citation the line was
+  reconstructed or removed. Comments only: no identifier changed and no
+  line of code moved.
+
+- `just scaffolding-check` is a new CI gate that fails when such a
+  citation reappears.
+
 - `analyze_window_lines` in a `POST /v1/index` body is now an explicit
   optional integer rather than an int that omitempty hid: absent, null
   and 0 all mean "use the default", and the field appears in the schema.

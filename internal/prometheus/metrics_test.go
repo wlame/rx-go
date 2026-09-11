@@ -72,7 +72,7 @@ func TestRegistry_DoesNotContainComplexityMetrics(t *testing.T) {
 }
 
 func TestRecordHTTPResponse(t *testing.T) {
-	// Stage 9 Round 2 S6: the helpers only update counters when
+	// the helpers only update counters when
 	// Enable() has been called. Enable it here so this test keeps
 	// measuring the actual increment; tests that verify the noop
 	// branch are in TestGating_NoopWhenDisabled below.
@@ -88,7 +88,7 @@ func TestRecordHTTPResponse(t *testing.T) {
 	}
 }
 
-// TestGating_NoopWhenDisabled covers Stage 9 Round 2 S6: with
+// TestGating_NoopWhenDisabled with
 // Enable() never called (or after Disable()), the Record* / Inc / Obs
 // helpers must skip work — counters remain at the same value after
 // every helper call.
@@ -170,8 +170,7 @@ func TestGating_WorksWhenEnabled(t *testing.T) {
 	}
 }
 
-// TestNewMetrics_RegisteredWhenEnabled verifies the Stage 9 Round 2 S6
-// Python-parity metrics are registered and observable. When Enable()
+// TestNewMetrics_RegisteredWhenEnabled verifies the // Python-parity metrics are registered and observable. When Enable()
 // is called and each helper is invoked once, Gather() must return the
 // metric family.
 func TestNewMetrics_RegisteredWhenEnabled(t *testing.T) {
@@ -210,7 +209,7 @@ func TestNewMetrics_RegisteredWhenEnabled(t *testing.T) {
 		"rx_hook_call_duration_seconds",
 	} {
 		if findMetric(t, name) == nil {
-			t.Errorf("Stage 9 Round 2 S6 parity metric %q not registered", name)
+			t.Errorf("parity metric %q not registered", name)
 		}
 	}
 }
@@ -237,7 +236,7 @@ func TestRecordCacheHitMiss(t *testing.T) {
 }
 
 func TestRecordHook(t *testing.T) {
-	// Stage 9 Round 2 S6: helpers are gated behind Enable(). Enable for
+	// helpers are gated behind Enable(). Enable for
 	// this test so the CounterVec gets labeled values and the family
 	// appears in Gather().
 	Enable()

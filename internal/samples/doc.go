@@ -1,9 +1,9 @@
 // Package samples is the shared implementation of `rx samples` used by
 // both the CLI (internal/clicommand) and the HTTP API
-// (internal/webapi). Round 1 of Stage 9 parity testing revealed that
+// (internal/webapi). Parity testing revealed that
 // the CLI and HTTP implementations had forked — byte-offset mode didn't
-// work in the CLI at all (R1-B4), and the HTTP implementation had an
-// off-by-context bug in the Lines map (R1-B5).
+// work in the CLI at all, and the HTTP implementation had an
+// off-by-context bug in the Lines map.
 //
 // Design invariants enforced by this package:
 //

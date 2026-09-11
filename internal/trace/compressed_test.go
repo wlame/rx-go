@@ -18,7 +18,7 @@ import (
 // writeGzipFile writes content gzip-compressed into a fresh tmp file
 // and returns its path. Uses pure-Go compress/gzip — no external
 // `gzip` binary required on the test host. This matches the production
-// path (Stage 8 Finding 4) which also no longer shells out.
+// path which also no longer shells out.
 func writeGzipFile(t *testing.T, content []byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -44,7 +44,7 @@ func writeGzipFile(t *testing.T, content []byte) string {
 }
 
 // TestProcessCompressed_Gzip runs the full decompress → rg pipeline
-// on a gzipped file. Post-consolidation (Stage 8 Finding 4) this does
+// on a gzipped file. Post-consolidation this does
 // NOT require the external `gzip` binary — the pipeline uses
 // compress/gzip from the stdlib.
 func TestProcessCompressed_Gzip(t *testing.T) {
@@ -315,7 +315,7 @@ func TestProcessCompressed_CleanStreamEmitsNoWarning(t *testing.T) {
 
 // TestEngine_Run_Gzip hits the compressed bucket end-to-end through
 // the engine dispatcher. No external `gzip` binary required — the
-// decompressor is pure-Go compress/gzip (Stage 8 Finding 4).
+// decompressor is pure-Go compress/gzip.
 func TestEngine_Run_Gzip(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_CACHE_DIR", t.TempDir())

@@ -664,6 +664,5 @@ func TestFrameSizeParser_Errors(t *testing.T) {
 	}
 }
 
-// TestParseOffsetOrRange — moved to internal/samples. Stage 9 Round 2
-// U rework migrated the parser into the shared package. Equivalent
+// TestParseOffsetOrRange — moved to internal/samples. // U rework migrated the parser into the shared package. Equivalent
 // coverage lives in internal/samples/parser_test.go.

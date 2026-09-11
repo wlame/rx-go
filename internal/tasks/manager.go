@@ -117,7 +117,7 @@ type Manager struct {
 	// to wait on sweeperDone. Without the flag, Stop() on a manager
 	// whose Start() was never called would deadlock waiting on a
 	// channel that's only closed by the (never-running) sweeperLoop.
-	// See Stage 8 Reviewer 2 High #6.
+	//.
 	started atomic.Bool
 
 	logger *slog.Logger

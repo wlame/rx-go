@@ -34,7 +34,7 @@ import (
 // from lock release, this contract MUST be preserved or the server
 // will leak locks on panicking jobs.
 //
-// This addresses Stage 8 Reviewer 3 High #1: before this helper existed,
+// This addresses before this helper existed,
 // a bare `go runIndexTask(...)` call could crash the whole server when
 // index.Build hit a malformed file that triggered a runtime panic
 // (slice-out-of-bounds, nil deref from a corrupted input, etc.).

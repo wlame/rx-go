@@ -48,8 +48,8 @@ func TestRunDetached_NormalCompletion(t *testing.T) {
 	}
 }
 
-// TestRunDetached_PanicTransitionsTaskToFailed covers Stage 8
-// Reviewer 3 High #1: a panic inside a detached goroutine must NOT
+// TestRunDetached_PanicTransitionsTaskToFailed :
+// a panic inside a detached goroutine must NOT
 // crash the server. runDetached must:
 //
 //   - Catch the panic with defer+recover.

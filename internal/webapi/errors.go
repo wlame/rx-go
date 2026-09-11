@@ -129,7 +129,7 @@ func ErrInternal(detail string) huma.StatusError {
 }
 
 // ============================================================================
-// Path-sandbox error — user decision 6.9.3
+// Path-sandbox error
 // ============================================================================
 //
 // paths.ErrPathOutsideRoots is returned by internal/paths when a

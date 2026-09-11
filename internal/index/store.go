@@ -60,7 +60,7 @@ const Version = 4
 // mounts, any file touched by `touch --date=... no microseconds`),
 // Python writes "2024-01-01T10:00:00" and Go — before this fix — wrote
 // "2024-01-01T10:00:00.000000". The two strings don't compare equal so
-// the cache cross-invalidates on every re-open. See Stage 8 Blocker.
+// the cache cross-invalidates on every re-open..
 //
 // The two layouts below encode the two output shapes.
 const (
@@ -207,7 +207,7 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 // stat failures — a missing/unreadable source is treated as "index
 // is stale".
 //
-// Per user decision 6.9.1: invalidation is mtime-based, no TTL, no
+// invalidation is mtime-based, no TTL, no
 // size-cap. The field SourceModifiedAt carries the Python-style ISO
 // timestamp; we compare it byte-for-byte with the current mtime
 // formatted the same way. Size check is exact.
@@ -295,8 +295,7 @@ func FormatMtime(t time.Time) string { return formatMtime(t) }
 // datetime, and its isoformat() drops tzinfo — so the stored string
 // reflects wall-clock at the host, not UTC.
 //
-// TIMEZONE-DEPENDENCE CAVEAT (see Stage 8 Reviewer 1 High #2 /
-// Finding 3):
+// # TIMEZONE-DEPENDENCE CAVEAT
 //
 // Because we use t.Local(), the same mtime produces DIFFERENT output
 // strings on hosts with different TZ settings. A Docker container
@@ -306,7 +305,7 @@ func FormatMtime(t time.Time) string { return formatMtime(t) }
 // be treated as stale and rebuilt. Document this for operators;
 // see docs/MIGRATION.md.
 //
-// FRACTIONAL-SECOND PARITY (see Stage 8 Blocker / Finding 1):
+// FRACTIONAL-SECOND PARITY:
 //
 // Python's datetime.isoformat() omits the ".ffffff" suffix when
 // microseconds == 0 and emits it otherwise. We reproduce that

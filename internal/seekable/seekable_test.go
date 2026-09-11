@@ -338,8 +338,8 @@ func (s *closeSpyEncoder) Close() error {
 	return s.inner.Close()
 }
 
-// TestEncodeParallel_EncoderClosedOnInitError covers Stage 8 Reviewer 1
-// High #1: when the zstd factory fails mid-loop during encodeParallel
+// TestEncodeParallel_EncoderClosedOnInitError covers
+// when the zstd factory fails mid-loop during encodeParallel
 // worker init, all encoders built BEFORE the failure must be Close()d.
 //
 // Before the fix, the cleanup defer was installed AFTER the

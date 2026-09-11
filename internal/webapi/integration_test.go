@@ -19,7 +19,7 @@ import (
 
 // TestIntegration_SPAFlow extracts the real v0.2.0 rx-viewer tarball
 // into a temp dir, stands up a full Server, and exercises every
-// SPA-serving code path. This is the Stage 9 parity probe for frontend
+// SPA-serving code path. This is the parity probe for frontend
 // compatibility: if rx-viewer's asset references resolve correctly
 // against the Go server, production deployments will Just Work.
 func TestIntegration_SPAFlow(t *testing.T) {

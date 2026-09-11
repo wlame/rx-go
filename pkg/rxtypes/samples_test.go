@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestSamplesResponse_OffsetsFieldIsInt64 covers Stage 8 Reviewer 3
-// High #14: the pre-fix SamplesResponse.Offsets / .Lines used plain
+// TestSamplesResponse_OffsetsFieldIsInt64 covers
+// the pre-fix SamplesResponse.Offsets / .Lines used plain
 // `int`, which would silently truncate on 32-bit builds and represents
 // a latent bug even on 64-bit (where int is 64-bit) because a reader
 // of the struct cannot be sure of the precision.

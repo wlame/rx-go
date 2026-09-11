@@ -84,8 +84,7 @@ type serveParams struct {
 // runServe wires everything up and blocks.
 func runServe(out io.Writer, p serveParams) error {
 	// Configure slog level from RX_LOG_LEVEL and publish the value to
-	// webapi so /health can report accurately (see Stage 8 Reviewer 3
-	// High #13). Keep slog.Default() as the handler so we don't
+	// webapi so /health can report accurately 	// . Keep slog.Default() as the handler so we don't
 	// disrupt callers that set their own handler — we only adjust the
 	// level-reporting side channel.
 	configureLogLevelFromEnv()

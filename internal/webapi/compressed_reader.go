@@ -7,7 +7,7 @@ import (
 )
 
 // newCompressedReader is a thin wrapper around compression.NewReader.
-// Post-Stage-8-consolidation (Finding 4) the webapi layer and the
+// Post-Stage-8-consolidation the webapi layer and the
 // trace layer both route through internal/compression — no subprocess
 // fork, pure-Go decoders, works on distroless containers.
 //

@@ -43,7 +43,7 @@ type LineDetectorFactory func() LineDetector
 //
 // No mutex: the pre-Freeze window is single-goroutine by Go's package
 // init semantics, so racy Register calls are impossible. This is the
-// key property user decision 6.9.4 rests on: readers can skip the
+// key property the rule rests on: readers can skip the
 // mutex because writers can't happen after Freeze.
 //
 // NOTE: line-oriented detectors should use RegisterLineDetector instead,

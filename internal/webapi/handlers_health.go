@@ -85,7 +85,7 @@ func getOSInfo() map[string]string {
 // Linux we can parse /proc/meminfo without cgo. The same approach covers
 // the common deployment target for rx-go.
 //
-// Stage 9 Round 2 R1-B9 fix: previously all three ram_* fields were
+// previously all three ram_* fields were
 // hard-coded null. With /proc/meminfo parsing we now populate them on
 // Linux; macOS / Windows still return null because adding platform-
 // specific syscalls would require cgo or build tags and the containers
@@ -220,7 +220,7 @@ func getConstants() map[string]any {
 // repr(NEWLINE_SYMBOL) which for "\n" yields the 4-char string `'\n'`
 // (apostrophe, backslash, n, apostrophe).
 //
-// Stage 9 Round 2 R1-B9 fix: Round 1's implementation used a ReplaceAll
+// An earlier implementation used a ReplaceAll
 // that escaped the literal backslash a SECOND time, producing `'\\n'`
 // on the wire. Python's path (repr of the decoded character) produces
 // `'\n'` on the wire. Mismatch was visible in the /health JSON
@@ -245,8 +245,7 @@ func formatPythonRepr(envLiteral string) string {
 // startup based on flags/env at the time it configured slog). Falls
 // back to the RX_LOG_LEVEL env var for callers that haven't adopted
 // SetRequestedLogLevel — this preserves legacy behavior while fixing
-// the divergence flagged in Stage 8 Reviewer 3 High #13.
-//
+// the divergence flagged in //
 // slog doesn't expose the effective level on its default handler, so
 // the package-level requested-level pointer is the single source of
 // truth. If a future version exposes slog.Handler.Enabled probing

@@ -174,7 +174,7 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 	// runDetached wraps the work in a panic-recovery boundary so a
 	// malformed input that triggers a runtime panic inside index.Build
 	// (or any downstream helper) marks the task Failed instead of
-	// crashing the whole server. See Stage 8 Reviewer 3 High #1.
+	// crashing the whole server..
 	mgr := s.cfg.TaskManager
 	logger := s.cfg.Logger
 	go runDetached(mgr, taskID, "index", logger, func() {

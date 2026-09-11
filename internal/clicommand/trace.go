@@ -51,7 +51,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		hookOnComplete string
 		noCache        bool
 		noIndex        bool
-		// Stage 9 Round 2 S5 + R1-B7: `rx trace <dir>` recurses by
+		// `rx trace <dir>` recurses by
 		// default (Python parity). `--recursive` is a Python-compat
 		// no-op (default already-true). `--no-recursive` flips the
 		// behavior for users who want top-level-only scans.
@@ -102,7 +102,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 				noCache:        noCache,
 				noIndex:        noIndex,
 				// recursive flag is advisory; actual behavior comes
-				// from noRecursive (Stage 9 Round 2 S5 default-recurse).
+				// from noRecursive.
 				// We silence the unused warning by passing through.
 				recursive:   recursive,
 				noRecursive: noRecursive,
@@ -165,7 +165,7 @@ type traceParams struct {
 	hookOnComplete string
 	noCache        bool
 	noIndex        bool
-	// Stage 9 Round 2 S5: recursive is advisory-only (default is already
+	// recursive is advisory-only (default is already
 	// recursive); noRecursive flips the behavior. Keeping both flags so
 	// Python scripts that pass -r continue to parse cleanly.
 	recursive   bool
@@ -235,7 +235,7 @@ func runTrace(out io.Writer, p traceParams) error {
 	// is typically unsandboxed (matches Python behavior); tests can
 	// opt-in via paths.SetSearchRoots.
 	//
-	// Stage 9 Round 2 R1-B6 fix: stat each user-supplied path up front
+	// stat each user-supplied path up front
 	// and refuse to proceed when any path is missing. Python's CLI emits
 	// "❌ Error: Path not found: <path>" and exits 1; we match with
 	// exit-code ExitFileNotFound (= 1 per common.go convention).

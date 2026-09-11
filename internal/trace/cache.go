@@ -228,7 +228,7 @@ func SaveCache(cachePath string, data *rxtypes.TraceCacheData) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("SaveCache: rename %s -> %s: %w", tmp, cachePath, err)
 	}
-	// Stage 9 Round 2 S6: gated helper — CLI mode skips collection.
+	// gated helper — CLI mode skips collection.
 	prometheus.IncTraceCacheWrites()
 	return nil
 }
@@ -278,7 +278,7 @@ func GetCachedMatches(
 ) ([]rxtypes.TraceCacheMatch, error) {
 	cp := CachePath(sourcePath, patterns, rgFlags)
 	if !IsCacheValid(cp, sourcePath, patterns, rgFlags) {
-		// Stage 9 Round 2 S6: gated helper — no-op in CLI mode.
+		// gated helper — no-op in CLI mode.
 		prometheus.IncTraceCacheMisses()
 		return nil, ErrCacheMiss
 	}

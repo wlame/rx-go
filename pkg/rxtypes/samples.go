@@ -12,7 +12,7 @@ type SamplesRequest struct {
 	AfterContext  int      `json:"after_context"`
 }
 
-// JSON KEY ORDERING NOTE (Stage 8 Reviewer 1 High #3 / Finding 5):
+// JSON KEY ORDERING NOTE:
 //
 // The SamplesResponse below uses map[string]*  for Offsets, Lines, and
 // Samples. Go's encoding/json marshals maps in ALPHABETICAL key order,
@@ -26,10 +26,10 @@ type SamplesRequest struct {
 // expecting request-matching order, they'll see different output
 // between the two backends. At v1 we DOCUMENT this divergence rather
 // than restructure the wire type into an ordered-pair slice — the
-// Stage 9 parity tests will confirm whether the frontend is actually
+// the parity tests will confirm whether the frontend is actually
 // affected.
 //
-// If Stage 9 reveals a frontend dependency on ordering, the fix is
+// If a parity test reveals a frontend dependency on ordering, the fix is
 // one of:
 //
 //   - Change the Go type to []KeyValue pairs with explicit order
@@ -53,7 +53,7 @@ type SamplesRequest struct {
 // range on files >2 GB. All other byte-offset fields in this package
 // also use int64 (see index.CompressedOffset, trace.Match.Offset,
 // etc.); matching that convention keeps the wire type honest on any
-// build target. See Stage 8 Reviewer 3 High #14. JSON-wise there is
+// build target.. JSON-wise there is
 // no visible difference — Go marshals both int and int64 as plain
 // numbers and Python parses them as unbounded int, so this is a
 // precision fix with no frontend-visible change.
@@ -61,7 +61,7 @@ type SamplesRequest struct {
 // CompressionFormat is nil for uncompressed files. CLICommand is set only
 // on GET requests that come from the web API (nil on direct CLI use).
 //
-// Stage 9 Round 2 S2 user rule: schema-documented fields must emit
+// schema-documented fields must emit
 // explicit null when unset. Python's SamplesResponse emits both
 // compression_format and cli_command as null on default values, so
 // CLICommand is typed as *string (not plain string with omitempty) to

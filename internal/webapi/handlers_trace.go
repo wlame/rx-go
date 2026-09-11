@@ -111,8 +111,8 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		// local / private addresses unless the operator has explicitly
 		// opted in via RX_ALLOW_INTERNAL_HOOKS. Prevents a malicious
 		// user from targeting internal infrastructure (e.g. cloud IMDS)
-		// via the request-scoped hook_on_* query params. See Stage 8
-		// Reviewer 2 High #15 / Finding 15.
+		// via the request-scoped hook_on_* query params. .
+		//
 		if err := hooks.ValidateConfig(hookConfig); err != nil {
 			return nil, ErrBadRequest(err.Error())
 		}
@@ -200,9 +200,9 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			s.cfg.Hooks.OnComplete(resp)
 		}
 
-		// Attach CLI command equivalent. CLICommand is *string per Stage
-		// 9 Round 2 S2 rule — &cli converts the builder's returned
-		// string into a pointer for JSON serialization.
+		// Attach CLI command equivalent. CLICommand is *string because a
+		// schema-documented field must emit null rather than vanish, so
+		// &cli converts the builder's string into a pointer.
 		cli := BuildCLICommand("trace", map[string]any{
 			"path":        validatedPaths,
 			"regexp":      in.Regexp,

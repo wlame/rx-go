@@ -77,7 +77,7 @@ func TestIndexCommand_BuildAndInfo(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	// Build (text mode). Stage 9 Round 2 S3 changed the human output
+	// Build (text mode). changed the human output
 	// summary to match Python's "Indexed N files in X.Xs" style — the
 	// old "lines:" sub-key is now inline on the per-file line.
 	var bufBuild bytes.Buffer
@@ -111,10 +111,9 @@ func TestIndexCommand_BuildAndInfo(t *testing.T) {
 }
 
 // TestIndexCommand_BuildBelowThreshold silently skips files smaller
-// than the configured threshold (matches Python behavior — Round 1
-// user decision on R1-B8). Python's CLI exits 0 with the below-threshold
-// file in the `skipped` list; scripts that rely on that exit code must
-// not see exit 1.
+// than the configured threshold, matching rx-python: its CLI exits 0
+// with the below-threshold file in the `skipped` list, and a script that
+// branches on that exit code must not see exit 1.
 func TestIndexCommand_BuildBelowThreshold(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	root := t.TempDir()
@@ -131,7 +130,6 @@ func TestIndexCommand_BuildBelowThreshold(t *testing.T) {
 
 // TestIndexCommand_JSONWrapper asserts Python's wrapper shape for
 // --json output: {indexed:[...], skipped:[...], errors:[...], total_time:N}.
-// Stage 9 Round 2 S3.
 func TestIndexCommand_JSONWrapper(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	root := t.TempDir()
@@ -182,7 +180,6 @@ func TestIndexCommand_JSONWrapper(t *testing.T) {
 // TestIndexCommand_IndexedEntryShape verifies each `indexed` entry has
 // the fields Python emits (path, file_type, size_bytes, created_at,
 // build_time_seconds, analysis_performed, line_index, index_entries).
-// Stage 9 Round 2 S3.
 func TestIndexCommand_IndexedEntryShape(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	root := t.TempDir()
@@ -219,7 +216,7 @@ func TestIndexCommand_IndexedEntryShape(t *testing.T) {
 // TestIndexCommand_BuildDirPythonParity: an empty directory (or one with
 // only below-threshold files) exits 0 with no indexed entries — matches
 // Python's behavior of not treating "directory" as a hard error. Under
-// Stage 9 Round 2 S3 Go now expands directories the same way.
+// Go now expands directories the same way.
 func TestIndexCommand_BuildDirPythonParity(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	dir := t.TempDir()
@@ -272,7 +269,7 @@ func TestIndexCommand_InfoHumanReadable(t *testing.T) {
 }
 
 // ============================================================================
-// Compress command — JSON wrapper coverage (Stage 9 Round 2 S4)
+// Compress command — JSON wrapper coverage
 // ============================================================================
 
 // TestCompressCommand_JSONWrapper asserts Python's wrapper shape for
@@ -440,10 +437,10 @@ func TestSamplesCommand_ColoredOutput_Never(t *testing.T) {
 }
 
 // TestSamplesCommand_ByteOffsetMode_ResolvesToLineContainingByte
-// covers Stage 9 Round 2 R1-B4: the CLI's --offsets (or -b) flag must
+// the CLI's --offsets (or -b) flag must
 // dispatch to BYTE-offset mode, not treat the value as a line number.
 // Python's `rx samples file -b 5000` goes to the line containing byte
-// 5000; Round 1 Go incorrectly treated 5000 as a line index.
+// 5000; An earlier version incorrectly treated 5000 as a line index.
 //
 // Deterministic fixture: 20 lines of "line NNN\n" (9 bytes each).
 // Byte offset 85 falls inside line 10 (line 10 starts at byte 81,
@@ -475,7 +472,7 @@ func TestSamplesCommand_ByteOffsetMode_ResolvesToLineContainingByte(t *testing.T
 		t.Fatalf("offsets[\"85\"] missing or wrong type: %v", offsets)
 	}
 	if got != 10 {
-		t.Errorf("offsets[\"85\"] = %v, want 10 (line containing byte 85); Round 1 bug was that this returned 85",
+		t.Errorf("offsets[\"85\"] = %v, want 10 (line containing byte 85); an earlier version returned 85",
 			got)
 	}
 	// Sample content should be the single line.
@@ -486,8 +483,7 @@ func TestSamplesCommand_ByteOffsetMode_ResolvesToLineContainingByte(t *testing.T
 	}
 }
 
-// TestSamplesCommand_MultiRangeSpec covers Stage 9 Round 2 R1-B4
-// user design: a single --lines spec can contain multiple ranges
+// TestSamplesCommand_MultiRangeSpec // user design: a single --lines spec can contain multiple ranges
 // (comma-separated), each with its own sample slice.
 func TestSamplesCommand_MultiRangeSpec(t *testing.T) {
 	root := t.TempDir()
@@ -522,8 +518,7 @@ func TestSamplesCommand_MultiRangeSpec(t *testing.T) {
 	}
 }
 
-// TestSamplesCommand_PythonShortFlags covers Stage 9 Round 2 R1-B11:
-// Python's samples CLI uses `-b / -l / -c / --no-color / -r` as short
+// TestSamplesCommand_PythonShortFlags: Python's samples CLI uses `-b / -l / -c / --no-color / -r` as short
 // aliases. Python scripts migrating to rx-go must continue to work,
 // so the Go implementation registers the same short aliases.
 func TestSamplesCommand_PythonShortFlags(t *testing.T) {
@@ -816,10 +811,9 @@ func withStdin(t *testing.T, content string) func() {
 	}
 }
 
-// TestTraceCommand_DirectoryRecursiveByDefault covers Stage 9 Round 2
-// S5 + R1-B7: `rx trace <dir>` recurses by default (Python parity).
-// Round 1 Go only scanned the top-level directory; subdirectories were
-// skipped silently.
+// TestTraceCommand_DirectoryRecursiveByDefault: `rx trace <dir>`
+// recurses by default, as rx-python does. An earlier version scanned
+// only the top-level directory and skipped subdirectories silently.
 //
 // Test setup: dir/a.log + dir/sub/b.log both contain matches. Default
 // invocation (no flag) must find BOTH files.
@@ -910,9 +904,9 @@ func TestTraceCommand_SingleFileUnaffected(t *testing.T) {
 	}
 }
 
-// TestTraceCommand_NonexistentFileExitsNonzero covers Stage 9 Round 2
-// R1-B6: Python exits 1 with "Path not found" on stderr; Go must match
-// (was silently reporting "no matches in 0 files" and exit 0 in Round 1).
+// TestTraceCommand_NonexistentFileExitsNonzero :
+// Python exits 1 with "Path not found" on stderr; Go must match
+// (was silently reporting "no matches in 0 files" and exit 0 ).
 func TestTraceCommand_NonexistentFileExitsNonzero(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg not installed")
@@ -993,7 +987,7 @@ func TestStdinIsPipe(t *testing.T) {
 	_ = stdinIsPipe()
 }
 
-// Stage 9 Round 2 U rework: parseRangeOrSingle was retired in favor of
+// parseRangeOrSingle was retired in favor of
 // internal/samples.ParseCSV / parseOne. Equivalent test coverage lives
 // in internal/samples/parser_test.go. This stub is kept only to
 // acknowledge the rename and document the relocation.
@@ -1032,7 +1026,7 @@ func TestWriteTraceJSON_EncodeError(t *testing.T) {
 	}
 }
 
-// Stage 9 Round 2 U rework: splitLinesWithLengths / rawLine were
+// splitLinesWithLengths / rawLine were
 // retired when the samples CLI moved to the shared internal/samples
 // resolver. The equivalent logic (line offsets + newline handling) is
 // exercised end-to-end in internal/samples/resolver_test.go, and the

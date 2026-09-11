@@ -194,8 +194,8 @@ func TestManager_Sweeper_StartStop(t *testing.T) {
 	m.Stop()
 }
 
-// TestManager_Stop_WithoutStart_DoesNotBlock covers Stage 8 Reviewer 2
-// High #6: Stop() must be safe to call even if Start() was never called.
+// TestManager_Stop_WithoutStart_DoesNotBlock covers
+// Stop() must be safe to call even if Start() was never called.
 //
 // Before the fix, Stop() closed sweeperCancel and then blocked on
 // `<-m.sweeperDone`. sweeperDone is only closed by the sweeperLoop's

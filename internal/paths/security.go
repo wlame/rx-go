@@ -4,8 +4,7 @@
 // Both the HTTP handlers and the CLI entry point call
 // ValidatePathWithinRoots for every user-supplied path before any
 // filesystem access. The error envelope produced on rejection
-// matches Python's exact message string (per user decision 6.9.3,
-// the HTTP handler wraps this into a Go-idiomatic error shape).
+// matches Python's exact message string (// the HTTP handler wraps this into a Go-idiomatic error shape).
 package paths
 
 import (

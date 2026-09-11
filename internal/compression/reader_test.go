@@ -38,7 +38,7 @@ func TestNewReader_GzipRoundTrip(t *testing.T) {
 
 // TestNewReader_XzRoundTrip is the critical static-binary test — proves
 // that `rx trace foo.xz` works without an `xz` binary on PATH. This
-// was the motivating example in Stage 8 Finding 4.
+// was the motivating example in .
 func TestNewReader_XzRoundTrip(t *testing.T) {
 	plaintext := []byte("hello xz world\nsome payload\n")
 

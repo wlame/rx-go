@@ -133,7 +133,7 @@ func ProcessSeekable(
 	batchFrameLines := make([][]frameLines, len(batches))
 
 	workers := workerLimit()
-	// R5-B3: cooperative cancel on max_results cap. Same pattern as
+	// cooperative cancel on max_results cap. Same pattern as
 	// ProcessAllChunks (see worker.go's tally channel). When the cap is
 	// reached, cancel the outer ctx; in-flight scanFrameBatch workers
 	// see gctx.Done() either in exec.CommandContext (subprocess killed)
@@ -401,7 +401,7 @@ func scanFrameBatch(
 	rgExtraArgs []string,
 	contextBefore, contextAfter int,
 ) (matches []MatchRaw, contexts []ContextRaw, counted []frameLines, err error) {
-	// Stage 9 Round 2 S6: gated helpers — CLI mode skips collection.
+	// gated helpers — CLI mode skips collection.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
 	defer func() {
@@ -569,7 +569,7 @@ func scanFrameBatch(
 	// Parse rg's stdout (buffered — we already have it all) and remap.
 	// Thread the parent ctx so a cancellation during parsing (e.g. the
 	// outer errgroup was canceled because a sibling batch failed) can
-	// abort the StreamEvents loop. See Stage 8 Reviewer 2 High #9.
+	// abort the StreamEvents loop..
 	matches, contexts = remapBatchEvents(ctx, stdout.Bytes(), locs, patternOrder)
 	return matches, contexts, countedFrames(locs), nil
 }
@@ -612,7 +612,7 @@ func matchesFromPartialBatch(
 // ctx propagates from the parent scanner — if the outer context is
 // canceled mid-parse (e.g. an errgroup sibling failed, or the HTTP
 // request was aborted), StreamEvents will stop calling the callback
-// and return promptly. Prior to Stage 8 this used context.Background()
+// and return promptly. Previously this used context.Background()
 // which meant cancellation signals never reached here; the buffer is
 // small and finite so no hangs were observed, but plumbing the parent
 // ctx is the correct idiom.

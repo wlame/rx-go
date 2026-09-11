@@ -27,7 +27,7 @@ type TreeEntry struct {
 // sandboxing, so Path is always either a search root or one of its
 // descendants.
 //
-// Stage 9 Round 2 S2 rule: schema-documented fields must emit null when
+// schema-documented fields must emit null when
 // unset. Python emits total_size/total_size_human as null on a
 // search-root TreeResponse; Go matches by dropping omitempty.
 type TreeResponse struct {

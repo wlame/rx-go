@@ -127,8 +127,8 @@ just ci                                          # exactly what GitHub CI runs
 just check                                       # ci + cover + build + vuln
 ```
 
-`just ci` is `fmt-check vet lint tidy-check test-race docs-build`, in that
-order, and `.github/workflows/ci.yml` runs `just ci` — the two cannot
+`just ci` is `fmt-check vet lint tidy-check scaffolding-check spec-check
+test-race docs-build`, in that order, and `.github/workflows/ci.yml` runs `just ci` — the two cannot
 disagree. The **coverage floor is 80%** (82.4% today), enforced by
 `just cover`; raise it as coverage improves and never lower it to make a red
 build green.
@@ -258,7 +258,9 @@ Data flow for `rx trace "pattern" big.log`:
 - Comments are more generous than typical Go, on purpose: explain the Go idiom,
   the goroutine lifecycle and the invariant. Label invariants (`INVARIANT:`,
   `SECURITY:`). Do not reference review rounds, stages, plans or ticket numbers
-  in code comments; describe what the code guarantees instead.
+  in code comments; describe what the code guarantees instead. `just
+  scaffolding-check` is a CI gate that fails on `Stage N`, `Round N`,
+  `Reviewer N`, `Finding N`, `Rn-Xn` and `user decision N.N`.
 - Prefer a lookup table over a chain of `if`/`switch` when the logic is a mapping.
 - Long flags use `=` in help text, docs and printed commands.
 - Small functions, early returns, no flag parameters that switch behaviour.

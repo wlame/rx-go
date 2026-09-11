@@ -32,7 +32,7 @@ type TaskStatusResponse struct {
 // FrameSize is a human-readable size string (e.g. "4M", "16MB") parsed
 // by internal/clicommand. CompressionLevel is 1..22 per zstd convention.
 //
-// Stage 9 Round 2 S2 rule: schema fields never omit. Python's
+// schema fields never omit. Python's
 // CompressRequest emits output_path as null and force as false on default
 // input, so Go preserves both keys in the JSON output.
 type CompressRequest struct {

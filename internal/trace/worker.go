@@ -174,7 +174,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	contextBefore, contextAfter := req.ContextBefore, req.ContextAfter
 
 	start := time.Now()
-	// Stage 9 Round 2 S6: gate all metric updates behind the package
+	// gate all metric updates behind the package
 	// enabled switch — CLI-mode callers pay no cost here.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
@@ -398,7 +398,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	// Exit 2 is a real error (bad regex, etc.).
 	//
 	// When exec.CommandContext kills rg on ctx cancellation, ExitCode()
-	// returns -1 (signal, not exit status). Stage 9 Round 5 R5-B2: this
+	// returns -1 (signal, not exit status). this
 	// is EXPECTED during cooperative cancel on max_results cap. If the
 	// outer ctx is canceled, classify the error as context.Canceled
 	// rather than leaking "rg exit -1" to the caller. The ProcessAllChunks
@@ -449,7 +449,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 // completed chunks are still returned (via the pointer-slice layout)
 // alongside the first error surfaced.
 //
-// # Bounded-read contract (Stage 9 Round 5, R5-B2)
+// # Bounded-read contract
 //
 // When maxResults is non-nil, this function COOPERATIVELY CANCELS the
 // remaining chunks as soon as the total match count from already-finished

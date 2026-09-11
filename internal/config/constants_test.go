@@ -12,7 +12,7 @@ func TestConstants_DefaultValues(t *testing.T) {
 	}{
 		{"MaxLineSizeKB default", DefaultMaxLineSizeKB, 8},
 		{"MaxSubprocesses default", DefaultMaxSubprocesses, 20},
-		{"MinChunkSizeMB default (per user decision 6.9.6)", DefaultMinChunkSizeMB, 20},
+		{"MinChunkSizeMB default", DefaultMinChunkSizeMB, 20},
 		{"MaxFiles default", DefaultMaxFiles, 1000},
 		{"LargeFileMB default", DefaultLargeFileMB, 50},
 	}
