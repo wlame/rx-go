@@ -39,7 +39,7 @@ func TestServeWarnings(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := serveWarnings(tc.host, tc.roots, home)
+			got := serveWarnings(tc.host, tc.roots, home, false)
 
 			if len(got) != len(tc.wantPhrases) {
 				t.Fatalf("serveWarnings = %q, want %d warnings", got, len(tc.wantPhrases))
@@ -56,9 +56,28 @@ func TestServeWarnings(t *testing.T) {
 // The bind warning has to say what to do about it, not only that
 // something is wrong.
 func TestServeWarnings_BindWarningNamesTheRemedies(t *testing.T) {
-	got := serveWarnings("0.0.0.0", []string{"/var/log"}, "/home/alice")
+	got := serveWarnings("0.0.0.0", []string{"/var/log"}, "/home/alice", false)
 
-	for _, phrase := range []string{"no authentication", "proxy"} {
+	for _, phrase := range []string{"no authentication", "RX_API_TOKEN", "proxy"} {
+		if !strings.Contains(got[0], phrase) {
+			t.Errorf("bind warning %q does not mention %q", got[0], phrase)
+		}
+	}
+}
+
+// With a token the API is guarded, so the warning stops claiming there
+// is no authentication and says what is still exposed: the token itself,
+// in clear text over plain HTTP.
+func TestServeWarnings_BindWarningWithATokenNamesTheCleartextRisk(t *testing.T) {
+	got := serveWarnings("0.0.0.0", []string{"/var/log"}, "/home/alice", true)
+
+	if len(got) != 1 {
+		t.Fatalf("serveWarnings = %q, want one warning", got)
+	}
+	if strings.Contains(got[0], "no authentication") {
+		t.Errorf("bind warning %q claims no authentication while a token is set", got[0])
+	}
+	for _, phrase := range []string{"clear text", "TLS"} {
 		if !strings.Contains(got[0], phrase) {
 			t.Errorf("bind warning %q does not mention %q", got[0], phrase)
 		}
@@ -67,7 +86,7 @@ func TestServeWarnings_BindWarningNamesTheRemedies(t *testing.T) {
 
 // Without a known home directory only the filesystem root can be judged.
 func TestServeWarnings_UnknownHomeIsNotARoot(t *testing.T) {
-	if got := serveWarnings("127.0.0.1", []string{"/var/log"}, ""); len(got) != 0 {
+	if got := serveWarnings("127.0.0.1", []string{"/var/log"}, "", false); len(got) != 0 {
 		t.Errorf("serveWarnings = %q, want none", got)
 	}
 }

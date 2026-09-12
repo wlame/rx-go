@@ -16,10 +16,11 @@ import (
 // choice is visible in the log of whoever starts the server.
 //
 // host is the --host value; roots are the resolved search roots; home
-// is the user's home directory, or "" when it is not known.
-func serveWarnings(host string, roots []string, home string) []string {
+// is the user's home directory, or "" when it is not known; tokenSet
+// says whether RX_API_TOKEN guards the /v1 API.
+func serveWarnings(host string, roots []string, home string, tokenSet bool) []string {
 	var warnings []string
-	if w := bindWarning(host); w != "" {
+	if w := bindWarning(host, tokenSet); w != "" {
 		warnings = append(warnings, w)
 	}
 	for _, root := range roots {
@@ -42,7 +43,11 @@ func isLoopbackHost(host string) bool {
 
 // bindWarning explains a bind other machines can reach, or returns "".
 // An empty host is Go's spelling of "every interface".
-func bindWarning(host string) string {
+//
+// Without a token the API is open to anyone who reaches the port. With
+// one, the API is guarded but the token crosses plain HTTP in clear text,
+// which is what the warning then says.
+func bindWarning(host string, tokenSet bool) string {
 	if isLoopbackHost(host) {
 		return ""
 	}
@@ -50,9 +55,15 @@ func bindWarning(host string) string {
 	if host == "" {
 		where = "every interface"
 	}
+	if tokenSet {
+		return fmt.Sprintf("Warning: listening on %s, which other machines can reach. "+
+			"/v1 requires the API token, but it crosses plain HTTP in clear text: "+
+			"use a VPN, an SSH tunnel or a TLS proxy for anything beyond a trusted network.",
+			where)
+	}
 	return fmt.Sprintf("Warning: listening on %s, which other machines can reach. "+
-		"rx serve has no authentication: put an authenticating proxy in front, "+
-		"or keep the port on a network you trust. rx is meant for a trusted internal network.",
+		"rx serve has no authentication: set RX_API_TOKEN to require a token, "+
+		"or put an authenticating proxy in front. rx is meant for a trusted internal network.",
 		where)
 }
 

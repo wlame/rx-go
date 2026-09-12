@@ -131,8 +131,9 @@ func runServe(out io.Writer, p serveParams) error {
 
 	// A bind other machines can reach, or a root as wide as $HOME or /,
 	// is allowed but said out loud before the server comes up.
+	apiToken := os.Getenv("RX_API_TOKEN")
 	home, _ := os.UserHomeDir()
-	for _, warning := range serveWarnings(p.host, resolvedRoots, home) {
+	for _, warning := range serveWarnings(p.host, resolvedRoots, home, apiToken != "") {
 		_, _ = fmt.Fprintln(os.Stderr, warning)
 	}
 
@@ -166,6 +167,7 @@ func runServe(out io.Writer, p serveParams) error {
 		Frontend:    fm,
 		Hooks:       hookDisp,
 		Logger:      slog.Default(),
+		APIToken:    apiToken,
 	})
 
 	// Nice startup banner — mirrors Python output.
@@ -177,6 +179,9 @@ func runServe(out io.Writer, p serveParams) error {
 		for _, r := range resolvedRoots {
 			_, _ = fmt.Fprintf(out, "  - %s\n", r)
 		}
+	}
+	if apiToken != "" {
+		_, _ = fmt.Fprintln(out, "API token: required on /v1 (RX_API_TOKEN is set)")
 	}
 	_, _ = fmt.Fprintf(out, "API docs available at http://%s:%d/docs\n", p.host, p.port)
 	_, _ = fmt.Fprintf(out, "Metrics available at http://%s:%d/metrics\n", p.host, p.port)

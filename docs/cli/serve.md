@@ -215,7 +215,9 @@ exposed as a flag).
     warning to stderr before the server comes up:
 
     - a `--host` other than a loopback address or `localhost`, such as
-      `0.0.0.0` or a private address, which other machines can reach;
+      `0.0.0.0` or a private address, which other machines can reach —
+      the warning suggests `RX_API_TOKEN`, or, when the token is set,
+      says that it crosses plain HTTP in clear text;
     - a search root that is `/` or your home directory, which serves
       every file in it except hidden ones.
 

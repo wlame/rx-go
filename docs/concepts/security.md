@@ -5,9 +5,10 @@
 **`rx` is built for internal use on a trusted network. It is not intended
 to be exposed to the internet.**
 
-`rx serve` has no authentication. Anyone who can reach the port can read
-any file under `--search-root`, and `--search-root` defaults to the
-current directory. There is no TLS and no multi-tenancy.
+`rx serve` has no identity system. Unless `RX_API_TOKEN` is set, anyone
+who can reach the port can read any file under `--search-root`, and
+`--search-root` defaults to the current directory. There is no TLS and
+no multi-tenancy.
 
 That is a deliberate scope decision, and it divides this page in two.
 **Building the perimeter is the operator's job** — bind to loopback,
@@ -31,8 +32,45 @@ it downloads is the one it expected. Those are the surfaces below.
 - **Webhook SSRF protection** — outbound webhook URLs are validated
   to prevent probing internal services
 
-Each is described below. At the end, we cover the threat model and
-known limitations.
+Each is described below, together with the opt-in API token. At the
+end, we cover the threat model and known limitations.
+
+## Opt-in API token
+
+Some deployments sit on a network trusted enough not to need a proxy
+but shared enough that a shared secret is worth having. Set
+`RX_API_TOKEN` and every `/v1` request must carry it:
+
+```bash
+RX_API_TOKEN="$(openssl rand -hex 24)" rx serve --host=0.0.0.0 --search-root=/var/log
+
+curl -H "Authorization: Bearer $RX_API_TOKEN" \
+  "http://loghost:7777/v1/trace?regexp=error&path=/var/log/app.log"
+```
+
+A request without it answers `401` with a `WWW-Authenticate: Bearer`
+challenge and the usual `{"detail": "..."}` body. The comparison is
+constant-time.
+
+- **One value for everyone.** No users, no sessions, no expiry. Rotate
+  it by restarting the server with a new value. Anything more is the
+  perimeter's job.
+- **Only `/v1` is guarded.** `/health`, `/metrics`, `/docs`,
+  `/openapi.json` and the viewer's files stay open, so probes and
+  scrapers keep working. `/health` reports `RX_API_TOKEN` — like any
+  variable whose name contains `TOKEN`, `SECRET`, `PASSWORD` or
+  `API_KEY` — as `<redacted>`.
+- **The viewer** takes the token from the link it is opened with,
+  `http://loghost:7777/#token=…`, keeps it for the browser tab, and
+  removes it from the address bar. Without one it asks.
+- **It is not a substitute for TLS.** The token crosses plain HTTP in
+  clear text; anyone who can read the traffic can read the token. For
+  anything beyond a trusted network, keep the VPN, the SSH tunnel or
+  the TLS proxy.
+
+The OpenAPI document declares the scheme as `bearerAuth` on every `/v1`
+operation, as optional — a server without `RX_API_TOKEN` ignores the
+header.
 
 ## Security response headers
 
@@ -443,15 +481,16 @@ happens at all.
 
 ### Things `rx` does NOT defend against
 
-- **Auth** — `rx serve` has no built-in authentication. Anyone who
-  can reach the socket can run any operation within the sandbox. This
-  is by design; see "Intended use, first" above.
+- **Identity** — `rx serve` has no users, roles or sessions. Without
+  `RX_API_TOKEN`, anyone who can reach the socket can run any operation
+  within the sandbox; with it, anyone who has the one shared token can.
+  This is by design; see "Intended use, first" above.
 - **DoS** — no built-in rate limiting. A single client can
   simultaneously launch N traces and exhaust CPU. Use a reverse
   proxy or a process supervisor that caps concurrent requests.
-- **Exposure to an untrusted network** — there is no authentication
-  and no TLS. This is the scope decision at the top of the page, not a
-  bug. Put `rx` behind a perimeter.
+- **Exposure to an untrusted network** — there is no TLS, and the
+  optional token travels in clear text. This is the scope decision at
+  the top of the page, not a bug. Put `rx` behind a perimeter.
 - **DNS rebinding, on rx-python only** — rx-go re-checks the address at
   connect time; rx-python validates once. Use
   `RX_HOOK_STRICT_IP_ONLY=true` there.
@@ -477,17 +516,20 @@ happens at all.
    rule exists to keep back.
 4. **Let the proxy handle TLS and rate limiting** as well as auth. `rx`
    serves plain HTTP and has no rate limiter.
-5. **Disable per-request hook overrides** where more than one person can
+5. **Set `RX_API_TOKEN`** when the server is reachable from machines
+   other than the operator's. `rx serve` warns at startup when it binds
+   beyond loopback without one.
+6. **Disable per-request hook overrides** where more than one person can
    reach the server: `RX_DISABLE_CUSTOM_HOOKS=true`.
-6. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations are
+7. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations are
    internal — and on rx-python, if DNS rebinding is in your threat model
    at all.
-7. **Monitor `/metrics`** — `rx_errors_total{error_type="access_denied"}`
+8. **Monitor `/metrics`** — `rx_errors_total{error_type="access_denied"}`
    and `rx_hook_calls_total{status="failure"}` flag misbehavior. The full
    `error_type` set is `access_denied`, `file_not_found`,
    `invalid_params`, `invalid_regex`, `service_unavailable` and
    `internal_error`.
-8. **Use separate per-user `RX_CACHE_DIR`** if several people share a
+9. **Use separate per-user `RX_CACHE_DIR`** if several people share a
    host. Cache entries are not isolated between users.
 
 ## Related concepts

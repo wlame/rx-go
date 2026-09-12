@@ -273,12 +273,32 @@ func getAppEnvVariables() map[string]string {
 		}
 		for _, p := range prefixes {
 			if strings.HasPrefix(k, p) {
-				out[k] = v
+				out[k] = envValueForHealth(k, v)
 				break
 			}
 		}
 	}
 	return out
+}
+
+// redactedEnvValue stands in for the value of a secret in /health.
+const redactedEnvValue = "<redacted>"
+
+// secretEnvNameParts are the name fragments that mark a variable as a
+// secret. /health is open even when RX_API_TOKEN guards the API, so a
+// secret it reports would hand the guard's key to anyone who asks.
+var secretEnvNameParts = []string{"TOKEN", "SECRET", "PASSWORD", "API_KEY"}
+
+// envValueForHealth returns what /health reports for one variable: the
+// value, or redactedEnvValue when the name marks it as a secret. The
+// operator still sees that the secret is set.
+func envValueForHealth(name, value string) string {
+	for _, part := range secretEnvNameParts {
+		if strings.Contains(name, part) {
+			return redactedEnvValue
+		}
+	}
+	return value
 }
 
 // getHookConfigMap returns a JSON-friendly view of the effective hook

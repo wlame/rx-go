@@ -9,12 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `RX_API_TOKEN`: an opt-in shared secret for the API. When it is set,
+  every `/v1` request must send `Authorization: Bearer <token>`, compared
+  in constant time; others get `401` with a `WWW-Authenticate: Bearer`
+  challenge and the usual `{"detail": ...}` body. `/health`, `/metrics`,
+  `/docs`, `/openapi.json` and the viewer's files stay open. One value
+  for every caller — not an identity system — and it crosses plain HTTP
+  in clear text, which the docs say. The OpenAPI document declares it as
+  an optional `bearerAuth` scheme with a `401` on every `/v1` operation.
+  Contract version 1.2.
+
 - `rx serve` warns on stderr at startup when it listens where other
   machines can reach it (any `--host` that is not a loopback address or
   `localhost`), and when a search root is `/` or the home directory.
-  rx has no authentication by design; the warning names the remedy —
-  an authenticating proxy, or a network you trust — and the server
-  still starts, since a VPN or a proxy makes a wide bind legitimate.
+  rx has no authentication by design; the warning names the remedies —
+  `RX_API_TOKEN` or an authenticating proxy — and the server still
+  starts, since a VPN or a proxy makes a wide bind legitimate. With a
+  token set, it says instead that the token crosses plain HTTP in clear
+  text.
 
 - A test says stdout carries nothing but the JSON document whenever
   `--json` is passed — for every subcommand that takes the flag, and for
@@ -223,6 +235,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory.
 
 ### Fixed
+
+- `/health` reported every `RX_*` variable by value, and it answers
+  without a token, so a secret set in the environment was public to
+  anyone who could reach the port — including `RX_API_TOKEN`, which
+  would have defeated it. A variable whose name contains `TOKEN`,
+  `SECRET`, `PASSWORD` or `API_KEY` is now reported as `<redacted>`.
 
 - `rx trace -i`, `-w`, `-x`, `-F` and `-P` gave wrong answers with exit
   0. The flags never reached ripgrep, and the argument after one was
