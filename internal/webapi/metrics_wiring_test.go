@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,7 +36,7 @@ func scrapeMetrics(t *testing.T, baseURL string) string {
 //
 // These tests serve a real request and then assert the families appear.
 func TestMetrics_TraceRequestIsCounted(t *testing.T) {
-	if _, err := os.Stat("/usr/bin/rg"); err != nil {
+	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("ripgrep not available; skipping")
 	}
 	prometheus.Enable()
