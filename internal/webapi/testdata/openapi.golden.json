@@ -1411,32 +1411,32 @@
             }
           },
           {
-            "description": "URL to POST when file scan completes",
+            "description": "Webhook URL called with GET once per file after its scan (event file_scanned, payload as query parameters). Overrides RX_HOOK_ON_FILE_URL for this request.",
             "explode": false,
             "in": "query",
             "name": "hook_on_file",
             "schema": {
-              "description": "URL to POST when file scan completes",
+              "description": "Webhook URL called with GET once per file after its scan (event file_scanned, payload as query parameters). Overrides RX_HOOK_ON_FILE_URL for this request.",
               "type": "string"
             }
           },
           {
-            "description": "URL to POST per match. Requires max_results.",
+            "description": "Webhook URL called with GET once per match (event match_found, payload as query parameters). Requires max_results. Overrides RX_HOOK_ON_MATCH_URL for this request.",
             "explode": false,
             "in": "query",
             "name": "hook_on_match",
             "schema": {
-              "description": "URL to POST per match. Requires max_results.",
+              "description": "Webhook URL called with GET once per match (event match_found, payload as query parameters). Requires max_results. Overrides RX_HOOK_ON_MATCH_URL for this request.",
               "type": "string"
             }
           },
           {
-            "description": "URL to POST when the whole trace completes",
+            "description": "Webhook URL called with GET once when the trace completes (event trace_complete, payload as query parameters). Overrides RX_HOOK_ON_COMPLETE_URL for this request.",
             "explode": false,
             "in": "query",
             "name": "hook_on_complete",
             "schema": {
-              "description": "URL to POST when the whole trace completes",
+              "description": "Webhook URL called with GET once when the trace completes (event trace_complete, payload as query parameters). Overrides RX_HOOK_ON_COMPLETE_URL for this request.",
               "type": "string"
             }
           },

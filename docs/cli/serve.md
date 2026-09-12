@@ -117,8 +117,9 @@ rx serve --search-root=/var/log
 ```
 
 Every `/v1/trace` request now also fires webhooks to the configured
-URLs. Per-request overrides via query parameters are allowed unless
-`RX_DISABLE_CUSTOM_HOOKS=1` is set. See [api/webhooks](../api/webhooks.md).
+URLs. A request's `hook_on_*` query parameter replaces the matching
+variable for that request alone, unless `RX_DISABLE_CUSTOM_HOOKS=1` is
+set. See [api/webhooks](../api/webhooks.md).
 
 ## How it works
 

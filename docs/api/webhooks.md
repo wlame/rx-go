@@ -1,16 +1,21 @@
 # Webhooks
 
-`rx` can fire outbound HTTP POSTs on three events during a trace
-request. Webhooks are fire-and-forget (no retry, no acknowledgment)
-and protected by SSRF validation.
+`rx` can call a URL of yours on three events during a trace. Each call
+is one HTTP `GET` with the payload in the query string and no request
+body. Webhooks are fire-and-forget (no retry, no acknowledgment) and
+protected by SSRF validation.
+
+The same protocol is used whether the trace runs as `rx trace` or as
+`GET /v1/trace`, and rx-python sends the same calls, so one webhook
+target serves both backends.
 
 ## Events
 
-| Event | Fires | Typical use |
-|---|---|---|
-| `on_file` | Once per file, after its scan finishes | Progress tracking in long scans |
-| `on_match` | Once per match (requires `max_results`) | Real-time alerting |
-| `on_complete` | Once per trace request | Completion signaling, persistence |
+| Hook | `event` value | Fires | Typical use |
+|---|---|---|---|
+| `on_file` | `file_scanned` | Once per file, after its scan finishes | Progress tracking in long scans |
+| `on_match` | `match_found` | Once per match (requires `max_results`) | Real-time alerting |
+| `on_complete` | `trace_complete` | Once per trace request | Completion signaling, persistence |
 
 ## Configuration
 
@@ -27,16 +32,20 @@ export RX_HOOK_ON_COMPLETE_URL=https://example.com/rx/complete
 rx serve
 ```
 
-### Per-request override (HTTP)
+### Per-request (HTTP)
 
-Query parameters on `GET /v1/trace` override the env values:
+Query parameters on `GET /v1/trace` set the URLs for that request
+alone:
 
 ```text
 GET /v1/trace?path=/var/log/app.log&regexp=error
              &hook_on_complete=https://other.example/notify
 ```
 
-### Per-request override (CLI)
+Concurrent requests do not share URLs: each request's events go to the
+URLs it resolved, and carry its `request_id`.
+
+### Per-invocation (CLI)
 
 Flags on `rx trace`:
 
@@ -46,62 +55,93 @@ rx trace "error" /var/log/app.log \
     --max-results=100
 ```
 
-### Disabling per-request overrides
+### Precedence
 
-Set `RX_DISABLE_CUSTOM_HOOKS=true` and only env-configured URLs
-will fire. Query-param and CLI-flag overrides are silently ignored.
+For each of the three hooks, separately:
 
-## Payload shapes
+1. When `RX_DISABLE_CUSTOM_HOOKS` is set, the environment URL is used
+   and the query parameter or flag is ignored.
+2. Otherwise a URL given on the request (`hook_on_*`) or on the command
+   line (`--hook-on-*`) wins over the environment URL.
+3. Otherwise the environment URL is used, if there is one.
 
-All payloads are POSTed as JSON. Content-Type is
-`application/json; charset=utf-8`. Every payload includes
-`request_id` for correlation with server logs.
+So with `RX_HOOK_ON_COMPLETE_URL` set, a request that passes its own
+`hook_on_complete` is notified at its own URL only, and a request that
+passes none is notified at the environment URL.
 
-### `on_file`
+## Payloads
 
-```json
-{
-  "event":      "on_file",
-  "request_id": "01936c8e-7b2a-7000-8000-000000000001",
-  "path":       "/var/log/app-2026-03.log",
-  "matches":    17,
-  "bytes_scanned": 582137856,
-  "duration_ms": 1234
-}
+Every call is a `GET` to the configured URL with the payload appended as
+query parameters (after `&` when the URL already has a query). Every
+value is a string in the query; numbers are written in decimal. Every
+payload carries `event` and `request_id`.
+
+### `file_scanned` (`on_file`)
+
+| Parameter | Meaning |
+|---|---|
+| `event` | `file_scanned` |
+| `request_id` | The trace's request ID |
+| `file_path` | Path of the scanned file |
+| `file_size_bytes` | Size of the file on disk, in bytes |
+| `scan_time_ms` | Time spent on this file, in milliseconds |
+| `matches_count` | Matches found in this file |
+
+```text
+GET https://example.com/rx/file?event=file_scanned
+    &file_path=%2Fvar%2Flog%2Fapp.log&file_size_bytes=582137856
+    &matches_count=17&request_id=01936c8e-7b2a-7000-8000-000000000001
+    &scan_time_ms=1234
 ```
 
-### `on_match`
+### `match_found` (`on_match`)
 
-```json
-{
-  "event":      "on_match",
-  "request_id": "01936c8e-7b2a-7000-8000-000000000001",
-  "path":       "/var/log/app-2026-03.log",
-  "pattern":    "timeout",
-  "offset":     1024581,
-  "absolute_line_number": 9812,
-  "line_text":  "2026-03-14 08:23:51 ERROR timeout 5023ms"
-}
+| Parameter | Meaning |
+|---|---|
+| `event` | `match_found` |
+| `request_id` | The trace's request ID |
+| `file_path` | Path of the file that holds the match |
+| `pattern` | The pattern that matched, as given in the request |
+| `offset` | Byte offset of the matched line in the file's text (the decompressed stream for a compressed file) |
+| `line_number` | Line number of the match, as the scan knew it |
+
+`line_number` is the line's 1-based number in the file whenever the
+scan could count the lines before it. A scan of a plain file that the
+`max_results` cap cut short may not have read those lines; there the
+value can count from the start of the chunk instead, or be `-1`. Use
+`offset` when you need the exact line: `rx samples --offsets=<offset>`
+resolves it.
+
+```text
+GET https://example.com/rx/match?event=match_found
+    &file_path=%2Fvar%2Flog%2Fapp.log&line_number=9812&offset=1024581
+    &pattern=timeout&request_id=01936c8e-7b2a-7000-8000-000000000001
 ```
 
-### `on_complete`
+### `trace_complete` (`on_complete`)
 
-```json
-{
-  "event":      "on_complete",
-  "request_id": "01936c8e-7b2a-7000-8000-000000000001",
-  "path":       ["/var/log/app-2026-03.log"],
-  "patterns":   ["timeout"],
-  "total_matches":    17,
-  "scanned_files":    1,
-  "skipped_files":    0,
-  "duration_seconds": 2.341
-}
+| Parameter | Meaning |
+|---|---|
+| `event` | `trace_complete` |
+| `request_id` | The trace's request ID |
+| `paths` | The requested paths, joined with `,` |
+| `patterns` | The patterns, joined with `,` |
+| `total_files_scanned` | Files the trace searched |
+| `total_files_skipped` | Files it skipped (binary, unreadable) |
+| `total_matches` | Matches in the response |
+| `total_time_ms` | Duration of the trace, in milliseconds |
+
+```text
+GET https://example.com/rx/complete?event=trace_complete
+    &paths=%2Fvar%2Flog%2Fapp.log&patterns=timeout
+    &request_id=01936c8e-7b2a-7000-8000-000000000001
+    &total_files_scanned=1&total_files_skipped=0&total_matches=17
+    &total_time_ms=2341
 ```
 
 ## Security: SSRF protection
 
-Webhook URLs are validated before the first POST. By default, these
+Webhook URLs are validated before the first call. By default, these
 are **rejected**:
 
 | Address space | Example | Why |
@@ -117,24 +157,33 @@ A URL that carries credentials (`http://user:pass@host/`) is rejected as
 well, whatever address it points at. `RX_ALLOW_INTERNAL_HOOKS` does not
 switch that rule off.
 
-The validation runs at two points:
+A rejected URL is refused before the trace runs: `GET /v1/trace`
+answers `400`, `rx trace` exits `2`, and `rx serve` refuses to start
+when an `RX_HOOK_ON_*_URL` is rejected.
+
+The validation runs at three points:
 
 1. **Static check** — if the host is an IP literal or the string
    `"localhost"`, the address space is checked directly
 2. **DNS resolution check** — for hostnames, `rx` resolves the name
    (2-second timeout) and checks every returned IP against the same
    address-space rules
+3. **Connect-time check** — the HTTP client's dialer applies the same
+   rules to the literal IP it is about to connect to, which is what
+   defeats DNS rebinding; see
+   [concepts/security](../concepts/security.md#dns-rebinding-is-checked-at-connect-time)
 
-A DNS failure is a **soft-accept** — better to let a DNS blip through
-than to false-positive during a transient outage. The POST will fail
-naturally if the host is truly unreachable.
+A DNS failure at the second point is a **soft-accept** — better to let
+a DNS blip through than to false-positive during a transient outage.
+The call will fail naturally if the host is truly unreachable, and the
+connect-time check still applies.
 
 ### Overrides
 
 | Variable | Effect |
 |---|---|
 | `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks. Use only when you actually need internal destinations (e.g. an internal logging service). |
-| `RX_HOOK_STRICT_IP_ONLY=true` | Reject **any** hostname, accept only IP literals. Strongest defense against DNS rebinding attacks. Operators must maintain IP allowlists. |
+| `RX_HOOK_STRICT_IP_ONLY=true` | Reject **any** hostname, accept only IP literals. No name is resolved at all. Operators must maintain IP allowlists. |
 
 ### Redirects are never followed
 
@@ -146,79 +195,84 @@ level as `hook_redirect_refused`, the `3xx` counts as a non-2xx
 response, and the hook is recorded as a failure. Point the hook at the
 final URL instead of one that redirects.
 
-### Known limitations
-
-- **DNS rebinding** is not mitigated: an attacker who controls DNS can
-  resolve to a public IP at validation time and to an internal IP at
-  POST time. Use `RX_HOOK_STRICT_IP_ONLY=true` if this matters in your
-  threat model.
-
 ## Failure handling
 
-- Each POST has a **3-second timeout**. Longer responses are canceled.
-- Failures are logged at Warn level and bump the
-  `rx_hook_calls_total{status="failure"}` metric.
-- **No retry.** A single failed POST is the final attempt for that
+- Each call has a **3-second timeout**. Longer responses are canceled.
+- A response outside `2xx`, a timeout or a connection error is logged
+  at Warn level as `hook_failed` and bumps
+  `rx_hook_calls_total{status="failure"}`.
+- **No retry.** A single failed call is the final attempt for that
   event.
-- If the webhook queue is full (over 512 pending events), new events
-  are **dropped** with a warning log. The queue backs up when the
+- If the webhook queue is full (512 pending events), new events are
+  **dropped** with a `hook_queue_full_dropped` warning and
+  `rx_hook_calls_total{status="dropped"}`. The queue backs up when the
   webhook endpoint is slower than the scan rate.
 
 ## Dispatch internals
 
-- One process-wide dispatcher with a buffered channel (depth 512) and
+- One dispatcher per process — per `rx serve`, or per `rx trace`
+  invocation — with a buffered channel (depth 512), one HTTP client and
   a pool of 8 worker goroutines
+- The dispatcher holds no URLs: each trace request hands it events
+  already addressed to that request's URLs and stamped with its
+  `request_id`, so concurrent requests share the queue and nothing else
 - Events enqueue fast (non-blocking on a live queue) and dispatch
   asynchronously
 - The trace engine never waits for webhook responses — fire-and-forget
-- On graceful shutdown, the dispatcher drains the queue before the
-  server exits
+- On graceful shutdown, and before `rx trace` exits, the dispatcher
+  drains the queue
 
 ## Operational guidance
 
 ### `on_match` + `max_results` is mandatory
 
 ```bash
-# This fails with 400.
+# This exits 2 (usage error); over HTTP the request gets a 400.
 rx trace "error" /var/log/app.log --hook-on-match=https://example.com/...
 
 # This works.
 rx trace "error" /var/log/app.log --hook-on-match=https://example.com/... --max-results=100
 ```
 
-Without the cap, a scan with 1 million matches would fire 1 million
-POSTs — a DoS on your own webhook endpoint.
+Without the cap, a scan with 1 million matches would make 1 million
+calls — a DoS on your own webhook endpoint.
 
 ### Hook endpoints should respond fast
 
 The 3-second timeout is per-event. If your webhook does synchronous
 work (DB writes, downstream API calls), you'll saturate the 8-worker
-pool quickly. Accept the payload, queue it for async processing,
-respond `202 Accepted` immediately.
+pool quickly. Accept the call, queue it for async processing, and
+respond `202 Accepted` or `204 No Content` immediately.
 
 ### Use request_id for correlation
 
-Every webhook payload includes the `request_id` that triggered it.
-Match it against `X-Request-ID` response headers and server-side
-slog records to trace a request end-to-end.
+Every payload's `request_id` is the `request_id` of the trace response
+that caused it. Pass your own with the `request_id` query parameter of
+`GET /v1/trace` (or `--request-id=…` on `rx trace`) to know it before
+the response arrives; otherwise `rx` generates a UUID v7. It is not the
+`X-Request-ID` header, which the HTTP layer assigns to every request
+for its logs.
 
-### Disable overrides in multi-tenant deployments
+### Disable overrides where several people share a server
 
-If multiple clients share one `rx serve`, they can probe each other's
-internal services by passing malicious hook URLs. Combine:
+If several people share one `rx serve`, any of them can point a hook at
+a URL of their choice. Combine:
 
-- `RX_DISABLE_CUSTOM_HOOKS=true` — ignore per-request overrides
+- `RX_DISABLE_CUSTOM_HOOKS=true` — ignore per-request URLs
 - Explicit env-configured URLs — all traffic goes to operator-controlled
   endpoints
 
 ## Monitoring
 
 ```promql
-# Webhook POST rate.
+# Webhook call rate.
 sum by (kind) (rate(rx_hook_calls_total[5m]))
 
 # Failure rate.
 sum by (kind) (rate(rx_hook_calls_total{status="failure"}[5m]))
+
+# Events dropped because the queue was full.
+sum by (kind) (rate(rx_hook_calls_total{status="dropped"}[5m]))
 
 # p95 latency per kind.
 histogram_quantile(0.95,

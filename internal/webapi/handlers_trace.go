@@ -38,9 +38,9 @@ type traceInput struct {
 	// query params). Valid user values start at 1.
 	MaxResults     int    `query:"max_results" minimum:"0" example:"100" doc:"Maximum results to return. 0 = unlimited."`
 	RequestID      string `query:"request_id" example:"01936c8e-7b2a-7000-8000-000000000001" doc:"Custom UUID v7 request ID"`
-	HookOnFile     string `query:"hook_on_file" doc:"URL to POST when file scan completes"`
-	HookOnMatch    string `query:"hook_on_match" doc:"URL to POST per match. Requires max_results."`
-	HookOnComplete string `query:"hook_on_complete" doc:"URL to POST when the whole trace completes"`
+	HookOnFile     string `query:"hook_on_file" doc:"Webhook URL called with GET once per file after its scan (event file_scanned, payload as query parameters). Overrides RX_HOOK_ON_FILE_URL for this request."`
+	HookOnMatch    string `query:"hook_on_match" doc:"Webhook URL called with GET once per match (event match_found, payload as query parameters). Requires max_results. Overrides RX_HOOK_ON_MATCH_URL for this request."`
+	HookOnComplete string `query:"hook_on_complete" doc:"Webhook URL called with GET once when the trace completes (event trace_complete, payload as query parameters). Overrides RX_HOOK_ON_COMPLETE_URL for this request."`
 
 	// The matching flags of trace.MatchingFlags, one boolean each, named
 	// after ripgrep's long flags. huma reads a parameter's name from a
