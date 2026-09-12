@@ -140,48 +140,6 @@ func knownPatternIDs(patternIDs map[string]string, patternOrder []string) []stri
 	return out
 }
 
-// matchFlags is the set of ripgrep options that change which text a
-// pattern matches. It is a bit set: each constant below is one bit, and
-// a request's flags are OR-ed together.
-type matchFlags uint8
-
-const (
-	matchIgnoreCase  matchFlags = 1 << iota // -i: case-insensitive
-	matchWholeWord                          // -w: match bounded by word boundaries
-	matchWholeLine                          // -x: match is the whole line
-	matchFixedString                        // -F: pattern is literal text
-)
-
-// has reports whether every bit of flag is set in f.
-func (f matchFlags) has(flag matchFlags) bool { return f&flag == flag }
-
-// ripgrepFlagMeaning maps each ripgrep spelling to the bit it sets.
-//
-// A flag missing from this table changes how ripgrep runs a pattern but
-// not the text a match covers — -P picks the PCRE2 engine, for one — so
-// re-running the pattern in Go needs nothing from it. Callers pass one
-// flag per element ("-i", "-w"), never a bundle like "-iw".
-var ripgrepFlagMeaning = map[string]matchFlags{
-	"-i":              matchIgnoreCase,
-	"--ignore-case":   matchIgnoreCase,
-	"-w":              matchWholeWord,
-	"--word-regexp":   matchWholeWord,
-	"-x":              matchWholeLine,
-	"--line-regexp":   matchWholeLine,
-	"-F":              matchFixedString,
-	"--fixed-strings": matchFixedString,
-}
-
-// matchFlagsFrom reads the matching flags out of ripgrep arguments.
-// Arguments the table does not know contribute nothing.
-func matchFlagsFrom(rgArgs []string) matchFlags {
-	var flags matchFlags
-	for _, arg := range rgArgs {
-		flags |= ripgrepFlagMeaning[arg]
-	}
-	return flags
-}
-
 // compileLikeRipgrep compiles pattern into a Go regexp that matches what
 // ripgrep matches under flags.
 //
