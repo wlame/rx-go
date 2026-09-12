@@ -153,10 +153,11 @@ func runServe(out io.Writer, p serveParams) error {
 		cancel()
 	}
 
-	// Hook dispatcher wired to env-configured URLs.
-	hookDisp := hooks.NewDispatcher(hooks.DispatcherConfig{
-		Env: hooks.HookEnvFromEnv(),
-	})
+	// One hook dispatcher (queue, HTTP client, workers) for the whole
+	// server. It holds no URLs: each /v1/trace request resolves its own
+	// from RX_HOOK_ON_*_URL and its hook_on_* parameters and passes them
+	// in through Dispatcher.ForRequest.
+	hookDisp := hooks.NewDispatcher(hooks.DispatcherConfig{})
 
 	// Build server.
 	srv := webapi.NewServer(webapi.Config{

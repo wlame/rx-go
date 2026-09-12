@@ -92,7 +92,8 @@ type traceOutput struct {
 //  5. Verify every path exists (404 otherwise).
 //  6. Generate / accept a request ID.
 //  7. Record RequestInfo in the request store.
-//  8. Call trace.Engine.RunWithOptions with a dispatcher-wrapped HookFirer.
+//  8. Call trace.Engine.RunWithOptions with this request's view of the
+//     shared hook dispatcher.
 //  9. Build response, fire on_complete hook, record metrics, return.
 func registerTraceHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
@@ -195,8 +196,14 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		}
 		s.cfg.RequestStore.Add(info)
 
-		// Build a HookFirer — use the dispatcher when configured, else Noop.
-		firer := buildHookFirer(s, hookConfig, reqID)
+		// This request's view of the shared hook dispatcher: its own URLs
+		// and its own request_id. The engine keeps its no-hook fast path
+		// (NoopHookFirer) when the request has no hook at all.
+		reqHooks := requestHooks(s, hookConfig, reqID)
+		var firer trace.HookFirer = trace.NoopHookFirer{}
+		if reqHooks != nil {
+			firer = reqHooks
+		}
 
 		// Run the engine.
 		matchingFlags := in.matchingFlags()
@@ -231,9 +238,10 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			r.TotalTimeMS = dur.Milliseconds()
 		})
 
-		// Fire on_complete hook if configured.
-		if hookConfig.OnCompleteURL != "" && s.cfg.Hooks != nil {
-			s.cfg.Hooks.OnComplete(resp)
+		// Fire on_complete hook if configured. resp.RequestID is set
+		// above, so the payload and the response carry the same ID.
+		if reqHooks != nil {
+			reqHooks.OnComplete(resp)
 		}
 
 		// Attach CLI command equivalent. CLICommand is *string because a
@@ -279,51 +287,18 @@ func hookOverridesFromQuery(onFile, onMatch, onComplete string) hooks.HookOverri
 	}
 }
 
-// buildHookFirer picks the right trace.HookFirer for this request.
-// When no hooks fire (either because none are configured OR we have no
-// Dispatcher), we use trace.NoopHookFirer to keep the engine's fast path.
+// requestHooks returns this request's view of the server's shared hook
+// dispatcher, carrying the request's effective hook URLs and its
+// request_id. It returns nil when the request has no hook URL at all, or
+// when the server was built without a dispatcher (some tests); the
+// caller then gives the engine trace.NoopHookFirer.
 //
-// The Dispatcher stores per-request URLs inside its config; we adapt by
-// mutating the request-specific URL map in requestHookFirer — see the
-// closure below. At the HTTP layer, dispatcher.Hooks holds the
-// process-level config; per-request overrides land on a custom firer
-// that chooses per event.
-func buildHookFirer(s *Server, cfg hooks.HookConfig, requestID string) trace.HookFirer {
-	if !cfg.HasAny() {
-		return trace.NoopHookFirer{}
+// The URLs come from the request, never from the dispatcher: one
+// dispatcher serves every concurrent request, so it holds no
+// request-level state.
+func requestHooks(s *Server, cfg hooks.HookConfig, requestID string) *hooks.RequestHooks {
+	if !cfg.HasAny() || s.cfg.Hooks == nil {
+		return nil
 	}
-	if s.cfg.Hooks == nil {
-		// No dispatcher wired; silently drop events.
-		return trace.NoopHookFirer{}
-	}
-	return &requestHookFirer{
-		dispatcher: s.cfg.Hooks,
-		cfg:        cfg,
-		requestID:  requestID,
-	}
-}
-
-// requestHookFirer adapts the per-request hook config to the shared
-// hooks.Dispatcher. It forwards OnFile/OnMatch to the dispatcher only
-// when the corresponding URL is set for this request.
-type requestHookFirer struct {
-	dispatcher *hooks.Dispatcher
-	cfg        hooks.HookConfig
-	requestID  string
-}
-
-// OnFile forwards to the dispatcher iff an on_file URL is set.
-func (r *requestHookFirer) OnFile(ctx context.Context, path string, info trace.FileInfo) {
-	if r.cfg.OnFileURL == "" {
-		return
-	}
-	r.dispatcher.OnFile(ctx, path, info)
-}
-
-// OnMatch forwards to the dispatcher iff an on_match URL is set.
-func (r *requestHookFirer) OnMatch(ctx context.Context, path string, m trace.MatchInfo) {
-	if r.cfg.OnMatchURL == "" {
-		return
-	}
-	r.dispatcher.OnMatch(ctx, path, m)
+	return s.cfg.Hooks.ForRequest(cfg, requestID)
 }

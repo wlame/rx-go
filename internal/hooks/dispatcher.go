@@ -22,13 +22,23 @@ import (
 // Dispatcher
 // ============================================================================
 
-// Dispatcher enqueues hook events onto a buffered channel and dispatches
-// them from a pool of worker goroutines. Implements trace.HookFirer.
+// Dispatcher delivers webhook events. It owns one bounded queue (a
+// buffered channel), one HTTP client and a pool of worker goroutines
+// that read from the queue, and it is shared by every trace request of
+// a process: one per `rx serve`, one per `rx trace` invocation.
 //
-// Fire-and-forget semantics: Enqueue returns as
-// soon as the event is on the channel. If the channel is full (pool
-// drained), we drop the event, log a warning, and bump a metric —
-// better to drop a notification than block the search pipeline.
+// The Dispatcher holds no hook URLs and no request ID. Those belong to a
+// single trace request, so a caller asks for a per-request view with
+// ForRequest and hands that view to the trace engine. Every view sends
+// its events through the same queue and client, which keeps the number
+// of goroutines and connections bounded however many requests run at
+// once, while each event carries the URL and request_id of the request
+// that produced it.
+//
+// Fire-and-forget semantics: enqueueing returns as soon as the event is
+// on the channel. If the channel is full, the event is dropped, a
+// warning is logged and a metric is bumped — better to drop a
+// notification than block the search pipeline.
 //
 // Dispatcher is safe for concurrent use. The zero value is NOT valid;
 // always construct via NewDispatcher.
@@ -54,24 +64,18 @@ type Dispatcher struct {
 	closed atomic.Bool
 }
 
-// DispatcherConfig holds the knobs for a Dispatcher.
+// DispatcherConfig holds the knobs for a Dispatcher. Every field is
+// optional; a zero value takes the default named in its comment.
 type DispatcherConfig struct {
-	// Env is the process-wide hook env.
-	Env HookEnv
-	// RequestOverrides applies only to events fired by the trace
-	// engine instance that owns this Dispatcher (one per request in
-	// the HTTP path; one global dispatcher for the CLI).
-	RequestOverrides HookOverrides
-	// RequestID is injected into every payload's request_id field.
-	// Set per-trace-request in the HTTP layer; empty in CLI.
-	RequestID string
-	// QueueDepth — size of the buffered channel. 0 uses the default.
+	// QueueDepth is the size of the buffered channel. 0 uses
+	// DefaultQueueDepth.
 	QueueDepth int
-	// Workers — number of goroutines. 0 uses the default.
+	// Workers is the number of goroutines that deliver events. 0 uses
+	// DefaultWorkers.
 	Workers int
-	// Timeout for each HTTP POST. 0 uses DefaultTimeout.
+	// Timeout bounds each webhook call. 0 uses DefaultTimeout.
 	Timeout time.Duration
-	// Logger — slog for structured output. nil uses slog.Default().
+	// Logger receives structured output. nil uses slog.Default().
 	Logger *slog.Logger
 }
 
@@ -86,9 +90,9 @@ type hookEvent struct {
 }
 
 // NewDispatcher constructs a Dispatcher and starts the worker pool.
-// Callers must call Close when done to drain the queue and stop the
-// goroutines. Using defer d.Close() at the HTTP-handler level ties
-// the dispatcher lifetime to a request.
+// Callers must call Close, then Wait, when done: Close stops new events
+// and lets the workers drain the queue, Wait blocks until they have.
+// `rx serve` does this at shutdown, `rx trace` before the process exits.
 func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 	if cfg.QueueDepth <= 0 {
 		cfg.QueueDepth = DefaultQueueDepth
@@ -168,72 +172,99 @@ func (d *Dispatcher) Close() {
 }
 
 // Wait blocks until all queued events have been processed AND Close
-// has been called. Tests use this to observe all expected POSTs
+// has been called. Tests use this to observe all expected calls
 // deterministically.
 func (d *Dispatcher) Wait() { <-d.stopped }
 
 // ============================================================================
-// trace.HookFirer implementation
+// Per-request view
 // ============================================================================
 
-// OnFile satisfies trace.HookFirer. Enqueues an on_file event with
-// Python-compatible query-param payload.
-func (d *Dispatcher) OnFile(_ context.Context, path string, info trace.FileInfo) {
-	cfg := EffectiveHooks(d.cfg.Env, d.cfg.RequestOverrides)
-	if cfg.OnFileURL == "" {
+// RequestHooks is the view of a Dispatcher for one trace request: the
+// hook URLs in effect for that request and the request_id its payloads
+// carry. It implements trace.HookFirer, so the trace engine calls OnFile
+// and OnMatch on it directly, and it adds OnComplete for the caller to
+// fire once the engine has returned.
+//
+// A RequestHooks is a small value with no goroutines of its own; it is
+// cheap to create one per request and needs no Close. Its events go
+// through the parent Dispatcher's queue, so they stop being delivered
+// once the parent is closed.
+type RequestHooks struct {
+	dispatcher *Dispatcher
+	urls       HookConfig
+	requestID  string
+}
+
+// ForRequest returns the view that sends one request's events to urls,
+// with requestID in every payload. urls is normally the result of
+// EffectiveHooks for that request and should already have passed
+// ValidateConfig; an empty URL switches that event off.
+//
+// INVARIANT: the view copies urls and requestID, so concurrent requests
+// never see each other's values — the shared Dispatcher holds neither.
+func (d *Dispatcher) ForRequest(urls HookConfig, requestID string) *RequestHooks {
+	return &RequestHooks{dispatcher: d, urls: urls, requestID: requestID}
+}
+
+// OnFile satisfies trace.HookFirer. It enqueues a file_scanned event
+// for the request's on_file URL; without that URL it does nothing.
+func (r *RequestHooks) OnFile(_ context.Context, path string, info trace.FileInfo) {
+	if r.urls.OnFileURL == "" {
 		return
 	}
 	payload := rxtypes.FileScannedPayload{
 		Event:         rxtypes.HookEventFileScanned,
-		RequestID:     d.cfg.RequestID,
+		RequestID:     r.requestID,
 		FilePath:      path,
 		FileSizeBytes: info.FileSizeBytes,
 		ScanTimeMS:    info.ScanTimeMS,
 		MatchesCount:  info.MatchesCount,
 	}
-	d.enqueue(hookEvent{
+	r.dispatcher.enqueue(hookEvent{
 		kind:      "on_file",
-		url:       cfg.OnFileURL,
+		url:       r.urls.OnFileURL,
 		params:    payloadToParams(payload),
-		requestID: d.cfg.RequestID,
+		requestID: r.requestID,
 	})
 }
 
-// OnMatch satisfies trace.HookFirer. Enqueues an on_match event per
-// matched line (can be very hot). Skipped entirely if URL unset.
-func (d *Dispatcher) OnMatch(_ context.Context, path string, m trace.MatchInfo) {
-	cfg := EffectiveHooks(d.cfg.Env, d.cfg.RequestOverrides)
-	if cfg.OnMatchURL == "" {
+// OnMatch satisfies trace.HookFirer. It enqueues a match_found event per
+// matched line for the request's on_match URL. The engine calls it once
+// per match, so it returns at once when that URL is not set.
+func (r *RequestHooks) OnMatch(_ context.Context, path string, m trace.MatchInfo) {
+	if r.urls.OnMatchURL == "" {
 		return
 	}
 	ln := m.LineNumber
 	payload := rxtypes.MatchFoundPayload{
 		Event:      rxtypes.HookEventMatchFound,
-		RequestID:  d.cfg.RequestID,
+		RequestID:  r.requestID,
 		FilePath:   path,
 		Pattern:    m.Pattern,
 		Offset:     m.Offset,
 		LineNumber: &ln,
 	}
-	d.enqueue(hookEvent{
+	r.dispatcher.enqueue(hookEvent{
 		kind:      "on_match",
-		url:       cfg.OnMatchURL,
+		url:       r.urls.OnMatchURL,
 		params:    payloadToParams(payload),
-		requestID: d.cfg.RequestID,
+		requestID: r.requestID,
 	})
 }
 
-// OnComplete is NOT part of trace.HookFirer (the interface only has
-// OnFile / OnMatch), but is exposed here for the HTTP layer to fire
-// the trace-complete webhook when the engine returns.
-func (d *Dispatcher) OnComplete(resp *rxtypes.TraceResponse) {
-	cfg := EffectiveHooks(d.cfg.Env, d.cfg.RequestOverrides)
-	if cfg.OnCompleteURL == "" || resp == nil {
+// OnComplete enqueues the trace_complete event for a finished trace. It
+// is not part of trace.HookFirer, because the engine does not know when
+// the caller considers the request complete; the HTTP handler and the
+// CLI call it after the engine returns. A nil response, or no
+// on_complete URL, does nothing.
+func (r *RequestHooks) OnComplete(resp *rxtypes.TraceResponse) {
+	if r.urls.OnCompleteURL == "" || resp == nil {
 		return
 	}
 	payload := rxtypes.TraceCompletePayload{
 		Event:             rxtypes.HookEventTraceComplete,
-		RequestID:         d.cfg.RequestID,
+		RequestID:         r.requestID,
 		Paths:             joinStrings(resp.Path, ","),
 		Patterns:          joinMap(resp.Patterns, ","),
 		TotalFilesScanned: len(resp.ScannedFiles),
@@ -241,11 +272,11 @@ func (d *Dispatcher) OnComplete(resp *rxtypes.TraceResponse) {
 		TotalMatches:      len(resp.Matches),
 		TotalTimeMS:       int(resp.Time * 1000),
 	}
-	d.enqueue(hookEvent{
+	r.dispatcher.enqueue(hookEvent{
 		kind:      "on_complete",
-		url:       cfg.OnCompleteURL,
+		url:       r.urls.OnCompleteURL,
 		params:    payloadToParams(payload),
-		requestID: d.cfg.RequestID,
+		requestID: r.requestID,
 	})
 }
 
@@ -254,16 +285,11 @@ func (d *Dispatcher) OnComplete(resp *rxtypes.TraceResponse) {
 // ============================================================================
 
 // worker consumes events from the queue until it's closed. Each event
-// is one HTTP GET (Python uses GET so it's trivially idempotent from
-// the webhook target's perspective — POSTing query params changes the
-// semantics).
-//
-// NOTE: Python's hooks use GET with query parameters, not POST.
-// rx-python/src/rx/hooks.py::_call_hook_internal does:
-//
-//	response = client.get(url, params=params)
-//
-// so the Go port uses http.MethodGet for exact parity.
+// is one HTTP GET whose payload travels as query parameters, with no
+// request body — the protocol rx-python uses
+// (rx-python/src/rx/hooks.py::_call_hook_internal calls
+// client.get(url, params=params)), so a webhook target serves both
+// backends.
 func (d *Dispatcher) worker() {
 	defer d.wg.Done()
 	for ev := range d.queue {
@@ -271,9 +297,9 @@ func (d *Dispatcher) worker() {
 	}
 }
 
-// fire executes a single hook POST (technically GET per parity note).
-// Any failure is logged and metered; we never return an error because
-// the caller has already moved on.
+// fire executes a single webhook GET. Any failure is logged and
+// metered; it never returns an error because the caller has already
+// moved on.
 func (d *Dispatcher) fire(ev hookEvent) {
 	start := time.Now()
 	target := ev.url
@@ -468,6 +494,6 @@ func joinMap(m map[string]string, sep string) string {
 // Type assertions
 // ============================================================================
 
-// Assert that *Dispatcher satisfies trace.HookFirer — compile-time
-// guarantee that the engine can accept us without a type switch.
-var _ trace.HookFirer = (*Dispatcher)(nil)
+// Assert that *RequestHooks satisfies trace.HookFirer — a compile-time
+// guarantee that the engine accepts the per-request view directly.
+var _ trace.HookFirer = (*RequestHooks)(nil)

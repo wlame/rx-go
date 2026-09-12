@@ -32,14 +32,13 @@ func TestDispatcher_DoesNotFollowRedirect(t *testing.T) {
 	t.Cleanup(redirector.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:        HookEnv{OnFileURL: redirector.URL},
-		RequestID:  "req-redirect",
 		Workers:    1,
 		QueueDepth: 4,
 		Timeout:    2 * time.Second,
 		Logger:     newSilentLogger(),
 	})
-	d.OnFile(context.Background(), "/var/log/test.log", trace.FileInfo{})
+	d.ForRequest(HookConfig{OnFileURL: redirector.URL}, "req-redirect").
+		OnFile(context.Background(), "/var/log/test.log", trace.FileInfo{})
 	d.Close()
 	d.Wait()
 
@@ -69,8 +68,6 @@ func TestDispatcher_RedirectToPublicHostIsAlsoRefused(t *testing.T) {
 	t.Cleanup(redirector.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:        HookEnv{OnCompleteURL: redirector.URL},
-		RequestID:  "req-public-redirect",
 		Workers:    1,
 		QueueDepth: 4,
 		Timeout:    2 * time.Second,

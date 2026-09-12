@@ -390,6 +390,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Webhook URLs given on `GET /v1/trace` (`hook_on_file`, `hook_on_match`,
+  `hook_on_complete`) fire. `rx serve` shared one dispatcher whose URLs
+  came from the environment at startup, so a URL given on the request
+  was validated and then never called; with an `RX_HOOK_ON_*_URL` set,
+  that URL was called instead, and every payload's `request_id` was
+  empty. Each request now resolves its own URLs, with the precedence
+  `rx trace --hook-on-*` follows (the request's URL over the
+  environment's, unless `RX_DISABLE_CUSTOM_HOOKS` is set), and its
+  payloads carry the `request_id` of its response. Concurrent requests
+  still share one queue and one HTTP client, and each receives only its
+  own events.
+
 - A `--max-results` search of a seekable `.zst` keeps the first matches
   in the file. The frame-parallel scan ordered its matches by a line
   number that restarts in every frame before applying the cap, so it

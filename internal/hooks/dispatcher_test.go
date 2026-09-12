@@ -36,14 +36,12 @@ func TestDispatcher_FireOnFile_PostsToConfiguredURL(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:        HookEnv{OnFileURL: srv.URL},
-		RequestID:  "req-42",
 		Workers:    1,
 		QueueDepth: 4,
 		Logger:     newSilentLogger(),
 	})
 
-	d.OnFile(context.Background(), "/var/log/test.log",
+	d.ForRequest(HookConfig{OnFileURL: srv.URL}, "req-42").OnFile(context.Background(), "/var/log/test.log",
 		trace.FileInfo{FileSizeBytes: 1024, ScanTimeMS: 50, MatchesCount: 3})
 
 	d.Close()
@@ -79,13 +77,12 @@ func TestDispatcher_UnsetURL_NoOp(t *testing.T) {
 		atomic.AddInt32(&hits, 1)
 	}))
 	t.Cleanup(srv.Close)
-	d := NewDispatcher(DispatcherConfig{
-		Env:    HookEnv{}, // all URLs empty
-		Logger: newSilentLogger(),
-	})
+	d := NewDispatcher(DispatcherConfig{Logger: newSilentLogger()})
 
-	d.OnFile(context.Background(), "/x", trace.FileInfo{})
-	d.OnMatch(context.Background(), "/x", trace.MatchInfo{})
+	view := d.ForRequest(HookConfig{}, "req-none") // all URLs empty
+	view.OnFile(context.Background(), "/x", trace.FileInfo{})
+	view.OnMatch(context.Background(), "/x", trace.MatchInfo{})
+	view.OnComplete(&rxtypes.TraceResponse{})
 
 	d.Close()
 	d.Wait()
@@ -106,13 +103,13 @@ func TestDispatcher_FailingURL_LogsAndContinues(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:     HookEnv{OnFileURL: srv.URL},
 		Workers: 1,
 		Logger:  newSilentLogger(),
 	})
-	d.OnFile(context.Background(), "/a", trace.FileInfo{})
-	d.OnFile(context.Background(), "/b", trace.FileInfo{})
-	d.OnFile(context.Background(), "/c", trace.FileInfo{})
+	view := d.ForRequest(HookConfig{OnFileURL: srv.URL}, "req-failing")
+	view.OnFile(context.Background(), "/a", trace.FileInfo{})
+	view.OnFile(context.Background(), "/b", trace.FileInfo{})
+	view.OnFile(context.Background(), "/c", trace.FileInfo{})
 
 	d.Close()
 	d.Wait()
@@ -136,21 +133,21 @@ func TestDispatcher_TimeoutDoesNotBlockProducer(t *testing.T) {
 	})
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:        HookEnv{OnFileURL: srv.URL},
 		Workers:    1,
 		QueueDepth: 1,
 		Timeout:    50 * time.Millisecond,
 		Logger:     newSilentLogger(),
 	})
+	view := d.ForRequest(HookConfig{OnFileURL: srv.URL}, "req-slow")
 
 	start := time.Now()
 	// First event ties up the single worker immediately.
-	d.OnFile(context.Background(), "/x", trace.FileInfo{})
+	view.OnFile(context.Background(), "/x", trace.FileInfo{})
 	// Second event goes on the queue.
-	d.OnFile(context.Background(), "/y", trace.FileInfo{})
+	view.OnFile(context.Background(), "/y", trace.FileInfo{})
 	// Third event — queue now full (depth=1, one in-flight, one queued),
 	// so this is dropped.
-	d.OnFile(context.Background(), "/z", trace.FileInfo{})
+	view.OnFile(context.Background(), "/z", trace.FileInfo{})
 
 	producerLatency := time.Since(start)
 	if producerLatency > 100*time.Millisecond {
@@ -162,7 +159,8 @@ func TestDispatcher_TimeoutDoesNotBlockProducer(t *testing.T) {
 }
 
 // TestDispatcher_RespectsDisableCustom confirms overrides are dropped
-// when the security flag is set.
+// when the security flag is set: the URLs EffectiveHooks resolves are
+// the ones the per-request view calls.
 func TestDispatcher_RespectsDisableCustom(t *testing.T) {
 	var envHit, overrideHit int32
 	envSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,17 +175,16 @@ func TestDispatcher_RespectsDisableCustom(t *testing.T) {
 	t.Cleanup(overrideSrv.Close)
 
 	override := overrideSrv.URL
+	urls := EffectiveHooks(
+		HookEnv{OnFileURL: envSrv.URL, DisableCustom: true},
+		HookOverrides{OnFileURL: &override},
+	)
 	d := NewDispatcher(DispatcherConfig{
-		Env: HookEnv{
-			OnFileURL:     envSrv.URL,
-			DisableCustom: true,
-		},
-		RequestOverrides: HookOverrides{OnFileURL: &override},
-		Workers:          1,
-		Logger:           newSilentLogger(),
+		Workers: 1,
+		Logger:  newSilentLogger(),
 	})
 
-	d.OnFile(context.Background(), "/x", trace.FileInfo{})
+	d.ForRequest(urls, "req-disable").OnFile(context.Background(), "/x", trace.FileInfo{})
 
 	d.Close()
 	d.Wait()
@@ -206,7 +203,7 @@ func TestDispatcher_RespectsDisableCustom(t *testing.T) {
 // dead-code eliminator pass.
 func TestDispatcher_ImplementsTraceHookFirer(t *testing.T) {
 	d := NewDispatcher(DispatcherConfig{Logger: newSilentLogger()})
-	var hf trace.HookFirer = d
+	var hf trace.HookFirer = d.ForRequest(HookConfig{}, "req-iface")
 	hf.OnFile(context.Background(), "/a", trace.FileInfo{})
 	hf.OnMatch(context.Background(), "/a", trace.MatchInfo{})
 	d.Close()
@@ -240,15 +237,15 @@ func TestDispatcher_EnqueueAfterClose_NoPanic(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env: HookEnv{
-			OnFileURL:     srv.URL,
-			OnMatchURL:    srv.URL,
-			OnCompleteURL: srv.URL,
-		},
 		Workers:    1,
 		QueueDepth: 4,
 		Logger:     newSilentLogger(),
 	})
+	view := d.ForRequest(HookConfig{
+		OnFileURL:     srv.URL,
+		OnMatchURL:    srv.URL,
+		OnCompleteURL: srv.URL,
+	}, "req-after-close")
 
 	// Close immediately — the channel is now closed.
 	d.Close()
@@ -270,15 +267,15 @@ func TestDispatcher_EnqueueAfterClose_NoPanic(t *testing.T) {
 	}
 
 	assertNoPanic("OnFile", func() {
-		d.OnFile(context.Background(), "/after-close.log",
+		view.OnFile(context.Background(), "/after-close.log",
 			trace.FileInfo{FileSizeBytes: 1, ScanTimeMS: 1, MatchesCount: 0})
 	})
 	assertNoPanic("OnMatch", func() {
-		d.OnMatch(context.Background(), "/after-close.log",
+		view.OnMatch(context.Background(), "/after-close.log",
 			trace.MatchInfo{Pattern: "x", Offset: 0, LineNumber: 1})
 	})
 	assertNoPanic("OnComplete", func() {
-		d.OnComplete(&rxtypes.TraceResponse{
+		view.OnComplete(&rxtypes.TraceResponse{
 			Path:         []string{"/after-close.log"},
 			Patterns:     map[string]string{"p1": "x"},
 			ScannedFiles: []string{},
@@ -286,4 +283,49 @@ func TestDispatcher_EnqueueAfterClose_NoPanic(t *testing.T) {
 			Matches:      []rxtypes.Match{},
 		})
 	})
+}
+
+// TestDispatcher_ViewsKeepTheirOwnURLAndRequestID pins the reason the
+// Dispatcher holds no URLs: two requests sharing one dispatcher each
+// reach only their own target, with their own request_id.
+func TestDispatcher_ViewsKeepTheirOwnURLAndRequestID(t *testing.T) {
+	// One target per request; each sends the request_id it saw on a
+	// channel buffered for every event the test fires.
+	newTarget := func() (*httptest.Server, chan string) {
+		seen := make(chan string, 4)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen <- r.URL.Query().Get("request_id")
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		t.Cleanup(srv.Close)
+		return srv, seen
+	}
+	srvA, seenA := newTarget()
+	srvB, seenB := newTarget()
+
+	d := NewDispatcher(DispatcherConfig{Workers: 2, Logger: newSilentLogger()})
+	viewA := d.ForRequest(HookConfig{OnFileURL: srvA.URL, OnCompleteURL: srvA.URL}, "req-a")
+	viewB := d.ForRequest(HookConfig{OnFileURL: srvB.URL, OnCompleteURL: srvB.URL}, "req-b")
+
+	viewA.OnFile(context.Background(), "/a", trace.FileInfo{})
+	viewB.OnFile(context.Background(), "/b", trace.FileInfo{})
+	viewA.OnComplete(&rxtypes.TraceResponse{})
+	viewB.OnComplete(&rxtypes.TraceResponse{})
+	d.Close()
+	d.Wait()
+	close(seenA)
+	close(seenB)
+
+	for want, seen := range map[string]chan string{"req-a": seenA, "req-b": seenB} {
+		count := 0
+		for got := range seen {
+			count++
+			if got != want {
+				t.Errorf("target of %s got request_id %q", want, got)
+			}
+		}
+		if count != 2 {
+			t.Errorf("target of %s: got %d calls, want 2", want, count)
+		}
+	}
 }
