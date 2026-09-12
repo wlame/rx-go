@@ -38,6 +38,11 @@ Repeat `path` and `regexp` to supply multiple values:
 GET /v1/trace?path=/var/log/a.log&path=/var/log/b.log&regexp=error&regexp=panic
 ```
 
+Each repetition is one value, and a comma inside it is part of the
+value: `regexp=a%7B2%2C5%7D` is the single pattern `a{2,5}`, and a file
+named `a,b.log` is searched as one path. The OpenAPI document declares
+both parameters `explode: true`.
+
 ### Matching flags
 
 The five boolean parameters are the matching flags of [`rx

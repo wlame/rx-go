@@ -390,6 +390,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /v1/trace` reads `path` and `regexp` as repeated parameters, one
+  value per repetition, as the docs always said. It used to split one
+  value at commas and ignore the repetitions: `regexp=a{2,5}` was
+  refused as two broken patterns, a path with a comma could not be
+  searched, and `path=a&path=b` or `regexp=x&regexp=y` searched only the
+  first value, so the viewer's search over several files searched one.
+  The OpenAPI document now declares both parameters `explode: true`. A
+  client that sent a comma-joined list now sends one value per
+  parameter; this is the documented form, so the contract stays 1.3.
+
 - Webhook URLs given on `GET /v1/trace` (`hook_on_file`, `hook_on_match`,
   `hook_on_complete`) fire. `rx serve` shared one dispatcher whose URLs
   came from the environment at startup, so a URL given on the request
