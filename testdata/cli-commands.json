@@ -36,6 +36,17 @@
       "expected": "rx trace '/var/log/my app.log' --regexp='a b'"
     },
     {
+      "name": "trace with matching flags and a cap",
+      "endpoint": "trace",
+      "params": {
+        "regexp": ["error"],
+        "path": ["/var/log/app.log"],
+        "matching_flags": ["ignore-case", "word-regexp"],
+        "max_results": 10
+      },
+      "expected": "rx trace /var/log/app.log --regexp=error --ignore-case --word-regexp --max-results=10"
+    },
+    {
       "name": "samples by line",
       "endpoint": "samples",
       "params": { "path": "/var/log/app.log", "lines": "100" },

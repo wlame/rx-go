@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wlame/rx-go/internal/trace"
 )
 
 type cliCommandCase struct {
@@ -96,6 +98,9 @@ func TestBuildCLICommand_UsesTheEqualsFormForEveryLongFlag(t *testing.T) {
 	// flag or nothing.
 	valuelessFlags := map[string]bool{
 		"--force": true, "--analyze": true, "--info": true, "--json": true,
+	}
+	for _, flag := range trace.MatchingFlags {
+		valuelessFlags["--"+flag.Long] = true
 	}
 
 	for _, testCase := range fixture.Cases {
