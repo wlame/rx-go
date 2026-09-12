@@ -2,6 +2,7 @@ package webapi
 
 import (
 	"net/http"
+	pathpkg "path" // aliased: handlers name their URL path variable `path`
 	"path/filepath"
 	"strings"
 
@@ -95,6 +96,7 @@ func registerStaticHandlers(r chi.Router, fm *frontend.Manager) {
 		// directory-traversal, absolute paths, and non-existent files,
 		// returning "" in those cases.
 		if resolved := fm.ValidateStaticPath(path); resolved != "" {
+			w.Header().Set("Cache-Control", staticCacheControl(path))
 			serveStaticFile(w, req, resolved)
 			return
 		}
@@ -113,6 +115,32 @@ func serveFrontendIndex(w http.ResponseWriter, req *http.Request, fm *frontend.M
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	http.ServeFile(w, req, fm.IndexHTMLPath())
+}
+
+// Cache-Control values for the viewer's static files.
+const (
+	// cacheForGood suits a file whose name carries a hash of its content:
+	// a new build writes a new name, so the old URL never changes.
+	cacheForGood = "public, max-age=31536000, immutable"
+	// cacheRevalidate makes the browser ask before reusing its copy. The
+	// answer is a 304 with no body while the file is unchanged.
+	cacheRevalidate = "no-cache"
+)
+
+// hashedAssetDir is where Vite writes every file whose name carries its
+// content hash.
+const hashedAssetDir = "assets/"
+
+// staticCacheControl returns the Cache-Control for the static file at
+// relPath (relative to the bundle root). Only the hashed assets are
+// cached for good. Every other file keeps its name from one viewer
+// release to the next — version.json, favicon.svg — so a browser that
+// kept it would show the previous release's copy after an upgrade.
+func staticCacheControl(relPath string) string {
+	if strings.HasPrefix(pathpkg.Clean(relPath), hashedAssetDir) {
+		return cacheForGood
+	}
+	return cacheRevalidate
 }
 
 // serveStaticFile serves a validated absolute path from the frontend
@@ -143,9 +171,6 @@ func serveStaticFile(w http.ResponseWriter, req *http.Request, resolved string) 
 	case ".woff2":
 		w.Header().Set("Content-Type", "font/woff2")
 	}
-	// Hashed-asset cache hint. index-<hash>.js etc. never change, so a
-	// long cache is fine; index.html itself is handled above with no-cache.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	// resolved comes from frontend.Manager.ValidateStaticPath, which
 	// rejects absolute paths and requires the cleaned path to sit under
 	// the cache root (prefix + separator, so a sibling directory cannot

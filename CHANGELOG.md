@@ -391,6 +391,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The viewer's `version.json` and `favicon.svg` are served with
+  `Cache-Control: no-cache` instead of a year-long `immutable`. Only the
+  files under `assets/` carry a hash of their content in their name; the
+  others keep their name across viewer releases, so a browser kept the
+  old `version.json` after an upgrade and showed the previous version,
+  and its release link, in the header. Revalidating costs a `304`. A
+  browser that already holds the year-long copy keeps it until a hard
+  reload.
+
 - `GET /v1/detectors` reported every detector's `severity_range` as
   `0..1`, which tells a client nothing it can scale an indicator by. Each
   detector now states its band through `analyzer.SeverityRanger` — every
