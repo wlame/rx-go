@@ -26,12 +26,39 @@ GET /v1/trace?path=...&regexp=...&max_results=...
 | `hook_on_file` | `string` | no | env | URL fired per file (overrides env) |
 | `hook_on_match` | `string` | no | env | URL fired per match — requires `max_results` |
 | `hook_on_complete` | `string` | no | env | URL fired once on completion |
+| `ignore_case` | `bool` | no | `false` | Match case-insensitively (ripgrep `-i`) |
+| `word_regexp` | `bool` | no | `false` | Match only whole words (ripgrep `-w`) |
+| `line_regexp` | `bool` | no | `false` | Match only whole lines (ripgrep `-x`) |
+| `fixed_strings` | `bool` | no | `false` | Treat every pattern as literal text (ripgrep `-F`) |
+| `pcre2` | `bool` | no | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
 
 Repeat `path` and `regexp` to supply multiple values:
 
 ```text
 GET /v1/trace?path=/var/log/a.log&path=/var/log/b.log&regexp=error&regexp=panic
 ```
+
+### Matching flags
+
+The five boolean parameters are the matching flags of [`rx
+trace`](../../cli/trace.md#ripgreps-matching-flags), named after
+ripgrep's long flags with `_` for `-`. They apply to every pattern in
+the request, an answer is the one `rx trace` gives with the same flags,
+and the response's `cli_command` carries them:
+
+```text
+GET /v1/trace?path=/var/log/app.log&regexp=connection%20reset&ignore_case=true
+```
+
+```json
+"cli_command": "rx trace /var/log/app.log --regexp='connection reset' --ignore-case"
+```
+
+A value is `true` or `false` (`1` and `0` also work); anything else is a
+`422`. A look-around or backreference without `pcre2=true` is a `400`,
+like any other pattern ripgrep cannot compile. These parameters arrived
+with contract version 1.3; a client can read the version from
+[`GET /health`](health.md) before relying on them.
 
 ### Required parameter validation
 

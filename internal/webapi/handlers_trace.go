@@ -41,6 +41,40 @@ type traceInput struct {
 	HookOnFile     string `query:"hook_on_file" doc:"URL to POST when file scan completes"`
 	HookOnMatch    string `query:"hook_on_match" doc:"URL to POST per match. Requires max_results."`
 	HookOnComplete string `query:"hook_on_complete" doc:"URL to POST when the whole trace completes"`
+
+	// The matching flags of trace.MatchingFlags, one boolean each, named
+	// after ripgrep's long flags. huma reads a parameter's name from a
+	// struct tag, which cannot be computed, so the five are spelled out
+	// here and matchingFlags maps them back to the table.
+	IgnoreCase   bool `query:"ignore_case" doc:"Match case-insensitively (ripgrep -i)"`
+	WordRegexp   bool `query:"word_regexp" doc:"Match only whole words (ripgrep -w)"`
+	LineRegexp   bool `query:"line_regexp" doc:"Match only whole lines (ripgrep -x)"`
+	FixedStrings bool `query:"fixed_strings" doc:"Treat every pattern as literal text (ripgrep -F)"`
+	PCRE2        bool `query:"pcre2" doc:"Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)"`
+}
+
+// matchingFlags reports which matching flags the query turned on, keyed
+// by the long name trace.MatchingFlags uses.
+func (in *traceInput) matchingFlags() map[string]bool {
+	return map[string]bool{
+		"ignore-case":   in.IgnoreCase,
+		"word-regexp":   in.WordRegexp,
+		"line-regexp":   in.LineRegexp,
+		"fixed-strings": in.FixedStrings,
+		"pcre2":         in.PCRE2,
+	}
+}
+
+// selectedFlagNames lists the long names of the flags that are on, in the
+// table's order, for the equivalent CLI command.
+func selectedFlagNames(selected map[string]bool) []string {
+	names := []string{}
+	for _, flag := range trace.MatchingFlags {
+		if selected[flag.Long] {
+			names = append(names, flag.Long)
+		}
+	}
+	return names
 }
 
 // traceOutput wraps the TraceResponse body.
@@ -165,11 +199,13 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		firer := buildHookFirer(s, hookConfig, reqID)
 
 		// Run the engine.
+		matchingFlags := in.matchingFlags()
 		start := time.Now()
 		resp, err := s.cfg.Engine.RunWithOptions(ctx, validatedPaths, in.Regexp, trace.Options{
-			MaxResults: maxResultsPtr,
-			HookFirer:  firer,
-			RequestID:  reqID,
+			MaxResults:  maxResultsPtr,
+			RgExtraArgs: trace.RipgrepArgs(matchingFlags),
+			HookFirer:   firer,
+			RequestID:   reqID,
 		})
 		if err != nil {
 			prometheus.RecordHTTPResponse(http.MethodGet, "/v1/trace", http.StatusInternalServerError)
@@ -204,9 +240,10 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		// schema-documented field must emit null rather than vanish, so
 		// &cli converts the builder's string into a pointer.
 		cli := BuildCLICommand("trace", map[string]any{
-			"path":        validatedPaths,
-			"regexp":      in.Regexp,
-			"max_results": maxResultsPtr,
+			"path":           validatedPaths,
+			"regexp":         in.Regexp,
+			"matching_flags": selectedFlagNames(matchingFlags),
+			"max_results":    maxResultsPtr,
 		})
 		resp.CLICommand = &cli
 

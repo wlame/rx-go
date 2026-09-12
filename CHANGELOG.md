@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GET /v1/trace` takes ripgrep's matching flags as five boolean query
+  parameters: `ignore_case`, `word_regexp`, `line_regexp`,
+  `fixed_strings` and `pcre2`. An answer is the one `rx trace` gives
+  with `--ignore-case` and the rest, the trace cache keys the request by
+  them, and the response's `cli_command` carries them. The CLI and the
+  API read one table of the five, so a flag cannot reach one surface and
+  not the other. Look-around and backreferences were unreachable over
+  HTTP until now. Contract version 1.3.
+
 - `RX_API_TOKEN`: an opt-in shared secret for the API. When it is set,
   every `/v1` request must send `Authorization: Bearer <token>`, compared
   in constant time; others get `401` with a `WWW-Authenticate: Bearer`
