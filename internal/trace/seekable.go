@@ -77,8 +77,10 @@ func readSeekTable(path string) (*seekable.SeekTable, error) {
 // Offsets in MatchRaw.Offset are absolute byte offsets in the
 // decompressed stream — same contract as Python.
 //
-// If maxResults is non-nil and the post-sort result set exceeds it,
-// the tail is truncated.
+// If maxResults is non-nil and the result set exceeds it, the matches
+// latest in the file are dropped. Batches run in parallel and the cap
+// cancels the ones still running, so the matches kept are the earliest
+// of those collected, not always the earliest in the file.
 func ProcessSeekable(
 	ctx context.Context,
 	path string,
@@ -229,12 +231,15 @@ func ProcessSeekable(
 	}
 	numberFramesAgainstTheFile(tbl, batchFrameLines, matches, contexts)
 
-	// Stabilize order across parallel batches (Python parity).
+	// Put the batches' results in file order. The offset is a position in
+	// the whole decompressed stream; LineNumber restarts in every frame,
+	// so ordering by it would interleave the frames and the cap below
+	// would keep line 1 of each frame rather than the first lines found.
 	sort.SliceStable(matches, func(i, j int) bool {
-		return matches[i].LineNumber < matches[j].LineNumber
+		return matches[i].Offset < matches[j].Offset
 	})
 	sort.SliceStable(contexts, func(i, j int) bool {
-		return contexts[i].LineNumber < contexts[j].LineNumber
+		return contexts[i].Offset < contexts[j].Offset
 	})
 
 	// Final hard cap — the cooperative cancel may overshoot (a batch
