@@ -234,98 +234,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own flag and now falls back to `RX_SEARCH_ROOTS` before the current
   directory.
 
-### Fixed
-
-- `GET /v1/detectors` reported every detector's `severity_range` as
-  `0..1`, which tells a client nothing it can scale an indicator by. Each
-  detector now states its band through `analyzer.SeverityRanger` — every
-  rx-go detector emits one fixed severity, so the band is a point, from
-  `0.3` for a long line to `1.0` for a secret — and a detector that
-  states none is still reported as `0..1`.
-
-- `/health` reported every `RX_*` variable by value, and it answers
-  without a token, so a secret set in the environment was public to
-  anyone who could reach the port — including `RX_API_TOKEN`, which
-  would have defeated it. A variable whose name contains `TOKEN`,
-  `SECRET`, `PASSWORD` or `API_KEY` is now reported as `<redacted>`.
-
-- `rx trace -i`, `-w`, `-x`, `-F` and `-P` gave wrong answers with exit
-  0. The flags never reached ripgrep, and the argument after one was
-  taken as its value: `rx trace error -i app.log` searched the current
-  directory, and `rx trace -w error app.log` searched for the pattern
-  `app.log`. They are now `rx trace` flags (`--ignore-case`,
-  `--word-regexp`, `--line-regexp`, `--fixed-strings`, `--pcre2`),
-  accepted anywhere on the line and passed to ripgrep on the plain,
-  gzip and seekable-zstd paths and into the trace-cache key, so each
-  answer is the one `rg` gives for the same flags.
-
-- A line ripgrep matched could be dropped afterwards. rg does not say
-  which `-e` pattern matched, so rx re-runs each pattern in Go to find
-  out, and a line no pattern reproduced was discarded: every match of
-  `-F 'foo('`, of a PCRE2 look-around under `-P`, or of a pattern in
-  Rust-only regex syntax. The re-run now honours `-i`, `-w`, `-x` and
-  `-F`, and a line Go cannot attribute is credited to the patterns it
-  could not check, never dropped.
-
-- A ripgrep config file changed rx's answers. ripgrep reads
-  `RIPGREP_CONFIG_PATH`, so a personal `--fixed-strings` or
-  `--smart-case` silently applied to every rx search. rx now runs
-  ripgrep with `--no-config`.
-
-- An error raised before a command runs — an unknown flag, a flag with
-  no value — and a `--search-root` that does not exist exited with the
-  right code and printed nothing. Commands print their own error line,
-  so the root command silences cobra's, and nothing printed the errors
-  that never reached a command. Every failure now ends with one `Error:`
-  line on stderr: `Error: Unknown flag: --frobnicate`.
-
-- `rx samples --offsets=B` past the end of the file reported the file's
-  last line, which is a number counted from the wrong place. It now
-  reports `-1` with a null sample, the same way a line number past the
-  last line already answered, and the same way rx-python answers both.
-  Line 0 and an empty file's line 1 answer that way too, on the plain,
-  gzipped and seekable-zstd paths alike.
-
-- `rx samples` prints the reason to stderr when a requested position is
-  not in the file, so a person reading the terminal does not have to know
-  the -1 convention to understand an empty answer. stdout stays
-  parseable.
-
-- `rx trace` printed plain text and ignored its own `--no-color`, while
-  rx-python colourised the same output — so the two produced different
-  text for the same search the moment a terminal was involved. It now
-  emits rx-python's sequences in rx-python's places, byte for byte, and
-  gained `--color=always|never|auto` so the choice is testable and means
-  the same thing as it does on `rx samples`.
-
-- `rx samples` on a plain file that ends with a newline reported an empty
-  extra line after the last one. The final zero-length read is the end of
-  the file, not a line; the compressed paths and rx-python have always
-  known that, so the three storage forms of one log disagreed about their
-  own last line.
-
-- `rx trace --hook-on-file`, `--hook-on-match` and `--hook-on-complete`
-  did nothing. The flags were declared, copied into the trace parameters
-  and never read again, so a script that notified CI under rx-python
-  silently notified nobody under rx-go — with no error and no log line.
-  They now build a dispatcher, fire the same payloads rx-python sends,
-  honour `RX_HOOK_ON_*_URL` and `RX_DISABLE_CUSTOM_HOOKS`, and drain the
-  queue before the process exits. `--hook-on-match` without
-  `--max-results` exits 2 with the message rx-python prints, rather than
-  offering one HTTP call per matching line.
-
-- `rx index` indexed binary files that rx-python skips, so the same
-  directory produced two different sets of indexes. It now applies the
-  same rule rx-python does — a NUL byte in the first 8 KiB means binary —
-  which also makes the summary line "below threshold or not text" true.
-- `POST /v1/index` with `analyze: true` refused a file below the size
-  threshold with 400, while `rx index --analyze` indexes it. Analysis now
-  bypasses the threshold on both surfaces.
-- `rx samples` accepts `--line-offset` and `--byte-offset`, the names
-  rx-python uses, alongside `--lines` and `--offsets`.
-
-### Changed
-
 - The five hand-rolled checkpoint lookups now call the binary search in
   the index package, which was tested but unused. One implementation
   instead of five, and O(log n) instead of a linear scan per lookup.
@@ -471,6 +379,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and resolve against the file's index when one exists — rather than
   reporting a chunk-relative number as if it were a file line. The
   human output prints `?` for a line number that stayed unknown.
+
+### Fixed
+
+- `GET /v1/detectors` reported every detector's `severity_range` as
+  `0..1`, which tells a client nothing it can scale an indicator by. Each
+  detector now states its band through `analyzer.SeverityRanger` — every
+  rx-go detector emits one fixed severity, so the band is a point, from
+  `0.3` for a long line to `1.0` for a secret — and a detector that
+  states none is still reported as `0..1`.
+
+- `/health` reported every `RX_*` variable by value, and it answers
+  without a token, so a secret set in the environment was public to
+  anyone who could reach the port — including `RX_API_TOKEN`, which
+  would have defeated it. A variable whose name contains `TOKEN`,
+  `SECRET`, `PASSWORD` or `API_KEY` is now reported as `<redacted>`.
+
+- `rx trace -i`, `-w`, `-x`, `-F` and `-P` gave wrong answers with exit
+  0. The flags never reached ripgrep, and the argument after one was
+  taken as its value: `rx trace error -i app.log` searched the current
+  directory, and `rx trace -w error app.log` searched for the pattern
+  `app.log`. They are now `rx trace` flags (`--ignore-case`,
+  `--word-regexp`, `--line-regexp`, `--fixed-strings`, `--pcre2`),
+  accepted anywhere on the line and passed to ripgrep on the plain,
+  gzip and seekable-zstd paths and into the trace-cache key, so each
+  answer is the one `rg` gives for the same flags.
+
+- A line ripgrep matched could be dropped afterwards. rg does not say
+  which `-e` pattern matched, so rx re-runs each pattern in Go to find
+  out, and a line no pattern reproduced was discarded: every match of
+  `-F 'foo('`, of a PCRE2 look-around under `-P`, or of a pattern in
+  Rust-only regex syntax. The re-run now honours `-i`, `-w`, `-x` and
+  `-F`, and a line Go cannot attribute is credited to the patterns it
+  could not check, never dropped.
+
+- A ripgrep config file changed rx's answers. ripgrep reads
+  `RIPGREP_CONFIG_PATH`, so a personal `--fixed-strings` or
+  `--smart-case` silently applied to every rx search. rx now runs
+  ripgrep with `--no-config`.
+
+- An error raised before a command runs — an unknown flag, a flag with
+  no value — and a `--search-root` that does not exist exited with the
+  right code and printed nothing. Commands print their own error line,
+  so the root command silences cobra's, and nothing printed the errors
+  that never reached a command. Every failure now ends with one `Error:`
+  line on stderr: `Error: Unknown flag: --frobnicate`.
+
+- `rx samples --offsets=B` past the end of the file reported the file's
+  last line, which is a number counted from the wrong place. It now
+  reports `-1` with a null sample, the same way a line number past the
+  last line already answered, and the same way rx-python answers both.
+  Line 0 and an empty file's line 1 answer that way too, on the plain,
+  gzipped and seekable-zstd paths alike.
+
+- `rx samples` prints the reason to stderr when a requested position is
+  not in the file, so a person reading the terminal does not have to know
+  the -1 convention to understand an empty answer. stdout stays
+  parseable.
+
+- `rx trace` printed plain text and ignored its own `--no-color`, while
+  rx-python colourised the same output — so the two produced different
+  text for the same search the moment a terminal was involved. It now
+  emits rx-python's sequences in rx-python's places, byte for byte, and
+  gained `--color=always|never|auto` so the choice is testable and means
+  the same thing as it does on `rx samples`.
+
+- `rx samples` on a plain file that ends with a newline reported an empty
+  extra line after the last one. The final zero-length read is the end of
+  the file, not a line; the compressed paths and rx-python have always
+  known that, so the three storage forms of one log disagreed about their
+  own last line.
+
+- `rx trace --hook-on-file`, `--hook-on-match` and `--hook-on-complete`
+  did nothing. The flags were declared, copied into the trace parameters
+  and never read again, so a script that notified CI under rx-python
+  silently notified nobody under rx-go — with no error and no log line.
+  They now build a dispatcher, fire the same payloads rx-python sends,
+  honour `RX_HOOK_ON_*_URL` and `RX_DISABLE_CUSTOM_HOOKS`, and drain the
+  queue before the process exits. `--hook-on-match` without
+  `--max-results` exits 2 with the message rx-python prints, rather than
+  offering one HTTP call per matching line.
+
+- `rx index` indexed binary files that rx-python skips, so the same
+  directory produced two different sets of indexes. It now applies the
+  same rule rx-python does — a NUL byte in the first 8 KiB means binary —
+  which also makes the summary line "below threshold or not text" true.
+- `POST /v1/index` with `analyze: true` refused a file below the size
+  threshold with 400, while `rx index --analyze` indexes it. Analysis now
+  bypasses the threshold on both surfaces.
+- `rx samples` accepts `--line-offset` and `--byte-offset`, the names
+  rx-python uses, alongside `--lines` and `--offsets`.
+
 
 ## [0.2.0] - 2026-09-03
 
