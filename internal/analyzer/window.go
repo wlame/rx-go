@@ -31,7 +31,8 @@ package analyzer
 
 // maxWindowLines caps the Window's per-instance backing array so the
 // struct size is bounded regardless of user configuration. The config
-// resolver (Task 2) clamps the user-visible window size to this value.
+// resolver (ResolveWindowLines) clamps the user-visible window size to
+// this value.
 const maxWindowLines = 2048
 
 // maxSlotBufCap caps the retained capacity of a slot's byte buffer. When

@@ -12,7 +12,7 @@ import (
 )
 
 // writeSeekableZstdFile encodes content as a seekable-zstd file via
-// M2's encoder and returns the path. Test helper — lets the trace
+// the internal/seekable encoder and returns the path. Test helper — lets the trace
 // layer exercise its seekable path without external `t2sz` binary.
 func writeSeekableZstdFile(t *testing.T, content []byte, frameSize int) string {
 	t.Helper()

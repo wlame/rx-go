@@ -7,7 +7,7 @@ import (
 
 // GetCacheBase returns the base directory for rx cache files.
 //
-// Resolution order (Decision 5.11):
+// Resolution order:
 //  1. $RX_CACHE_DIR/rx         (explicit override; Python appends "rx" too)
 //  2. $XDG_CACHE_HOME/rx       (freedesktop spec default)
 //  3. $HOME/.cache/rx          (ultimate fallback)
@@ -49,8 +49,7 @@ func GetFrontendCacheDir() string {
 	return filepath.Join(GetCacheBase(), "frontend")
 }
 
-// GetAnalyzerCacheDir returns the per-analyzer cache directory scheme
-// from Decision 5.3:
+// GetAnalyzerCacheDir returns the per-analyzer cache directory:
 //
 //	{base}/analyzers/<name>/v<version>/
 //

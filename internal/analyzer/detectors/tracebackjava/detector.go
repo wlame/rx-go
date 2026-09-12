@@ -69,15 +69,15 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 )
 
-// Metadata constants — kept as a block at the top so /v1/detectors
-// output is trivially auditable against the plan.
+// Metadata constants — kept as a block at the top so the values
+// /v1/detectors reports are easy to find.
 const (
 	detectorName        = "traceback-java"
 	detectorVersion     = "0.1.0"
 	detectorCategory    = "log-traceback"
 	detectorDescription = "Java stack traces (Exception in thread ... / Caused by: / Suppressed:)"
 
-	// severity is the plan-mandated value for this detector.
+	// severity is the fixed severity of every anomaly this detector emits.
 	severity = 0.7
 )
 
@@ -114,8 +114,8 @@ var continuationAtRe = regexp.MustCompile(`^\s+at [\w.$<>]+\(.*\)$`)
 var continuationMoreRe = regexp.MustCompile(`^\s+\.\.\. \d+ more$`)
 
 // continuationSuppressedRe matches a `Suppressed: ...` line. Java
-// indents Suppressed with a tab by default but the spec allows any
-// leading whitespace here so unusual formatters still match.
+// indents Suppressed with a tab by default but this pattern accepts any
+// leading whitespace so unusual formatters still match.
 var continuationSuppressedRe = regexp.MustCompile(`^\s*Suppressed: `)
 
 // continuationCausedByPrefix is the exact prefix of a `Caused by: ...`

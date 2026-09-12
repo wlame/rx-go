@@ -1,7 +1,7 @@
 package analyzer
 
 // This file implements the per-worker coordinator that drives the
-// streaming scan. The index builder (Task 5) creates one Coordinator
+// streaming scan. The index builder creates one Coordinator
 // per chunk worker and calls ProcessLine for every line, then Finalize
 // exactly once. The coordinator owns one Window and fans each line out
 // to every registered LineDetector.
@@ -22,8 +22,8 @@ package analyzer
 //     detector reads them via w.Current() — the work isn't duplicated.
 //
 //   - Finalize returns a single flat slice of Anomaly. The caller
-//     (index builder, Task 5) collects one slice per worker and then
-//     runs the dedup pass (Task 4) across them.
+//     (the index builder) collects one slice per worker and then
+//     runs the dedup pass (Deduplicate) across them.
 //
 // Thread safety: a Coordinator and its Window are NOT safe for
 // concurrent use. One Coordinator per worker; workers run in parallel
@@ -39,7 +39,7 @@ package analyzer
 type Coordinator struct {
 	// detectors is the ordered list of detectors receiving OnLine
 	// callbacks. Stored by interface value because each detector is an
-	// instance created for this worker (see Task 5 wiring notes).
+	// instance created for this worker.
 	detectors []LineDetector
 
 	// window is this worker's sliding view of recent lines. Passed by
@@ -108,7 +108,7 @@ func (c *Coordinator) ProcessLine(num, start, end int64, line []byte) {
 
 // Finalize asks every detector for its anomaly list and returns the
 // combined slice. The caller typically runs one Coordinator per
-// worker and then deduplicates across workers' results (Task 4).
+// worker and then deduplicates across workers' results (Deduplicate).
 //
 // flush carries file-global stats (total lines, median / P99 line
 // length) computed by the index builder. It is passed through to each
@@ -118,7 +118,7 @@ func (c *Coordinator) ProcessLine(num, start, end int64, line []byte) {
 // The coordinator stamps each anomaly's DetectorName with its producing
 // detector's Name(). Rationale:
 //
-//   - Deduplicate (Task 4) keys on (DetectorName, start_offset, end_offset)
+//   - Deduplicate keys on (DetectorName, start_offset, end_offset)
 //     so two different detectors that both emit Category="log-pattern"
 //     do not collapse across workers.
 //

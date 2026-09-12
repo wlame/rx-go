@@ -21,7 +21,7 @@ import (
 )
 
 // ============================================================================
-// Hook firer interface (stub for M3; real impl lands in M4)
+// Hook firer interface
 // ============================================================================
 
 // FileInfo is the bundle of per-file scan metadata passed to HookFirer.
@@ -46,12 +46,12 @@ type MatchInfo struct {
 // as matches/files complete. It's intentionally abstracted so the
 // trace package can be tested without any HTTP stack in scope.
 //
-// Concrete implementations live in internal/hooks (M4). The default
-// for M3 is NoopHookFirer, which is also what CLI `rx trace` uses by
-// default (no RX_HOOK_* env vars set).
+// The webhook implementation is hooks.Dispatcher in internal/hooks.
+// The default is NoopHookFirer, which is also what CLI `rx trace` uses
+// when no hook is configured (no RX_HOOK_* env vars set).
 //
-// Decision 6.9.2 binds the implementation style: fire-and-forget,
-// single POST per event, 3 s timeout, no retries. The engine does NOT
+// Implementations are fire-and-forget: a single POST per event, a 3 s
+// timeout and no retries. The engine does NOT
 // block on Hook calls; implementations must enqueue work on a channel
 // or spawn a goroutine before returning.
 type HookFirer interface {
@@ -86,10 +86,9 @@ func (NoopHookFirer) OnMatch(context.Context, string, MatchInfo) {}
 // computes this by adding task.Offset to rg's reported chunk-local
 // absolute_offset, then filters out matches that lie outside the
 // task's designated range to avoid duplicate hits at chunk boundaries.
-// The filter pattern is borrowed from
-// another-rx-go/internal/engine/worker.go:109-118 — a single
-// per-match range-containment check at the accept point, no
-// cross-worker coordination and no post-merge dedup pass.
+// The filter is a single per-match range-containment check at the
+// accept point, with no cross-worker coordination and no post-merge
+// dedup pass.
 type MatchRaw struct {
 	Offset     int64
 	LineNumber int
@@ -145,13 +144,12 @@ type ChunkResult struct {
 }
 
 // ProcessChunk runs `rg --json` over a single chunk of a file, feeding
-// the chunk bytes in via stdin using os.File.ReadAt (Decision 5.1:
-// native chunking, no `dd` subprocess). It parses the rg event stream,
+// the chunk bytes in via stdin using os.File.ReadAt (native chunking,
+// no `dd` subprocess). It parses the rg event stream,
 // filters out matches that don't belong to this chunk's range, and
 // returns the rich MatchRaw + ContextRaw slices.
 //
-// Deduplication rule (matches Python verbatim, Decision 6.9.5;
-// borrowed from another-rx-go/internal/engine/worker.go:116):
+// Deduplication rule (the same rule rx-python applies):
 //
 //	a match at absolute offset O is KEPT iff
 //	task.Offset <= O < task.Offset + task.Count.
@@ -327,9 +325,8 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 				//
 				// This invariant is local to each worker — a duplicate
 				// match would be a chunker bug, not something this
-				// filter needs to patch at merge time. Borrowed from
-				// another-rx-go/internal/engine/worker.go:116; matches
-				// Python decision 6.9.5 verbatim.
+				// filter needs to patch at merge time. rx-python
+				// applies the same rule.
 				if absOff < task.Offset || absOff >= task.EndOffset() {
 					return nil
 				}
@@ -565,7 +562,7 @@ func ProcessAllChunks(
 
 // workerLimit returns the effective concurrency cap.
 //
-// Precedence (matches stage-6 plan §6.5.10):
+// Precedence:
 //  1. RX_WORKERS env var (new Go addition; no Python equivalent).
 //  2. RX_MAX_SUBPROCESSES env var (Python parity).
 //  3. runtime.NumCPU().

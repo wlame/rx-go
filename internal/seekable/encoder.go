@@ -80,7 +80,7 @@ type chunk struct {
 // (except possibly the final frame, which contains whatever trailing
 // bytes have no terminator).
 //
-// Concurrency model (decision 5.4, Workers > 1):
+// Concurrency model (Workers > 1):
 //
 //	reader goroutine        workers              writer goroutine
 //	  |                       |                    |
@@ -239,9 +239,8 @@ func (e *Encoder) encodeParallel(ctx context.Context, src io.ReaderAt, srcSize i
 	// For very large files this holds srcSize bytes in memory — matching
 	// Python's behavior — but keeps the encoder cache-friendly.
 	//
-	// A future optimization would be to stream chunks through a bounded
-	// channel and rely on write-order reassembly, but that's an incremental
-	// improvement (decision 5.4 doesn't require it at v1).
+	// Streaming chunks through a bounded channel with write-order
+	// reassembly would cap that memory; this encoder does not do it.
 	chunks, err := splitIntoChunks(src, srcSize, int64(e.cfg.FrameSize))
 	if err != nil {
 		return nil, fmt.Errorf("split chunks: %w", err)

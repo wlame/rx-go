@@ -178,7 +178,7 @@ func TestTree_ListDirectory(t *testing.T) {
 }
 
 // TestTree_PathOutsideRoots verifies sandbox rejection emits the
-// Go-idiomatic structured error (decision 6.9.3).
+// Go-idiomatic structured error.
 func TestTree_PathOutsideRoots(t *testing.T) {
 	root := t.TempDir()
 	if err := paths.SetSearchRoots([]string{root}); err != nil {

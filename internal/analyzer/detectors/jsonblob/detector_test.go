@@ -407,7 +407,7 @@ func TestIsEscaped(t *testing.T) {
 	}
 }
 
-// TestDetector_Metadata nails the plan-mandated metadata. If a constant
+// TestDetector_Metadata pins the detector's metadata. If a constant
 // drifts this test fails loudly so the change is deliberate.
 func TestDetector_Metadata(t *testing.T) {
 	d := New()

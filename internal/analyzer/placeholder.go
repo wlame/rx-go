@@ -4,8 +4,8 @@ import "context"
 
 // NoopAnalyzer is a concrete FileAnalyzer used ONLY by contract tests.
 // It's not auto-registered; test code imports it and calls Register
-// explicitly to verify the registry machinery. Production ships with
-// zero analyzers — see user-instructions.md.
+// explicitly to verify the registry machinery. Production code never
+// registers it.
 type NoopAnalyzer struct {
 	NameValue    string
 	VersionValue string

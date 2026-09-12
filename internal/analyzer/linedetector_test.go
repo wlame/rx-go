@@ -88,7 +88,7 @@ func TestFlushContext_FieldsAreIndependent(t *testing.T) {
 	// Lightweight smoke test that FlushContext is a plain value type:
 	// constructing it and reading the fields yields the values set.
 	// Future changes that, say, use pointers or computed getters would
-	// need to revisit the zero-allocation plumbing in Task 5.
+	// need to revisit the zero-allocation plumbing in the index builder.
 	fc := FlushContext{
 		TotalLines:       1000,
 		MedianLineLength: 80,

@@ -483,8 +483,9 @@ func TestSamplesCommand_ByteOffsetMode_ResolvesToLineContainingByte(t *testing.T
 	}
 }
 
-// TestSamplesCommand_MultiRangeSpec // user design: a single --lines spec can contain multiple ranges
-// (comma-separated), each with its own sample slice.
+// TestSamplesCommand_MultiRangeSpec checks that a single --lines spec can
+// contain multiple ranges (comma-separated), each with its own sample
+// slice.
 func TestSamplesCommand_MultiRangeSpec(t *testing.T) {
 	root := t.TempDir()
 	f := filepath.Join(root, "a.log")

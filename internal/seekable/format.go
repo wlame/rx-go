@@ -1,7 +1,6 @@
 // Package seekable implements the seekable-zstd binary format used by
-// rx-go for large compressed log files. Per decision 5.4 and 5.14,
-// rx-go ships its own Go-native encoder/decoder and drops the t2sz
-// external dependency.
+// rx-go for large compressed log files. rx-go ships its own Go-native
+// encoder/decoder, so no external t2sz binary is needed.
 //
 // Format overview:
 //

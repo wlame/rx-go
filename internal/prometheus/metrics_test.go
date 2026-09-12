@@ -56,7 +56,7 @@ func TestRegistry_ContainsCoreMetrics(t *testing.T) {
 }
 
 func TestRegistry_DoesNotContainComplexityMetrics(t *testing.T) {
-	// Regex complexity is excluded per user-instructions — double check
+	// Regex complexity is not implemented in rx-go — double check
 	// none of the dropped metric names leaked through.
 	forbidden := []string{
 		"rx_complexity_requests_total",

@@ -16,9 +16,9 @@ import (
 //
 //	go test -bench=BenchmarkChunkerGetOffsets ./internal/trace/
 //
-// The result is compared across Go versions / chunking refactors in
-// BENCHMARKS.md. Numbers from a clean run are the reference; ±20% drift
-// should be investigated before shipping.
+// Compare a run against one from the previous release when the chunker
+// or the Go version changes; a drift of more than about 20% is worth
+// investigating before shipping. `just bench` runs every benchmark.
 func BenchmarkChunkerGetOffsets(b *testing.B) {
 	// Build a ~10 MB fixture. Not using testparity helpers to keep the
 	// benchmark self-contained.

@@ -8,8 +8,8 @@
 //     and the Go runtime panics on duplicate metric registration at the
 //     default registry, so an isolated registry is strictly safer.
 //   - The set of metrics mirrors rx-python/src/rx/prometheus.py MINUS
-//     the rx_complexity_* family (dropped per user-instructions since
-//     the regex-complexity feature is excluded from the Go port).
+//     the rx_complexity_* family, because the regex-complexity feature
+//     is not implemented in rx-go.
 //   - Helpers take basic types (strings, ints, time.Durations) so
 //     callers don't import this package's internals. Any non-existent
 //     label value is allowed; promauto handles it.

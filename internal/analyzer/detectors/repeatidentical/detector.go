@@ -58,8 +58,9 @@ const (
 	// would produce far more noise than signal.
 	minRunLength = 5
 
-	// severity is the plan-mandated value for this detector. Stored here
-	// (not inline at the emit site) so it's obvious at a glance.
+	// severity is the fixed severity of every anomaly this detector
+	// emits. Stored here (not inline at the emit site) so it's obvious
+	// at a glance.
 	severity = 0.4
 )
 

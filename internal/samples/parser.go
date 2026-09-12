@@ -21,9 +21,8 @@ type OffsetOrRange struct {
 }
 
 // ParseCSV parses a comma-separated spec into a slice of OffsetOrRange
-// values. Empty or whitespace-only entries are rejected. Multi-range
-// support per user design: a single request can
-// contain any mix of singles and ranges.
+// values. Empty or whitespace-only entries are rejected. A single
+// request can contain any mix of singles and ranges.
 //
 // Syntax:
 //

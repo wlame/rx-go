@@ -223,8 +223,8 @@ type traceParams struct {
 //  1. The first positional is always the PATTERN unless --regexp was
 //     already used (in which case it's the first PATH).
 //  2. All remaining positionals are PATHs.
-//  3. If no PATH is given and stdin is a pipe → read from stdin (not
-//     implemented in M6; we emit a helpful error).
+//  3. If no PATH is given and stdin is a pipe → read from stdin, which
+//     is spooled to a temporary file (see spoolStdinFor).
 //  4. If no PATH is given and stdin is a TTY → default to ".".
 func runTrace(out io.Writer, p traceParams) error {
 	patterns, filePaths, err := resolveTracePositionals(p)

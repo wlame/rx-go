@@ -68,12 +68,11 @@ func readSeekTable(path string) (*seekable.SeekTable, error) {
 // file. Each batch of frames is decompressed and piped through rg
 // --json in its own goroutine, bounded by workerLimit().
 //
-// Line numbers in the returned MatchRaw are CURRENTLY batch-local
-// (1-indexed against the concatenated batch, not the full file). That
-// matches Python's behavior when the unified index for the file
-// hasn't been built yet. Once M3's unified-index builder lands, the
-// engine post-processes these into file-absolute line numbers using
-// the frame first-line table.
+// MatchRaw.LineNumber is frame-local (1-indexed within the match's
+// own frame). numberFramesAgainstTheFile then fills AbsoluteLine with
+// the file-absolute number, from the per-frame newline counts gathered
+// during the scan; a match whose earlier frames were not all read keeps
+// AbsoluteLine 0 (unknown).
 //
 // Offsets in MatchRaw.Offset are absolute byte offsets in the
 // decompressed stream — same contract as Python.
@@ -253,7 +252,7 @@ func ProcessSeekable(
 // and package-private — the only callers are the streaming pipe
 // writer and the decompressFrameForBatch test seam.
 //
-// Go note: the pooled decoder (from compression.AcquireDecoder, Task 1)
+// Go note: the pooled decoder (from compression.AcquireDecoder)
 // holds ~2 MB of zstd decoding tables. We acquire it once per batch
 // and reuse it for every frame in the batch via DecodeAll (stateless).
 type frameDecoder struct {
@@ -298,14 +297,12 @@ var decompressFrameForBatch = func(dec *frameDecoder, frame seekable.FrameInfo) 
 // remapped from pipe-cumulative to absolute decompressed file offsets
 // via binary search. Both remaps use the pre-computed locs slice.
 //
-// Uses compression.AcquireDecoder / ReleaseDecoder (Task 1) to avoid
+// Uses compression.AcquireDecoder / ReleaseDecoder to avoid
 // the ~2 MB per-frame decoding-table allocation — one decoder per
 // batch is reused across all frames in the batch via stateless
 // DecodeAll calls.
 //
 // Parity: rx-python/src/rx/trace_compressed.py::process_seekable_zstd_frame_batch
-// and another-rx-go/internal/engine/compressed.go:315-395 (the
-// reference io.Pipe implementation we ported from).
 
 // numberFramesAgainstTheFile turns frame-relative line numbers into the
 // file's own, in place.
@@ -491,7 +488,8 @@ func scanFrameBatch(
 		defer func() { _ = pw.Close() }()
 
 		// Acquire one decoder per batch; release at exit. Reusing it
-		// across all frames in the batch is the main win of Task 1.
+		// across all frames in the batch avoids a ~2 MB allocation per
+		// frame.
 		zd := compression.AcquireDecoder()
 		defer compression.ReleaseDecoder(zd)
 

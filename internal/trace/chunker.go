@@ -58,7 +58,7 @@ func (t FileTask) EndOffset() int64 { return t.Offset + t.Count }
 //
 // The Go version does the same, except it uses os.File.ReadAt instead
 // of seek+read so there's no shared file cursor — this is the native
-// chunking path (Decision 5.1).
+// chunking path, with no `dd` subprocess.
 func findNextNewline(f *os.File, startOffset int64, maxReadBytes int) (int64, error) {
 	if maxReadBytes <= 0 {
 		// Match Python's default of 256 KB.

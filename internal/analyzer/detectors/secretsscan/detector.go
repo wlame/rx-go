@@ -31,8 +31,8 @@
 //     produce multiple anomalies (e.g. a JWT and a Slack token concatenated
 //     in the same log record).
 //
-//   - Severity 1.0 (loud): per user guidance and plan §Severity
-//     Assignments, secrets get the loudest navigation hint. They are
+//   - Severity 1.0 (loud): secrets get the loudest navigation hint
+//     of any detector. They are
 //     almost always worth a human look — false positives are cheap to
 //     dismiss but a missed production secret can be very expensive.
 //
@@ -72,16 +72,16 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 )
 
-// Metadata constants — kept together at the top so /v1/detectors output
-// is trivially auditable against the plan.
+// Metadata constants — kept together at the top so the values
+// /v1/detectors reports are easy to find.
 const (
 	detectorName        = "secrets-scan"
 	detectorVersion     = "0.1.0"
 	detectorCategory    = "secrets"
 	detectorDescription = "Credential-shaped strings (AWS key, GitHub PAT, Slack token, JWT, PEM key)"
 
-	// severity is the plan-mandated value for this detector. Secrets get
-	// the loudest navigation hint because false positives are cheap and
+	// severity is the fixed severity of every anomaly this detector
+	// emits. Secrets get the loudest navigation hint because false positives are cheap and
 	// missed ones are expensive.
 	severity = 1.0
 )

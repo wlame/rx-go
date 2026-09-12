@@ -121,9 +121,9 @@ type UnifiedFileIndex struct {
 
 // AnomalyRangeResult is a single anomaly entry inside UnifiedFileIndex.
 //
-// The Go port ships without built-in analyzers (per user instructions),
-// so this type will almost always be empty at v1. It's defined here so
-// cached files written by Python deserialise cleanly.
+// Entries come from the analyzer detectors when an index is built with
+// analysis on. The same type lets cached files written by Python
+// deserialize cleanly.
 type AnomalyRangeResult struct {
 	StartLine   int64   `json:"start_line"`
 	EndLine     int64   `json:"end_line"`

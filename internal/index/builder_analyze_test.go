@@ -1,9 +1,9 @@
 package index
 
-// Integration tests for the analyzer coordinator wired into index.Build
-// (plan task 5). These sit alongside builder_test.go so they share the
-// writeTempFile helper; a separate file keeps the analyzer-specific
-// wiring obviously attributable to this task.
+// Integration tests for the analyzer coordinator wired into index.Build.
+// These sit alongside builder_test.go so they share the writeTempFile
+// helper; a separate file keeps the analyzer-specific wiring tests
+// together.
 //
 // What's covered here:
 //
@@ -35,9 +35,8 @@ import (
 // "cue" byte-slice. That's enough to verify the coordinator dispatches
 // every line AND that detector-emitted anomalies reach the index.
 //
-// Kept in _test.go (not shared with the detectors package) because the
-// detector catalog is added task-by-task later in the plan — we don't
-// want premature coupling here.
+// Kept in _test.go (not shared with the detectors package) so these
+// tests do not depend on the real detector catalog.
 type cueDetector struct {
 	name    string
 	cue     string
@@ -236,9 +235,9 @@ func TestBuild_Analyze_NoDetectorsIsEmpty(t *testing.T) {
 
 // TestBuild_Analyze_FlushContextMatchesIndexStats verifies the coordinator
 // receives a FlushContext whose fields match the index's own computed
-// line-length statistics. This is the wiring contract long-line (Task 8)
-// will depend on: it reads Median and P99 from the FlushContext and must
-// see the same values the builder publishes.
+// line-length statistics. The long-line detector depends on this
+// wiring: it reads Median and P99 from the FlushContext and must see
+// the same values the builder publishes.
 func TestBuild_Analyze_FlushContextMatchesIndexStats(t *testing.T) {
 	// Build a file with a varied line-length distribution so the
 	// percentile fields are meaningful. Lines are 10..109 bytes of
@@ -285,10 +284,10 @@ func TestBuild_Analyze_FlushContextMatchesIndexStats(t *testing.T) {
 // by using a detector that emits an extra duplicate of each line's
 // anomaly — the duplicate must collapse to one in the final index.
 //
-// This is the stand-in for the plan's "anomalies straddling chunk
-// boundaries are detected exactly once" assertion: today the builder is
-// single-worker so there are no chunk boundaries, but the dedup path
-// MUST still run so the future chunk-parallel build stays correct.
+// This stands in for an "anomalies straddling chunk boundaries are
+// detected exactly once" assertion: the builder is single-worker so
+// there are no chunk boundaries, but the dedup path MUST still run so
+// a chunk-parallel build would stay correct.
 func TestBuild_Analyze_DedupCollapsesDuplicates(t *testing.T) {
 	p := writeTempFile(t, "ok\nERROR: A\nok\n")
 

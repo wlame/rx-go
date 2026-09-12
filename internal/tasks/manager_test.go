@@ -125,7 +125,7 @@ func TestManager_ConcurrentCreate_SamePathAtomic(t *testing.T) {
 // TestManager_Get_ReturnsClone — the map[string]any inside Result
 // should be copyable without the caller being able to mutate the
 // original task's result. We relax to "fields don't leak pointer"
-// because shallow copy is enough per the spec.
+// because Get promises only a shallow copy.
 func TestManager_Get_ReturnsShallowClone(t *testing.T) {
 	m := New(Config{Logger: silentLogger()})
 	t1, _ := m.Create("/a", "index")

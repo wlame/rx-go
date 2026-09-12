@@ -58,8 +58,7 @@ var appVersion = "dev"
 //
 // A []string + slices.Contains is used instead of map[string]bool
 // because the list is tiny (~8 entries) and the slice form reads more
-// naturally as "the registered commands". Pattern borrowed from
-// another-rx-go/internal/cli/root.go.
+// naturally as "the registered commands".
 var knownSubcommands = []string{
 	"trace",
 	"samples",
@@ -258,8 +257,6 @@ func preprocessArgs(args []string) []string {
 //
 // Case 4 handles leading-flag forms like `rx --json "error" file.log` by
 // walking forward past the leading flags to find the first positional.
-//
-// Borrowed from another-rx-go/internal/cli/root.go:96-139.
 func shouldRouteToTrace(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -289,9 +286,6 @@ func shouldRouteToTrace(args []string) bool {
 	// All args are flags with no positional (e.g. bare `rx --json`). We
 	// route to trace so cobra surfaces a consistent "missing pattern"
 	// usage error from the trace command rather than a root-level error.
-	// This preserves the pre-refactor rx-go behavior; the reference
-	// another-rx-go returns false here, but we keep ours to avoid a
-	// user-facing regression.
 	return true
 }
 

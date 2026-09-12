@@ -17,7 +17,7 @@ type TraceCacheMatch struct {
 
 // TraceCacheData is the full on-disk schema for a trace-cache file.
 //
-// Filename scheme (per spec §5.2):
+// Filename scheme:
 //
 //	~/.cache/rx/trace_cache/<patterns_hash>/<path_hash>_<filename>.json
 //

@@ -339,7 +339,7 @@ func TestComputeThreshold(t *testing.T) {
 	}
 }
 
-// TestDetector_Metadata nails the plan-mandated metadata. If someone
+// TestDetector_Metadata pins the detector's metadata. If someone
 // tweaks a constant here, this test fails loudly so the change is
 // deliberate.
 func TestDetector_Metadata(t *testing.T) {

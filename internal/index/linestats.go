@@ -1,8 +1,7 @@
 // Constant-memory line-length statistics.
 //
-// This file replaces the previous O(N) slice-based accumulator with two
-// online algorithms that together keep memory use flat regardless of input
-// size:
+// This file uses two online algorithms that together keep memory use flat
+// regardless of input size:
 //
 //  1. Welford's online algorithm for mean and sample variance — exact to
 //     floating-point precision, numerically stable (no catastrophic
@@ -13,11 +12,9 @@
 //     regardless of total observation count.
 //
 // Memory footprint is O(reservoirCap) = ~80 KB for the default 10 000-sample
-// reservoir. Previously the builder accumulated every non-empty line's length
-// into a []int64, which on a 1.3 GB / 15 M-line file ballooned to ~120 MB
-// just for the slice header-plus-backing-array.
-//
-// Borrowed from another-rx-go/internal/index/builder.go:23-120.
+// reservoir. Accumulating every non-empty line's length into a []int64
+// instead would take ~120 MB on a 1.3 GB / 15 M-line file just for the
+// slice header-plus-backing-array.
 package index
 
 import (

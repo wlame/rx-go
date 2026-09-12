@@ -162,7 +162,7 @@ func TestCoordinator_WindowLenTracksPushes(t *testing.T) {
 func TestCoordinator_FinalizeAggregatesAnomalies(t *testing.T) {
 	// Coordinator.Finalize concatenates each detector's anomaly slice in
 	// detector order and STAMPS DetectorName with the producing detector's
-	// Name() so Deduplicate (Task 4) can key on it. It does NOT touch
+	// Name() so Deduplicate can key on it. It does NOT touch
 	// Category — that's the semantic bucket and survives verbatim.
 	d1 := newTrackingDetector("t1")
 	d1.emit = []Anomaly{

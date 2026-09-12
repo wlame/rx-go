@@ -12,8 +12,7 @@ import (
 
 // TestWorker_RangeContainmentDedup asserts the correctness invariant
 // provided by the range-containment dedup filter at the match-accept
-// point in ProcessChunk (worker.go). Borrowed-by-design from
-// another-rx-go/internal/engine/worker.go:109-118 — the rule is:
+// point in ProcessChunk (worker.go). The rule is:
 //
 //	keep iff chunk.Offset <= absoluteOffset < chunk.Offset + chunk.Count
 //
@@ -115,8 +114,8 @@ func TestWorker_RangeContainmentDedup(t *testing.T) {
 	// ------------------------------------------------------------------
 	t.Run("OverlappingChunksExposeDependency", func(t *testing.T) {
 		// Confirms the range-containment filter relies on the chunker
-		// producing a PARTITION. This is the same documented invariant
-		// in both rx-go (worker.go) and another-rx-go (engine/worker.go).
+		// producing a PARTITION, the invariant documented on
+		// ProcessChunk in worker.go.
 		task0 := FileTask{TaskID: 0, FilePath: path, Offset: 0, Count: 7000}
 		task1 := FileTask{TaskID: 1, FilePath: path, Offset: 5000, Count: 7000}
 

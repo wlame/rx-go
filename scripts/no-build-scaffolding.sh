@@ -10,6 +10,16 @@
 set -euo pipefail
 
 pattern='Stage [0-9]|Round [0-9]|R[0-9]-[A-Z][0-9]|Reviewer [0-9]|Finding [0-9]|user decision [0-9.]'
+# Design documents, task lists and a separate prototype the product does
+# not contain: "Decision 5.1", "spec §7", "(Task 4)", "Task 6:",
+# "plan-mandated", "another-rx-go/internal/…", "Post-Stage-8", "per
+# user-instructions", ".go-rewriter/stage-5-decisions.md".
+pattern+='|another-rx-go|[Dd]ecisions? [0-9]+\.[0-9]|plan-mandated|\(Task [0-9]+\)|Task [0-9]+:|§[0-9]'
+pattern+='|Stage-[0-9]|user[- ]instructions|user design|\.go-rewriter'
+# Milestones: "stub for M3", "lands in M4", "At M2", "M3's builder".
+# Welford's "M2" (the running sum of squared deviations in
+# internal/index/linestats.go) is never preceded by these words.
+pattern+="|(at|At|in|for|until|of) M[0-9]\\b|M[0-9]'s"
 
 if hits=$(grep -rnE "$pattern" --include='*.go' internal/ cmd/ pkg/); then
     echo "build-process citations found in comments:" >&2
