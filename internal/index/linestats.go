@@ -191,11 +191,6 @@ func (a *lineStatsAccumulator) finish() lineStatsSnapshot {
 // _percentile helper in rx-python/src/rx/unified_index.py, so JSON output
 // is interchangeable between the Python and Go builders when both see the
 // same data.
-//
-// Naming note: this is an internal helper distinct from the package-level
-// percentile() in builder.go (which operates on []int64 — the legacy
-// slice-of-lengths path). Once all callers route through the accumulator
-// the legacy helper can be deleted.
 func reservoirPercentile(sorted []int, p float64) float64 {
 	if len(sorted) == 0 {
 		return 0
