@@ -68,6 +68,7 @@ func TestDispatcher_OnComplete_BuildsCorrectPayload(t *testing.T) {
 	d.ForRequest(HookConfig{OnCompleteURL: srv.URL}, "req-complete").OnComplete(&rxtypes.TraceResponse{
 		Path:         []string{"/var/log/a.log", "/var/log/b.log"},
 		Patterns:     map[string]string{"p1": "foo", "p2": "bar"},
+		Files:        map[string]string{"f1": "/var/log/a.log", "f2": "/var/log/b.log"},
 		Matches:      []rxtypes.Match{{}, {}, {}},
 		ScannedFiles: []string{"a", "b"},
 		SkippedFiles: []string{"c"},
@@ -142,5 +143,32 @@ func TestJoinMap_PatternIDOrder(t *testing.T) {
 	// Empty map.
 	if got := joinMap(nil, ","); got != "" {
 		t.Errorf("empty map: got %q", got)
+	}
+}
+
+// total_files_scanned counts the files the trace searched — the
+// response's files map, as rx-python's len(result.files) does. A trace
+// of named files leaves scanned_files empty (that list is filled only
+// when a directory was walked), and the count must not drop to 0.
+func TestDispatcher_OnComplete_CountsFilesOfAFileTrace(t *testing.T) {
+	seen := make(chan url.Values, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.URL.Query()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := NewDispatcher(DispatcherConfig{Workers: 1, Logger: newSilentLogger()})
+	d.ForRequest(HookConfig{OnCompleteURL: srv.URL}, "req-files").OnComplete(&rxtypes.TraceResponse{
+		Path:         []string{"/var/log/a.log", "/var/log/b.log"},
+		Files:        map[string]string{"f1": "/var/log/a.log", "f2": "/var/log/b.log"},
+		ScannedFiles: []string{},
+		SkippedFiles: []string{},
+	})
+	d.Close()
+	d.Wait()
+
+	if got := (<-seen).Get("total_files_scanned"); got != "2" {
+		t.Errorf("total_files_scanned = %q, want 2", got)
 	}
 }

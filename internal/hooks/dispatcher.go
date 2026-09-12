@@ -262,12 +262,16 @@ func (r *RequestHooks) OnComplete(resp *rxtypes.TraceResponse) {
 	if r.urls.OnCompleteURL == "" || resp == nil {
 		return
 	}
+	// TotalFilesScanned counts resp.Files, where every file the trace
+	// searched has an ID, as rx-python counts len(result.files).
+	// resp.ScannedFiles is filled only when a directory was walked, so it
+	// would report 0 for a trace of named files.
 	payload := rxtypes.TraceCompletePayload{
 		Event:             rxtypes.HookEventTraceComplete,
 		RequestID:         r.requestID,
 		Paths:             joinStrings(resp.Path, ","),
 		Patterns:          joinMap(resp.Patterns, ","),
-		TotalFilesScanned: len(resp.ScannedFiles),
+		TotalFilesScanned: len(resp.Files),
 		TotalFilesSkipped: len(resp.SkippedFiles),
 		TotalMatches:      len(resp.Matches),
 		TotalTimeMS:       int(resp.Time * 1000),
