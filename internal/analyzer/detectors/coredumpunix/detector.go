@@ -273,6 +273,13 @@ func (d *Detector) Category() string { return detectorCategory }
 // Description returns the one-line human summary.
 func (d *Detector) Description() string { return detectorDescription }
 
+// SeverityRange states the band of severities this detector's anomalies
+// carry: every one of them has the same severity.
+func (d *Detector) SeverityRange() (float64, float64) { return severity, severity }
+
+// The registry reads the band through this interface.
+var _ analyzer.SeverityRanger = (*Detector)(nil)
+
 // Supports says yes to anything. Unix crash output can appear in any
 // text-shaped log (stdout/stderr, dmesg capture, systemd journals, CI
 // output, container logs). Non-matching logs simply never trigger the

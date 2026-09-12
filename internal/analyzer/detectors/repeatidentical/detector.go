@@ -123,6 +123,13 @@ func (d *Detector) Category() string { return detectorCategory }
 // Description returns the one-line human summary.
 func (d *Detector) Description() string { return detectorDescription }
 
+// SeverityRange states the band of severities this detector's anomalies
+// carry: every one of them has the same severity.
+func (d *Detector) SeverityRange() (float64, float64) { return severity, severity }
+
+// The registry reads the band through this interface.
+var _ analyzer.SeverityRanger = (*Detector)(nil)
+
 // Supports says yes to anything text-shaped. The coordinator passes each
 // line's IsBinary flag separately, so a binary-heavy file just becomes a
 // no-op for this detector at the per-line level.
