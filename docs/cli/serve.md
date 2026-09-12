@@ -128,13 +128,15 @@ URLs. Per-request overrides via query parameters are allowed unless
 2. Validate every `--search-root`; abort with exit code 2 on failure
 3. Export `RX_SEARCH_ROOTS` to the process environment (propagates to
    any child processes like `ripgrep` — though currently unused)
-4. Look up `ripgrep` on `PATH`; remember the result for `/health`
-5. Best-effort fetch of the `rx-viewer` SPA (60-second timeout, failure
+4. Print a warning to stderr for a bind other machines can reach, and
+   for a search root that is `/` or your home directory (see below)
+5. Look up `ripgrep` on `PATH`; remember the result for `/health`
+6. Best-effort fetch of the `rx-viewer` SPA (60-second timeout, failure
    is non-fatal)
-6. Register HTTP middleware (request ID, structured logging, panic
+7. Register HTTP middleware (request ID, structured logging, panic
    recovery, Prometheus metrics middleware)
-7. Register every endpoint and the static-file catch-all
-8. Bind the listening socket and begin serving
+8. Register every endpoint and the static-file catch-all
+9. Bind the listening socket and begin serving
 
 If the socket bind fails (port in use, permission denied), the server
 returns immediately with a non-zero exit code.
@@ -207,6 +209,18 @@ exposed as a flag).
     to connect and `curl localhost:7777` works but `curl <host>:7777`
     doesn't, you've hit this. Set `--host=0.0.0.0` (and put a reverse
     proxy in front if the host is internet-facing).
+
+!!! warning "A wide bind or a wide root is announced at startup"
+    `rx serve` has no authentication, so two configurations print a
+    warning to stderr before the server comes up:
+
+    - a `--host` other than a loopback address or `localhost`, such as
+      `0.0.0.0` or a private address, which other machines can reach;
+    - a search root that is `/` or your home directory, which serves
+      every file in it except hidden ones.
+
+    Both are allowed — a VPN or an authenticating proxy makes the first
+    reasonable — but whoever reads the log sees that the choice was made.
 
 !!! tip "Use multiple `--search-root` flags"
     Don't collapse multiple search roots into a common ancestor unless

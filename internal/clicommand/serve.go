@@ -129,6 +129,13 @@ func runServe(out io.Writer, p serveParams) error {
 	// Publish to env so any subprocess we spawn inherits the sandbox.
 	_ = os.Setenv("RX_SEARCH_ROOTS", strings.Join(resolvedRoots, string(os.PathListSeparator)))
 
+	// A bind other machines can reach, or a root as wide as $HOME or /,
+	// is allowed but said out loud before the server comes up.
+	home, _ := os.UserHomeDir()
+	for _, warning := range serveWarnings(p.host, resolvedRoots, home) {
+		_, _ = fmt.Fprintln(os.Stderr, warning)
+	}
+
 	// Lookup ripgrep once (affects health + 503 responses).
 	rgPath, _ := exec.LookPath("rg")
 

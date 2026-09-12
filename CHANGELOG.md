@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rx serve` warns on stderr at startup when it listens where other
+  machines can reach it (any `--host` that is not a loopback address or
+  `localhost`), and when a search root is `/` or the home directory.
+  rx has no authentication by design; the warning names the remedy —
+  an authenticating proxy, or a network you trust — and the server
+  still starts, since a VPN or a proxy makes a wide bind legitimate.
+
 - A test says stdout carries nothing but the JSON document whenever
   `--json` is passed — for every subcommand that takes the flag, and for
   a plain file, a gzip member and a seekable zstd. rx-python printed a
