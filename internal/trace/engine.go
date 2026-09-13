@@ -480,6 +480,12 @@ func (e *Engine) RunWithOptions(
 					},
 				})
 			}
+			// Without a result cap ProcessSeekable either reads every
+			// frame or returns an error, so a scan that got here is
+			// complete.
+			if cacheEntry != nil {
+				toCache[b.path] = cacheEntry
+			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size,
 				countMatchesForFile(allMatches, fileID))
 		case "cached-regular", "cached-seekable":
