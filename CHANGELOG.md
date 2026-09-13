@@ -427,6 +427,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx_http_responses_total` counts each response once, with the status
+  the client received. The trace handler counted its own responses as
+  well, so one `GET /v1/trace` with an invalid pattern added both a
+  `400` and a `500` sample. A request no route matches is labeled
+  `endpoint="unmatched"` instead of with its path, so random paths no
+  longer create a series each.
+
 - Nineteen of the 37 `rx_*` metric families never moved in `serve`,
   so a dashboard built on them showed zero whatever happened. They are
   updated where the event happens: `rx_files_processed_total`,

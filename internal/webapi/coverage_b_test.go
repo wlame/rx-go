@@ -22,6 +22,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -962,6 +963,10 @@ func TestMetricsEndpoint(t *testing.T) {
 //   - The output does NOT include endpoint="/v1/tasks/abc-1" — the raw
 //     path should be collapsed into the template.
 func TestMetricsMiddleware_UsesChiRoutePattern(t *testing.T) {
+	// Metrics are off until enabled; without this the test passed only
+	// when an earlier test had left them on.
+	prometheus.Enable()
+	t.Cleanup(prometheus.Disable)
 	ts := newTestServer(t)
 
 	// Hit the same route with two different task IDs. Both will

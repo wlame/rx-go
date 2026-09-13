@@ -119,7 +119,6 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		defer func() { recordEndpoint(prometheus.RecordTraceRequest, traceErr) }()
 
 		if s.cfg.RipgrepPath == "" {
-			prometheus.RecordHTTPResponse(http.MethodGet, "/v1/trace", http.StatusServiceUnavailable)
 			return nil, ErrServiceUnavailable("ripgrep is not available on this system")
 		}
 
@@ -213,7 +212,6 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			RequestID:   reqID,
 		})
 		if err != nil {
-			prometheus.RecordHTTPResponse(http.MethodGet, "/v1/trace", http.StatusInternalServerError)
 			// A pattern ripgrep cannot compile is the caller's mistake,
 			// not ours, and rg's message names the exact position.
 			if errors.Is(err, trace.ErrInvalidPattern) {
