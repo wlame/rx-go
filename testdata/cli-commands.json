@@ -103,6 +103,27 @@
       "expected": "rx index /var/log/app.log --force --analyze"
     },
     {
+      "name": "index build renders a zero threshold and a window",
+      "endpoint": "index_post",
+      "params": {
+        "path": "/var/log/app.log",
+        "analyze": true,
+        "threshold": 0,
+        "analyze_window_lines": 50
+      },
+      "expected": "rx index /var/log/app.log --analyze --threshold=0 --analyze-window-lines=50"
+    },
+    {
+      "name": "index build leaves out the default window",
+      "endpoint": "index_post",
+      "params": {
+        "path": "/var/log/app.log",
+        "threshold": 10,
+        "analyze_window_lines": 0
+      },
+      "expected": "rx index /var/log/app.log --threshold=10"
+    },
+    {
       "name": "index build with no flags",
       "endpoint": "index_post",
       "params": { "path": "/var/log/app.log" },

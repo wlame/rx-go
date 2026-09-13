@@ -436,6 +436,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--lines=5000-5100 --before=0 --after=0` printed three lines of
   context on each side.
 
+- The `cli_command` of a `POST /v1/index` task renders `threshold` and
+  `analyze_window_lines` (`--threshold=N`, `--analyze-window-lines=N`).
+  It dropped both, so for a request with `"threshold": 0` the pasted
+  command skipped the file the task had indexed.
+
 - The OpenAPI document allows `null` for the `result` of
   `GET /v1/tasks/{task_id}`, which is what every poll before the task
   completes answers; it declared a non-null object. rx-python declares

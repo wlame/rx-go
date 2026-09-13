@@ -214,9 +214,13 @@ func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 	})
 
 	t.Run("index_post", func(t *testing.T) {
-		result := f.runTask(t, "/v1/index", map[string]any{"path": f.logPath, "force": true, "analyze": true})
+		// A 300-line file is far below RX_LARGE_FILE_MB; threshold 0
+		// indexes it anyway, and so must the rendered command.
+		result := f.runTask(t, "/v1/index", map[string]any{
+			"path": f.logPath, "force": true, "threshold": 0, "analyze_window_lines": 50,
+		})
 		rendered, _ := result["cli_command"].(string)
-		want := "rx index " + f.logPath + " --force --analyze"
+		want := "rx index " + f.logPath + " --force --threshold=0 --analyze-window-lines=50"
 		if rendered != want {
 			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
 		}
