@@ -206,68 +206,23 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 // stat failures — a missing/unreadable source is treated as "index
 // is stale".
 //
-// Invalidation has no TTL and no size cap. The field SourceModifiedAt
-// carries the Python-style ISO timestamp; we compare it byte-for-byte
-// with the current mtime formatted the same way. Size check is exact.
+// Invalidation has no TTL and no size cap. The identity the index
+// records (size, mtime, inode, ctime and fingerprint) is compared with
+// the file through SourceIdentity.MatchesFile, the same check the trace
+// cache uses.
 func IsValidForSource(idx *rxtypes.UnifiedFileIndex, sourcePath string) bool {
-	info, err := os.Stat(sourcePath)
-	if err != nil {
-		return false
-	}
-	if info.Size() != idx.SourceSizeBytes {
-		return false
-	}
-	if formatMtime(info.ModTime()) != idx.SourceModifiedAt {
-		return false
-	}
-	if !matchesIdentity(idx, info) {
-		return false
-	}
-	return matchesFingerprint(idx, sourcePath)
+	return recordedIdentity(idx).MatchesFile(sourcePath)
 }
 
-// matchesIdentity compares the inode and ctime recorded in the index
-// against the file on disk.
-//
-// Size and mtime miss two ordinary cases: a file restored from a backup
-// or copied with `cp -p` keeps its mtime, and an edit that replaces one
-// byte with another keeps its size. Either leaves a stale index looking
-// valid, and a stale index answers with the wrong line. ctime moves on
-// every write and cannot be set through utime, and the inode changes
-// when a file is replaced by rename, so together they close the gap.
-//
-// A missing field means the index predates this check or the filesystem
-// did not report one, so an absent value is not treated as a mismatch.
-func matchesIdentity(idx *rxtypes.UnifiedFileIndex, info os.FileInfo) bool {
-	inode, changed, ok := sourceIdentity(info)
-	if !ok {
-		return true
+// recordedIdentity gathers the identity fields an index carries.
+func recordedIdentity(idx *rxtypes.UnifiedFileIndex) SourceIdentity {
+	return SourceIdentity{
+		SizeBytes:   idx.SourceSizeBytes,
+		ModifiedAt:  idx.SourceModifiedAt,
+		Inode:       idx.SourceInode,
+		ChangedAt:   idx.SourceChangedAt,
+		Fingerprint: idx.SourceFingerprint,
 	}
-	if idx.SourceInode != nil && *idx.SourceInode != inode {
-		return false
-	}
-	if idx.SourceChangedAt != nil && *idx.SourceChangedAt != formatMtime(changed) {
-		return false
-	}
-	return true
-}
-
-// matchesFingerprint re-reads the two 64 KiB windows the fingerprint
-// covers and compares the digest.
-//
-// A fingerprint the index does not carry is not a mismatch, so a cache
-// written before this field existed still validates on size and mtime.
-// A read failure is treated as a mismatch: if we cannot confirm the file
-// is the one that was indexed, the index does not get used.
-func matchesFingerprint(idx *rxtypes.UnifiedFileIndex, sourcePath string) bool {
-	if idx.SourceFingerprint == nil {
-		return true
-	}
-	current, err := SourceFingerprint(sourcePath)
-	if err != nil {
-		return false
-	}
-	return current == *idx.SourceFingerprint
 }
 
 // SourceIdentityFields returns the inode and ctime to stamp into a new
