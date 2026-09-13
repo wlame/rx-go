@@ -40,7 +40,8 @@ func registerHealthHandlers(s *Server, api huma.API) {
 		Summary:     "Health check and system introspection",
 		Description: "Returns service status, ripgrep availability, app version, OS info, " +
 			"environment variables, and hook configuration.",
-		Tags: []string{"General"},
+		Tags:      []string{"General"},
+		Responses: errorResponses(api),
 	}, func(_ context.Context, _ *struct{}) (*healthOutput, error) {
 		return &healthOutput{Body: buildHealthResponse(s)}, nil
 	})

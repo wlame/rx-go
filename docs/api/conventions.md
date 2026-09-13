@@ -73,6 +73,15 @@ message without parsing the string.
 | `500 Internal Server Error` | Unhandled error or panic | Always logged with stack trace |
 | `503 Service Unavailable` | Required dependency missing | `ripgrep` not on `PATH` (trace/samples endpoints) |
 
+The [OpenAPI document](openapi.md) declares, on every operation, each of
+these statuses that the operation can answer, with its body schema:
+`ApiError` (the `detail` envelope) for all of them, except `403`, which
+is `oneOf` `SandboxError` (the extended body above) and `ApiError` (a
+hidden or unreadable path). Its `default` response, also `ApiError`,
+covers anything rarer, such as `413` for an oversized body, `415` for a
+body sent without `Content-Type: application/json`, or a `500` from a
+recovered panic.
+
 ## Query parameter conventions
 
 - **Repeated params**: `?path=a&path=b` — many endpoints accept multiple

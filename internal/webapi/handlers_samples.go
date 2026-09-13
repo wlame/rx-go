@@ -68,7 +68,9 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		Summary:     "Get context lines around byte offsets or line numbers",
 		Description: "Use this endpoint to view actual content around matches from /v1/trace.",
 		Tags:        []string{"Context"},
-		Responses:   sandboxResponses(api),
+		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
+			http.StatusNotFound, http.StatusUnprocessableEntity,
+			http.StatusInternalServerError, http.StatusServiceUnavailable),
 	}, func(_ context.Context, in *samplesInput) (out *samplesOutput, err error) {
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.

@@ -34,6 +34,7 @@ func registerTaskHandlers(s *Server, api huma.API) {
 		Summary:     "Get status of a background task",
 		Description: "Returns queued/running/completed/failed state and, on completion, the task result.",
 		Tags:        []string{"Operations"},
+		Responses:   errorResponses(api, http.StatusNotFound),
 	}, func(_ context.Context, in *taskStatusInput) (*taskStatusOutput, error) {
 		task, ok := s.cfg.TaskManager.Get(in.TaskID)
 		if !ok {

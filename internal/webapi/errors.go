@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -183,24 +184,92 @@ func NewSandboxError(perr *paths.ErrPathOutsideRoots) huma.StatusError {
 	}}
 }
 
-// sandboxResponses is the OpenAPI "403" entry every path-accepting
-// operation declares, so the refusal shape is published rather than only
-// implemented. Registering the schema through the API's own registry
-// means the document names it once and the operations $ref it.
+// ============================================================================
+// Declared error responses
+// ============================================================================
+
+// errorStatusDescriptions is the one table of error statuses the API
+// declares in its OpenAPI document, with the sentence each one gets
+// there. An operation picks the statuses it can answer from this table
+// through errorResponses; the description is written once, here, so the
+// same status reads the same on every operation.
 //
-// Call it once per operation registration:
+// The statuses come from two places: the error constructors above,
+// which handlers return, and huma itself, which answers 400 for a body
+// that is not JSON and 422 for a request that fails the schema before
+// the handler runs.
+var errorStatusDescriptions = map[int]string{
+	http.StatusBadRequest: "The request cannot be served as asked: a value rx cannot use " +
+		"(an uncompilable pattern, a malformed line or offset list, a file below the index " +
+		"threshold, an output file that exists), or a body that is not valid JSON",
+	http.StatusForbidden: "Refused: the path is outside every configured --search-root " +
+		"(SandboxError body), or it is hidden or cannot be read (ApiError body)",
+	http.StatusNotFound: "The file, directory, index or task does not exist",
+	http.StatusConflict: "A task for the same path is already running",
+	http.StatusUnprocessableEntity: "The request does not match the schema: a required " +
+		"parameter or field is missing, or a value has the wrong type or is out of range",
+	http.StatusInternalServerError: "rx failed while serving the request",
+	http.StatusServiceUnavailable:  "ripgrep is not available on this system",
+}
+
+// defaultErrorDescription describes the OpenAPI "default" response,
+// which covers every status an operation does not list: a panic turned
+// into 500 by recoverMiddleware, or one of huma's rarer answers such as
+// 413 for an oversized body or 415 for a body that is not JSON.
+const defaultErrorDescription = "Any other error"
+
+// errorResponses builds the error part of an operation's OpenAPI
+// responses: one entry per status given, described from
+// errorStatusDescriptions, plus "default". Every body is the ApiError
+// envelope ({"detail": ...}) except where noted:
 //
-//	huma.Register(api, huma.Operation{..., Responses: sandboxResponses(api)}, handler)
-func sandboxResponses(api huma.API) map[string]*huma.Response {
+//   - 403 is SandboxError for a path outside the search roots and
+//     ApiError for any other refusal, so it is declared as oneOf the
+//     two. The two shapes cannot be confused: each forbids properties
+//     the other requires.
+//
+// Registering the schemas through the API's own registry means the
+// document names each once and the operations $ref it. Call it once per
+// operation registration:
+//
+//	huma.Register(api, huma.Operation{...,
+//	    Responses: errorResponses(api, http.StatusNotFound),
+//	}, handler)
+//
+// A status missing from errorStatusDescriptions panics: it is a mistake
+// in the registration code, and every test that builds a Server finds it.
+func errorResponses(api huma.API, statuses ...int) map[string]*huma.Response {
 	registry := api.OpenAPI().Components.Schemas
-	schema := registry.Schema(reflect.TypeOf(rxtypes.SandboxError{}), true, "SandboxError")
-	return map[string]*huma.Response{
-		"403": {
-			Description: "Path outside every configured --search-root",
-			Content: map[string]*huma.MediaType{
-				"application/json": {Schema: schema},
-			},
-		},
+	envelope := registry.Schema(reflect.TypeOf(apiError{}), true, "ApiError")
+	bodies := map[int]*huma.Schema{
+		http.StatusForbidden: {OneOf: []*huma.Schema{
+			registry.Schema(reflect.TypeOf(rxtypes.SandboxError{}), true, "SandboxError"),
+			envelope,
+		}},
+	}
+
+	responses := map[string]*huma.Response{
+		"default": jsonResponse(defaultErrorDescription, envelope),
+	}
+	for _, status := range statuses {
+		description, known := errorStatusDescriptions[status]
+		if !known {
+			panic(fmt.Sprintf("webapi: status %d has no entry in errorStatusDescriptions", status))
+		}
+		body, special := bodies[status]
+		if !special {
+			body = envelope
+		}
+		responses[strconv.Itoa(status)] = jsonResponse(description, body)
+	}
+	return responses
+}
+
+// jsonResponse is an OpenAPI response with an application/json body.
+func jsonResponse(description string, schema *huma.Schema) *huma.Response {
+	return &huma.Response{
+		Description: description,
+		Content:     map[string]*huma.MediaType{"application/json": {Schema: schema}},
 	}
 }
 

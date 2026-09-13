@@ -109,7 +109,9 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		Summary:     "Search file for regex patterns (supports multiple patterns)",
 		Description: "Uses ripgrep to scan one or more paths for one or more regex patterns, returning match offsets.",
 		Tags:        []string{"Search"},
-		Responses:   sandboxResponses(api),
+		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
+			http.StatusNotFound, http.StatusUnprocessableEntity,
+			http.StatusInternalServerError, http.StatusServiceUnavailable),
 		// The results are named only so the deferred counter below can
 		// read whatever this handler ends up returning; nothing assigns
 		// them directly.
