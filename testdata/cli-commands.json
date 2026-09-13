@@ -67,7 +67,7 @@
         "before_context": 2,
         "after_context": 7
       },
-      "expected": "rx samples /var/log/app.log --offsets=4096 --before-context=2 --after-context=7"
+      "expected": "rx samples /var/log/app.log --offsets=4096 --before=2 --after=7"
     },
     {
       "name": "samples renders a zero context rather than dropping it",

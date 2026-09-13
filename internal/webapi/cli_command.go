@@ -39,8 +39,8 @@ func BuildCLICommand(subcommand string, params map[string]any) string {
 		parts = appendStringFlag(parts, "--offsets", params["offsets"])
 		parts = appendStringFlag(parts, "--lines", params["lines"])
 		parts = appendIntPtrFlag(parts, "--context", params["context"])
-		parts = appendIntPtrFlag(parts, "--before-context", params["before_context"])
-		parts = appendIntPtrFlag(parts, "--after-context", params["after_context"])
+		parts = appendIntPtrFlag(parts, "--before", params["before_context"])
+		parts = appendIntPtrFlag(parts, "--after", params["after_context"])
 	case "index_get":
 		parts = append(parts, "index")
 		parts = appendStringPositional(parts, params["path"])
