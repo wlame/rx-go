@@ -551,7 +551,7 @@ func (e *Engine) RunWithOptions(
 	// over are few; an existing index answers them from the nearest
 	// checkpoint. Files with no index keep the unknown marker rather
 	// than paying for a full pass.
-	resolveUnknownLineNumbers(fileIDs, allMatches, allContexts)
+	resolveUnknownLineNumbers(fileIDs, allMatches, allContexts, lineResolverFor(opts))
 
 	sort.SliceStable(allMatches, func(i, j int) bool {
 		if allMatches[i].File != allMatches[j].File {

@@ -198,10 +198,12 @@ Data flow for `rx trace "pattern" big.log`:
    numbering its matches means reading them now — gigabytes, to answer a
    search that stopped early on purpose. Without an index those matches
    keep `absolute_line_number` -1; with one the count starts at the
-   nearest checkpoint and is cheap, so it is done. Both backends behave
-   the same way, and a caller that wants the number regardless asks
-   `samples --offsets=…`, which answers a whole batch in one pass. A
-   number rx does report is identical either way.
+   nearest checkpoint and is cheap, so it is done. A caller that wants
+   the number regardless asks `samples --offsets=…`, which answers a
+   whole batch in one pass, or passes `--no-index`: that reads and
+   writes no index and counts from byte 0 up to the last unnumbered
+   match, so the flag changes the cost and never the answer. A number
+   rx does report is identical either way.
 
    An index is used only when it still describes the file it was built
    from. That means the format version matches exactly — an index from
