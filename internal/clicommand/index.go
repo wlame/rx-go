@@ -349,45 +349,33 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			continue
 		}
 
-		// Honor --force=false by consulting the cache first.
-		// rx-python's indexer checks `load_index()` then `needs_rebuild()`
-		// before calling the builder. Rebuilding unconditionally made
-		// `rx index` non-idempotent and cost a full rebuild on every warm
-		// call — measured at 687 ms against rx-python's 438 ms.
-		//
-		// LoadForSource returns:
-		//   (idx, nil)              → cache hit, valid
-		//   (nil, nil)              → cache hit, stale → rebuild
-		//   (nil, ErrIndexNotFound) → no cache → rebuild
-		//   (nil, other err)        → read/parse failure → rebuild (don't fail the call)
-		if !p.force {
-			if idx, loadErr := index.LoadForSource(path); loadErr == nil && idx != nil {
-				// Respect analysis-mode contract: a cache built without
-				// analysis can't satisfy --analyze. Fall through to a
-				// rebuild in that case. (Python's needs_rebuild has the
-				// same escape hatch; see indexer.py::needs_rebuild.)
-				if !p.analyze || idx.AnalysisPerformed {
-					cachePath := index.GetCachePath(path)
-					result.Indexed = append(result.Indexed, indexEntryJSON(idx, cachePath))
-					continue
-				}
-			}
-		}
-
 		// Populate detectors from the global registry when --analyze is
 		// on. LineDetectorSnapshot returns FRESH instances per call so
 		// state cannot leak across files in a multi-file invocation.
-		// Without this, the coordinator's zero-detector fast path kicks
-		// in and `rx index --analyze` silently returns zero anomalies.
 		var detectors []analyzer.LineDetector
 		if p.analyze {
 			detectors = analyzer.LineDetectorSnapshot()
 		}
-		idx, err := index.Build(path, index.BuildOptions{
+		buildOpts := index.BuildOptions{
 			Analyze:     p.analyze,
 			WindowLines: windowLines,
 			Detectors:   detectors,
-		})
+		}
+
+		// Without --force a valid cached index is reused when it answers
+		// this request (index.SatisfiesBuild), as rx-python reuses one;
+		// rebuilding on every call cost a full pass each time. A cache
+		// that is missing, stale or unreadable means a rebuild, not a
+		// failure.
+		if !p.force {
+			if idx, loadErr := index.LoadForSource(path); loadErr == nil && idx != nil &&
+				index.SatisfiesBuild(idx, buildOpts) {
+				result.Indexed = append(result.Indexed, indexEntryJSON(idx, index.GetCachePath(path)))
+				continue
+			}
+		}
+
+		idx, err := index.Build(path, buildOpts)
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
 				Path:     path,

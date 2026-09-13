@@ -84,6 +84,35 @@ func GetIndexStepBytes() int64 {
 	return threshold / 50
 }
 
+// analysisWindowLines is the sliding-window size an analysis with opts
+// runs with: opts.WindowLines through the resolver, so 0 means the
+// environment variable or the default.
+func analysisWindowLines(opts BuildOptions) int {
+	return analyzer.ResolveWindowLines(opts.WindowLines, 0)
+}
+
+// SatisfiesBuild reports whether a cached index answers a request that
+// would otherwise build one with opts, so the caller may reuse it
+// instead. The cached index must already be valid for its source
+// (LoadForSource checks that).
+//
+// Without analysis, any index will do: the line index does not depend
+// on the options. With analysis, the cached index must hold an analysis
+// made with the same window and the same detector set: a different
+// window finds different anomalies, and so does a detector added,
+// removed or upgraded since. An analysis that does not record them
+// (written before the index did) is never reused.
+func SatisfiesBuild(idx *rxtypes.UnifiedFileIndex, opts BuildOptions) bool {
+	if !opts.Analyze {
+		return true
+	}
+	if !idx.AnalysisPerformed || idx.AnalysisWindowLines == nil || idx.AnalysisDetectorSet == nil {
+		return false
+	}
+	return *idx.AnalysisWindowLines == analysisWindowLines(opts) &&
+		*idx.AnalysisDetectorSet == analyzer.DetectorSetVersion(opts.Detectors)
+}
+
 // Build reads sourcePath and constructs a UnifiedFileIndex. It records
 // the current mtime + size into the index so IsValidForSource can later
 // detect changes.
@@ -154,8 +183,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// pre-analyzer shape (no regression for users who don't opt in).
 	var coord *analyzer.Coordinator
 	if opts.Analyze {
-		windowLines := analyzer.ResolveWindowLines(opts.WindowLines, 0)
-		coord = analyzer.NewCoordinator(windowLines, opts.Detectors)
+		coord = analyzer.NewCoordinator(analysisWindowLines(opts), opts.Detectors)
 	}
 
 	// Walk the file. Python uses `for line in f` which yields lines
@@ -290,6 +318,10 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		}
 		idx.Anomalies = &results
 		idx.AnomalySummary = summary
+		window := analysisWindowLines(opts)
+		detectorSet := analyzer.DetectorSetVersion(opts.Detectors)
+		idx.AnalysisWindowLines = &window
+		idx.AnalysisDetectorSet = &detectorSet
 	}
 
 	// gated helper — CLI mode skips observation.

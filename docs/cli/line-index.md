@@ -151,8 +151,11 @@ In addition to the line-offset checkpoints, `--analyze` populates:
 
 `--analyze` is slower than a plain build because it walks every byte
 of the file to gather statistics and dispatches each line to the
-detector coordinator. A cached non-analyze index cannot satisfy an
-`--analyze` call; `rx` falls through to a full rebuild.
+detector coordinator. A cached index satisfies an `--analyze` call only
+when its analysis ran with the same `--analyze-window-lines` and the same
+detectors at the same versions; the index records both
+(`analysis_window_lines`, `analysis_detector_set`). Otherwise `rx` falls
+through to a full rebuild.
 
 ### Tuning the anomaly window
 

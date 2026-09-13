@@ -1,5 +1,10 @@
 package analyzer
 
+import (
+	"sort"
+	"strings"
+)
+
 // This file defines the line-oriented detector contract layered on top
 // of the FileAnalyzer interface. Whereas FileAnalyzer consumes a whole
 // file, LineDetector observes a stream of lines as the index builder
@@ -117,4 +122,19 @@ type LineDetector interface {
 	// Finalize is called exactly once, after the last OnLine. Returns
 	// the detector's complete anomaly list for its input range.
 	Finalize(flush *FlushContext) []Anomaly
+}
+
+// DetectorSetVersion names a set of detectors and their versions in one
+// string: "name@version" for each, sorted by name and joined with
+// commas. An analysis records the set that produced it, and a cached
+// analysis is reused only for a run whose detectors give the same
+// string, so adding, removing or upgrading a detector invalidates every
+// cached analysis. An empty set gives "".
+func DetectorSetVersion(detectors []LineDetector) string {
+	parts := make([]string, len(detectors))
+	for i, d := range detectors {
+		parts[i] = d.Name() + "@" + d.Version()
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
 }

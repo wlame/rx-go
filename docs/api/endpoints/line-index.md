@@ -243,8 +243,9 @@ JSON blobs that the default 128-line window would truncate.
 
 - `force=false` + valid cache exists → task completes instantly with
   the cached data
-- `force=false` + valid cache + `analyze=true` + cache lacks analysis
-  → rebuild
+- `force=false` + valid cache + `analyze=true` + cache lacks analysis,
+  or its analysis ran with another `analyze_window_lines` or another
+  set of detectors (one added, removed or at another version) → rebuild
 - `force=true` → always rebuild
 
 ### Result shape

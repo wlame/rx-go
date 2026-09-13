@@ -197,8 +197,8 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 //
 // Pipeline:
 //  1. Mark task Running.
-//  2. If the file has a valid cached index AND --force is false AND the
-//     caller doesn't want fresh analysis, reuse it.
+//  2. If --force is false and the file has a valid cached index that
+//     answers the request (index.SatisfiesBuild), reuse it.
 //  3. Otherwise run index.Build() to produce a new line-offset index
 //     (with or without --analyze statistics) and Save() it.
 //  4. Mark task Completed (or Failed on error).
@@ -210,20 +210,6 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 	mgr.MarkRunning(taskID)
 	start := time.Now()
 
-	// Attempt cache reuse first — skip if caller asked for --force, or
-	// if they asked to --analyze and the cached index lacks analysis.
-	if !req.Force {
-		if existing, err := index.LoadForSource(absPath); err == nil && existing != nil {
-			if !req.Analyze || existing.AnalysisPerformed {
-				mgr.Complete(taskID, indexTaskResultFrom(existing, index.GetCachePath(absPath), absPath, req))
-				return
-			}
-		}
-	}
-
-	// Fresh build. index.Build() opens/stats the file itself, so an
-	// open failure surfaces here.
-	//
 	// Window-size precedence: URL body param (req.AnalyzeWindowLines)
 	// wins; if unset (zero), the resolver falls through to the env var
 	// and then the compiled-in default. The CLI flag doesn't apply in
@@ -237,11 +223,27 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 	if req.Analyze {
 		detectors = analyzer.LineDetectorSnapshot()
 	}
-	idx, err := index.Build(absPath, index.BuildOptions{
+	buildOpts := index.BuildOptions{
 		Analyze:     req.Analyze,
 		WindowLines: windowLines,
 		Detectors:   detectors,
-	})
+	}
+
+	// Reuse a valid cached index unless the caller asked for force or
+	// the cached one does not answer this request: an analysis made
+	// with another window or another detector set is rebuilt
+	// (index.SatisfiesBuild).
+	if !req.Force {
+		if existing, err := index.LoadForSource(absPath); err == nil && existing != nil &&
+			index.SatisfiesBuild(existing, buildOpts) {
+			mgr.Complete(taskID, indexTaskResultFrom(existing, index.GetCachePath(absPath), absPath, req))
+			return
+		}
+	}
+
+	// Fresh build. index.Build() opens/stats the file itself, so an
+	// open failure surfaces here.
+	idx, err := index.Build(absPath, buildOpts)
 	if err != nil {
 		mgr.Fail(taskID, fmt.Sprintf("build index: %v", err))
 		return
