@@ -111,6 +111,39 @@ func TestExitCode_MissingTracePathIsThree(t *testing.T) {
 	}
 }
 
+// index and compress go through every named path and report each
+// failure in their output, so a missing file there is one failure among
+// possibly several. When every failure is a missing file, the exit code
+// is the one the contract gives a missing file, as in trace and samples.
+func TestExitCode_IndexAndCompressMissingFileIsThree(t *testing.T) {
+	for _, subcommand := range []string{"index", "compress"} {
+		t.Run(subcommand, func(t *testing.T) {
+			missing := filepath.Join(t.TempDir(), "nope.log")
+
+			code, _, stderr := runRx(t, subcommand, missing)
+
+			if code != 3 {
+				t.Errorf("exit code: got %d, want 3 (stderr: %s)", code, stderr)
+			}
+		})
+	}
+}
+
+func TestExitCode_IndexWithOneMissingPathIsThreeAndIndexesTheOther(t *testing.T) {
+	_, present := writeLog(t)
+	missing := filepath.Join(t.TempDir(), "nope.log")
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+
+	code, stdout, stderr := runRx(t, "index", "--threshold=0", "--json", present, missing)
+
+	if code != 3 {
+		t.Errorf("exit code: got %d, want 3 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stdout, `"path": "`+present+`"`) {
+		t.Errorf("the present file should still be indexed: %s", stdout)
+	}
+}
+
 func TestExitCode_InvalidRegexIsTwo(t *testing.T) {
 	_, path := writeLog(t)
 

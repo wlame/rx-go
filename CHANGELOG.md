@@ -427,6 +427,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx index` and `rx compress` exit 3 when a file they were given does
+  not exist, as `rx trace` and `rx samples` do; they exited 1. Both
+  still go through every path and report each failure in their output.
+  The exit code is 3 when every failure was a missing file, 4 when
+  every failure was a path outside the search roots, and 1 when the
+  failures were of different kinds.
+
 - `rx_http_responses_total` counts each response once, with the status
   the client received. The trace handler counted its own responses as
   well, so one `GET /v1/trace` with an invalid pattern added both a

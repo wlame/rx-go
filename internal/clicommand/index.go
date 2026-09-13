@@ -142,6 +142,9 @@ type indexBuildResult struct {
 type indexErrorItem struct {
 	Path  string `json:"path"`
 	Error string `json:"error"`
+	// exitCode is the code this failure would produce alone; the run's
+	// exit code is derived from all of them by multiPathFailure.
+	exitCode int
 }
 
 // runIndex dispatches based on the mutually-exclusive mode flags.
@@ -275,8 +278,9 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		info, err := os.Stat(path)
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
-				Path:  path,
-				Error: err.Error(),
+				Path:     path,
+				Error:    err.Error(),
+				exitCode: exitCodeForPathError(err),
 			})
 			continue
 		}
@@ -284,8 +288,9 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			entries, derr := expandDirForIndex(path, p.recursive)
 			if derr != nil {
 				result.Errors = append(result.Errors, indexErrorItem{
-					Path:  path,
-					Error: derr.Error(),
+					Path:     path,
+					Error:    derr.Error(),
+					exitCode: exitCodeForPathError(derr),
 				})
 				continue
 			}
@@ -323,8 +328,9 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		info, err := os.Stat(path)
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
-				Path:  path,
-				Error: err.Error(),
+				Path:     path,
+				Error:    err.Error(),
+				exitCode: exitCodeForPathError(err),
 			})
 			continue
 		}
@@ -384,16 +390,18 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		})
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
-				Path:  path,
-				Error: err.Error(),
+				Path:     path,
+				Error:    err.Error(),
+				exitCode: ExitGenericError,
 			})
 			continue
 		}
 		cachePath, err := index.Save(idx)
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
-				Path:  path,
-				Error: err.Error(),
+				Path:     path,
+				Error:    err.Error(),
+				exitCode: ExitGenericError,
 			})
 			continue
 		}
@@ -413,11 +421,11 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		writeIndexBuildHuman(out, result, p.analyze)
 	}
 
-	// Exit 1 if any hard errors (matches Python `if result.errors: sys.exit(1)`).
-	if len(result.Errors) > 0 {
-		return errors.New("one or more files failed to index")
+	failureCodes := make([]int, len(result.Errors))
+	for i, item := range result.Errors {
+		failureCodes[i] = item.exitCode
 	}
-	return nil
+	return multiPathFailure(failureCodes, "one or more files failed to index")
 }
 
 // indexEntryJSON builds one `indexed` array entry matching Python's
