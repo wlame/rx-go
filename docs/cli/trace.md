@@ -246,8 +246,9 @@ to a linear scan around each match.
 rx "WARN" /var/log/app-2026-03.log --no-cache
 ```
 
-Skips the trace cache entirely — useful after manual file edits that
-don't change mtime, or when debugging cache-related behavior. See
+Skips the trace cache entirely — useful after an edit that keeps the
+file's size and mtime on a filesystem whose ctime does not move, or when
+debugging cache-related behavior. See
 [concepts/caching](../concepts/caching.md) for invalidation rules.
 
 ## How it works
@@ -268,9 +269,12 @@ lock on the hot path.
 ### Cache hit path
 
 When a trace request is made, `rx` computes a cache key from the source
-path, mtime, size, pattern set, and flags. If the key matches an entry
-under `~/.cache/rx/trace_cache/`, that entry is loaded and reconstructed
-into a full response without re-scanning. Cache miss → full scan.
+path, the pattern set and the matching flags. If an entry exists under
+`~/.cache/rx/trace_cache/` and the file still has the size, mtime,
+inode, ctime and fingerprint the entry recorded, that entry is loaded
+and reconstructed into a full response without re-scanning. Cache miss
+→ full scan. The entry records the file as it was when the scan was
+planned, so a log that grows during a scan is scanned again next time.
 
 ### Line number resolution
 

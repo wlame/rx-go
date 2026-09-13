@@ -12,6 +12,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/index"
 	sandbox "github.com/wlame/rx-go/internal/paths" // aliased: local vars named `paths`
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
@@ -43,6 +44,15 @@ type Options struct {
 	// empty string when unset; the caller (HTTP or CLI) is responsible
 	// for generating one if webhooks are configured.
 	RequestID string
+
+	// afterScan, when set, runs once the chunks of a plain file have
+	// been scanned and before the file's trace cache is written. It is a
+	// test seam: a test uses it to change the file at exactly that
+	// moment, the way a live log grows while rx reads it. Being
+	// unexported, it can only be set from inside this package, and
+	// production code leaves it nil. A file answered from the trace
+	// cache is not scanned, so the function is not called for it.
+	afterScan func(path string)
 }
 
 // applyDefaults fills zero fields with sane defaults.
@@ -158,9 +168,14 @@ func (e *Engine) RunWithOptions(
 	// Phase 2: classify each file
 	// -------------------------------------------------------------------
 	type fileBucket struct {
-		kind        string // "regular" | "compressed" | "seekable" | "cached-regular" | "cached-seekable"
-		path        string
-		size        int64
+		kind string // "regular" | "compressed" | "seekable" | "cached-regular" | "cached-seekable"
+		path string
+		size int64
+		// info is the stat taken when the file was classified, nil when
+		// the stat failed. A plain file's chunks are planned from it and
+		// its trace cache is stamped with it, so the cache describes the
+		// bytes the scan covered and nothing the file gained later.
+		info        os.FileInfo
 		cachedMatch []rxtypes.TraceCacheMatch
 		cacheInfo   *CompressedCacheInfo // only for cached-seekable
 	}
@@ -172,6 +187,8 @@ func (e *Engine) RunWithOptions(
 		var sz int64
 		if err == nil {
 			sz = fi.Size()
+		} else {
+			fi = nil
 		}
 
 		// Seekable-zstd first — takes priority over plain zstd.
@@ -185,7 +202,7 @@ func (e *Engine) RunWithOptions(
 					continue
 				}
 			}
-			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, size: sz})
+			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, size: sz, info: fi})
 			// Chunk count for seekable = frame count. We fetch it via
 			// the seek table; failure falls back to 1.
 			if tbl, terr := readSeekTable(fp); terr == nil {
@@ -210,7 +227,7 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 		}
-		buckets = append(buckets, fileBucket{kind: "regular", path: fp, size: sz})
+		buckets = append(buckets, fileBucket{kind: "regular", path: fp, size: sz, info: fi})
 	}
 
 	// -------------------------------------------------------------------
@@ -218,11 +235,10 @@ func (e *Engine) RunWithOptions(
 	// -------------------------------------------------------------------
 	var allMatches []rxtypes.Match
 	var allContexts []contextWithFile
-	// Track matches-to-be-cached per file (only set for regular / seekable
-	// buckets that are candidates for cache write).
-	cacheCandidates := map[string][]rxtypes.Match{}
-	compressedCacheCandidates := map[string][]rxtypes.Match{}
-	frameIndexByOffset := map[string]map[int64]int{} // per-file map
+	// Completed scans whose answer goes into the trace cache, keyed by
+	// path. A file gets an entry only when caching was wanted before its
+	// scan started (see scanToCache) and the scan read every chunk.
+	toCache := map[string]*ScannedFile{}
 
 	for _, b := range buckets {
 		select {
@@ -239,11 +255,18 @@ func (e *Engine) RunWithOptions(
 
 		switch b.kind {
 		case "regular":
-			tasks, terr := CreateFileTasks(b.path)
+			if b.info == nil {
+				skipped = append(skipped, b.path)
+				continue
+			}
+			// Plan from the stat taken at classification and record that
+			// stat as the file's identity, before any byte is read.
+			tasks, terr := planFileTasks(b.path, b.info.Size())
 			if terr != nil {
 				skipped = append(skipped, b.path)
 				continue
 			}
+			cacheEntry := scanToCache(opts, b.path, b.info, "")
 			fileChunkCounts[fileID] = len(tasks)
 			// Pass the REMAINING cap (opts.MaxResults minus already-collected
 			// matches) so ProcessAllChunks can cooperatively cancel as
@@ -295,7 +318,9 @@ func (e *Engine) RunWithOptions(
 							m.RelativeLineNumber = ptrInt(absLine)
 						}
 						allMatches = append(allMatches, m)
-						cacheCandidates[b.path] = append(cacheCandidates[b.path], m)
+						if cacheEntry != nil {
+							cacheEntry.Matches = append(cacheEntry.Matches, m)
+						}
 						opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
 							Pattern: patternIDs[pid], Offset: m.Offset,
 							LineNumber: int64(*m.RelativeLineNumber),
@@ -322,6 +347,14 @@ func (e *Engine) RunWithOptions(
 					numbered = false
 				}
 				startLine += int(res.Newlines)
+			}
+			if opts.afterScan != nil {
+				opts.afterScan(b.path)
+			}
+			// A chunk cut short leaves numbered false; only a scan that
+			// read every chunk describes the whole planned file.
+			if cacheEntry != nil && numbered {
+				toCache[b.path] = cacheEntry
 			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, countMatchesForFile(allMatches, fileID))
 		case "compressed":
@@ -388,6 +421,10 @@ func (e *Engine) RunWithOptions(
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size,
 				countMatchesForFile(allMatches, fileID))
 		case "seekable":
+			var cacheEntry *ScannedFile
+			if b.info != nil {
+				cacheEntry = scanToCache(opts, b.path, b.info, "zstd-seekable")
+			}
 			remaining := remainingResults(opts.MaxResults, len(allMatches))
 			rawMatches, rawContexts, _, serr := ProcessSeekable(
 				ctx, b.path,
@@ -401,12 +438,6 @@ func (e *Engine) RunWithOptions(
 				}
 				skipped = append(skipped, b.path)
 				continue
-			}
-			// Track frame_index per offset so we can cache later.
-			fm := frameIndexByOffset[b.path]
-			if fm == nil {
-				fm = map[int64]int{}
-				frameIndexByOffset[b.path] = fm
 			}
 			// Frames carry their own line numbering, which the scan
 			// turns into the file's by counting the lines of the frames
@@ -425,7 +456,9 @@ func (e *Engine) RunWithOptions(
 						m.RelativeLineNumber = ptrInt(rm.AbsoluteLine)
 					}
 					allMatches = append(allMatches, m)
-					compressedCacheCandidates[b.path] = append(compressedCacheCandidates[b.path], m)
+					if cacheEntry != nil {
+						cacheEntry.Matches = append(cacheEntry.Matches, m)
+					}
 					opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
 						Pattern: patternIDs[pid], Offset: m.Offset,
 						LineNumber: int64(*m.RelativeLineNumber),
@@ -512,35 +545,12 @@ func (e *Engine) RunWithOptions(
 	contextDict := buildContextDict(allMatches, allContexts, opts.ContextBefore, opts.ContextAfter)
 
 	// -------------------------------------------------------------------
-	// Phase 5: write caches for large completed regular scans
+	// Phase 5: write caches for large completed scans
 	// -------------------------------------------------------------------
-	maxResultsHit := opts.MaxResults != nil && len(allMatches) >= *opts.MaxResults
-	if !opts.NoCache && !maxResultsHit {
-		for path, matches := range cacheCandidates {
-			var size int64
-			if fi, err := os.Stat(path); err == nil {
-				size = fi.Size()
-			}
-			if ShouldCache(size, opts.MaxResults, true, false) {
-				data, berr := BuildCache(path, patterns, opts.RgExtraArgs, matches, nil, "")
-				if berr == nil {
-					_ = SaveCache(CachePath(path, patterns, opts.RgExtraArgs), data)
-				}
-			}
-		}
-		for path, matches := range compressedCacheCandidates {
-			var size int64
-			if fi, err := os.Stat(path); err == nil {
-				size = fi.Size()
-			}
-			if ShouldCache(size, opts.MaxResults, true, true) {
-				data, berr := BuildCache(path, patterns, opts.RgExtraArgs, matches,
-					frameIndexByOffset[path], "zstd-seekable")
-				if berr == nil {
-					_ = SaveCache(CachePath(path, patterns, opts.RgExtraArgs), data)
-				}
-			}
-		}
+	// toCache only holds scans started without a result cap, so a
+	// capped answer never reaches the cache.
+	for _, scan := range toCache {
+		SaveScannedFile(*scan, patterns, opts.RgExtraArgs)
 	}
 
 	// -------------------------------------------------------------------
@@ -923,3 +933,26 @@ func ParsePaths(
 // debug-file writes here. We intentionally leave that hook in as a
 // single symbol so it's easy to reintroduce Python's RX_DEBUG path.
 var _ = config.DebugMode
+
+// scanToCache decides, before a file is scanned, whether the scan's
+// answer is to be written to the trace cache, and if so starts the
+// record with the file's identity as info saw it. It returns nil when
+// the answer is not to be cached: the cache is off, a result cap is
+// set, or the file is below the size threshold for its kind.
+//
+// Taking the identity here, before the scan, is what keeps a growing
+// log from being cached as larger than the part that was scanned.
+// compressionFormat is empty for a plain file and "zstd-seekable" for a
+// seekable-zstd one, whose lower threshold ShouldCache applies.
+func scanToCache(opts Options, path string, info os.FileInfo, compressionFormat string) *ScannedFile {
+	compressed := compressionFormat != ""
+	if opts.NoCache || !ShouldCache(info.Size(), opts.MaxResults, true, compressed) {
+		return nil
+	}
+	return &ScannedFile{
+		Path:              path,
+		Source:            index.IdentityFromInfo(path, info),
+		Matches:           []rxtypes.Match{},
+		CompressionFormat: compressionFormat,
+	}
+}

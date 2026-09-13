@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -140,10 +141,7 @@ func TestSaveAndLoadCache_RoundTrip(t *testing.T) {
 		},
 	}
 
-	data, err := BuildCache(srcPath, patterns, flags, matches, nil, "")
-	if err != nil {
-		t.Fatalf("BuildCache: %v", err)
-	}
+	data := BuildCache(scannedNow(t, srcPath, matches), patterns, flags)
 	cp := CachePath(srcPath, patterns, flags)
 	if err := SaveCache(cp, data); err != nil {
 		t.Fatalf("SaveCache: %v", err)
@@ -194,10 +192,7 @@ func TestIsCacheValid_DetectsMtimeDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	patterns := []string{"hello"}
-	data, err := BuildCache(srcPath, patterns, nil, nil, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := BuildCache(scannedNow(t, srcPath, nil), patterns, nil)
 	cp := CachePath(srcPath, patterns, nil)
 	if err := SaveCache(cp, data); err != nil {
 		t.Fatal(err)
@@ -247,6 +242,17 @@ func TestShouldCache_Thresholds(t *testing.T) {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+// scannedNow describes a scan of path that found matches, with the
+// file's identity taken now.
+func scannedNow(t *testing.T, path string, matches []rxtypes.Match) ScannedFile {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return ScannedFile{Path: path, Source: index.IdentityFromInfo(path, info), Matches: matches}
+}
 
 // ptrIntT returns a pointer to an int literal — handy for building
 // test match data.

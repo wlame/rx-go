@@ -423,6 +423,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The trace cache no longer keeps an incomplete answer for a log that
+  grows during a trace. The cache records the file as it was when the
+  scan's chunks were planned, and is not written when the file has
+  changed by the end of the scan, so the next trace scans again and
+  finds the new lines. It was stamped from a stat taken after the scan:
+  the new size, with matches only up to the old one, and every later
+  trace of the same pattern missed the appended lines. A cache is also
+  checked against the file's inode, ctime and fingerprint, as the line
+  index is, so a file replaced with one of the same size and mtime is
+  scanned again. The trace cache format is version 4 and records
+  `source_inode`, `source_changed_at` and `source_fingerprint`; a cache
+  of version 3, which may hold such an incomplete answer, is treated as
+  absent. A completed scan with no matches is now cached too, as
+  rx-python does.
+
 - The `cli_command` of `GET /v1/samples` names the context flags `rx
   samples` has, `--before=N` and `--after=N`. It rendered
   `--before-context=N` and `--after-context=N`, which the CLI does not
