@@ -24,7 +24,7 @@ var errorConstructorStatus = map[string]int{
 	"ErrForbidden":          http.StatusForbidden,
 	"NewSandboxError":       http.StatusForbidden,
 	"ErrNotFound":           http.StatusNotFound,
-	"ErrConflict":           http.StatusConflict,
+	"ErrTaskConflict":       http.StatusConflict,
 	"ErrInternal":           http.StatusInternalServerError,
 	"ErrServiceUnavailable": http.StatusServiceUnavailable,
 }
