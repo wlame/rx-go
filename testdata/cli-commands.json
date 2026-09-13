@@ -50,6 +50,20 @@
       "expected": "rx trace /var/log/app.log --regexp=error --ignore-case --word-regexp --max-results=10"
     },
     {
+      "name": "trace with a request ID and webhooks",
+      "endpoint": "trace",
+      "params": {
+        "regexp": ["error"],
+        "path": ["/var/log/app.log"],
+        "max_results": 10,
+        "request_id": "01936c8e-7b2a-7000-8000-000000000001",
+        "hook_on_file": "https://hooks.example.com/file",
+        "hook_on_match": "https://hooks.example.com/match?team=ops&env=prod",
+        "hook_on_complete": "https://hooks.example.com/done"
+      },
+      "expected": "rx trace /var/log/app.log --regexp=error --max-results=10 --request-id=01936c8e-7b2a-7000-8000-000000000001 --hook-on-file=https://hooks.example.com/file --hook-on-match='https://hooks.example.com/match?team=ops&env=prod' --hook-on-complete=https://hooks.example.com/done"
+    },
+    {
       "name": "samples by line",
       "endpoint": "samples",
       "params": { "path": "/var/log/app.log", "lines": "100" },

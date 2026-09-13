@@ -447,6 +447,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built an index the task had not, and failed on the output the task
   had just written.
 
+- The `cli_command` of `GET /v1/trace` renders the `request_id` and the
+  `hook_on_file`, `hook_on_match` and `hook_on_complete` URLs the
+  request gave, as `--request-id` and `--hook-on-*`. It dropped them,
+  so the pasted command fired no webhook the request had asked for.
+
 - The OpenAPI document allows `null` for the `result` of
   `GET /v1/tasks/{task_id}`, which is what every poll before the task
   completes answers; it declared a non-null object. rx-python declares

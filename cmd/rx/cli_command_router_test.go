@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/internal/webapi"
@@ -182,16 +184,23 @@ func requireSameAnswer(t *testing.T, httpAnswer, cliAnswer map[string]any) {
 
 func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 	f := startRouterFixture(t)
+	requestID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid: %v", err)
+	}
 
 	t.Run("trace", func(t *testing.T) {
 		answer := f.get(t, "/v1/trace", url.Values{
-			"path":        {f.logPath},
-			"regexp":      {"error", `LINE 7\d `},
-			"ignore_case": {"true"},
-			"max_results": {"1000"},
+			"path":             {f.logPath},
+			"regexp":           {"error", `LINE 7\d `},
+			"ignore_case":      {"true"},
+			"max_results":      {"1000"},
+			"request_id":       {requestID.String()},
+			"hook_on_complete": {f.hookURL},
 		})
 		rendered, _ := answer["cli_command"].(string)
-		want := "rx trace " + f.logPath + ` --regexp=error --regexp='LINE 7\d ' --ignore-case --max-results=1000`
+		want := "rx trace " + f.logPath + ` --regexp=error --regexp='LINE 7\d ' --ignore-case` +
+			" --max-results=1000 --request-id=" + requestID.String() + " --hook-on-complete=" + f.hookURL
 		if rendered != want {
 			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
 		}

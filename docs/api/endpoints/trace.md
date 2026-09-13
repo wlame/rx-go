@@ -130,7 +130,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into |
 | `context_lines` | `{matchKey: [...]}` | Context lines when `--samples` mode was used |
 | `before_context`, `after_context` | `int \| null` | Requested context size |
-| `cli_command` | string | Equivalent CLI command |
+| `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
 
 ### `matches[]` shape
 
