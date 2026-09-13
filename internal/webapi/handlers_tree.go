@@ -249,8 +249,9 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 		entry.IsText = &isText
 	}
 
-	// Index status.
-	if idx, err := index.LoadForSource(entryPath); err == nil && idx != nil {
+	// Index status. A peek, not a lookup: listing a directory does not
+	// use its indexes, so it must not move the index cache metrics.
+	if idx, err := index.PeekForSource(entryPath); err == nil && idx != nil {
 		indexed := true
 		entry.IsIndexed = &indexed
 		if idx.LineCount != nil {

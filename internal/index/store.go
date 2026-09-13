@@ -25,6 +25,7 @@ import (
 	"unicode"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -281,7 +282,29 @@ func formatMtime(t time.Time) string {
 // cache file is absent. Returns (idx, nil) iff the cache is present
 // and valid. Returns (nil, nil) if the cache is present but stale —
 // the caller should rebuild.
+//
+// Each call is one index cache lookup in the metrics: a hit when it
+// returns an index, a miss otherwise, and the time taken whenever an
+// index file was read. A caller that only reports whether an index
+// exists, without using it, calls PeekForSource instead.
 func LoadForSource(sourcePath string) (*rxtypes.UnifiedFileIndex, error) {
+	start := time.Now()
+	idx, err := PeekForSource(sourcePath)
+	if err == nil {
+		prometheus.RecordIndexLoadDuration(time.Since(start))
+	}
+	if idx == nil {
+		prometheus.IncIndexCacheMisses()
+	} else {
+		prometheus.IncIndexCacheHits()
+	}
+	return idx, err
+}
+
+// PeekForSource answers exactly as LoadForSource does without counting
+// as an index cache lookup, for a listing that shows whether each file
+// has an index: listing a directory is not a use of its indexes.
+func PeekForSource(sourcePath string) (*rxtypes.UnifiedFileIndex, error) {
 	idx, err := Load(sourcePath)
 	if err != nil {
 		return nil, err

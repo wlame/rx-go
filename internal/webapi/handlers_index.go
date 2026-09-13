@@ -257,6 +257,11 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 		mgr.Fail(taskID, fmt.Sprintf("save index: %v", err))
 		return
 	}
+	// Only a build that ran the detectors is an analysis; reusing a
+	// cached analyzed index above is not timed as one.
+	if req.Analyze {
+		prometheus.RecordAnalyzeDuration(time.Since(start))
+	}
 
 	mgr.Complete(taskID, indexTaskResultFrom(idx, cachePath, absPath, req))
 }

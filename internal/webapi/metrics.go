@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/prometheus"
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // errorTypeByStatus maps an HTTP status onto the rx_errors_total
@@ -100,4 +101,27 @@ func pathKindOf(paths []string) string {
 // observeTraceDuration records how long a successful trace took.
 func observeTraceDuration(paths []string, start time.Time) {
 	prometheus.RecordTraceDuration(pathKindOf(paths), time.Since(start))
+}
+
+// observeTraceResult records what one answered trace request found: its
+// pattern count, its match count, whether the max_results cap was
+// reached, and how many files it skipped. rx-python reports the same
+// families from the same values.
+func observeTraceResult(resp *rxtypes.TraceResponse) {
+	prometheus.RecordPatternsPerRequest(len(resp.Patterns))
+	prometheus.RecordMatchesPerRequest(len(resp.Matches))
+	if resp.MaxResults != nil && len(resp.Matches) >= *resp.MaxResults {
+		prometheus.RecordMaxResultsLimited()
+	}
+	prometheus.AddFilesSkipped(len(resp.SkippedFiles))
+}
+
+// observeSamplesResult records one answered samples request: how long it
+// took since start, how many offsets or lines it asked for, and the
+// context it gave before and after each.
+func observeSamplesResult(start time.Time, positions, before, after int) {
+	prometheus.RecordSamplesDuration(time.Since(start))
+	prometheus.RecordSamplesOffsets(positions)
+	prometheus.RecordContextBefore(before)
+	prometheus.RecordContextAfter(after)
 }

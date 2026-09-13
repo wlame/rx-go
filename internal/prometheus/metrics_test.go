@@ -103,15 +103,20 @@ func TestGating_NoopWhenDisabled(t *testing.T) {
 	beforeHook := getCounterValue(t, HookCallsTotal.WithLabelValues("on_file", "success"))
 	beforeHits := getCounterValue(t, TraceCacheHitsTotal)
 	beforeWrites := getCounterValue(t, TraceCacheWritesTotal)
+	beforeFiles := getCounterValue(t, FilesProcessedTotal)
+	beforeIndexHits := getCounterValue(t, IndexCacheHitsTotal)
 
 	// Exercise every gated helper. None should observe a change.
 	RecordHTTPResponse("GET", "/gate-test", 200)
-	RecordCacheHit("trace")
-	RecordCacheMiss("trace")
+	IncIndexCacheHits()
+	IncIndexCacheMisses()
+	AddFilesSkipped(2)
+	RecordSamplesDuration(time.Second)
+	RecordAnalyzeDuration(time.Second)
 	RecordHook("on_file", "success")
 	RecordHookDuration("on_file", time.Second)
 	RecordError("test_error")
-	RecordFileSize(1024)
+	RecordFileScanned(1024)
 	RecordPatternsPerRequest(3)
 	RecordMatchesPerRequest(100)
 	RecordParallelTasks(8)
@@ -138,6 +143,12 @@ func TestGating_NoopWhenDisabled(t *testing.T) {
 	afterHook := getCounterValue(t, HookCallsTotal.WithLabelValues("on_file", "success"))
 	afterHits := getCounterValue(t, TraceCacheHitsTotal)
 	afterWrites := getCounterValue(t, TraceCacheWritesTotal)
+	if after := getCounterValue(t, FilesProcessedTotal); after != beforeFiles {
+		t.Errorf("Files: %v → %v (expected no change while disabled)", beforeFiles, after)
+	}
+	if after := getCounterValue(t, IndexCacheHitsTotal); after != beforeIndexHits {
+		t.Errorf("Index hits: %v → %v (expected no change while disabled)", beforeIndexHits, after)
+	}
 	if afterHTTP != beforeHTTP {
 		t.Errorf("HTTP: %v → %v (expected no change while disabled)", beforeHTTP, afterHTTP)
 	}
@@ -178,7 +189,7 @@ func TestNewMetrics_RegisteredWhenEnabled(t *testing.T) {
 	t.Cleanup(Disable)
 	// Touch each new metric family to ensure it appears in Gather().
 	RecordError("test")
-	RecordFileSize(1024)
+	RecordFileScanned(1024)
 	RecordPatternsPerRequest(1)
 	RecordMatchesPerRequest(1)
 	RecordParallelTasks(1)
@@ -211,27 +222,6 @@ func TestNewMetrics_RegisteredWhenEnabled(t *testing.T) {
 		if findMetric(t, name) == nil {
 			t.Errorf("parity metric %q not registered", name)
 		}
-	}
-}
-
-func TestRecordCacheHitMiss(t *testing.T) {
-	cases := []struct {
-		kind string
-		ok   bool
-	}{
-		{"trace", true},
-		{"index", true},
-		{"unknown", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.kind, func(t *testing.T) {
-			if got := RecordCacheHit(tc.kind); got != tc.ok {
-				t.Errorf("RecordCacheHit(%q): got %v, want %v", tc.kind, got, tc.ok)
-			}
-			if got := RecordCacheMiss(tc.kind); got != tc.ok {
-				t.Errorf("RecordCacheMiss(%q): got %v, want %v", tc.kind, got, tc.ok)
-			}
-		})
 	}
 }
 
@@ -311,4 +301,43 @@ func getCounterValue(t *testing.T, c any) float64 {
 		t.Fatal("not a counter")
 	}
 	return m.Counter.GetValue()
+}
+
+// FamilyNames is the inventory a test checks /metrics against, so it
+// must hold a labeled family that has no series yet (which Gather
+// leaves out), hold every rx_* family Gather does report, and name
+// each family once.
+func TestFamilyNames_ListsEveryDeclaredFamilyOnce(t *testing.T) {
+	names := FamilyNames()
+	listed := map[string]int{}
+	for _, name := range names {
+		listed[name]++
+	}
+	for name, count := range listed {
+		if count != 1 {
+			t.Errorf("%s is listed %d times", name, count)
+		}
+	}
+	if listed["rx_hook_calls_total"] != 1 {
+		t.Error("rx_hook_calls_total, a labeled family, is missing")
+	}
+	families, err := Registry.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	for _, f := range families {
+		if strings.HasPrefix(f.GetName(), "rx_") && listed[f.GetName()] == 0 {
+			t.Errorf("%s is registered but missing from FamilyNames", f.GetName())
+		}
+	}
+}
+
+// /metrics carries the Go runtime and process families an operator's
+// standard dashboards read, beside the rx_* ones.
+func TestRegistry_HasGoRuntimeAndProcessFamilies(t *testing.T) {
+	for _, name := range []string{"go_goroutines", "go_memstats_alloc_bytes", "process_cpu_seconds_total"} {
+		if findMetric(t, name) == nil {
+			t.Errorf("%s is missing from the registry", name)
+		}
+	}
 }

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -50,21 +51,37 @@ func Disable() { enabled.Store(false) }
 // IsEnabled reports the current state. Exposed for tests.
 func IsEnabled() bool { return enabled.Load() }
 
-// Registry is the private registry for all rx_* metrics. Exposed so
-// tests can pass it to promhttp.HandlerFor, and so downstream code can
-// register their own collectors if ever needed.
-var Registry = prometheus.NewRegistry()
+// Registry is the private registry for all rx_* metrics, plus the Go
+// runtime (go_*) and process (process_*) families. Exposed so tests can
+// pass it to promhttp.HandlerFor, and so downstream code can register
+// their own collectors if ever needed.
+var Registry = newRegistry()
+
+// newRegistry returns a registry holding the standard Go runtime and
+// process collectors. Both read their values when /metrics is scraped
+// and do nothing in between, so the CLI, which never serves /metrics,
+// pays nothing for them.
+func newRegistry() *prometheus.Registry {
+	r := prometheus.NewRegistry()
+	r.MustRegister(
+		collectors.NewGoCollector(),
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+	)
+	return r
+}
 
 // factory is promauto wired to Registry so every Counter/Histogram/Gauge
-// declaration below auto-registers without littering init().
-var factory = promauto.With(Registry)
+// declaration below auto-registers without littering init(). The
+// inventoryRegisterer between them records each family's name for
+// FamilyNames.
+var factory = promauto.With(inventoryRegisterer{Registry})
 
 // ============================================================================
 // Request-level metrics
 // ============================================================================
 
 var (
-	// TraceRequestsTotal — counter per trace request; labels: status (ok, error).
+	// TraceRequestsTotal — counter per trace request; labels: status (success, error).
 	TraceRequestsTotal = factory.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rx_trace_requests_total",
@@ -117,7 +134,9 @@ var (
 
 // File-scope counters incremented by the search engine as work proceeds.
 var (
-	// FilesProcessedTotal counts files opened and scanned (includes skipped).
+	// FilesProcessedTotal counts the files a trace scanned or answered
+	// from its cache. A file that failed part-way is counted here and in
+	// FilesSkippedTotal.
 	FilesProcessedTotal = factory.NewCounter(
 		prometheus.CounterOpts{
 			Name: "rx_files_processed_total",
@@ -125,8 +144,8 @@ var (
 		},
 	)
 
-	// FilesSkippedTotal counts files the engine declined to scan
-	// (binary, permission denied, or filtered by --max-files).
+	// FilesSkippedTotal counts the files a trace answer lists as skipped:
+	// binary, unreadable, or failed during the scan.
 	FilesSkippedTotal = factory.NewCounter(
 		prometheus.CounterOpts{
 			Name: "rx_files_skipped_total",
@@ -134,7 +153,8 @@ var (
 		},
 	)
 
-	// BytesProcessedTotal counts raw bytes read from disk across all files.
+	// BytesProcessedTotal adds the on-disk size of every file
+	// FilesProcessedTotal counts, as rx-python does.
 	BytesProcessedTotal = factory.NewCounter(
 		prometheus.CounterOpts{
 			Name: "rx_bytes_processed_total",
@@ -156,18 +176,19 @@ var (
 // Cache metrics
 // ============================================================================
 
-// Cache observability — one pair per cache kind. Use the RecordCacheHit /
-// RecordCacheMiss helpers from business code so the kind label strings
-// stay consistent.
+// Cache observability — one hit/miss pair per cache kind, each updated
+// through its gated Inc* helper.
 var (
-	// IndexCacheHitsTotal increments when an index is loaded from cache.
+	// IndexCacheHitsTotal increments when a lookup finds a valid index
+	// on disk.
 	IndexCacheHitsTotal = factory.NewCounter(
 		prometheus.CounterOpts{
 			Name: "rx_index_cache_hits_total",
 			Help: "Unified-index cache hits",
 		},
 	)
-	// IndexCacheMissesTotal increments when an index is rebuilt.
+	// IndexCacheMissesTotal increments when a lookup finds no index, or
+	// one that no longer describes its file.
 	IndexCacheMissesTotal = factory.NewCounter(
 		prometheus.CounterOpts{
 			Name: "rx_index_cache_misses_total",
@@ -416,10 +437,9 @@ var (
 		},
 	)
 
-	// AnalyzeRequestsDurationSeconds: mirror of Python's
-	// rx_analyze_duration_seconds. At v1 Go doesn't ship analyzers, so
-	// this histogram remains unobserved; it exists so dashboards
-	// consuming Python metrics don't 404 when pointed at rx-go.
+	// AnalyzeRequestsDurationSeconds: how long an index build with
+	// analysis took, from the task's start to the saved index. Same
+	// name and buckets as rx-python's.
 	AnalyzeRequestsDurationSeconds = factory.NewHistogram(
 		prometheus.HistogramOpts{
 			Name:    "rx_analyze_duration_seconds",
@@ -493,43 +513,20 @@ func RecordTraceDuration(pathKind string, dur time.Duration) {
 		Observe(dur.Seconds())
 }
 
-// RecordCacheHit / RecordCacheMiss bump the appropriate counter.
-// kind: "trace", "index". Returns false for unknown kinds.
-//
-// The return value is used by callers to validate the `kind` string —
-// it stays meaningful even when the package is disabled (returns match
-// the "would have incremented" semantics).
-func RecordCacheHit(kind string) bool {
-	switch kind {
-	case "trace":
-		if enabled.Load() {
-			TraceCacheHitsTotal.Inc()
-		}
-		return true
-	case "index":
-		if enabled.Load() {
-			IndexCacheHitsTotal.Inc()
-		}
-		return true
+// IncIndexCacheHits increments IndexCacheHitsTotal when enabled.
+func IncIndexCacheHits() {
+	if !enabled.Load() {
+		return
 	}
-	return false
+	IndexCacheHitsTotal.Inc()
 }
 
-// RecordCacheMiss is the miss counterpart of RecordCacheHit.
-func RecordCacheMiss(kind string) bool {
-	switch kind {
-	case "trace":
-		if enabled.Load() {
-			TraceCacheMissesTotal.Inc()
-		}
-		return true
-	case "index":
-		if enabled.Load() {
-			IndexCacheMissesTotal.Inc()
-		}
-		return true
+// IncIndexCacheMisses increments IndexCacheMissesTotal when enabled.
+func IncIndexCacheMisses() {
+	if !enabled.Load() {
+		return
 	}
-	return false
+	IndexCacheMissesTotal.Inc()
 }
 
 // RecordHook bumps HookCallsTotal with (kind, status) labels.
@@ -594,12 +591,25 @@ func RecordError(errorType string) {
 	ErrorsTotal.WithLabelValues(errorType).Inc()
 }
 
-// RecordFileSize observes a file size in bytes.
-func RecordFileSize(sizeBytes int64) {
+// RecordFileScanned counts one file a trace scanned or answered from
+// its cache: FilesProcessedTotal by one, its size into FileSizeBytes,
+// and the same size onto BytesProcessedTotal.
+func RecordFileScanned(sizeBytes int64) {
 	if !enabled.Load() {
 		return
 	}
+	FilesProcessedTotal.Inc()
 	FileSizeBytes.Observe(float64(sizeBytes))
+	BytesProcessedTotal.Add(float64(sizeBytes))
+}
+
+// AddFilesSkipped adds the number of files one trace answer lists as
+// skipped to FilesSkippedTotal.
+func AddFilesSkipped(n int) {
+	if !enabled.Load() || n <= 0 {
+		return
+	}
+	FilesSkippedTotal.Add(float64(n))
 }
 
 // RecordPatternsPerRequest observes the regex pattern count on a
@@ -637,6 +647,24 @@ func RecordMaxResultsLimited() {
 		return
 	}
 	MaxResultsLimitedTotal.Inc()
+}
+
+// RecordSamplesDuration observes how long one successful samples
+// request took on SamplesDurationSeconds.
+func RecordSamplesDuration(dur time.Duration) {
+	if !enabled.Load() {
+		return
+	}
+	SamplesDurationSeconds.Observe(dur.Seconds())
+}
+
+// RecordAnalyzeDuration observes how long one index build with analysis
+// took on AnalyzeRequestsDurationSeconds.
+func RecordAnalyzeDuration(dur time.Duration) {
+	if !enabled.Load() {
+		return
+	}
+	AnalyzeRequestsDurationSeconds.Observe(dur.Seconds())
 }
 
 // RecordSamplesOffsets observes the offset count on the
