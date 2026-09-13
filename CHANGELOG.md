@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The index answers have named schemas in the OpenAPI document, so a
+  client can generate types for them instead of writing its own:
+  `IndexResponse` for `GET /v1/index`, `IndexTaskResult` and
+  `CompressTaskResult` for the `result` of a finished index or compress
+  task (which the document now declares as one of the two, or `null`),
+  and `LineIndexEntry` for a `line_index` entry: `[line_number,
+  byte_offset]`, or `[line_number, byte_offset, frame_index]` in a
+  seekable-zstd index. They were free-form objects. The answers keep
+  their shape, with three small exceptions where a key used to be left
+  out or empty: an empty `line_index` is `[]` rather than `null`, an
+  analyzed index without a longest-line position answers
+  `"longest_line": null`, and a compress result always carries
+  `index_error`, `null` unless building the index failed. A test
+  validates real answers, a seekable-zstd index included, against the
+  schemas. Additive; the contract stays 1.3.
+
 - A `409` from `POST /v1/index` or `POST /v1/compress` names the task
   already running for the path in a `task_id` member beside `detail`,
   so a client can poll that task without reading the ID out of the

@@ -346,8 +346,10 @@ func TestCompress_TaskLifecycle(t *testing.T) {
 				t.Errorf("output missing: %v", err)
 			}
 			// Verify result fields.
-			if st.Result["success"] != true {
-				t.Errorf("result.success: got %v", st.Result["success"])
+			// A decoded result is a map; its Operation says which
+			// result type it is.
+			if result, _ := st.Result.(map[string]any); result["success"] != true {
+				t.Errorf("result.success: got %v", st.Result)
 			}
 			return
 		}

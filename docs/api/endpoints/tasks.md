@@ -110,13 +110,15 @@ GET /v1/tasks/{task_id}
 | `started_at` | string | ISO 8601 UTC — when the task was created |
 | `completed_at` | string \| null | Set once the task reaches `completed` or `failed` |
 | `error` | string \| null | Populated only when `status == "failed"` |
-| `result` | object \| null | Populated only when `status == "completed"`; shape depends on operation |
+| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult` or `CompressTaskResult` by operation |
 
 ### Result shape by operation
 
-- `operation == "index"`: same shape as [`GET /v1/index`](line-index.md) plus a
-  `success` bool and `index_path` string
-- `operation == "compress"`: see the [compress task result](compress.md#task-result-shape)
+- `operation == "index"`: `IndexTaskResult`, the same shape as
+  [`GET /v1/index`](line-index.md) plus a `success` bool and an
+  `index_path` string
+- `operation == "compress"`: `CompressTaskResult`, see the
+  [compress task result](compress.md#task-result-shape)
 
 ## Status codes
 

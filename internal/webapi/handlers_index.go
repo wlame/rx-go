@@ -28,7 +28,7 @@ type getIndexInput struct {
 }
 
 type getIndexOutput struct {
-	Body map[string]any
+	Body rxtypes.IndexResponse
 }
 
 // ============================================================================
@@ -46,7 +46,7 @@ type postIndexOutput struct {
 // registerIndexHandlers mounts GET and POST /v1/index.
 //
 // GET returns a cached UnifiedFileIndex projected through
-// unifiedIndexToDict (matches rx-python/src/rx/web.py:755-823).
+// indexResponseFrom (matches rx-python/src/rx/web.py:755-823).
 //
 // POST validates, creates a task, launches the background goroutine
 // that actually does the indexing (matches web.py:1790-1876).
@@ -76,9 +76,9 @@ func registerIndexHandlers(s *Server, api huma.API) {
 				validated,
 			))
 		}
-		data := unifiedIndexToDict(idx)
+		data := indexResponseFrom(idx)
 		// cli_command equivalent (only on API responses; CLI fills its own).
-		data["cli_command"] = BuildCLICommand("index_get", map[string]any{"path": validated})
+		data.CLICommand = BuildCLICommand("index_get", map[string]any{"path": validated})
 		return &getIndexOutput{Body: data}, nil
 	})
 
@@ -215,15 +215,7 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 	if !req.Force {
 		if existing, err := index.LoadForSource(absPath); err == nil && existing != nil {
 			if !req.Analyze || existing.AnalysisPerformed {
-				result := unifiedIndexToDict(existing)
-				result["success"] = true
-				result["index_path"] = index.GetCachePath(absPath)
-				result["cli_command"] = BuildCLICommand("index_post", map[string]any{
-					"path":    absPath,
-					"force":   req.Force,
-					"analyze": req.Analyze,
-				})
-				mgr.Complete(taskID, result)
+				mgr.Complete(taskID, indexTaskResultFrom(existing, index.GetCachePath(absPath), absPath, req))
 				return
 			}
 		}
@@ -266,99 +258,79 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 		return
 	}
 
-	result := unifiedIndexToDict(idx)
-	result["success"] = true
-	result["index_path"] = cachePath
-	result["cli_command"] = BuildCLICommand("index_post", map[string]any{
+	mgr.Complete(taskID, indexTaskResultFrom(idx, cachePath, absPath, req))
+}
+
+// indexTaskResultFrom is the result a POST /v1/index task completes
+// with: the projection of the index it built or reused, where that index
+// is stored, and the rx command that does the same for absPath, the
+// validated path the request named.
+func indexTaskResultFrom(idx *rxtypes.UnifiedFileIndex, indexPath, absPath string, req rxtypes.IndexRequest) rxtypes.IndexTaskResult {
+	projection := indexResponseFrom(idx)
+	projection.CLICommand = BuildCLICommand("index_post", map[string]any{
 		"path":    absPath,
 		"force":   req.Force,
 		"analyze": req.Analyze,
 	})
-	mgr.Complete(taskID, result)
+	return rxtypes.IndexTaskResult{
+		IndexResponse: projection,
+		Success:       true,
+		IndexPath:     indexPath,
+	}
 }
 
-// unifiedIndexToDict projects a UnifiedFileIndex to a JSON-shaped map
-// matching rx-python/src/rx/web.py:826-898's _unified_index_to_dict.
+// indexResponseFrom projects a UnifiedFileIndex to the client-facing
+// IndexResponse, matching rx-python/src/rx/web.py's
+// _unified_index_to_dict. CLICommand is left empty: GET /v1/index and
+// the index task each fill in their own.
 //
-// This shape is the contract for both GET /v1/index and the terminal
-// task result of POST /v1/index, so changes here must be coordinated
-// with the task handler.
-func unifiedIndexToDict(idx *rxtypes.UnifiedFileIndex) map[string]any {
-	out := map[string]any{
-		"path":               idx.SourcePath,
-		"file_type":          string(idx.FileType),
-		"size_bytes":         idx.SourceSizeBytes,
-		"created_at":         idx.CreatedAt,
-		"build_time_seconds": idx.BuildTimeSeconds,
-		"analysis_performed": idx.AnalysisPerformed,
-		"line_index":         idx.LineIndex,
-		"index_entries":      len(idx.LineIndex),
+// This shape is the contract for both GET /v1/index and the result of a
+// POST /v1/index task (IndexTaskResult embeds it).
+func indexResponseFrom(idx *rxtypes.UnifiedFileIndex) rxtypes.IndexResponse {
+	lineIndex := idx.LineIndex
+	if lineIndex == nil {
+		lineIndex = []rxtypes.LineIndexEntry{}
 	}
-
-	if idx.LineCount != nil {
-		out["line_count"] = *idx.LineCount
-	} else {
-		out["line_count"] = nil
+	out := rxtypes.IndexResponse{
+		Path:                  idx.SourcePath,
+		FileType:              idx.FileType,
+		SizeBytes:             idx.SourceSizeBytes,
+		CreatedAt:             idx.CreatedAt,
+		BuildTimeSeconds:      idx.BuildTimeSeconds,
+		AnalysisPerformed:     idx.AnalysisPerformed,
+		LineIndex:             lineIndex,
+		IndexEntries:          len(lineIndex),
+		LineCount:             idx.LineCount,
+		EmptyLineCount:        idx.EmptyLineCount,
+		LineEnding:            idx.LineEnding,
+		CompressionFormat:     idx.CompressionFormat,
+		DecompressedSizeBytes: idx.DecompressedSizeBytes,
+		CompressionRatio:      idx.CompressionRatio,
+		AnomalySummary:        idx.AnomalySummary,
+		Anomalies:             idx.Anomalies,
 	}
-	if idx.EmptyLineCount != nil {
-		out["empty_line_count"] = *idx.EmptyLineCount
-	} else {
-		out["empty_line_count"] = nil
+	// Anomalies is a *[]AnomalyRangeResult so that "no analysis" stays
+	// null on the wire; dereference with a nil guard before len().
+	if idx.Anomalies != nil {
+		out.AnomalyCount = len(*idx.Anomalies)
 	}
-	if idx.LineEnding != nil {
-		out["line_ending"] = *idx.LineEnding
-	} else {
-		out["line_ending"] = nil
-	}
-
-	// line_length sub-object
+	// The line-length group exists only when the statistics were
+	// computed, and the longest line only when its position is known.
 	if idx.LineLengthMax != nil {
-		ll := map[string]any{
-			"max": *idx.LineLengthMax,
+		out.LineLength = &rxtypes.LineLengthStats{
+			Max:    *idx.LineLengthMax,
+			Avg:    idx.LineLengthAvg,
+			Median: idx.LineLengthMedian,
+			P95:    idx.LineLengthP95,
+			P99:    idx.LineLengthP99,
+			Stddev: idx.LineLengthStddev,
 		}
-		if idx.LineLengthAvg != nil {
-			ll["avg"] = *idx.LineLengthAvg
-		}
-		if idx.LineLengthMedian != nil {
-			ll["median"] = *idx.LineLengthMedian
-		}
-		if idx.LineLengthP95 != nil {
-			ll["p95"] = *idx.LineLengthP95
-		}
-		if idx.LineLengthP99 != nil {
-			ll["p99"] = *idx.LineLengthP99
-		}
-		if idx.LineLengthStddev != nil {
-			ll["stddev"] = *idx.LineLengthStddev
-		}
-		out["line_length"] = ll
-		if idx.LineLengthMaxLineNumber != nil {
-			out["longest_line"] = map[string]any{
-				"line_number": *idx.LineLengthMaxLineNumber,
-				"byte_offset": *idx.LineLengthMaxByteOffset,
+		if idx.LineLengthMaxLineNumber != nil && idx.LineLengthMaxByteOffset != nil {
+			out.LongestLine = &rxtypes.LongestLine{
+				LineNumber: *idx.LineLengthMaxLineNumber,
+				ByteOffset: *idx.LineLengthMaxByteOffset,
 			}
 		}
-	} else {
-		out["line_length"] = nil
-		out["longest_line"] = nil
-	}
-
-	// Compression info
-	out["compression_format"] = idx.CompressionFormat
-	out["decompressed_size_bytes"] = idx.DecompressedSizeBytes
-	out["compression_ratio"] = idx.CompressionRatio
-
-	// Anomaly info. Anomalies is typed as *[]AnomalyRangeResult so that
-	// a nil pointer serializes to JSON null (matches Python default).
-	// Dereference with a nil-guard before len().
-	if idx.Anomalies != nil {
-		out["anomaly_count"] = len(*idx.Anomalies)
-		out["anomaly_summary"] = idx.AnomalySummary
-		out["anomalies"] = *idx.Anomalies
-	} else {
-		out["anomaly_count"] = 0
-		out["anomaly_summary"] = idx.AnomalySummary
-		out["anomalies"] = nil
 	}
 	return out
 }

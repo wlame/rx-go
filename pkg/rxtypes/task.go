@@ -16,20 +16,30 @@ type TaskResponse struct {
 // Operation is "compress" or "index". Status transitions:
 // "queued" → "running" → ("completed" | "failed"). Result is nil until
 // Status == "completed"; Error is nil unless Status == "failed".
-//
-// Result is tagged nullable because it is null on every poll before the
-// last one; huma declares a map as a non-null object unless told
-// otherwise.
 type TaskStatusResponse struct {
-	TaskID      string         `json:"task_id"`
-	Status      string         `json:"status"`
-	Path        string         `json:"path"`
-	Operation   string         `json:"operation"`
-	StartedAt   *string        `json:"started_at"`
-	CompletedAt *string        `json:"completed_at"`
-	Error       *string        `json:"error"`
-	Result      map[string]any `json:"result" nullable:"true"`
+	TaskID      string     `json:"task_id"`
+	Status      string     `json:"status"`
+	Path        string     `json:"path"`
+	Operation   string     `json:"operation"`
+	StartedAt   *string    `json:"started_at"`
+	CompletedAt *string    `json:"completed_at"`
+	Error       *string    `json:"error"`
+	Result      TaskResult `json:"result"`
 }
+
+// TaskResult is the result of a background task: an IndexTaskResult
+// for an "index" task, a CompressTaskResult for a "compress" task, and
+// nil (JSON null) until the task completes.
+//
+// It is a defined type over `any` rather than `any` itself so that the
+// OpenAPI generator can tell this field apart from every other `any` in
+// the wire types and publish it as "IndexTaskResult, CompressTaskResult
+// or null" (internal/webapi registers that schema for this type).
+// encoding/json treats it like `any`: it marshals whatever value it
+// holds, and a Go client that decodes a TaskStatusResponse gets the
+// result as a map[string]any, to decode again into the type its
+// Operation names.
+type TaskResult any
 
 // CompressRequest is the body for POST /v1/compress (background task).
 //
@@ -71,17 +81,24 @@ type CompressRequest struct {
 	Force            bool    `json:"force,omitempty" required:"false" default:"false" doc:"Overwrite the output file if it exists."`
 }
 
-// CompressResponse is the terminal payload of POST /v1/compress tasks.
-type CompressResponse struct {
-	Success          bool     `json:"success"`
-	InputPath        string   `json:"input_path"`
-	OutputPath       *string  `json:"output_path"`
-	CompressedSize   *int64   `json:"compressed_size"`
-	DecompressedSize *int64   `json:"decompressed_size"`
-	CompressionRatio *float64 `json:"compression_ratio"`
-	FrameCount       *int     `json:"frame_count"`
-	TotalLines       *int64   `json:"total_lines"`
-	IndexBuilt       bool     `json:"index_built"`
-	TimeSeconds      *float64 `json:"time_seconds"`
-	Error            *string  `json:"error"`
+// CompressTaskResult is the result of a completed POST /v1/compress
+// task.
+//
+// TotalLines is the line count of the index built after compressing,
+// null when none was built. IndexError says why building that index
+// failed, and is null otherwise: the compressed file is correct and
+// usable either way, and POST /v1/index can build the index later.
+type CompressTaskResult struct {
+	Success          bool    `json:"success"`
+	InputPath        string  `json:"input_path"`
+	OutputPath       string  `json:"output_path"`
+	CompressedSize   int64   `json:"compressed_size"`
+	DecompressedSize int64   `json:"decompressed_size"`
+	CompressionRatio float64 `json:"compression_ratio" doc:"decompressed_size / compressed_size, rounded down to two decimals."`
+	FrameCount       int     `json:"frame_count"`
+	TotalLines       *int64  `json:"total_lines"`
+	IndexBuilt       bool    `json:"index_built"`
+	IndexError       *string `json:"index_error"`
+	TimeSeconds      float64 `json:"time_seconds"`
+	CLICommand       string  `json:"cli_command" doc:"The rx command that does what this task did."`
 }

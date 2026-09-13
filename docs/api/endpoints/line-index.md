@@ -35,9 +35,9 @@ GET /v1/index?path=<file>
   "build_time_seconds": 1.234,
   "analysis_performed": false,
   "line_index": [
-    { "line_number": 1,       "byte_offset": 0 },
-    { "line_number": 12500,   "byte_offset": 2097152 },
-    { "line_number": 25000,   "byte_offset": 4194304 }
+    [1,     0],
+    [12500, 2097152],
+    [25000, 4194304]
   ],
   "index_entries":   2187,
   "line_count":      3528914,
@@ -49,11 +49,13 @@ GET /v1/index?path=<file>
   "decompressed_size_bytes": null,
   "compression_ratio":       null,
   "anomaly_count":   0,
-  "anomaly_summary": {},
+  "anomaly_summary": null,
   "anomalies":       null,
   "cli_command":     "rx index /var/log/audit-2026-03.log --info --json"
 }
 ```
+
+The OpenAPI document names this shape `IndexResponse`.
 
 ### Response fields (key selection)
 
@@ -65,7 +67,7 @@ GET /v1/index?path=<file>
 | `created_at` | string | ISO 8601 UTC with microsecond precision |
 | `build_time_seconds` | number | Wall-clock build time |
 | `analysis_performed` | bool | Whether `--analyze` was run |
-| `line_index` | array | Sparse `{line_number, byte_offset}` checkpoints |
+| `line_index` | array | Sparse checkpoints, each an array (`LineIndexEntry`): `[line_number, byte_offset]`, or `[line_number, byte_offset, frame_index]` in a seekable-zstd index, where the third element is the 0-based frame holding the line |
 | `index_entries` | int | `len(line_index)` |
 | `line_count` | int64 \| null | Total lines, populated when analysis ran |
 | `line_length` | object \| null | `{max, avg, median, p95, p99, stddev}` when analyzed |
@@ -227,7 +229,8 @@ JSON blobs that the default 128-line window would truncate.
 ### Result shape
 
 Once `status == "completed"`, the task's `result` field contains the
-same JSON shape as `GET /v1/index` returns, plus:
+same JSON shape as `GET /v1/index` returns, plus the two fields below.
+The OpenAPI document names it `IndexTaskResult`.
 
 ```json
 {

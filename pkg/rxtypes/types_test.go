@@ -7,12 +7,11 @@ import (
 	"testing"
 )
 
-// intPtr / strPtr / int64Ptr / float64Ptr — tiny helpers for populating
-// pointer fields in test fixtures without cluttering table-driven cases.
-func intPtr(v int) *int             { return &v }
-func strPtr(v string) *string       { return &v }
-func int64Ptr(v int64) *int64       { return &v }
-func float64Ptr(v float64) *float64 { return &v }
+// intPtr / strPtr / int64Ptr — tiny helpers for populating pointer
+// fields in test fixtures without cluttering table-driven cases.
+func intPtr(v int) *int       { return &v }
+func strPtr(v string) *string { return &v }
+func int64Ptr(v int64) *int64 { return &v }
 
 func TestErrorResponse_JSON(t *testing.T) {
 	t.Parallel()
@@ -418,24 +417,34 @@ func TestMatchFoundPayload_NullableLineNumber(t *testing.T) {
 	}
 }
 
-func TestIndexResponse_JSON(t *testing.T) {
+// TestIndexTaskResult_JSON pins the shape of an index answer without
+// analysis: every field present, the ones that need analysis null, and
+// the task's own fields beside the embedded projection's at the top
+// level.
+func TestIndexTaskResult_JSON(t *testing.T) {
 	t.Parallel()
-	r := IndexResponse{
-		Success:         true,
-		Path:            "/tmp/big.log",
-		IndexPath:       strPtr("/home/u/.cache/rx/indexes/big.log_abc.json"),
-		LineCount:       int64Ptr(1000000),
-		FileSize:        int64Ptr(1 << 30),
-		CheckpointCount: intPtr(50),
-		TimeSeconds:     float64Ptr(2.5),
+	frame := 0
+	r := IndexTaskResult{
+		IndexResponse: IndexResponse{
+			Path:      "/tmp/big.log.zst",
+			FileType:  FileTypeSeekableZstd,
+			LineIndex: []LineIndexEntry{{LineNumber: 1, ByteOffset: 0, FrameIndex: &frame}},
+		},
+		Success:   true,
+		IndexPath: "/home/u/.cache/rx/indexes/big.log.zst_abc.json",
 	}
 	data, err := json.Marshal(r)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	// Verify error:null emitted (pointer, not set).
-	if !strings.Contains(string(data), `"error":null`) {
-		t.Errorf("expected error:null, got %s", data)
+	for _, frag := range []string{
+		`"file_type":"seekable_zstd"`, `"line_index":[[1,0,0]]`,
+		`"line_length":null`, `"longest_line":null`, `"anomaly_summary":null`, `"anomalies":null`,
+		`"success":true`, `"index_path":"/home/u/.cache/rx/indexes/big.log.zst_abc.json"`,
+	} {
+		if !strings.Contains(string(data), frag) {
+			t.Errorf("expected %s in %s", frag, data)
+		}
 	}
 }
 

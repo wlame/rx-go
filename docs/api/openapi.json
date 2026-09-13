@@ -1,6 +1,51 @@
 {
   "components": {
     "schemas": {
+      "AnomalyRangeResult": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "detector": {
+            "type": "string"
+          },
+          "end_line": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "end_offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "severity": {
+            "format": "double",
+            "type": "number"
+          },
+          "start_line": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_offset": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_line",
+          "end_line",
+          "start_offset",
+          "end_offset",
+          "severity",
+          "category",
+          "description",
+          "detector"
+        ],
+        "type": "object"
+      },
       "ApiError": {
         "additionalProperties": false,
         "properties": {
@@ -79,6 +124,76 @@
         },
         "required": [
           "input_path"
+        ],
+        "type": "object"
+      },
+      "CompressTaskResult": {
+        "additionalProperties": false,
+        "properties": {
+          "cli_command": {
+            "description": "The rx command that does what this task did.",
+            "type": "string"
+          },
+          "compressed_size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "compression_ratio": {
+            "description": "decompressed_size / compressed_size, rounded down to two decimals.",
+            "format": "double",
+            "type": "number"
+          },
+          "decompressed_size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "frame_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "index_built": {
+            "type": "boolean"
+          },
+          "index_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_path": {
+            "type": "string"
+          },
+          "output_path": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "time_seconds": {
+            "format": "double",
+            "type": "number"
+          },
+          "total_lines": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "success",
+          "input_path",
+          "output_path",
+          "compressed_size",
+          "decompressed_size",
+          "compression_ratio",
+          "frame_count",
+          "total_lines",
+          "index_built",
+          "index_error",
+          "time_seconds",
+          "cli_command"
         ],
         "type": "object"
       },
@@ -293,6 +408,441 @@
           "path"
         ],
         "type": "object"
+      },
+      "IndexResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_performed": {
+            "description": "Whether the line statistics and anomalies were computed.",
+            "type": "boolean"
+          },
+          "anomalies": {
+            "items": {
+              "$ref": "#/components/schemas/AnomalyRangeResult"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "anomaly_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "anomaly_summary": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "build_time_seconds": {
+            "format": "double",
+            "type": "number"
+          },
+          "cli_command": {
+            "description": "The rx command that gives this answer.",
+            "type": "string"
+          },
+          "compression_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "compression_ratio": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "created_at": {
+            "description": "When the index was built (ISO 8601).",
+            "type": "string"
+          },
+          "decompressed_size_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "empty_line_count": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "file_type": {
+            "enum": [
+              "text",
+              "binary",
+              "compressed",
+              "seekable_zstd"
+            ],
+            "type": "string"
+          },
+          "index_entries": {
+            "description": "Number of line_index entries.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "line_count": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "line_ending": {
+            "description": "LF, CRLF, CR or mixed; null without analysis.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line_index": {
+            "items": {
+              "$ref": "#/components/schemas/LineIndexEntry"
+            },
+            "type": "array"
+          },
+          "line_length": {
+            "$ref": "#/components/schemas/LineLengthStats",
+            "description": "Line-length statistics; null without analysis."
+          },
+          "longest_line": {
+            "$ref": "#/components/schemas/LongestLine",
+            "description": "Where the longest line is; null without analysis."
+          },
+          "path": {
+            "description": "The indexed file.",
+            "type": "string"
+          },
+          "size_bytes": {
+            "description": "Size of the file on disk.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "file_type",
+          "size_bytes",
+          "created_at",
+          "build_time_seconds",
+          "analysis_performed",
+          "line_index",
+          "index_entries",
+          "line_count",
+          "empty_line_count",
+          "line_ending",
+          "line_length",
+          "longest_line",
+          "compression_format",
+          "decompressed_size_bytes",
+          "compression_ratio",
+          "anomaly_count",
+          "anomaly_summary",
+          "anomalies",
+          "cli_command"
+        ],
+        "type": "object"
+      },
+      "IndexTaskResult": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis_performed": {
+            "description": "Whether the line statistics and anomalies were computed.",
+            "type": "boolean"
+          },
+          "anomalies": {
+            "items": {
+              "$ref": "#/components/schemas/AnomalyRangeResult"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "anomaly_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "anomaly_summary": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "build_time_seconds": {
+            "format": "double",
+            "type": "number"
+          },
+          "cli_command": {
+            "description": "The rx command that gives this answer.",
+            "type": "string"
+          },
+          "compression_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "compression_ratio": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "created_at": {
+            "description": "When the index was built (ISO 8601).",
+            "type": "string"
+          },
+          "decompressed_size_bytes": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "empty_line_count": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "file_type": {
+            "enum": [
+              "text",
+              "binary",
+              "compressed",
+              "seekable_zstd"
+            ],
+            "type": "string"
+          },
+          "index_entries": {
+            "description": "Number of line_index entries.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "index_path": {
+            "description": "Where the index is stored in the cache.",
+            "type": "string"
+          },
+          "line_count": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "line_ending": {
+            "description": "LF, CRLF, CR or mixed; null without analysis.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line_index": {
+            "items": {
+              "$ref": "#/components/schemas/LineIndexEntry"
+            },
+            "type": "array"
+          },
+          "line_length": {
+            "$ref": "#/components/schemas/LineLengthStats",
+            "description": "Line-length statistics; null without analysis."
+          },
+          "longest_line": {
+            "$ref": "#/components/schemas/LongestLine",
+            "description": "Where the longest line is; null without analysis."
+          },
+          "path": {
+            "description": "The indexed file.",
+            "type": "string"
+          },
+          "size_bytes": {
+            "description": "Size of the file on disk.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "index_path",
+          "path",
+          "file_type",
+          "size_bytes",
+          "created_at",
+          "build_time_seconds",
+          "analysis_performed",
+          "line_index",
+          "index_entries",
+          "line_count",
+          "empty_line_count",
+          "line_ending",
+          "line_length",
+          "longest_line",
+          "compression_format",
+          "decompressed_size_bytes",
+          "compression_ratio",
+          "anomaly_count",
+          "anomaly_summary",
+          "anomalies",
+          "cli_command"
+        ],
+        "type": "object"
+      },
+      "LineIndexEntry": {
+        "description": "A line-index checkpoint: the 1-based line number and the byte offset where that line starts in the file's text. An entry of a seekable-zstd index has a third element, the 0-based index of the frame holding the line.",
+        "oneOf": [
+          {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "description": "Line number, 1-based.",
+                "format": "int64",
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "description": "Byte offset where the line starts, in the file's text (the decompressed stream for a compressed file).",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          },
+          {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "description": "Line number, 1-based.",
+                "format": "int64",
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "description": "Byte offset where the line starts, in the file's text (the decompressed stream for a compressed file).",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "description": "Index of the seekable-zstd frame holding the line, 0-based.",
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          }
+        ]
+      },
+      "LineLengthStats": {
+        "additionalProperties": false,
+        "properties": {
+          "avg": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "max": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "median": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p95": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "p99": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "stddev": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "max",
+          "avg",
+          "median",
+          "p95",
+          "p99",
+          "stddev"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "LongestLine": {
+        "additionalProperties": false,
+        "properties": {
+          "byte_offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "line_number": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "line_number",
+          "byte_offset"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
       },
       "Match": {
         "additionalProperties": false,
@@ -596,11 +1146,18 @@
             "type": "string"
           },
           "result": {
-            "additionalProperties": {},
-            "type": [
-              "object",
-              "null"
-            ]
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexTaskResult"
+              },
+              {
+                "$ref": "#/components/schemas/CompressTaskResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task. Null until then."
           },
           "started_at": {
             "type": [
@@ -1122,8 +1679,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {},
-                  "type": "object"
+                  "$ref": "#/components/schemas/IndexResponse"
                 }
               }
             },

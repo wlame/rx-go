@@ -152,7 +152,8 @@ done
 
 ## Task result shape
 
-When the task completes, its `result` field contains:
+When the task completes, its `result` field contains a
+`CompressTaskResult`:
 
 ```json
 {
@@ -165,6 +166,7 @@ When the task completes, its `result` field contains:
   "frame_count":       139,
   "total_lines":       2846193,
   "index_built":       true,
+  "index_error":       null,
   "time_seconds":      12.34,
   "cli_command":       "rx compress /var/log/audit-2026-03.log --output=/var/log/audit-2026-03.log.zst --frame-size=4M --level=3"
 }
@@ -183,6 +185,7 @@ When the task completes, its `result` field contains:
 | `frame_count` | int | Number of independent zstd frames |
 | `total_lines` | int64 \| null | Line count from the index; `null` when no index was built |
 | `index_built` | bool | Whether the line index was built and saved |
+| `index_error` | string \| null | Why building the index failed; `null` when it was built or not asked for. The compressed file is usable either way, and `POST /v1/index` can build the index later |
 | `time_seconds` | number | Wall-clock encode time |
 | `cli_command` | string | Equivalent CLI invocation |
 

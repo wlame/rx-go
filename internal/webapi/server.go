@@ -111,6 +111,10 @@ func NewServer(cfg Config) *Server {
 		api:    api,
 	}
 
+	// Schemas huma cannot reflect from the Go types; they must be in
+	// place before the first operation that uses them is registered.
+	registerWireSchemas(api)
+
 	// Register all typed handlers through huma. Route order does not
 	// matter across the humachi calls because chi matches exact routes
 	// first; the SPA catch-all comes after.
