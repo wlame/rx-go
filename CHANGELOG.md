@@ -452,6 +452,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request gave, as `--request-id` and `--hook-on-*`. It dropped them,
   so the pasted command fired no webhook the request had asked for.
 
+- The `GET /v1/index` page says what its `cli_command`,
+  `rx index PATH --info --json`, prints: the whole stored index, of which
+  the HTTP answer is a projection, and which members differ.
+
 - The OpenAPI document allows `null` for the `result` of
   `GET /v1/tasks/{task_id}`, which is what every poll before the task
   completes answers; it declared a non-null object. rx-python declares
