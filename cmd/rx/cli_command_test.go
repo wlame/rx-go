@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/internal/webapi"
 )
 
@@ -135,6 +136,57 @@ func TestCLICommand_ParserRejectsAnUnknownFlagAndABadValue(t *testing.T) {
 	} {
 		if err := parseWithCommandTree(shellWords(t, command)[1:]); err == nil {
 			t.Errorf("%q parsed without error", command)
+		}
+	}
+}
+
+// The table BuildCLICommand renders from names flags the command tree
+// has, and what it treats as "rx without this flag" is the flag's own
+// default there, so a default changed on one side fails here.
+func TestCLICommand_TableMatchesTheCommandTree(t *testing.T) {
+	root := newRootCmd()
+	for name, op := range webapi.CLICommandOperations() {
+		sub, _, err := root.Find([]string{op.Subcommand})
+		if err != nil || sub == root {
+			t.Errorf("%s: no subcommand %q", name, op.Subcommand)
+			continue
+		}
+		fields := map[string]bool{}
+		for _, arg := range op.Args {
+			fields[arg.Field] = true
+		}
+		for _, arg := range op.Args {
+			switch arg.Kind {
+			case webapi.ArgPositional:
+				continue
+			case webapi.ArgSwitchList:
+				for _, flag := range trace.MatchingFlags {
+					if sub.Flags().Lookup(flag.Long) == nil {
+						t.Errorf("%s: rx %s has no --%s", name, op.Subcommand, flag.Long)
+					}
+				}
+				continue
+			}
+			flag := sub.Flags().Lookup(arg.Flag)
+			switch {
+			case flag == nil:
+				t.Errorf("%s: rx %s has no --%s", name, op.Subcommand, arg.Flag)
+			case arg.Absent.NoValue:
+				// Leaving the flag out means something no value spells.
+			case arg.Absent.SameAs != "":
+				if !fields[arg.Absent.SameAs] {
+					t.Errorf("%s: --%s defaults to field %q, which the operation lacks",
+						name, arg.Flag, arg.Absent.SameAs)
+				}
+			case flag.DefValue != arg.Absent.Value:
+				t.Errorf("%s: --%s defaults to %q in rx %s, the table says %q",
+					name, arg.Flag, flag.DefValue, op.Subcommand, arg.Absent.Value)
+			}
+		}
+		for _, word := range op.FixedFlags {
+			if sub.Flags().Lookup(strings.TrimPrefix(word, "--")) == nil {
+				t.Errorf("%s: rx %s has no %s", name, op.Subcommand, word)
+			}
 		}
 	}
 }

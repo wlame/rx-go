@@ -89,11 +89,10 @@ func TestCompress_BodyWithOnlyInputPathUsesCLIDefaults(t *testing.T) {
 	if result["index_built"] != true {
 		t.Errorf("index_built = %v, want true (rx compress builds the index by default)", result["index_built"])
 	}
-	command, _ := result["cli_command"].(string)
-	for _, flag := range []string{"--frame-size=4M", "--level=3"} {
-		if !strings.Contains(command, flag) {
-			t.Errorf("cli_command %q lacks %s", command, flag)
-		}
+	// The defaults the request took are those of rx compress, so the
+	// equivalent command names none of them.
+	if got, want := result["cli_command"], "rx compress "+input; got != want {
+		t.Errorf("cli_command = %v, want %v", got, want)
 	}
 }
 

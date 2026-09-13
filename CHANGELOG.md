@@ -112,6 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `cli_command` follows one rule for every operation: a flag appears
+  when the request gave a value and that value is not what `rx` uses
+  without the flag. A value equal to the CLI default is left out, so a
+  compress task that took the defaults renders `rx compress PATH`
+  instead of `... --output=PATH.zst --frame-size=4M --level=3`, and
+  `--output` appears only when the request named an output. The
+  rendering comes from one table of request fields and flags per
+  operation; a test compares the table's defaults with the real command
+  tree and runs the commands of real trace and samples requests, whose
+  `--json` answer must equal the HTTP answer.
+
 - `rx trace` refuses a flag it does not know, with exit 2 and the
   flag's name, instead of skipping it. Skipping is what let `-i` and
   `-w` give wrong answers, and the forwarding it imitated would also
