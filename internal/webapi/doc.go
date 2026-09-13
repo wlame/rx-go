@@ -17,7 +17,6 @@
 //   - huma.API   — typed handler registration + OpenAPI
 //   - trace.Engine — regex search backend (stateless)
 //   - tasks.Manager — background compress/index jobs
-//   - requeststore.Store — per-request scan metadata
 //   - hooks.Dispatcher — webhook fan-out
 //   - frontend.Manager — SPA cache directory
 //   - prometheus.Registry — metrics
