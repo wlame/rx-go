@@ -472,7 +472,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes the default of the matching `rx compress` flag, which rx-python
   uses too: `frame_size` `"4M"`, `compression_level` `3`, `build_index`
   `true` (the docs said `false`), `force` `false`, and `output_path`
-  `null`, meaning `<input_path>.zst`. The OpenAPI document publishes
+  `null`, meaning `<input_path>.zst`. An explicit `"build_index": false`
+  is kept: `CompressRequest.BuildIndex` is a `*bool` in Go, because huma
+  fills a default into every zero value. The OpenAPI document publishes
   the defaults and the level range 1-22; a level outside it, an explicit
   `0` included, is now a `422` validation error rather than a `400`, as
   in rx-python. A test compares the HTTP defaults with the CLI flag

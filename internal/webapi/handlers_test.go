@@ -304,7 +304,7 @@ func TestCompress_TaskLifecycle(t *testing.T) {
 		OutputPath:       &output,
 		FrameSize:        "4K", // small so we get multiple frames
 		CompressionLevel: 1,
-		BuildIndex:       false,
+		BuildIndex:       new(bool),
 	}
 	buf, _ := json.Marshal(req)
 	resp, err := http.Post(ts.URL+"/v1/compress", "application/json", bytes.NewReader(buf))

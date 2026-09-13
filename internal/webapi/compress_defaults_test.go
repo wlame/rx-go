@@ -137,3 +137,33 @@ func TestCompress_DocumentedExampleBodiesAreAccepted(t *testing.T) {
 		})
 	}
 }
+
+// TestCompress_BuildIndexFalseBuildsNoIndex asserts that an explicit
+// "build_index": false is honored. Its default is true, and a default
+// filled over every zero value would turn the false into true.
+func TestCompress_BuildIndexFalseBuildsNoIndex(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	root := t.TempDir()
+	input := filepath.Join(root, "app.log")
+	if err := os.WriteFile(input, []byte(strings.Repeat("a log line\n", 500)), 0o600); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	ts := newTestServer(t)
+
+	status, created := postCompressRaw(t, ts.URL, `{"input_path": "`+input+`", "build_index": false}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body %v", status, created)
+	}
+	taskID, _ := created["task_id"].(string)
+	waitForTaskCompletion(t, ts.URL, taskID)
+
+	result := getTaskResult(t, ts.URL, taskID)
+	if result["index_built"] != false || result["total_lines"] != nil {
+		t.Errorf("index_built = %v, total_lines = %v; want false and null",
+			result["index_built"], result["total_lines"])
+	}
+}
