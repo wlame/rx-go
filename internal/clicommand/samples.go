@@ -67,12 +67,17 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 				colorFlag = "never"
 			}
 			return runSamples(out, samplesParams{
-				path:       args[0],
-				offsets:    offsets,
-				lines:      lines,
-				ctxLines:   ctxLines,
-				beforeCtx:  beforeCtx,
-				afterCtx:   afterCtx,
+				path:      args[0],
+				offsets:   offsets,
+				lines:     lines,
+				ctxLines:  ctxLines,
+				beforeCtx: beforeCtx,
+				afterCtx:  afterCtx,
+				// --before=0 asks for no lines before, which is not the
+				// same as leaving the flag out; only Changed() can tell
+				// the two apart on an int flag.
+				beforeSet:  cmd.Flags().Changed("before"),
+				afterSet:   cmd.Flags().Changed("after"),
 				jsonOutput: jsonOutput,
 				colorFlag:  colorFlag,
 				regex:      regex,
@@ -116,12 +121,16 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 }
 
 type samplesParams struct {
-	path       string
-	offsets    []string
-	lines      []string
-	ctxLines   int
-	beforeCtx  int
-	afterCtx   int
+	path      string
+	offsets   []string
+	lines     []string
+	ctxLines  int
+	beforeCtx int
+	afterCtx  int
+	// beforeSet and afterSet say whether --before / --after were given;
+	// a given value, 0 included, overrides --context.
+	beforeSet  bool
+	afterSet   bool
 	jsonOutput bool
 	colorFlag  string
 	regex      string
@@ -168,14 +177,15 @@ func runSamples(out io.Writer, p samplesParams) error {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 
-	// Context precedence: explicit --before/--after override --context.
-	before := p.beforeCtx
-	if before == 0 {
-		before = p.ctxLines
+	// Context precedence: a given --before/--after overrides --context,
+	// as before_context/after_context do over HTTP.
+	before := p.ctxLines
+	if p.beforeSet {
+		before = p.beforeCtx
 	}
-	after := p.afterCtx
-	if after == 0 {
-		after = p.ctxLines
+	after := p.ctxLines
+	if p.afterSet {
+		after = p.afterCtx
 	}
 
 	// IndexLoader hooks up the cached unified index for index-aware
