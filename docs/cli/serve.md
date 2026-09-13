@@ -245,8 +245,9 @@ exposed as a flag).
 
 !!! note "`/metrics` includes endpoint labels, not path values"
     The Prometheus metrics label requests by **route pattern**
-    (`/v1/tasks/{task_id}`), not by path value (`/v1/tasks/abc-123`).
-    This prevents cardinality explosion from variable path segments.
+    (`/v1/tasks/{task_id}`), not by path value (`/v1/tasks/abc-123`),
+    and a request no route matches as `unmatched`. This keeps the number
+    of series fixed whatever paths clients try.
 
 ## See also
 
