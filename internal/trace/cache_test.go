@@ -251,7 +251,7 @@ func scannedNow(t *testing.T, path string, matches []rxtypes.Match) ScannedFile 
 	if err != nil {
 		t.Fatalf("stat %s: %v", path, err)
 	}
-	return ScannedFile{Path: path, Source: index.IdentityFromInfo(path, info), Matches: matches}
+	return ScannedFile{Path: path, Source: index.IdentityFromInfo(path, info), Matches: matches, Chunks: 1}
 }
 
 // ptrIntT returns a pointer to an int literal — handy for building

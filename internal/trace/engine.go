@@ -198,7 +198,7 @@ func (e *Engine) RunWithOptions(
 					buckets = append(buckets, fileBucket{
 						kind: "cached-seekable", path: fp, size: sz, cacheInfo: info,
 					})
-					fileChunkCounts[filePathToID[fp]] = len(info.FramesWithMatches)
+					fileChunkCounts[filePathToID[fp]] = info.ChunkCount
 					continue
 				}
 			}
@@ -219,11 +219,13 @@ func (e *Engine) RunWithOptions(
 		}
 		// Regular files — try cache if large enough.
 		if !opts.NoCache && sz >= largeFileThresholdBytes() {
-			if cm, cerr := GetCachedMatches(fp, patterns, opts.RgExtraArgs); cerr == nil {
+			if cached, cerr := GetCachedScan(fp, patterns, opts.RgExtraArgs); cerr == nil {
 				buckets = append(buckets, fileBucket{
-					kind: "cached-regular", path: fp, size: sz, cachedMatch: cm,
+					kind: "cached-regular", path: fp, size: sz, cachedMatch: cached.Matches,
 				})
-				fileChunkCounts[filePathToID[fp]] = 0 // 0 = served from cache
+				// The chunk count of the scan that wrote the cache, so a
+				// cache hit answers exactly what that scan answered.
+				fileChunkCounts[filePathToID[fp]] = cached.ChunkCount
 				continue
 			}
 		}
@@ -267,6 +269,9 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 			cacheEntry := scanToCache(opts, b.path, b.info, "")
+			if cacheEntry != nil {
+				cacheEntry.Chunks = len(tasks)
+			}
 			fileChunkCounts[fileID] = len(tasks)
 			// Pass the REMAINING cap (opts.MaxResults minus already-collected
 			// matches) so ProcessAllChunks can cooperatively cancel as
@@ -424,6 +429,10 @@ func (e *Engine) RunWithOptions(
 			var cacheEntry *ScannedFile
 			if b.info != nil {
 				cacheEntry = scanToCache(opts, b.path, b.info, "zstd-seekable")
+			}
+			if cacheEntry != nil {
+				// The frame count, set when the file was classified.
+				cacheEntry.Chunks = fileChunkCounts[fileID]
 			}
 			remaining := remainingResults(opts.MaxResults, len(allMatches))
 			rawMatches, rawContexts, _, serr := ProcessSeekable(

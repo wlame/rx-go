@@ -423,6 +423,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An answer served from the trace cache reports the `file_chunks` of
+  the scan that wrote the cache, on `rx trace --json` and `GET
+  /v1/trace`. It reported `0` for a plain file (where the scan reported,
+  for example, `20`) and the number of frames with a match for a
+  seekable-zstd file, so the cache changed the answer. The cache
+  records the count as `chunk_count`; a cache without it is treated as
+  absent.
+
 - The trace cache no longer keeps an incomplete answer for a log that
   grows during a trace. The cache records the file as it was when the
   scan's chunks were planned, and is not written when the file has

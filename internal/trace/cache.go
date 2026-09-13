@@ -32,7 +32,8 @@ import (
 //
 // Version 4: the cache records the source's inode, ctime and
 // fingerprint, and every identity field describes the file as it was
-// when the scan was planned. Version 3 caches were stamped from a stat
+// when the scan was planned. It also records the scan's chunk count,
+// so a cache hit reports the file_chunks the scan reported. Version 3 caches were stamped from a stat
 // taken after the scan, so a log that grew during the scan got a cache
 // claiming its new size with matches only up to the old one; such a
 // cache cannot be told apart from a good one and is discarded.
@@ -249,7 +250,8 @@ func SaveCache(cachePath string, data *rxtypes.TraceCacheData) error {
 // ============================================================================
 
 // IsCacheValid returns true when the cache file exists, the version
-// and the patterns hash match, and the source file is still the file
+// and the patterns hash match, the cache records the scan's chunk
+// count, and the source file is still the file
 // the cache was built from: the same size, mtime, inode, ctime and
 // fingerprint, compared by index.SourceIdentity.MatchesFile exactly as
 // the line index compares them.
@@ -263,6 +265,11 @@ func IsCacheValid(
 		return false
 	}
 	if data.PatternsHash != ComputePatternsHash(patterns, rgFlags) {
+		return false
+	}
+	// Every scan has at least one chunk. A cache without the count
+	// cannot report the scan's file_chunks, so it is not used.
+	if data.ChunkCount < 1 {
 		return false
 	}
 	return recordedSource(data).MatchesFile(sourcePath)
@@ -279,12 +286,13 @@ func recordedSource(data *rxtypes.TraceCacheData) index.SourceIdentity {
 	}
 }
 
-// GetCachedMatches returns the raw cached matches for (source, patterns, flags)
-// when the cache is valid, or ErrCacheMiss otherwise.
-func GetCachedMatches(
+// GetCachedScan returns the cached scan for (source, patterns, flags)
+// when the cache is valid, or ErrCacheMiss otherwise. The caller
+// reconstructs the answer from its matches and reports its chunk count.
+func GetCachedScan(
 	sourcePath string,
 	patterns, rgFlags []string,
-) ([]rxtypes.TraceCacheMatch, error) {
+) (*rxtypes.TraceCacheData, error) {
 	cp := CachePath(sourcePath, patterns, rgFlags)
 	if !IsCacheValid(cp, sourcePath, patterns, rgFlags) {
 		// gated helper — no-op in CLI mode.
@@ -297,7 +305,7 @@ func GetCachedMatches(
 		return nil, err
 	}
 	prometheus.IncTraceCacheHits()
-	return data.Matches, nil
+	return data, nil
 }
 
 // CompressedCacheInfo is the equivalent of Python's
@@ -308,6 +316,9 @@ type CompressedCacheInfo struct {
 	CompressionFormat string
 	FramesWithMatches []int
 	Matches           []rxtypes.TraceCacheMatch
+	// ChunkCount is the frame count the scan that wrote the cache
+	// reported as file_chunks.
+	ChunkCount int
 }
 
 // GetCompressedCacheInfo returns cache info for a compressed file, or
@@ -329,6 +340,7 @@ func GetCompressedCacheInfo(
 		CompressionFormat: data.CompressionFormat,
 		FramesWithMatches: append([]int(nil), data.FramesWithMatches...),
 		Matches:           data.Matches,
+		ChunkCount:        data.ChunkCount,
 	}, nil
 }
 
@@ -355,6 +367,9 @@ type ScannedFile struct {
 	// CompressionFormat is "zstd-seekable" for a seekable-zstd source
 	// and empty for a plain file.
 	CompressionFormat string
+	// Chunks is the file_chunks value the scan reported: chunks of a
+	// plain file, frames of a seekable-zstd one.
+	Chunks int
 }
 
 // BuildCache converts a scan's output into the on-disk cache shape. For
@@ -426,6 +441,7 @@ func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCach
 		PatternsHash:      ComputePatternsHash(patterns, rgFlags),
 		RgFlags:           relevantFlags,
 		CreatedAt:         index.FormatMtime(time.Now()),
+		ChunkCount:        scan.Chunks,
 		Matches:           cachedMatches,
 	}
 

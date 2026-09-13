@@ -39,13 +39,18 @@ type TraceCacheData struct {
 	// inode, the inode-change time in the SourceModifiedAt layout, and a
 	// digest of the size plus the first and last 64 KiB. Each is null
 	// when it could not be read, and a null field is not compared.
-	SourceInode       *uint64           `json:"source_inode"`
-	SourceChangedAt   *string           `json:"source_changed_at"`
-	SourceFingerprint *string           `json:"source_fingerprint"`
-	Patterns          []string          `json:"patterns"`
-	PatternsHash      string            `json:"patterns_hash"`
-	RgFlags           []string          `json:"rg_flags"`
-	CreatedAt         string            `json:"created_at"`
+	SourceInode       *uint64  `json:"source_inode"`
+	SourceChangedAt   *string  `json:"source_changed_at"`
+	SourceFingerprint *string  `json:"source_fingerprint"`
+	Patterns          []string `json:"patterns"`
+	PatternsHash      string   `json:"patterns_hash"`
+	RgFlags           []string `json:"rg_flags"`
+	CreatedAt         string   `json:"created_at"`
+	// ChunkCount is the file_chunks value of the scan that wrote the
+	// cache: the number of chunks a plain file was split into, or the
+	// number of frames of a seekable-zstd file. A cache hit reports it,
+	// so the answer is the scan's. A scan always has at least one.
+	ChunkCount        int               `json:"chunk_count"`
 	Matches           []TraceCacheMatch `json:"matches"`
 	CompressionFormat string            `json:"compression_format,omitempty"`
 	FramesWithMatches []int             `json:"frames_with_matches,omitempty"`
