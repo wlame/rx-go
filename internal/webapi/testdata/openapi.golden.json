@@ -597,7 +597,10 @@
           },
           "result": {
             "additionalProperties": {},
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "started_at": {
             "type": [

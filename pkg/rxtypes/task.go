@@ -16,6 +16,10 @@ type TaskResponse struct {
 // Operation is "compress" or "index". Status transitions:
 // "queued" → "running" → ("completed" | "failed"). Result is nil until
 // Status == "completed"; Error is nil unless Status == "failed".
+//
+// Result is tagged nullable because it is null on every poll before the
+// last one; huma declares a map as a non-null object unless told
+// otherwise.
 type TaskStatusResponse struct {
 	TaskID      string         `json:"task_id"`
 	Status      string         `json:"status"`
@@ -24,7 +28,7 @@ type TaskStatusResponse struct {
 	StartedAt   *string        `json:"started_at"`
 	CompletedAt *string        `json:"completed_at"`
 	Error       *string        `json:"error"`
-	Result      map[string]any `json:"result"`
+	Result      map[string]any `json:"result" nullable:"true"`
 }
 
 // CompressRequest is the body for POST /v1/compress (background task).
