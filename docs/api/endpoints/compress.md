@@ -24,8 +24,13 @@ Content-Type: application/json
 | `output_path` | string \| null | no | `<input_path>.zst` | Output file path. Validated against `--search-root` like the input |
 | `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`) |
 | `compression_level` | int | no | `3` | zstd level: 1-22 |
-| `build_index` | bool | no | `false` | Register for line indexing after compression |
+| `build_index` | bool | no | `true` | Build the line index of the compressed file after compressing it |
 | `force` | bool | no | `false` | Overwrite existing output |
+
+Every default is the default of the matching
+[`rx compress`](../../cli/compress.md) flag (`--output`, `--frame-size`,
+`--level`, `--build-index`, `--force`), so a request that leaves a field
+out compresses the way the CLI does without that flag.
 
 ### Frame size syntax
 
@@ -67,10 +72,11 @@ Content-Type: application/json
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued |
-| `400 Bad Request` | Output file exists and `force=false`; level out of range; bad `frame_size` |
+| `400 Bad Request` | Output file exists and `force=false`; bad `frame_size`; body is not valid JSON |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
 | `409 Conflict` | Another compress task for the same input is already running |
+| `422 Unprocessable Entity` | Body fails the schema: `input_path` missing, a field of the wrong type, an unknown field, or `compression_level` outside 1-22 |
 
 ## Path sandbox
 
@@ -157,8 +163,8 @@ When the task completes, its `result` field contains:
   "decompressed_size": 582137856,
   "compression_ratio": 14.47,
   "frame_count":       139,
-  "total_lines":       null,
-  "index_built":       false,
+  "total_lines":       2846193,
+  "index_built":       true,
   "time_seconds":      12.34,
   "cli_command":       "rx compress /var/log/audit-2026-03.log --output=/var/log/audit-2026-03.log.zst --frame-size=4M --level=3"
 }
@@ -175,8 +181,8 @@ When the task completes, its `result` field contains:
 | `decompressed_size` | int64 | Original file size |
 | `compression_ratio` | number | `decompressed / compressed` (≥ 1.0) |
 | `frame_count` | int | Number of independent zstd frames |
-| `total_lines` | int64 \| null | Populated when `build_index=true` |
-| `index_built` | bool | Whether a line index was registered |
+| `total_lines` | int64 \| null | Line count from the index; `null` when no index was built |
+| `index_built` | bool | Whether the line index was built and saved |
 | `time_seconds` | number | Wall-clock encode time |
 | `cli_command` | string | Equivalent CLI invocation |
 
@@ -193,10 +199,10 @@ Status: `400`. Set `"force": true` or choose a different `output_path`.
 ### Invalid compression level
 
 ```json
-{ "detail": "compression_level must be 1..22, got 25" }
+{ "detail": "validation failed; expected number <= 22 (body.compression_level: 25)" }
 ```
 
-Status: `400`. Use a valid zstd level.
+Status: `422`. Use a valid zstd level.
 
 ### Invalid frame size
 
