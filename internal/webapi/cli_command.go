@@ -167,6 +167,8 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "output_path", Flag: "output", Kind: ArgFlag, Absent: defaultValue("")},
 			{Field: "frame_size", Flag: "frame-size", Kind: ArgFlag, Absent: defaultValue("4M")},
 			{Field: "compression_level", Flag: "level", Kind: ArgFlag, Absent: defaultValue("3")},
+			{Field: "build_index", Flag: "build-index", Kind: ArgFlag, Absent: defaultValue("true")},
+			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
 		},
 	},
 }

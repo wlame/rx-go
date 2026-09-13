@@ -156,6 +156,8 @@ func compressCLICommand(input, output string, req rxtypes.CompressRequest) strin
 		"input_path":        input,
 		"frame_size":        req.FrameSize,
 		"compression_level": req.CompressionLevel,
+		"build_index":       req.BuildIndex,
+		"force":             req.Force,
 	}
 	if req.OutputPath != nil && *req.OutputPath != "" {
 		params["output_path"] = output
