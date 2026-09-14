@@ -451,6 +451,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The trace and samples docs describe the answers rx gives. HTTP trace
+  takes no context window, so `context_lines` holds each match's own
+  line and `before_context`/`after_context` are `null` there.
+  `scanned_files` lists only files found by walking a directory.
+  `relative_line_number` is chunk-relative when `absolute_line_number`
+  is `-1`. The `X-Request-ID` header is not the body's `request_id`, and
+  webhooks carry the latter. In `samples`, a missing position is `null`
+  (not an empty array), `offsets` maps an offset to a line number, a
+  range in `lines` maps to `-1`, `before_context` and `after_context`
+  echo the request while each window is clamped at both ends of the
+  file, and the first lookup in a large or compressed file builds a full
+  index inside the request. The timings quoted come from a real 465 MB
+  log.
+
 - The compression docs match the encoder and the offsets rx reports.
   A byte offset rx reports for a compressed file is a position in the
   decompressed text (the docs said compressed bytes); `samples

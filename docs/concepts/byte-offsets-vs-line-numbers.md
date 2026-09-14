@@ -89,9 +89,10 @@ A common pattern in `rx` is:
 1. `rx trace` returns match byte offsets
 2. `rx samples --offsets=...` retrieves context around those offsets
 
-Because both use byte offsets, the chain is O(matches) in cost — every
-sample retrieval is O(1). Using line numbers at either side would
-introduce O(n) scans.
+Because both use byte offsets, each sample starts at a known position.
+`samples` still numbers the line it prints, which reads from the
+nearest index checkpoint (or from byte 0 without an index) once for the
+whole batch: one pass serves every offset in the request.
 
 Example:
 
@@ -104,8 +105,8 @@ offsets=$(rx "timeout" /var/log/app.log --json \
 rx samples /var/log/app.log --offsets="$offsets" --context=2
 ```
 
-Regardless of how many matches there are or how large the file is,
-this runs at constant time per match.
+On a 465 MB log, an offset 403 MB in took 15 ms without an index and
+14 ms with one.
 
 ## When line numbers are unavoidable
 
@@ -116,10 +117,11 @@ Human-facing inputs — "show me line 10000" — are line-native.
 
 ### When you want the last N lines
 
-"The last 50 lines of the file" can't be expressed in byte offsets
-without first knowing the file size in lines. `rx samples --lines=-50--1`
-uses the index's line count to convert to absolute line numbers, then
-proceeds via O(1) index lookups.
+"The last 50 lines of the file" can't be expressed in byte offsets.
+`rx samples --lines=-50--1` asks for them directly. On a plain file it
+is cheap with or without an index (11 ms on a 465 MB log either way);
+on a gzip, bzip2, xz or plain zstd file it streams the file twice, once
+to count the lines.
 
 ### When presenting to users
 
@@ -157,14 +159,14 @@ holding the wanted lines. Byte offsets are refused there too.
   them for follow-up queries. Don't convert to line numbers unless
   you need to display them.
 
-- **Always build an index before doing line-number lookups on large
-  files.** The ~10 ms warm-cache index read dominates every
-  `--lines=...` call; without the index, every call is an O(n) scan.
+- **Line lookups deep into a large file want an index.** `rx samples`
+  builds one by itself on the first lookup in a plain file of 50 MB or
+  more; after that, line 700000 of a 465 MB log took 13 ms against
+  90 ms without one.
 
-- **Don't use `--lines=-N` on unindexed files.** Computing "N from the
-  end" requires knowing the total line count, which requires scanning
-  the whole file at least once. `rx index` computes this during build
-  and caches it.
+- **On compressed files, prefer seekable zstd.** A gzip, bzip2, xz or
+  plain zstd file is streamed in full for every line lookup, and twice
+  for `--lines=-N`.
 
 ## Related
 

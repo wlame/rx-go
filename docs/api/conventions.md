@@ -22,8 +22,13 @@ Every request receives a UUID v7 request ID.
   128 chars to prevent log flooding)
 - If absent, `rx` generates a new UUID v7 (time-sortable)
 - The ID is echoed in the `X-Request-ID` response header
-- The ID appears in every log record for the request
-- The ID is included in webhook payloads triggered by the request
+- The ID appears in the log records of the request
+
+A trace answer also has a `request_id` in its body, and that is a
+different ID: the `request_id` query parameter, or one generated for the
+trace. It is the ID webhooks carry. Sending `X-Request-ID: abc` gets
+`X-Request-ID: abc` back, while the body's `request_id` stays a fresh
+UUID v7 unless the request also passes `request_id=abc`.
 
 UUID v7 is time-sortable — the first 48 bits are the creation timestamp
 in milliseconds, so sorting by request ID gives you chronological order.

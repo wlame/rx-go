@@ -6,8 +6,14 @@ trace`](../../cli/trace.md).
 ## Purpose
 
 Execute a regex scan across one or more paths with parallel chunking,
-returning match byte offsets, line numbers, and optional context
-lines. Supports webhook callbacks for progress notifications.
+returning match byte offsets and line numbers. Supports webhook
+callbacks for progress notifications.
+
+Over HTTP a trace takes no context window: there are no `context`,
+`before_context` or `after_context` parameters, nor `no_cache`,
+`no_index` or `no_recursive`. A parameter the operation does not
+declare is ignored, so `&context=3` changes nothing. For lines around
+the matches, pass their offsets to [`GET /v1/samples`](samples.md).
 
 ## Request
 
@@ -118,18 +124,18 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 
 | Field | Type | Description |
 |---|---|---|
-| `request_id` | string | UUID v7, echoed from request or auto-generated |
+| `request_id` | string | The `request_id` parameter, or a generated UUID v7. It is not the `X-Request-ID` header, which the HTTP layer sets on its own |
 | `path` | `string[]` | The requested paths (validated & absolute) |
 | `time` | number | Wall-clock elapsed seconds for the scan |
 | `patterns` | `{id: pattern}` | Pattern ID → original string map |
 | `files` | `{id: path}` | File ID → absolute path map |
 | `matches` | array | See below |
-| `scanned_files` | `string[]` | Files actually scanned (vs skipped) |
+| `scanned_files` | `string[]` | The files found by walking a directory named in `path`; empty when every path is a file. `files` lists every file searched either way |
 | `skipped_files` | `string[]` | Files skipped (binary, size limit, etc.) |
 | `max_results` | `int \| null` | The cap that was applied, or null |
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it |
-| `context_lines` | `{matchKey: [...]}` | Context lines when `--samples` mode was used |
-| `before_context`, `after_context` | `int \| null` | Requested context size |
+| `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); over HTTP each entry holds only the match's own line, as `{relative_line_number, absolute_line_number, line_text, absolute_offset}`. The lines around a match appear only from `rx trace --samples` |
+| `before_context`, `after_context` | `int \| null` | Always `null` over HTTP; the CLI reports the window `--samples` used |
 | `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
 
 ### `matches[]` shape
@@ -139,14 +145,24 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `pattern` | string | Pattern ID (key into `patterns`) |
 | `file` | string | File ID (key into `files`) |
 | `offset` | int64 | Byte offset of the line start |
-| `relative_line_number` | int | Line number within the chunk |
-| `absolute_line_number` | int | File-absolute line number |
+| `relative_line_number` | int | The same number as `absolute_line_number` when that is known; otherwise the line's number within the chunk or frame that found it |
+| `absolute_line_number` | int | The line's 1-based number in the file, or `-1` when a scan cut short by `max_results` did not read the bytes before the match |
 | `line_text` | string | Full matched line |
 | `submatches` | array | `{text, start, end}` per regex submatch |
 
-When the file was scanned in a single chunk, `relative_line_number ==
-absolute_line_number`. In multi-chunk scans, the absolute number is
-computed from the line index (if available) or by counting.
+Every chunk counts the newlines it reads, so a scan that runs to the
+end numbers every match. A scan cut short by `max_results` can stop a
+chunk part-way; a match in a later chunk then has an offset but no
+file line number yet. rx numbers it from the file's line index when
+one exists; without one it reports `absolute_line_number: -1`, and
+`relative_line_number` is then a chunk-relative number, not a file line
+number. Resolve such offsets with `GET /v1/samples?offsets=…`, which
+answers a batch in one pass. Captured from a capped search of a 465 MB
+log with no index:
+
+```json
+{"offset": 365779981, "absolute_line_number": -1, "relative_line_number": 70}
+```
 
 ## Status codes
 
@@ -261,12 +277,15 @@ Status: `400`. Add `&max_results=N` to the request.
 
 ## Performance notes
 
-- For files above 20 MB (configurable via `RX_MIN_CHUNK_SIZE_MB`),
-  the engine parallelizes across goroutines
-- The trace cache is consulted first — a warm cache returns in
-  milliseconds regardless of file size
-- `request_id` is returned in both the body and the `X-Request-ID`
-  header; use it to correlate server logs with your client
+- A plain file of 40 MB or more (twice `RX_MIN_CHUNK_SIZE_MB`) is
+  split into chunks scanned in parallel; a seekable zstd file is
+  scanned frame-parallel
+- The trace cache is consulted first for a plain file of
+  `RX_LARGE_FILE_MB` or more, and for a seekable zstd file — a hit
+  returns in milliseconds regardless of file size
+- The body's `request_id` is the one webhooks carry. The
+  `X-Request-ID` response header is a separate ID: the one the client
+  sent in that header, or one the server generated
 
 ## See also
 

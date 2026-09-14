@@ -8,24 +8,28 @@ configurable context. HTTP equivalent of [`rx samples`](../../cli/samples.md).
 Given a file and a set of addresses, return the targeted lines plus
 surrounding context. Supports both byte-offset and line-offset modes.
 Works on uncompressed files in both modes and on compressed files
-(gzip, bzip2, xz) in line-offset mode only.
+(gzip, bzip2, xz, zstd, seekable zstd) in line-offset mode only.
 
-### Performance contract
+### What a request reads
 
-`/v1/samples` reads ONLY the portion of the file needed for the
-response — never the whole file. For line-number ranges:
-
-- With a cached line index (`POST /v1/index` built at least once):
-  seeks to the nearest checkpoint before the requested start line,
-  then reads through the range. On a 1.3 GB file, a mid-file range
-  request typically completes in ~5-10 ms (HTTP round-trip included).
-- Without an index: reads from byte 0 to the end of the requested
-  range, then stops. Still bounded, just slower for ranges that start
-  deep in the file.
-
-A request for `?lines=1-1000` on a 1.3 GB file reads roughly 150 KB
-of file content; the response latency is dominated by HTTP
-framing, not disk I/O.
+- **First lookup in a large or compressed file:** when no index is
+  cached, the request first builds and stores one — for any compressed
+  file, and for a plain file of `RX_LARGE_FILE_MB` (50 MB) or more. That
+  reads the whole file inside the request: 137 ms for a 465 MB log
+  already in the page cache, longer from disk. `RX_NO_INDEX=true` on the
+  server turns it off. The build is not shared between concurrent
+  requests and has no deadline.
+- **Plain file with an index:** seeks to the nearest checkpoint before
+  the first wanted line and reads through the last one. Line 700000 of
+  the 465 MB log took 13 ms from the CLI.
+- **Plain file without an index:** reads from byte 0 to the last wanted
+  line, then stops — 12 ms for lines 1-1000, 90 ms for line 700000 of
+  the same log.
+- **gzip, bzip2, xz, plain zstd:** streams the whole decompressed file
+  for every request, whatever lines are asked, index or not — 1.6 s for
+  a 113 MB `.gz` of that log.
+- **Seekable zstd with an index:** decompresses only the frames that
+  hold the wanted lines.
 
 ## Request
 
@@ -46,7 +50,7 @@ GET /v1/samples?path=...&offsets=...
 | `after_context` | `int` | no | `3` | Lines after (overrides `context`) (`-1` = default) |
 
 Exactly one of `offsets` / `lines` must be provided. Both-set or
-neither-set returns `400`.
+neither-set returns `400`. `offsets` is refused for a compressed file.
 
 ### Address syntax
 
@@ -65,62 +69,51 @@ your proxy imposes.
 The `-1` sentinel is the "not provided" marker for `context`,
 `before_context`, and `after_context` (huma query params can't
 distinguish absent from `0`). Omit the param entirely or pass `-1` to
-get the default `3`.
+get the default `3`. `before_context` and `after_context`, `0`
+included, override `context`.
+
+The response's `before_context` and `after_context` echo the window
+the request asked for. Each window is clamped at line 1 and at the last
+line of the file, so a sample near either end has fewer lines than the
+echo suggests: `lines=1&context=3` answers `before_context: 3` and four
+lines, lines 1-4.
 
 ## Response — 200 OK
 
+For a 30-line file whose every line reads `LINE <n> payload`,
+`lines=1,30,99&context=3` answers:
+
 ```json
 {
-  "path": "/var/log/audit-2026-03.log",
+  "path": "/var/log/lines.log",
   "offsets": {},
-  "lines": {
-    "100":       1024,
-    "200-205":   2048,
-    "99999":     524288000
-  },
+  "lines": {"1": 0, "30": 455, "99": -1},
   "before_context": 3,
-  "after_context":  3,
+  "after_context": 3,
   "samples": {
-    "100": [
-      "line 97 content",
-      "line 98 content",
-      "line 99 content",
-      "line 100 content",
-      "line 101 content",
-      "line 102 content",
-      "line 103 content"
-    ],
-    "200-205": [
-      "line 197 content",
-      "line 198 content",
-      "line 199 content",
-      "line 200 content",
-      "line 201 content",
-      "line 202 content",
-      "line 203 content",
-      "line 204 content",
-      "line 205 content",
-      "line 206 content",
-      "line 207 content",
-      "line 208 content"
-    ],
-    "99999": [ /* ... */ ]
+    "1":  ["LINE 1 payload", "LINE 2 payload", "LINE 3 payload", "LINE 4 payload"],
+    "30": ["LINE 27 payload", "LINE 28 payload", "LINE 29 payload", "LINE 30 payload"],
+    "99": null
   },
-  "is_compressed":       false,
-  "compression_format":  null,
-  "cli_command":         "rx samples /var/log/audit-2026-03.log --lines=100,200-205,99999"
+  "is_compressed": false,
+  "compression_format": null,
+  "cli_command": "rx samples /var/log/lines.log --lines=1,30,99"
 }
 ```
+
+and `offsets=20,30-50,9999&context=0` on the same file answers
+`"offsets": {"20": 2, "30-50": 3, "9999": -1}` with
+`"samples": {"20": ["LINE 2 payload"], "30-50": ["LINE 3 payload", "LINE 4 payload"], "9999": null}`.
 
 ### Response fields
 
 | Field | Type | Description |
 |---|---|---|
 | `path` | string | The validated absolute file path |
-| `offsets` | `{key: byteOffset}` | Byte-offset mode: key is the request spec, value is the resolved byte offset |
-| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, value is the starting byte offset of the first line in the range |
-| `before_context`, `after_context` | int | Resolved context values used |
-| `samples` | `{key: lines[]}` | Retrieved content, keyed identically to `offsets` / `lines` |
+| `offsets` | `{key: lineNumber}` | Byte-offset mode: key is the request spec, value is the 1-based number of the line holding that byte (for a range, its first byte); `-1` past the end of the file |
+| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
+| `before_context`, `after_context` | int | The context the request asked for (or the default 3), echoed; see [context defaults](#context-defaults) |
+| `samples` | `{key: lines[] \| null}` | Retrieved content, keyed identically to `offsets` / `lines`; `null` for a position the file does not have |
 | `is_compressed` | bool | Whether the file was compressed |
 | `compression_format` | `string \| null` | `"gzip"`, `"bzip2"`, `"xz"`, `"zstd"`, `"seekable_zstd"`, or `null` |
 | `cli_command` | string | Equivalent CLI invocation |
@@ -136,7 +129,7 @@ client-side and iterate accordingly.
 
 | Code | When |
 |---:|---|
-| `200 OK` | Success (returns empty arrays for any missing line numbers) |
+| `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `400 Bad Request` | Missing both `offsets` and `lines`; both set; byte offsets on compressed file; bad spec syntax; `path` is a directory |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |
@@ -223,13 +216,13 @@ Returns line 10000 plus the next 20 lines, no preceding context.
 }
 ```
 
-Status: `400`. Byte offsets are undefined after partial decompression.
+Status: `400`. Reaching a position in the decompressed text would mean decompressing everything before it; use `lines`.
 
 ### Bad spec syntax
 
 ```json
 {
-  "detail": "Invalid lines format: could not parse 100-..."
+  "detail": "Invalid lines format: invalid range format: 100-. Both values must be integers"
 }
 ```
 
@@ -246,21 +239,22 @@ Status: `400`. Supply exactly one.
 ### File is a directory
 
 ```json
-{ "detail": "Path is a directory, not a file: /var/log" }
+{ "detail": "Path is a directory, not a file: /var/log/sub" }
 ```
 
 Status: `400`.
 
 ## Performance notes
 
-- With a cached line index, line-mode lookups are low single-digit
-  milliseconds regardless of line number
+- With a cached line index, a line lookup reads from the nearest
+  checkpoint (1 MB apart by default), whatever the line number
 - Without an index, line lookups scale linearly with line number
-- Byte-offset mode is always O(1) per offset on uncompressed files
+- Byte-offset mode reads from the nearest checkpoint before the offset,
+  or from byte 0 without an index, to number the line
 - Multiple addresses in one request are amortized — the file is
   opened once and walked once
-- Compressed line-mode streams the decompressor from the start — high
-  line numbers take longer
+- Compressed line-mode (except seekable zstd with an index) streams the
+  whole decompressed file
 
 ## See also
 
