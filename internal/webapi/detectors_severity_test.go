@@ -1,7 +1,6 @@
 package webapi
 
 import (
-	"context"
 	"testing"
 
 	"github.com/wlame/rx-go/internal/analyzer"
@@ -10,14 +9,10 @@ import (
 // fakeDetector is the least a FileAnalyzer needs to be listed.
 type fakeDetector struct{ name string }
 
-func (f fakeDetector) Name() string                        { return f.name }
-func (f fakeDetector) Version() string                     { return "0.0.0" }
-func (f fakeDetector) Category() string                    { return "format" }
-func (f fakeDetector) Description() string                 { return "a fake" }
-func (f fakeDetector) Supports(string, string, int64) bool { return true }
-func (f fakeDetector) Analyze(context.Context, analyzer.Input) (*analyzer.Report, error) {
-	return nil, nil
-}
+func (f fakeDetector) Name() string        { return f.name }
+func (f fakeDetector) Version() string     { return "0.0.0" }
+func (f fakeDetector) Category() string    { return "format" }
+func (f fakeDetector) Description() string { return "a fake" }
 
 // rangedDetector also states the severities its anomalies carry.
 type rangedDetector struct {

@@ -7,27 +7,22 @@ regions of interest (tracebacks, crashes, JSON blobs, long lines,
 repeated runs, secret-shaped strings) so rx-viewer can surface them
 as jump targets or highlights.
 
-## What an analyzer is
+## What a detector is
 
-An analyzer is a Go implementation of the `FileAnalyzer` interface
-(in `internal/analyzer/registry.go`). It inspects a file and returns
-a list of anomalies — regions of the file that stand out statistically
-or semantically. Each detector's output is a navigation hint, not a
-verdict: `severity` maps to a display bucket, not a production-grade
-alert level.
-
-Line-level detectors additionally implement `LineDetector`
-(`internal/analyzer/linedetector.go`): they receive each line through
-a shared **coordinator** that runs inside the index builder's per-chunk
-loop. One file pass produces both the line-offset index and the anomaly
-list.
+A detector is a Go implementation of the `LineDetector` interface
+(`internal/analyzer/linedetector.go`). It receives each line of the
+file through a shared **coordinator** that runs inside the index
+builder's loop, and returns a list of anomalies — regions of the file
+that stand out statistically or semantically. One file pass produces
+both the line-offset index and the anomaly list. Each detector's output
+is a navigation hint, not a verdict: `severity` maps to a display
+bucket, not a production-grade alert level.
 
 ## Shipped catalog
 
 The nine detectors below register at process startup and run whenever
 `--analyze` is set. Each is a separate package under
-`internal/analyzer/detectors/`; bumping one detector's version does
-not invalidate the others' caches.
+`internal/analyzer/detectors/`.
 
 | Detector | Category | Severity | What it finds | Package |
 |---|---|---:|---|---|
@@ -43,8 +38,8 @@ not invalidate the others' caches.
 
 Severity values are fixed per detector — they map to one of the four
 bands exposed via `GET /v1/detectors`. Every detector on this list is
-`version = "0.1.0"`; bumps are reflected in the cache path and in
-`GET /v1/detectors`.
+`version = "0.1.0"`; a bump shows in `GET /v1/detectors` and in the
+`analysis_detector_set` an analysis records.
 
 ## The wire contract
 
@@ -139,62 +134,74 @@ size is configurable per request:
 Precedence is URL param > CLI flag > env > default (128). The value is
 clamped to `[1, 2048]`.
 
-## Cache namespacing
+## Where the analysis is kept
 
-Each analyzer's output is cached under:
+The anomalies are part of the file's line index; no detector writes a
+file of its own. The index records what the analysis ran with:
 
-```text
-~/.cache/rx/analyzers/<analyzer-name>/v<version>/<source-hash>.json
-```
+- `analysis_window_lines` — the sliding window
+- `analysis_detector_set` — every detector as `name@version`, sorted
+  and comma-joined
 
-This scheme means:
+A later analysis request reuses the cached analysis only when both
+match. Another window, a detector added or removed, or a detector at
+another version rebuilds the index. `--force` rebuilds it in any case.
 
-- Two analyzer versions coexist without overwriting each other
-- Upgrading one analyzer doesn't invalidate the others
-- Removing an analyzer from the registry leaves its old cache files
-  dormant (safe to delete at any time)
+## Registering a new detector
 
-## Registering a new analyzer
-
-**Analyzers are added at build time, not runtime.** End users cannot
-drop a plugin into a directory and have `rx` pick it up. Adding an
-analyzer is a small code change to `rx` itself.
+**Detectors are added at build time, not runtime.** End users cannot
+drop a plugin into a directory and have `rx` pick it up. Adding a
+detector is a small code change to `rx` itself.
 
 Steps (for developers):
 
-1. Implement `LineDetector` (or `FileAnalyzer` for whole-file
-   detectors) in a new package under
+1. Implement `LineDetector` in a new package under
    `internal/analyzer/detectors/<your-detector>/`
-2. Call `analyzer.Register(...)` from the package's `init()` function
+2. Register a factory from the package's `init()` function:
+
+    ```go
+    func init() {
+        analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
+    }
+    ```
+
+    The factory runs once per index build, so each build gets a fresh
+    detector and no state crosses from one file to the next. It is the
+    only way to register a detector, so every detector
+    `GET /v1/detectors` lists is one that runs.
+
 3. Add a blank import (`_ "github.com/wlame/rx-go/internal/analyzer/detectors/<your-detector>"`)
    to `cmd/rx/main.go` so the init fires at process startup
 4. Rebuild `rx`
-5. The detector's metadata now appears in `GET /v1/detectors` and runs
-   whenever `analyze=true`
+5. The detector's metadata now appears in `GET /v1/detectors` and it
+   runs whenever `analyze=true`
 
 The `LineDetector` interface:
 
 ```go
 type LineDetector interface {
     FileAnalyzer
-    OnLine(w *Window)
-    Finalize(flush *FlushContext) []Anomaly
+    OnLine(w *Window)                       // once per line, in order
+    Finalize(flush *FlushContext) []Anomaly // once, after the last line
 }
 ```
 
-`FileAnalyzer` (the metadata-only parent):
+`FileAnalyzer` is the metadata every detector reports; it has no method
+that reads a file:
 
 ```go
 type FileAnalyzer interface {
-    Name() string         // stable identifier, used in cache paths
-    Version() string      // bump to invalidate cached output
+    Name() string         // stable identifier, reported as `detector`
+    Version() string      // bump it to invalidate cached analyses
     Category() string     // grouping tag; shown in GET /v1/detectors
     Description() string  // human-readable
 }
 ```
 
-Cache key scheme, the registry's Freeze barrier, and the coordinator's
-concurrency contract are documented in `internal/analyzer/` source.
+A detector may also implement `SeverityRanger` to publish the band of
+severities its anomalies carry. The registry's Freeze barrier and the
+coordinator's concurrency contract are documented in the
+`internal/analyzer/` source.
 
 ## Implications for users
 
@@ -245,7 +252,7 @@ the exact case is `testdata/line-lengths.log` here and
 
 ## Related concepts
 
-- [Caching](caching.md) — analyzer cache layout
+- [Caching](caching.md) — where the analysis is kept
 - [Line indexes](line-indexes.md) — `--analyze` extends the index
   with statistics
 - [API: detectors endpoint](../api/endpoints/detectors.md)

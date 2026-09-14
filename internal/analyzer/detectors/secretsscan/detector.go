@@ -61,12 +61,11 @@
 //     the byte just PAST the last byte of the secret (end-exclusive,
 //     matching LineEvent conventions).
 //
-// Registration: this package has an init() that calls analyzer.Register
+// Registration: this package has an init() that calls analyzer.RegisterLineDetector
 // so a blank import in cmd/rx/main.go is enough to hook it up.
 package secretsscan
 
 import (
-	"context"
 	"regexp"
 
 	"github.com/wlame/rx-go/internal/analyzer"
@@ -168,27 +167,6 @@ func (d *Detector) SeverityRange() (float64, float64) { return severity, severit
 
 // The registry reads the band through this interface.
 var _ analyzer.SeverityRanger = (*Detector)(nil)
-
-// Supports says yes to anything. Secret-shaped strings can appear in
-// any text-shaped log (stdout/stderr capture, debug dumps, env-var
-// snapshots, misconfigured request logs). Non-matching logs simply never
-// fire a match so the detector's cost is near-zero on clean data.
-func (d *Detector) Supports(_ string, _ string, _ int64) bool {
-	return true
-}
-
-// Analyze is the FileAnalyzer entry point. The streaming-scan path is
-// driven by the coordinator, not Analyze, so this returns an empty
-// Report — it exists to satisfy the FileAnalyzer interface for registry
-// enumeration.
-func (d *Detector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{
-		Name:          detectorName,
-		Version:       detectorVersion,
-		SchemaVersion: 1,
-		Result:        map[string]any{},
-	}, nil
-}
 
 // OnLine is the streaming-scan hook. Runs the combined regex against
 // the current line's bytes and emits one anomaly per non-overlapping

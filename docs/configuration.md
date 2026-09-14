@@ -31,7 +31,6 @@ The resolved cache base holds:
 
 - `indexes/` — line-offset indexes
 - `trace_cache/` — trace result caches
-- `analyzers/<name>/v<version>/` — per-analyzer output
 - `frontend/` — `rx-viewer` SPA
 
 See [concepts/caching](concepts/caching.md).

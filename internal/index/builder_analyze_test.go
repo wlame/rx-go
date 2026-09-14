@@ -21,7 +21,6 @@ package index
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -57,12 +56,6 @@ func (c *cueDetector) Name() string        { return c.name }
 func (c *cueDetector) Version() string     { return c.version }
 func (c *cueDetector) Category() string    { return "test-cue" }
 func (c *cueDetector) Description() string { return "mock detector for builder tests" }
-func (c *cueDetector) Supports(_, _ string, _ int64) bool {
-	return true
-}
-func (c *cueDetector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{Name: c.name, Version: c.version, SchemaVersion: 1}, nil
-}
 
 func (c *cueDetector) OnLine(w *analyzer.Window) {
 	c.processCalls.Add(1)
@@ -404,12 +397,6 @@ func (d *openCloseDetector) Name() string        { return d.name }
 func (d *openCloseDetector) Version() string     { return d.version }
 func (d *openCloseDetector) Category() string    { return "test" }
 func (d *openCloseDetector) Description() string { return "open/close test detector" }
-func (d *openCloseDetector) Supports(_, _ string, _ int64) bool {
-	return true
-}
-func (d *openCloseDetector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{Name: d.name, Version: d.version, SchemaVersion: 1}, nil
-}
 
 func (d *openCloseDetector) OnLine(w *analyzer.Window) {
 	ev := w.Current()

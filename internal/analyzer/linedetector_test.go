@@ -1,7 +1,6 @@
 package analyzer
 
 import (
-	"context"
 	"testing"
 )
 
@@ -11,7 +10,7 @@ import (
 // here (not in a testdata helper) because the interface is small
 // enough that inlining is clearer than centralizing.
 type recorderDetector struct {
-	// Embed a NoopAnalyzer to satisfy FileAnalyzer cheaply.
+	// Embed a NoopAnalyzer for the FileAnalyzer metadata.
 	NoopAnalyzer
 
 	// Linger — each OnLine copies the Bytes so we can assert against
@@ -96,21 +95,5 @@ func TestFlushContext_FieldsAreIndependent(t *testing.T) {
 	}
 	if fc.TotalLines != 1000 || fc.MedianLineLength != 80 || fc.P99LineLength != 512 {
 		t.Errorf("FlushContext round-trip failed: %+v", fc)
-	}
-}
-
-func TestRecorderDetector_AnalyzeReturnsReport(t *testing.T) {
-	// recorderDetector embeds NoopAnalyzer, so its Analyze must still
-	// honor the FileAnalyzer contract. This ensures we haven't broken
-	// the base contract while adding the new hooks.
-	r := &recorderDetector{
-		NoopAnalyzer: NoopAnalyzer{NameValue: "rec", VersionValue: "0.1.0"},
-	}
-	rep, err := r.Analyze(context.Background(), Input{Path: "/tmp/x"})
-	if err != nil {
-		t.Fatalf("Analyze: %v", err)
-	}
-	if rep.Name != "rec" || rep.Version != "0.1.0" {
-		t.Errorf("report fields mismatch: %+v", rep)
 	}
 }
