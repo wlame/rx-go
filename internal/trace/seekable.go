@@ -675,6 +675,7 @@ func remapBatchEvents(
 				Submatches:   subs,
 				PatternIDs:   append([]string(nil), patternOrder...),
 				IsCompressed: true,
+				FrameIndex:   info.Index,
 			})
 		case RgEventContext:
 			if ev.Context == nil {

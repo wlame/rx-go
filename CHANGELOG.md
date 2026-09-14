@@ -438,6 +438,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A seekable-zstd trace cache records `frames_with_matches` and each
+  match's `frame_index`, as rx-python's does. Both were always empty, so
+  the cache could not say which frames to decompress again.
+
 - The background task table of `serve` is capped at 256 tasks. A
   finished index task keeps its whole result, line index included, for
   `RX_TASK_TTL_MINUTES`, and the number of tasks had no limit, so a

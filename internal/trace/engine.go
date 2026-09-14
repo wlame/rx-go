@@ -425,6 +425,7 @@ func (e *Engine) RunWithOptions(
 			if cacheEntry != nil {
 				// The frame count, set when the file was classified.
 				cacheEntry.Chunks = fileChunkCounts[fileID]
+				cacheEntry.FrameIndexByOffset = map[int64]int{}
 			}
 			remaining := remainingResults(opts.MaxResults, len(allMatches))
 			rawMatches, rawContexts, _, serr := ProcessSeekable(
@@ -459,6 +460,7 @@ func (e *Engine) RunWithOptions(
 					allMatches = append(allMatches, m)
 					if cacheEntry != nil {
 						cacheEntry.Matches = append(cacheEntry.Matches, m)
+						cacheEntry.FrameIndexByOffset[m.Offset] = rm.FrameIndex
 					}
 					opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
 						Pattern: patternIDs[pid], Offset: m.Offset,

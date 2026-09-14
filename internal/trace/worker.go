@@ -102,6 +102,9 @@ type MatchRaw struct {
 	Submatches   []rxtypes.Submatch
 	PatternIDs   []string // all pattern IDs (assigned by engine post-hoc)
 	IsCompressed bool
+	// FrameIndex is the seekable-zstd frame that holds the match. Only
+	// the seekable path sets it; elsewhere it is 0 and means nothing.
+	FrameIndex int
 }
 
 // ContextRaw mirrors MatchRaw for context lines.
