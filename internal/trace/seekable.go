@@ -575,7 +575,13 @@ func scanFrameBatch(
 	// Thread the parent ctx so a cancellation during parsing (e.g. the
 	// outer errgroup was canceled because a sibling batch failed) can
 	// abort the StreamEvents loop..
-	matches, contexts = remapBatchEvents(ctx, stdout.Bytes(), locs, patternOrder)
+	matches, contexts, err = remapBatchEvents(ctx, stdout.Bytes(), locs, patternOrder)
+	if err != nil {
+		// A cancel arrives as context.Canceled, which the caller treats
+		// as cooperative and keeps the matches read so far; any other
+		// error fails the batch.
+		return matches, contexts, countedFrames(locs), fmt.Errorf("read rg output: %w", err)
+	}
 	return matches, contexts, countedFrames(locs), nil
 }
 
@@ -606,7 +612,10 @@ func matchesFromPartialBatch(
 	locs []frameLoc,
 	patternOrder []string,
 ) ([]MatchRaw, []ContextRaw, []frameLines, error) {
-	matches, contexts := remapBatchEvents(context.WithoutCancel(ctx), out, locs, patternOrder)
+	// rg was killed part-way, so its last line may be cut off; a stream
+	// that cannot be read to the end is expected here, and the matches
+	// read before that point are kept.
+	matches, contexts, _ := remapBatchEvents(context.WithoutCancel(ctx), out, locs, patternOrder)
 	return matches, contexts, countedFrames(locs), context.Canceled
 }
 
@@ -615,21 +624,24 @@ func matchesFromPartialBatch(
 // the file's decompressed coordinate system.
 //
 // ctx propagates from the parent scanner — if the outer context is
-// canceled mid-parse (e.g. an errgroup sibling failed, or the HTTP
-// request was aborted), StreamEvents will stop calling the callback
-// and return promptly. Previously this used context.Background()
-// which meant cancellation signals never reached here; the buffer is
-// small and finite so no hangs were observed, but plumbing the parent
-// ctx is the correct idiom.
+// canceled mid-parse (a cap fired, an errgroup sibling failed, or the
+// HTTP request was aborted), StreamEvents stops calling the callback
+// and returns the context's error, which comes back beside the matches
+// parsed so far.
 func remapBatchEvents(
 	ctx context.Context,
 	rgStdout []byte,
 	locs []frameLoc,
 	patternOrder []string,
-) ([]MatchRaw, []ContextRaw) {
+) ([]MatchRaw, []ContextRaw, error) {
 	var matches []MatchRaw
 	var contexts []ContextRaw
-	_ = StreamEvents(ctx, bytes.NewReader(rgStdout), func(ev *RgEvent, parseErr error) error {
+	// A line that is not a valid event reaches the callback as parseErr
+	// and is skipped, as the chunked path skips it. What StreamEvents
+	// returns is worse: the stream could not be read past some point (a
+	// line longer than its buffer) or the scan was canceled, and every
+	// match after that point is missing. That goes back to the caller.
+	streamErr := StreamEvents(ctx, bytes.NewReader(rgStdout), func(ev *RgEvent, parseErr error) error {
 		if parseErr != nil || ev == nil {
 			return nil
 		}
@@ -685,7 +697,7 @@ func remapBatchEvents(
 		}
 		return nil
 	})
-	return matches, contexts
+	return matches, contexts, streamErr
 }
 
 // locateInBatch maps a batch-local offset to (frameInfo, offset-within-frame,
