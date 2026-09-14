@@ -68,6 +68,10 @@ type BuildOptions struct {
 	// (analyzer.LineDetectorSnapshot); passing an explicit slice here is
 	// mostly for tests that want deterministic detector sets.
 	Detectors []analyzer.LineDetector
+
+	// beforeWalk, when set, runs after the file is stated and before it
+	// is read. Tests use it to change the file at that moment.
+	beforeWalk func()
 }
 
 // GetIndexStepBytes returns the default checkpoint step in bytes.
@@ -113,8 +117,8 @@ func SatisfiesBuild(idx *rxtypes.UnifiedFileIndex, opts BuildOptions) bool {
 }
 
 // Build reads sourcePath and constructs a UnifiedFileIndex. It records
-// the current mtime + size into the index so IsValidForSource can later
-// detect changes.
+// the file's identity as its first stat saw it, and reads no further
+// than that size, so IsValidForSource can later detect any change.
 //
 // On success the caller can hand the result straight to Save() or
 // inspect LineIndex in-memory; Build does not write to disk itself.
@@ -143,6 +147,16 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		return buildSeekable(sourcePath, info, started)
 	}
 
+	// The index describes the file as this stat saw it. The identity is
+	// taken now, before the walk, and the walk reads no further than the
+	// stated size, so a log that grows during the build gets an index
+	// of exactly the bytes its identity records. The next load sees the
+	// larger size and rebuilds. Inode, ctime and the fingerprint are
+	// what let a later run tell this exact file from one rewritten with
+	// the same size and mtime; a fingerprint that cannot be read is left
+	// out, and validation falls back to the other fields.
+	identity := IdentityFromInfo(sourcePath, info)
+
 	f, err := os.Open(sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", sourcePath, err)
@@ -151,6 +165,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		// Close error ignored — file was opened read-only.
 		_ = f.Close()
 	}()
+	statedBytes := io.LimitReader(f, info.Size())
 
 	// A compressed file is indexed through its decompressor, so the
 	// line numbers and byte offsets describe the text inside it. Read
@@ -158,10 +173,11 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// address compressed noise and the statistics would describe the
 	// container: a 600 MB log came back as 209,365 lines with a "mixed"
 	// line ending. rx-python indexes the same content the same way.
-	var source io.Reader = f
+	source := statedBytes
 	format, _ := compression.DetectFromPath(sourcePath)
 	if format != compression.FormatNone {
-		dec, dErr := compression.NewReader(f, format)
+		// The file itself is closed by the defer above.
+		dec, dErr := compression.NewReader(io.NopCloser(statedBytes), format)
 		if dErr != nil {
 			return nil, fmt.Errorf("decompress %s: %w", sourcePath, dErr)
 		}
@@ -193,18 +209,15 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// (Python parity — see rx-python/src/rx/unified_index.py::build_index).
 	// Anomaly detection is gated at the call site (opts.Analyze controls
 	// whether coord is non-nil).
+	if opts.beforeWalk != nil {
+		opts.beforeWalk()
+	}
 	stats, err := walkLines(source, step, coord)
 	if err != nil {
 		return nil, err
 	}
 
 	// Build the final index.
-	// Inode, ctime and the fingerprint are what let a later run tell
-	// this exact file from one that was rewritten with the same size
-	// and mtime. A fingerprint we cannot compute is left out rather
-	// than treated as a build failure; validation then falls back to
-	// the other fields.
-	identity := IdentityFromInfo(sourcePath, info)
 	permissions, owner := FileOwnership(info)
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
