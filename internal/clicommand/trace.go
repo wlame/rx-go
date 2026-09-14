@@ -43,7 +43,6 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		jsonOutput     bool
 		noColor        bool
 		colorFlag      string
-		debugMode      bool
 		requestID      string
 		hookOnFile     string
 		hookOnMatch    string
@@ -88,7 +87,6 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 				afterSet:       cmd.Flags().Changed("after"),
 				jsonOutput:     jsonOutput,
 				colorFlag:      colorFlag,
-				debug:          debugMode,
 				requestID:      requestID,
 				hookOnFile:     hookOnFile,
 				hookOnMatch:    hookOnMatch,
@@ -118,7 +116,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&colorFlag, "color", "auto",
 		"Colorize output: 'always', 'never', or 'auto' (color only on a terminal)")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output (alias for --color=never)")
-	cmd.Flags().BoolVar(&debugMode, "debug", false, "Enable debug mode (creates .debug_* files)")
+	addDeprecatedDebugFlag(cmd)
 	cmd.Flags().StringVar(&requestID, "request-id", "", "Custom request ID (auto-generated if not provided)")
 	cmd.Flags().StringVar(&hookOnFile, "hook-on-file", "", "URL to call when file scan completes")
 	cmd.Flags().StringVar(&hookOnMatch, "hook-on-match", "", "URL to call per match. Requires --max-results.")
@@ -165,7 +163,6 @@ type traceParams struct {
 	afterCtx       int
 	jsonOutput     bool
 	colorFlag      string
-	debug          bool
 	requestID      string
 	ctxSet         bool
 	beforeSet      bool
@@ -549,4 +546,16 @@ func writeTraceHuman(out io.Writer, resp *rxtypes.TraceResponse, p traceParams) 
 		Colorize:    colorize,
 	}))
 	return nil
+}
+
+// addDeprecatedDebugFlag keeps `--debug` on the command line of
+// `rx trace` although it never did anything: a script that passes it
+// keeps working. MarkDeprecated hides the flag from help, and cobra
+// prints a one-line deprecation note to stderr when it is used, so
+// stdout still carries only the answer. The value is never read.
+func addDeprecatedDebugFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("debug", false, "Has no effect")
+	// MarkDeprecated fails only for a flag name that does not exist,
+	// and the flag is declared on the line above.
+	_ = cmd.Flags().MarkDeprecated("debug", "it has no effect and will be removed")
 }

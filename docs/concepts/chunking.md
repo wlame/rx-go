@@ -45,9 +45,9 @@ post-processing is needed to deduplicate boundary matches.
 ### Pseudo-code
 
 ```text
-chunk_count     = desired_worker_count
+chunk_count     = min(file_size / RX_MIN_CHUNK_SIZE_MB, RX_MAX_SUBPROCESSES), at least 1
 target_size     = file_size / chunk_count
-max_line_length = 256 KB  // configurable via RX_MAX_LINE_SIZE_KB
+max_line_length = 256 KB  // fixed
 
 boundaries = [0]
 for i in 1..chunk_count-1:
@@ -61,19 +61,18 @@ chunks = [(boundaries[i], boundaries[i+1]) for i in 0..chunk_count-1]
 
 ## When chunking engages
 
-Chunking only runs when the file is larger than
-`RX_MIN_CHUNK_SIZE_MB` (default **20 MB**). Below that threshold, the
-file is scanned by a single worker — the startup cost of spawning and
-synchronizing multiple workers dominates for small files.
-
-For a file just above threshold (25 MB), `rx` typically creates 2
-chunks. As file size grows, the chunk count approaches the worker
-limit.
+A plain file is split into `file_size / RX_MIN_CHUNK_SIZE_MB` chunks,
+rounded down, at most `RX_MAX_SUBPROCESSES` and at least one. With the
+defaults (20 MB and 20) a file below 40 MB is one chunk, a 45 MB file is
+two, and every file of 400 MB or more is twenty — the 572 MB log of the
+[quickstart](../quickstart.md) reports `Parallel chunks: 20`. Below two
+chunks' worth, the startup cost of spawning and synchronizing several
+workers would dominate.
 
 ## Worker coordination
 
-- A goroutine pool of size `RX_WORKERS` (default: `NumCPU`) consumes
-  chunks from a channel
+- A goroutine pool of size `RX_WORKERS` (default: the smaller of
+  `NumCPU` and `RX_MAX_SUBPROCESSES`) consumes chunks from a channel
 - Each worker opens the file, seeks to its chunk start, and spawns a
   `ripgrep` subprocess bounded to the chunk byte range
 - `ripgrep` outputs JSON; the worker parses it and appends matches to
@@ -139,10 +138,12 @@ scan is not 5× slower than a 1-pattern scan.
 
 | Variable | Effect |
 |---|---|
-| `RX_WORKERS` | Goroutine pool size. Default: `NumCPU`. |
-| `RX_MIN_CHUNK_SIZE_MB` | Smallest chunk. Default: `20`. Below-threshold files skip parallel mode entirely. |
-| `RX_MAX_LINE_SIZE_KB` | Assumed largest line length the engine tolerates when choosing chunk overlap. Default: `8`. Genuinely long lines may benefit from a bump. The newline-search forward window is separately bounded to 256 KB. |
-| `RX_MAX_SUBPROCESSES` | Upper bound on concurrent workers (the name is historical — it applies to goroutines). Default: `20`. |
+| `RX_WORKERS` | Goroutine pool size, when positive. Default: the smaller of `NumCPU` and `RX_MAX_SUBPROCESSES`. |
+| `RX_MIN_CHUNK_SIZE_MB` | Smallest chunk. Default: `20`. A file below twice this size is one chunk. |
+| `RX_MAX_SUBPROCESSES` | Most chunks per file, and the pool size when `RX_WORKERS` is unset. Default: `20`. |
+
+The newline search at a chunk boundary reads at most 256 KB forward;
+that window is fixed.
 
 ## Implications
 

@@ -39,11 +39,9 @@ See [concepts/caching](concepts/caching.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_WORKERS` | `NumCPU` | Number of parallel worker goroutines for trace scans. Takes precedence when positive. |
-| `RX_MAX_SUBPROCESSES` | `20` | Upper bound on worker goroutines (despite the name). |
-| `RX_MIN_CHUNK_SIZE_MB` | `20` | Smallest chunk the parallel scanner carves. Below this file size, scans run single-threaded. |
-| `RX_MAX_LINE_SIZE_KB` | `8` | Max line length the chunker tolerates; affects the forward-scan window when finding newline-aligned boundaries. |
-| `RX_MAX_FILES` | `1000` | Max files a single trace request will scan. Protects against runaway directory scans. |
+| `RX_WORKERS` | smaller of `NumCPU` and `RX_MAX_SUBPROCESSES` | Number of parallel worker goroutines for trace scans. Takes precedence when positive. |
+| `RX_MAX_SUBPROCESSES` | `20` | Most chunks one file is split into, and the worker count when `RX_WORKERS` is unset. |
+| `RX_MIN_CHUNK_SIZE_MB` | `20` | Smallest chunk the parallel scanner carves: a file is split into `size / RX_MIN_CHUNK_SIZE_MB` chunks, so a file below twice this size is scanned as one. |
 | `RX_HIDDEN` | `false` | Include files and directories whose name starts with a dot. Off by default, as in `ripgrep`. The `--hidden` flag overrides it. |
 
 See [concepts/chunking](concepts/chunking.md).
@@ -52,15 +50,22 @@ See [concepts/chunking](concepts/chunking.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LARGE_FILE_MB` | `50` | Minimum file size (MB) to be indexed automatically. Below-threshold files are skipped by `rx index` unless `--analyze` is set or `--threshold=N` is supplied. `--threshold=0` indexes every file; omitting the flag uses this variable. |
+| `RX_LARGE_FILE_MB` | `50` | The large-file size in MB. `rx index` skips a smaller plain file unless `--analyze` is set or `--threshold=N` is supplied (`--threshold=0` indexes every file; omitting the flag uses this variable). `rx samples` and `GET /v1/samples` build an index before a lookup in a plain file of this size or more. A trace answer for a plain file of this size or more is cached. The index checkpoint step is a fiftieth of it (1 MB by default). |
+| `RX_ANALYZE_WINDOW_LINES` | `128` | Sliding-window size, in lines, of the anomaly detectors that `--analyze` runs. `--analyze-window-lines` and the `analyze_window_lines` request field win over it; a value that is not a positive integer is ignored, and the result is clamped to 1–2048. See [analyzers](concepts/analyzers.md). |
 
 ## Cache control
 
-Cache disabling is done per-invocation via CLI flags — there are no
-"global disable" environment variables in this release:
+The trace cache is turned off per invocation; there is no variable for
+it:
 
 - `--no-cache` on `rx trace` — don't consult or write the trace cache
-- `--no-index` on `rx trace` — don't consult the line-index cache
+- `--no-index` on `rx trace` — neither read nor write a line index;
+  lines a capped scan left unnumbered are counted from the start of the
+  file instead (same answer)
+
+| Variable | Default | Description |
+|---|---|---|
+| `RX_NO_INDEX` | `false` | `rx samples` and `GET /v1/samples` neither build nor read a line index; the lookup streams the file (same answer). The CLI flag is `rx samples --no-index`; there is no query parameter. |
 
 `NO_COLOR` / `RX_NO_COLOR` control color output:
 
@@ -75,7 +80,7 @@ Both are overridden by explicit `--color=always`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_SEARCH_ROOTS` | — | Path-separator-delimited list of directories. Read by every subcommand as the environment form of `--search-root`, which overrides it. Exported by `rx serve` from the roots it resolved, so a child process inherits the same sandbox. |
+| `RX_SEARCH_ROOTS` | — | Path-separator-delimited (`:`) list of directories. Read by every subcommand as the environment form of `--search-root`, which overrides it. With neither set, `rx serve` uses the current directory and the other subcommands have no sandbox. Exported by `rx serve` from the roots it resolved, so a child process inherits the same sandbox. |
 
 See [concepts/security](concepts/security.md).
 
@@ -111,9 +116,7 @@ See [concepts/security](concepts/security.md) and
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` (alias `WARNING`), or `ERROR`. Sets slog level on `rx serve` startup. |
-| `RX_DEBUG` | `false` | When truthy, enables debug mode — writes `.debug_*` artifacts under `RX_DEBUG_DIR` during trace/index operations. |
-| `RX_DEBUG_DIR` | `$TMPDIR/rx-debug` | Directory for debug artifacts. |
+| `RX_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` (alias `WARNING`), or `ERROR`, in any case. Sets slog level on `rx serve` startup. |
 
 ## HTTP server
 
@@ -126,25 +129,24 @@ listings:
 |---|---|---|
 | `RX_API_TOKEN` | unset | When set, every `/v1` request must send `Authorization: Bearer <token>`; others get `401`. `/health`, `/metrics` and the docs stay open, and `/health` reports the value as `<redacted>`. See [security](concepts/security.md#opt-in-api-token). |
 
-## Newline rendering
+## Variables rx does not read
 
-| Variable | Default | Description |
-|---|---|---|
-| `NEWLINE_SYMBOL` | `\n` | Character sequence used when rendering "newline" in human-readable output. Surfaced via `GET /health` under `constants.NEWLINE_SYMBOL`. |
-
-## Unused / compatibility variables
-
-The `UVICORN_*` and `PROMETHEUS_*` env vars are echoed back on
-`/health` under `environment` if set, for operator convenience. `rx`
-itself doesn't consume them.
+`/health` echoes every `RX_*`, `UVICORN_*` and `PROMETHEUS_*` variable
+under `environment`, as it is set, whether rx reads it or not. Several
+names rx-python reads do nothing in rx: `RX_MAX_FILES`,
+`RX_MAX_LINE_SIZE_KB`, `RX_DEBUG`, `RX_DEBUG_DIR`, `NEWLINE_SYMBOL` and
+`RX_NO_CACHE`. Setting them changes nothing, and `/health` does not list
+them under `constants`.
 
 ## Global flags
 
-`rx` has no flags that apply across all subcommands beyond cobra's
-built-ins:
+Two flags are declared on the root command, so every subcommand accepts
+them, before or after the subcommand name:
 
 | Flag | Scope | Effect |
 |---|---|---|
+| `--hidden` | all | Include entries whose name starts with a dot; default `RX_HIDDEN` or `false` |
+| `--search-root=DIR` | all | Restrict file access to `DIR` (repeatable); default `RX_SEARCH_ROOTS`, else no sandbox — except `rx serve`, which defaults to the current directory |
 | `--help`, `-h` | all | Print help for the current command |
 | `--version` | root | Print `rx version <version>` |
 
@@ -176,27 +178,32 @@ curl -s http://127.0.0.1:7777/health | jq '.search_roots'
 
 ## Boolean parsing
 
-All boolean env vars (`RX_DEBUG`, `RX_ALLOW_INTERNAL_HOOKS`,
-`RX_HOOK_STRICT_IP_ONLY`, `RX_DISABLE_CUSTOM_HOOKS`) recognize these
-truthy values:
+The boolean variables (`RX_HIDDEN`, `RX_NO_INDEX`,
+`RX_ALLOW_INTERNAL_HOOKS`, `RX_HOOK_STRICT_IP_ONLY`,
+`RX_DISABLE_CUSTOM_HOOKS`) recognize these truthy values:
 
 ```text
 true, yes, 1, on
 ```
 
-And these falsy values:
+`RX_HIDDEN` and `RX_NO_INDEX` also recognize these falsy values, and
+fall back to their default for anything else:
 
 ```text
 false, no, 0, off
 ```
 
-Matching is case-insensitive. Anything else falls back to the default.
+The three hook variables are on only for a truthy value; anything else
+is off. Matching is case-insensitive.
+
+`NO_COLOR` and `RX_NO_COLOR` are different: any non-empty value turns
+colour off.
 
 ## Integer parsing
 
 All integer env vars (`RX_WORKERS`, `RX_MAX_SUBPROCESSES`,
-`RX_MIN_CHUNK_SIZE_MB`, `RX_LARGE_FILE_MB`, `RX_MAX_FILES`,
-`RX_MAX_LINE_SIZE_KB`, `RX_TASK_TTL_MINUTES`) use Go's `strconv.Atoi`:
+`RX_MIN_CHUNK_SIZE_MB`, `RX_LARGE_FILE_MB`, `RX_ANALYZE_WINDOW_LINES`,
+`RX_TASK_TTL_MINUTES`) use Go's `strconv.Atoi`:
 
 - Plain decimal digits only
 - Negative values accepted but usually produce unhelpful behavior
