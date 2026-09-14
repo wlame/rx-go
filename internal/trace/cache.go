@@ -72,11 +72,10 @@ var ErrCacheMiss = errors.New("trace: cache miss")
 //
 // Byte-for-byte parity with Python is mandatory — rx-go and rx-python
 // MUST produce identical patterns_hash for identical inputs so caches
-// cross-load. Python uses `json.dumps(..., sort_keys=True)` which emits
-// lowercase-alphabetical keys and NO whitespace. Go's
-// encoding/json.Marshal outputs keys in struct-declaration order, so
-// we build the JSON manually to guarantee "flags" < "patterns" key
-// ordering (alphabetical, same as Python's sort_keys).
+// cross-load. Python uses `json.dumps(..., sort_keys=True)`, which
+// emits the keys in alphabetical order with ", " and ": " as
+// separators. Go's encoding/json.Marshal writes no spaces, so the JSON
+// is built by hand: "flags" before "patterns", and the same separators.
 func ComputePatternsHash(patterns, rgFlags []string) string {
 	sortedPatterns := append([]string(nil), patterns...)
 	sort.Strings(sortedPatterns)
@@ -115,21 +114,11 @@ func ComputePatternsHash(patterns, rgFlags []string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
-// appendJSONStringArray writes a JSON array of strings to buf in
-// Python-compatible layout: `["a", "b"]` with a single space after
-// each comma, matching Python's `json.dumps(..., sort_keys=True)`
-// default (separators = ", " after ',' and ": " after ':').
-//
-// Actually Python's default separators are (',', ': ') — note the
-// single space after colons and NO space after commas. But with
-// sort_keys=True and default separators, Python still emits
-// `[, ]` WITHOUT a post-comma space — let me re-verify:
-//
-// Python: `json.dumps(["a","b"], sort_keys=True)` -> '["a", "b"]'
-// Actually that's ', ' with a space. Let me test...
-//
-// The reliable answer: Python's default `json.dumps` uses (', ', ': ')
-// — space after both. For byte-for-byte parity we match that layout.
+// appendJSONStringArray writes a JSON array of strings to buf in the
+// layout Python's default `json.dumps` produces: `["a", "b"]`, with one
+// space after each comma. Python's default separators are (", ", ": "),
+// so `json.dumps(["a", "b"])` gives '["a", "b"]'; the patterns hash
+// depends on matching it byte for byte.
 func appendJSONStringArray(buf []byte, xs []string) []byte {
 	buf = append(buf, '[')
 	for i, x := range xs {

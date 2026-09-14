@@ -116,6 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Go package `pkg/rxtypes` no longer has `TraceRequest`. Nothing
+  used it: `GET /v1/trace` reads query parameters, and `rx trace` builds
+  its options directly. The wire contract is unchanged.
+
 - The analyzers page describes the one way to add a detector,
   `analyzer.RegisterLineDetector`. It named `analyzer.Register`, whose
   detectors were listed by `GET /v1/detectors` and never run. That call

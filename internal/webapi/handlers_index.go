@@ -203,9 +203,9 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 //     (with or without --analyze statistics) and Save() it.
 //  4. Mark task Completed (or Failed on error).
 //
-// Per-analyzer pluggable output is a separate track — this function
-// stays analyzer-agnostic. When analyzer support lands, the registry
-// hook slots in right after index.Build() and before the save.
+// Anomaly detection runs inside index.Build, which drives the
+// registered detectors when req.Analyze is set; this function only
+// chooses them and the window.
 func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexRequest) {
 	mgr.MarkRunning(taskID)
 	start := time.Now()
