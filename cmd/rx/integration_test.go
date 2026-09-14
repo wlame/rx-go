@@ -39,10 +39,10 @@ func TestRegistry_BlankImportsWireAllDetectors(t *testing.T) {
 // registry (the same snapshot the CLI and HTTP paths take) produces
 // non-zero anomalies on a file containing obvious detector cues.
 //
-// Before finding #3 was fixed, BuildOptions.Detectors was left nil on
-// the CLI path, the coordinator's zero-detector fast path kicked in,
-// and `rx index --analyze` silently returned anomaly_count = 0. This
-// test guards against that regression.
+// If BuildOptions.Detectors were left nil on the CLI path, the
+// coordinator's zero-detector fast path would kick in and
+// `rx index --analyze` would silently return anomaly_count = 0. This
+// test guards against that.
 func TestIndexBuild_AnalyzeProductionPath(t *testing.T) {
 	// Contents chosen to fire at least THREE different detectors:
 	//   - secrets-scan: an AWS access key ID pattern.
@@ -109,7 +109,7 @@ func TestIndexBuild_AnalyzeProductionPath(t *testing.T) {
 // TestIndexBuild_MultiFile_NoStateLeak confirms that running index.Build
 // sequentially against two files does NOT let detector state from the
 // first build contaminate the second — proves the per-build factory
-// pattern works as designed (finding #6 of the analyzers review).
+// pattern works as designed.
 //
 // Why this matters: before the factory fix, every detector registered
 // a SHARED instance whose streaming state (open runs, hash fingerprints,

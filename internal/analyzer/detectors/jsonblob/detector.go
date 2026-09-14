@@ -46,18 +46,18 @@
 //     edge preserves navigation value ("the last complete or partial
 //     blob started here").
 //
-// Per-run signal (post-review, finding #7):
+// Per-run signal:
 //
-//   - Prior versions emitted a synthetic "sentinel" anomaly at offset 0
-//     / line 0 to carry a `truncated_at_window: true` flag plus a
-//     truncated_count. That was removed because:
+//   - There is no synthetic "sentinel" anomaly at offset 0 / line 0
+//     carrying a `truncated_at_window: true` flag and a
+//     truncated_count, because:
 //   - dedup keys on (detector, start_offset, end_offset) — a
 //     sentinel at (0, 0) collides with legitimate anomalies that
 //     happen to start at byte 0, and first-wins dedup would drop
 //     them.
-//   - truncated_count wasn't summable across workers; first-wins
+//   - truncated_count is not summable across workers; first-wins
 //     would report the wrong count.
-//   - Today each truncation produces its own real partial anomaly with
+//   - Each truncation produces its own real partial anomaly with
 //     a non-zero span. Consumers can count them by filtering on
 //     Description prefix "truncated:" if a per-run tally is needed.
 //
@@ -129,7 +129,7 @@ type Detector struct {
 
 	// truncatedCount tracks how many blobs were aborted due to the
 	// window-age check during this run. No longer surfaced via a
-	// sentinel anomaly (finding #7) — each truncation produces its
+	// sentinel anomaly — each truncation produces its
 	// own real partial anomaly at emit time. Retained as state for
 	// tests and potential future telemetry.
 	truncatedCount int

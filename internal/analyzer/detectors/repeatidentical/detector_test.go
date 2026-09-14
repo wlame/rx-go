@@ -263,7 +263,7 @@ func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 }
 
 // TestDetector_SharedInstance_StateLeakScenario documents the failure
-// mode that motivated the factory-based registration (finding #6).
+// mode that motivates the factory-based registration.
 //
 // If a single detector instance is fed two SEPARATE Finalize cycles
 // without explicitly resetting between them, state from the first
