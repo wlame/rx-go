@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -361,5 +362,32 @@ func TestFormatTaskTime(t *testing.T) {
 func TestCompressedReader_XzUnsupported(t *testing.T) {
 	if _, err := newCompressedReader(strings.NewReader(""), "xz"); err == nil {
 		t.Errorf("xz should not be supported")
+	}
+}
+
+// Samples reads the file itself and never runs ripgrep, so a server
+// without rg still answers it.
+func TestSamples_AnswersWithoutRipgrep(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	root := t.TempDir()
+	f := filepath.Join(root, "a.log")
+	if err := os.WriteFile(f, []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	srv := NewServer(Config{AppVersion: "no-rg"})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/v1/samples?path=" + url.QueryEscape(f) + "&lines=2&context=0")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `"two"`) {
+		t.Errorf("body does not carry line 2: %s", body)
 	}
 }

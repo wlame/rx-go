@@ -141,7 +141,9 @@ client-side and iterate accordingly.
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |
 | `500 Internal Server Error` | Resolver failure; logged with stack |
-| `503 Service Unavailable` | `ripgrep` not available |
+
+Samples reads the file itself and never runs `ripgrep`, so it answers on
+a server where `rg` is missing.
 
 ## Examples
 

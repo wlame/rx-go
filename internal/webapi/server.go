@@ -35,8 +35,9 @@ type Config struct {
 	AppVersion string
 
 	// RipgrepPath is empty when ripgrep is not on PATH. /health reports
-	// "ripgrep_available: false" in that case, and /v1/trace and
-	// /v1/samples return 503 Service Unavailable.
+	// "ripgrep_available: false" in that case, and /v1/trace returns 503
+	// Service Unavailable. /v1/samples does not run ripgrep and answers
+	// either way.
 	RipgrepPath string
 
 	// Backends. Any nil pointer is replaced with a sensible default at

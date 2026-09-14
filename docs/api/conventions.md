@@ -71,7 +71,7 @@ message without parsing the string.
 | `409 Conflict` | Duplicate background task | `POST /v1/index` or `/v1/compress` while one is already running for the same path |
 | `422 Unprocessable Entity` | Schema validation failure | Missing required query param, wrong type |
 | `500 Internal Server Error` | Unhandled error or panic | Always logged with stack trace |
-| `503 Service Unavailable` | Required dependency missing | `ripgrep` not on `PATH` (trace/samples endpoints) |
+| `503 Service Unavailable` | Required dependency missing | `ripgrep` not on `PATH` (trace endpoint) |
 
 The [OpenAPI document](openapi.md) declares, on every operation, each of
 these statuses that the operation can answer, with its body schema:

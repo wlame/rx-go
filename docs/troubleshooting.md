@@ -11,7 +11,8 @@ Error: ripgrep (rg) is not installed or not on PATH
 ```
 
 Exit code 1 on any `rx trace` call; `503 Service Unavailable` on
-`/v1/trace` and `/v1/samples` (uncompressed path).
+`/v1/trace`. `rx samples` and `/v1/samples` do not use `ripgrep` and
+keep working.
 
 ### Cause
 
