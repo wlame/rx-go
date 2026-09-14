@@ -546,13 +546,13 @@ func RecordHookDuration(kind string, dur time.Duration) {
 	HookCallDurationSeconds.WithLabelValues(kind).Observe(dur.Seconds())
 }
 
-// LargeFileThresholdMB publishes the size above which a file is chunked.
-// A scrape cannot interpret rx_parallel_tasks_created without it.
-// rx-python publishes the same gauge from the same constant.
+// LargeFileThresholdMB publishes RX_LARGE_FILE_MB, the size from which
+// a plain file's trace is cached and an index is built for it. A scrape
+// cannot read the trace-cache and index families without it.
 var LargeFileThresholdMB = factory.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "rx_large_file_threshold_mb",
-		Help: `Threshold in MB for considering a file "large" for chunking`,
+		Help: `Threshold in MB (RX_LARGE_FILE_MB) from which a file is "large": its trace is cached and it gets an index`,
 	},
 )
 
@@ -568,11 +568,11 @@ var RipgrepProcessingSeconds = factory.NewHistogram(
 
 // RecordConfig publishes the configuration gauges a scrape needs to
 // interpret the rest of the exposition.
-func RecordConfig(minChunkSizeMB int) {
+func RecordConfig(largeFileMB int) {
 	if !enabled.Load() {
 		return
 	}
-	LargeFileThresholdMB.Set(float64(minChunkSizeMB))
+	LargeFileThresholdMB.Set(float64(largeFileMB))
 }
 
 // RecordRipgrepProcessing observes how long one ripgrep run took.

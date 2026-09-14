@@ -183,14 +183,20 @@ func applyConfigDefaults(cfg *Config) {
 // (rx trace / index / samples / compress) never take this path, so the
 // prometheus gate stays false for them and they pay nothing.
 func (s *Server) Start() error {
-	prometheus.Enable()
-	prometheus.RecordConfig(config.MinChunkSizeMB())
+	enableMetrics()
 	err := s.http.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		// Graceful shutdown path — not an error.
 		return nil
 	}
 	return err
+}
+
+// enableMetrics turns metric collection on and publishes the
+// configuration gauges a scrape needs to read the other families.
+func enableMetrics() {
+	prometheus.Enable()
+	prometheus.RecordConfig(config.LargeFileMB())
 }
 
 // ServeHTTP makes *Server satisfy http.Handler. Useful for httptest.

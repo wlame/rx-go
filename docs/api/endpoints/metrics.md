@@ -65,7 +65,7 @@ runtime and process families listed after them.
 | `rx_max_results_limited_total` | counter | — | Per answered trace whose match count reached `max_results` |
 | `rx_parallel_tasks_created` | histogram | — | The chunks of each plain file scanned, or the frame batches of each seekable `.zst` |
 | `rx_ripgrep_processing_seconds` | histogram | — | The duration of each ripgrep run on a chunk |
-| `rx_large_file_threshold_mb` | gauge | — | Set when `serve` starts: the chunk size, in MB, that `rx_parallel_tasks_created` depends on |
+| `rx_large_file_threshold_mb` | gauge | — | Set when `serve` starts: `RX_LARGE_FILE_MB`, the size from which a plain file's trace is cached and an index is built |
 
 ### Workers
 
