@@ -438,6 +438,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A scan task stopped by a `max_results` cap no longer counts in
+  `rx_worker_tasks_failed_total`. Every capped trace of a chunked file
+  added the chunks it canceled there. A canceled task now counts as
+  neither completed nor failed.
+
 - An index of a log that grows while it is built covers exactly the
   size it records. The builder stated the file, then read to whatever
   end the file had by then, so the index described bytes past its

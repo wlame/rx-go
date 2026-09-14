@@ -408,13 +408,7 @@ func scanFrameBatch(
 	// gated helpers — CLI mode skips collection.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
-	defer func() {
-		if err == nil {
-			prometheus.IncWorkerTasksCompleted()
-		} else {
-			prometheus.IncWorkerTasksFailed()
-		}
-	}()
+	defer func() { recordWorkerOutcome(err) }()
 
 	// Open the file once per batch — reused by the writer goroutine
 	// for every frame's ReadAt. os.File.ReadAt is safe for concurrent
