@@ -2,15 +2,15 @@
 
 `rx` is distributed as a single statically-linked binary. It has exactly one
 runtime dependency: the `ripgrep` (`rg`) executable must be on `PATH` for
-any command that performs regex search.
+regex search.
 
 ## System requirements
 
 - **Operating system:** Linux (amd64, arm64) or macOS (arm64, amd64). Windows
   is not an officially supported target.
-- **`ripgrep` (`rg`):** required for `rx trace`, `rx samples` against
-  uncompressed files, and the HTTP `/v1/trace` and `/v1/samples` endpoints.
-  Must be reachable via `$PATH`.
+- **`ripgrep` (`rg`):** required for `rx trace` and the HTTP `/v1/trace`
+  endpoint. Must be reachable via `$PATH`. `samples`, `index`, `compress`
+  and the other endpoints work without it.
 - **Disk:** roughly 2-5% of your largest indexed file for on-disk caches.
   Cache location defaults to `~/.cache/rx/`; override with
   [`RX_CACHE_DIR`](configuration.md).
@@ -73,36 +73,42 @@ rg --version
 ```
 
 `rx serve` will report `ripgrep_available: false` on `GET /health` if `rg`
-isn't reachable, and will return `503 Service Unavailable` on search
-endpoints until one is installed.
+isn't reachable, and will return `503 Service Unavailable` on `/v1/trace`
+until one is installed.
 
 ## Install `rx`
 
 ### Prebuilt binary
 
-Download the archive for your platform from the releases page, extract, and
-move the binary into `$PATH`:
+Every `vX.Y.Z` tag publishes one static binary per platform —
+`rx-linux-amd64`, `rx-linux-arm64`, `rx-darwin-arm64`, `rx-darwin-amd64` —
+each with a `.sha256` sidecar. Download the one for your platform, check
+it, and move it into `$PATH`:
 
 ```bash
-# Example — adjust tag and arch to match your target.
-curl -LO https://github.com/wlame/rx-go/releases/download/v2.2.1-go/rx-linux-amd64.tar.gz
-tar -xzf rx-linux-amd64.tar.gz
-sudo install -m 0755 rx /usr/local/bin/rx
+# The latest release; for another one use download/vX.Y.Z in place of
+# latest/download.
+base="https://github.com/wlame/rx-go/releases/latest/download"
+curl -LO "$base/rx-linux-amd64"
+curl -LO "$base/rx-linux-amd64.sha256"
+sha256sum -c rx-linux-amd64.sha256      # on macOS: shasum -a 256 -c
+sudo install -m 0755 rx-linux-amd64 /usr/local/bin/rx
 
 rx --version
-# rx version 2.2.1-go
+# rx version v0.2.0  (the release tag)
 ```
 
 ### Build from source
 
 Requires Go 1.25 or newer. The build is fully reproducible with CGO disabled.
+The version comes from the git tag; `just build` stamps it the same way.
 
 ```bash
 git clone https://github.com/wlame/rx-go.git
 cd rx-go
 
 CGO_ENABLED=0 go build \
-    -ldflags='-s -w -X main.appVersion=2.2.1-go' \
+    -ldflags="-s -w -X main.appVersion=$(git describe --tags --dirty --always)" \
     -o /usr/local/bin/rx \
     ./cmd/rx
 
@@ -123,7 +129,7 @@ rx --help
 ```
 
 If `rx` prints the help page but `rx trace` fails with
-"ripgrep (rg) is not installed or not on PATH", complete the
+"Ripgrep (rg) is not installed or not on PATH", complete the
 [ripgrep install](#install-ripgrep-first) step above.
 
 ## Shell completion

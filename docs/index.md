@@ -39,7 +39,7 @@ files in the tens of gigabytes.
 ## Quick look
 
 ```bash
-# Search a 1.3 GB log with 4 workers, show byte offsets of matches.
+# Search a log; every match comes with its line number and byte offset.
 rx "timeout.*ms" /var/log/app-2026-03.log
 
 # Build a line index so future line-number lookups are instant.
@@ -82,7 +82,8 @@ rx serve --search-root=/var/log
 
 ## Version and license
 
-- Current version: **2.2.1-go**
+- Version: the release tag (`rx --version` prints it); see the
+  [releases](https://github.com/wlame/rx-go/releases)
 - License: MIT
 - Source: <https://github.com/wlame/rx-go>
 
