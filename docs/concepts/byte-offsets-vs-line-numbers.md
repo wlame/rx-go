@@ -129,20 +129,26 @@ more useful.
 
 ## Compressed files
 
-Byte offsets don't have stable semantics in compressed streams:
+A byte offset `rx` reports for a compressed file is a position in the
+decompressed text — the same number the plain copy of the file gives.
+`rx trace` on a log, its `.gz` copy and a seekable `.zst` made from it
+reports the same offset and line for each match (403366791 and
+1191541 for one match in a 465 MB log), and the `lines` map of
+`rx samples --lines` on the `.gz` reports that offset too.
 
-- A gzip file's byte offset refers to *compressed* data
-- The decompressed content at "offset 1000 in the compressed stream"
-  requires decompressing the first 1000 bytes of input, which might
-  produce 500 or 5,000 bytes of output depending on the dictionary
+What is missing is a way to reach such a position without decompressing
+everything before it, so `rx samples` refuses `--offsets` on a
+compressed file (exit 2, `Byte offsets are not supported for
+compressed files; use lines instead`). Use `--lines` with the
+`absolute_line_number` of the match instead.
 
-`rx samples` rejects `--offsets` on compressed files for this reason.
-Use `--lines` instead — it's always well-defined in decompressed
-space.
+A capped trace of a seekable zstd file can leave a match without a line
+number (`-1`); there is then no `samples` call that resolves it. Run
+the search without `--max-results`, or on the plain file.
 
 Seekable zstd files produced by [`rx compress`](../cli/compress.md)
-partially restore byte-level random access by enabling frame-boundary
-seeks. But within a frame, seeks are still linear.
+make line lookups cheap: `samples --lines` decompresses only the frames
+holding the wanted lines. Byte offsets are refused there too.
 
 ## Implications
 
@@ -164,5 +170,4 @@ seeks. But within a frame, seeks are still linear.
 
 - [Chunking](chunking.md) — how parallel workers handle byte ranges
 - [Line indexes](line-indexes.md) — how `rx` makes line lookups fast
-- [Compression](compression.md) — why byte offsets don't work on
-  compressed files
+- [Compression](compression.md) — what each compressed format supports
