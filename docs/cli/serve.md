@@ -176,7 +176,11 @@ One task per `(path, operation)` pair at a time. Duplicate POSTs
 return the existing task's ID with `409 Conflict`.
 
 Finished tasks are swept from memory every 5 minutes if older than
-`RX_TASK_TTL_MINUTES` (default 60).
+`RX_TASK_TTL_MINUTES` (default 60). A finished index task keeps its
+whole result, line index included, until then, so the table is capped
+at 256 tasks: starting a task past the cap drops the oldest finished
+ones, and `GET /v1/tasks/{id}` for a dropped task answers `404`.
+Running and queued tasks are never dropped.
 
 ### Graceful shutdown
 

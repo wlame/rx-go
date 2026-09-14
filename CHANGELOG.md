@@ -438,6 +438,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The background task table of `serve` is capped at 256 tasks. A
+  finished index task keeps its whole result, line index included, for
+  `RX_TASK_TTL_MINUTES`, and the number of tasks had no limit, so a
+  burst of requests could hold any amount of memory for an hour. Past
+  the cap, starting a task drops the oldest finished ones; running and
+  queued tasks are never dropped. The result keeps `line_index`, which
+  the viewer reads to tell an index result from a compress result.
+
 - A trace cache that cannot be written (a full disk, a cache directory
   that cannot be created) is logged once per process as a
   `trace_cache_write_failed` warning. The failure was dropped, so the

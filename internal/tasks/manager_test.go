@@ -289,3 +289,45 @@ func TestManager_ActivePathLockCount(t *testing.T) {
 		t.Errorf("after Complete, locks = %d, want 1", got)
 	}
 }
+
+// A finished task's result stays in memory until the sweeper removes it,
+// so a burst of requests within one TTL would otherwise grow the table
+// without bound. Past the cap, the oldest finished tasks go first; a
+// running task is never dropped, since its worker still reports to it.
+func TestManager_Create_DropsTheOldestFinishedTasksPastTheCap(t *testing.T) {
+	m := New(Config{Logger: silentLogger(), MaxTasks: 3})
+	running, _ := m.Create("/logs/running.log", "index")
+	m.MarkRunning(running.TaskID)
+	var finished []string
+	for _, name := range []string{"a", "b", "c", "d"} {
+		task, _ := m.Create("/logs/"+name+".log", "index")
+		m.Complete(task.TaskID, map[string]any{"line_index": []any{}})
+		finished = append(finished, task.TaskID)
+		// CompletedAt orders the eviction; keep the times distinct.
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	if got := m.Size(); got != 3 {
+		t.Fatalf("Size = %d, want the cap of 3", got)
+	}
+	if _, ok := m.Get(running.TaskID); !ok {
+		t.Error("the running task was dropped")
+	}
+	for _, id := range finished[:2] {
+		if _, ok := m.Get(id); ok {
+			t.Errorf("task %s, among the oldest finished, was kept", id)
+		}
+	}
+	for _, id := range finished[2:] {
+		if _, ok := m.Get(id); !ok {
+			t.Errorf("task %s, among the newest finished, was dropped", id)
+		}
+	}
+}
+
+func TestManager_New_DefaultsTheCap(t *testing.T) {
+	m := New(Config{Logger: silentLogger()})
+	if m.maxTasks != DefaultMaxTasks {
+		t.Errorf("maxTasks = %d, want DefaultMaxTasks (%d)", m.maxTasks, DefaultMaxTasks)
+	}
+}

@@ -11,6 +11,8 @@
 //     ID (idempotent POST).
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
+//   - A cap on the table (DefaultMaxTasks): past it, creating a task
+//     drops the oldest finished ones.
 //
 // Task store backing: Python uses an asyncio.Lock with dict mutation.
 // This package uses one sync.Mutex guarding a map[string]*Task for the
@@ -23,6 +25,7 @@ package tasks
 import (
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +43,15 @@ import (
 // memory before the sweeper removes it. Mirrors Python's 60 minutes.
 // Override via RX_TASK_TTL_MINUTES.
 const DefaultTTL = 60 * time.Minute
+
+// DefaultMaxTasks is how many tasks the manager keeps at most. A
+// finished task keeps its whole result, the line index included, until
+// the sweeper removes it after the TTL; without a cap, a burst of
+// requests inside one TTL would grow the table without bound. Past the
+// cap, Create drops the oldest finished tasks. Running and queued tasks
+// are never dropped, so the table can exceed the cap only while more
+// than this many tasks are unfinished at once.
+const DefaultMaxTasks = 256
 
 // DefaultSweepInterval is how often the sweeper goroutine wakes up.
 // Python uses 5 minutes; we match.
@@ -107,6 +119,9 @@ type Manager struct {
 	// Locks are released when a task transitions to Terminal.
 	pathLocks map[string]string
 
+	// maxTasks caps the table; see DefaultMaxTasks.
+	maxTasks int
+
 	// Sweeper control.
 	ttl           time.Duration
 	sweepInterval time.Duration
@@ -128,6 +143,7 @@ type Manager struct {
 type Config struct {
 	TTL           time.Duration // finished task retention; 0 = env/default
 	SweepInterval time.Duration // sweeper interval; 0 = default
+	MaxTasks      int           // table cap; 0 = DefaultMaxTasks
 	Logger        *slog.Logger
 }
 
@@ -142,7 +158,11 @@ func New(cfg Config) *Manager {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.MaxTasks <= 0 {
+		cfg.MaxTasks = DefaultMaxTasks
+	}
 	return &Manager{
+		maxTasks:      cfg.MaxTasks,
 		tasks:         map[string]*Task{},
 		pathLocks:     map[string]string{},
 		ttl:           cfg.TTL,
@@ -221,7 +241,32 @@ func (m *Manager) Create(path, operation string) (*Task, bool) {
 	}
 	m.tasks[task.TaskID] = task
 	m.pathLocks[path] = task.TaskID
+	m.dropOldestFinishedLocked(len(m.tasks) - m.maxTasks)
 	return task, true
+}
+
+// dropOldestFinishedLocked removes up to n finished tasks, oldest
+// completion first. Unfinished tasks are left alone: their workers still
+// report to them. The caller holds m.mu.
+func (m *Manager) dropOldestFinishedLocked(n int) {
+	if n <= 0 {
+		return
+	}
+	finished := make([]*Task, 0, len(m.tasks))
+	for _, task := range m.tasks {
+		if task.IsTerminal() && task.CompletedAt != nil {
+			finished = append(finished, task)
+		}
+	}
+	sort.Slice(finished, func(i, j int) bool {
+		return finished[i].CompletedAt.Before(*finished[j].CompletedAt)
+	})
+	if n > len(finished) {
+		n = len(finished)
+	}
+	for _, task := range finished[:n] {
+		delete(m.tasks, task.TaskID)
+	}
 }
 
 // Update mutates a task's status / error / result. Releases the path
