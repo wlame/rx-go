@@ -488,6 +488,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace --json` gives each match the window `--before` and
+  `--after` ask for, each on its own: `-B 12 -A 1` gave a match up to 12
+  lines after it, because the window used the larger of the two on both
+  sides and took the lines a neighbouring match's leading context had
+  brought in. A line in the window that matches too is now part of it;
+  it was left out, so the windows of neighbouring matches had holes.
+  The human output, which merges the windows, is unchanged.
+
 - Seekable zstd files whose frames do not end at line breaks (written
   by another encoder, which may cut a frame mid-line or inside a line
   longer than a frame) are numbered as their text. The index counted a

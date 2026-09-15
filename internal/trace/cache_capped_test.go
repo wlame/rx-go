@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"fmt"
 	"io"
 	"reflect"
 	"sync/atomic"
@@ -62,14 +63,21 @@ func TestCacheHit_CappedTraceReadsOnlyToItsLastMatch(t *testing.T) {
 // The capped answer from the cache is the uncapped answer from the
 // cache cut to the cap: the same matches, numbers and context lines.
 // Two patterns match every needle line, and the odd cap falls between
-// the two matches of one line. Needles are 10 lines apart and the
-// leading context is 12 lines, so the window of the last match kept
-// holds lines that only the leading context of a match past the cap
-// supplies.
+// the two matches of one line. Needles are 10 lines apart, so with 12
+// lines of leading context a window holds the match before it, and
+// with 12 lines of trailing context the window of the last match kept
+// holds a match past the cap.
 func TestCacheHit_CappedTraceAnswersTheUncappedHitCutToTheCap(t *testing.T) {
+	for _, tc := range []struct{ before, after int }{{12, 1}, {0, 12}} {
+		t.Run(fmt.Sprintf("B%d-A%d", tc.before, tc.after), func(t *testing.T) {
+			checkCappedCacheHitIsTheUncappedHitCut(t, Options{ContextBefore: tc.before, ContextAfter: tc.after})
+		})
+	}
+}
+
+func checkCappedCacheHitIsTheUncappedHitCut(t *testing.T, withContext Options) {
 	patterns := []string{"NEEDLE", "NEEDLE "}
 	path, _, _ := cacheFixture(t, patterns)
-	withContext := Options{ContextBefore: 12, ContextAfter: 1}
 	full := cappedTraceFromCache(t, path, patterns, withContext)
 
 	limit := 7

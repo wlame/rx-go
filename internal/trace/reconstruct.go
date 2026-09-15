@@ -144,7 +144,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 				afterWanted = req.ContextAfter
 			}
 			if lastLineToRead == 0 && req.MaxMatches > 0 && len(matches) >= req.MaxMatches {
-				lastLineToRead = line + contextReachPastLastMatch(req.ContextBefore, req.ContextAfter)
+				lastLineToRead = line + contextReachPastLastMatch(req.ContextAfter)
 			}
 		}
 
@@ -161,19 +161,18 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 }
 
 // contextReachPastLastMatch is how many lines past the last match a
-// trace keeps a pass must still read so the context of that match is
+// trace keeps a pass must still read so the window of that match is
 // exactly what a pass over every cached match gives it.
 //
-// buildContextDict fills a match's window with the context lines of
-// every match within width = max(before, after) lines on either side,
-// and a match emits its leading context when its own line is read. So
-// a context line inside the last kept window, at most width lines past
-// it, can come from a match up to before lines further on. Reading
-// that far, and treating the lines as the full pass does (matches past
-// the cap included; the engine's cut drops them), gives the same
-// context lines; past it, nothing reaches a kept window.
-func contextReachPastLastMatch(before, after int) int {
-	return max(before, after) + before
+// buildContextDict gives a match the lines from before lines ahead of
+// it to after lines past it. Every line past it in that window is
+// emitted as context by the match's own trailing count, or is a match
+// itself, and reading up to it finds both; nothing further on reaches
+// the window. A match past the cap that this reads is dropped by the
+// engine's cut and still serves as a line of the window, as in the full
+// pass.
+func contextReachPastLastMatch(after int) int {
+	return after
 }
 
 // matchFromCached turns one cached record plus the text of the line it
