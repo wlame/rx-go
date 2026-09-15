@@ -181,22 +181,25 @@ Per-invocation flags:
 
 Cache files are written via a temp-file-plus-rename pattern:
 
-1. Write the full content to a temporary file in the same directory:
-   `.tmp-<random>` for an index, `<target>.tmp` for a trace entry
+1. Write the full content to a temporary file of the writer's own in
+   the same directory, named `.tmp-<random>`
 2. `rename` it to the final name (atomic on POSIX)
 
 There is no `fsync`. This guarantees:
 
 - No torn reads — a concurrent reader either sees the old file or the
   new file, never a half-written state
-- A failed write leaves no entry under the final name; an index's
-  temporary file is removed, and a leftover `.tmp` is never read
+- A failed write leaves no entry under the final name and removes its
+  temporary file; a `.tmp-*` left by a crash is never read
+- Two writers of the same entry at once (two traces of one file and
+  pattern set finishing together) each rename a whole entry; the last
+  rename wins
 
 It does not guarantee the entry survives a power loss: the rename can
 reach the disk before the content. A truncated entry fails to parse and
-is treated as absent, so the cost is a rebuild. Two `rx` processes
-writing the same trace entry at once share one `<target>.tmp` name; the
-last rename wins.
+is treated as absent, so the cost is a rebuild. A trace entry that
+fails to parse is also logged at Warn level as `trace_cache_unreadable`
+with its path, and the next complete scan of that file replaces it.
 
 ## Cache size
 
