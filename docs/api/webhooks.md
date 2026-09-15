@@ -14,7 +14,7 @@ target serves both backends.
 | Hook | `event` value | Fires | Typical use |
 |---|---|---|---|
 | `on_file` | `file_scanned` | Once per file, after its scan finishes | Progress tracking in long scans |
-| `on_match` | `match_found` | Once per match (requires `max_results`) | Real-time alerting |
+| `on_match` | `match_found` | Once per match of the response, after the scan (requires `max_results`) | Alerting on the matches found |
 | `on_complete` | `trace_complete` | Once per trace request | Completion signaling, persistence |
 
 ## Configuration
@@ -103,14 +103,22 @@ GET https://example.com/rx/file?event=file_scanned
 | `file_path` | Path of the file that holds the match |
 | `pattern` | The pattern that matched, as given in the request |
 | `offset` | Byte offset of the matched line in the file's text (the decompressed stream for a compressed file) |
-| `line_number` | Line number of the match, as the scan knew it |
+| `line_number` | The line's 1-based number in the file, or `-1` when it is unknown |
 
-`line_number` is the line's 1-based number in the file whenever the
-scan could count the lines before it. A scan of a plain file that the
-`max_results` cap cut short may not have read those lines; there the
-value can count from the start of the chunk instead, or be `-1`. Use
-`offset` when you need the exact line: `rx samples --offsets=<offset>`
-resolves it.
+The calls describe the matches of the response and nothing else: one
+call per match, sent once the trace has numbered the matches and cut
+them to `max_results`, in the response's order. Each call's
+`line_number` is that match's `absolute_line_number` in the response.
+It is `-1` where the response has `-1`: a scan of a plain file that the
+`max_results` cap cut short may not have read the lines before a match,
+and rx does not read them just to number it (see
+[`/v1/trace`](endpoints/trace.md)). `offset` is always sent, so
+`rx samples --offsets=<offset>` resolves such a line. A number counted
+from the start of a chunk is never sent.
+
+Because the calls follow the numbering, `match_found` calls of a trace
+go out after its `file_scanned` calls, and the dispatcher's 8 workers
+may deliver them in any order.
 
 ```text
 GET https://example.com/rx/match?event=match_found

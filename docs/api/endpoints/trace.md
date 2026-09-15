@@ -218,10 +218,11 @@ curl -sG 'http://127.0.0.1:7777/v1/trace' \
     | jq '.request_id'
 ```
 
-Each match also calls `https://example.com/rx-alerts` with a `GET`
-whose query parameters carry the match (`event=match_found`,
-`file_path`, `pattern`, `offset`, `line_number`) and the `request_id`
-of this response. See [webhooks](../webhooks.md).
+Each match of the response also calls `https://example.com/rx-alerts`
+with a `GET` whose query parameters carry the match (`event=match_found`,
+`file_path`, `pattern`, `offset`, and `line_number`, which is the
+match's `absolute_line_number`, `-1` included) and the `request_id` of
+this response. See [webhooks](../webhooks.md).
 
 ### Sandbox rejection
 
