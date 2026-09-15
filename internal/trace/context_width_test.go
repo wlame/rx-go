@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,5 +163,73 @@ func TestContextWindowOfTheLastKeptMatchHoldsAMatchPastTheCap(t *testing.T) {
 	}
 	if len(windows) != 1 {
 		t.Errorf("windows for %d matches, want one for the match kept", len(windows))
+	}
+}
+
+// A result cap does not shorten the window of a match it keeps: the
+// last match kept has the lines after it that the trace without the cap
+// gives it, and so does a match whose window holds a match the cap cut
+// (line 100, whose window holds the match on line 101).
+func TestContextWindowsOfACappedTraceAreTheUncappedOnes(t *testing.T) {
+	requireRipgrep(t)
+	text := contextFixture()
+	lines := textLines(text)
+	const before, after = 1, 2
+	for kind, path := range writeContextCopies(t, text) {
+		for limit := 1; limit <= 6; limit++ {
+			t.Run(fmt.Sprintf("%s/max%d", kind, limit), func(t *testing.T) {
+				resp := traceOnce(t, path, []string{"NEEDLE"}, Options{
+					NoCache: true, ContextBefore: before, ContextAfter: after, MaxResults: &limit,
+				})
+				if len(resp.Matches) != limit {
+					t.Fatalf("got %d matches, want %d", len(resp.Matches), limit)
+				}
+				checkContextWindows(t, resp, lines, before, after)
+			})
+		}
+	}
+}
+
+// A seekable batch that the cap stopped part-way returns the matches
+// whose windows rg finished writing. A later match whose trailing
+// context was cut off was never complete; it comes back as a context
+// line, a line of the windows around it, rather than as a match with a
+// shortened window.
+func TestAStoppedSeekableBatchKeepsOnlyMatchesWithWholeWindows(t *testing.T) {
+	requireRipgrep(t)
+	text := "LINE 1 NEEDLE\nLINE 2\nLINE 3\nLINE 4\nLINE 5 NEEDLE\nLINE 6 NEEDLE\nLINE 7\nLINE 8\n"
+	cmd := exec.Command("rg", "--json", "--no-config", "-A", "2", "-e", "NEEDLE", "-")
+	cmd.Stdin = strings.NewReader(text)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rg: %v", err)
+	}
+	// Keep rg's events up to the line after the match on line 5, as if
+	// rg was killed there: line 5's window misses line 7, and line 6's
+	// misses lines 7 and 8.
+	var cut []byte
+	for _, event := range bytes.SplitAfter(out, []byte("\n")) {
+		cut = append(cut, event...)
+		if bytes.Contains(event, []byte(`"line_number":6`)) {
+			break
+		}
+	}
+	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: int64(len(text))}, lineShift: 0}}
+	locs := []frameLoc{{frameIdx: 0, lineCount: 8, decoded: true}}
+
+	matches, contexts, _, err := matchesFromPartialBatch(context.Background(), cut, segments, locs, []string{"p1"}, 2)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	var matchLines, contextLines []int
+	for _, m := range matches {
+		matchLines = append(matchLines, m.LineNumber)
+	}
+	for _, c := range contexts {
+		contextLines = append(contextLines, c.LineNumber)
+	}
+	if fmt.Sprint(matchLines) != "[1]" || fmt.Sprint(contextLines) != "[2 3 5 6]" {
+		t.Errorf("matches on lines %v, context lines %v; want matches [1], context lines [2 3 5 6]",
+			matchLines, contextLines)
 	}
 }

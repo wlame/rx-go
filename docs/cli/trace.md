@@ -232,6 +232,12 @@ concurrent workers each produce matches past the cap before the
 cancel propagates; the response is truncated to the cap before
 return so callers always see at most `--max-results` matches.
 
+A match the cap keeps has the whole window `--before` and `--after`
+ask for: a worker counts a match against the cap only once ripgrep
+has written the lines after it, and a match read while finishing such
+a window, or cut by the cap, still appears in the windows around it as
+a context line.
+
 ### Line numbers, `scanned_files` and the request ID in `--json`
 
 - `absolute_line_number` is `-1` (human output: `?`) for a match a

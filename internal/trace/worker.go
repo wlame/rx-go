@@ -121,6 +121,32 @@ type ContextRaw struct {
 	LineText     string
 }
 
+// matchAsContext reports a match as a line of the windows around it.
+//
+// A result cap can leave a scan holding matches it does not report: a
+// match the cap cut, or one whose own window the scan stopped before
+// reading. Each is still a line of an earlier match's window, so it is
+// kept as a context line, with the same offset, numbers and text a
+// trace without the cap gives that line.
+func matchAsContext(m MatchRaw) ContextRaw {
+	return ContextRaw{
+		Offset:       m.Offset,
+		LineNumber:   m.LineNumber,
+		AbsoluteLine: m.AbsoluteLine,
+		LineText:     m.LineText,
+	}
+}
+
+// matchesAsContext moves the last n matches into contexts, as context
+// lines, and returns both slices.
+func matchesAsContext(matches []MatchRaw, contexts []ContextRaw, n int) ([]MatchRaw, []ContextRaw) {
+	keep := len(matches) - n
+	for _, m := range matches[keep:] {
+		contexts = append(contexts, matchAsContext(m))
+	}
+	return matches[:keep], contexts
+}
+
 // recordWorkerOutcome counts one finished worker task (a chunk, a
 // compressed stream or a batch of seekable frames) by the error it
 // returned: completed when there was none, failed when there was one,
@@ -318,6 +344,10 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 		matches  []MatchRaw
 		contexts []ContextRaw
 	}
+	// The gate charges the shared cap for a match once rg has written
+	// the trailing context of that match. Only goroutine 2 touches it
+	// until g.Wait() returns below.
+	gate := newTrailingWindowGate(req.Budget, contextAfter)
 	g.Go(func() error {
 		return StreamEvents(gctx, rgStdout, func(ev *RgEvent, parseErr error) error {
 			if parseErr != nil {
@@ -348,6 +378,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 				// filter needs to patch at merge time. rx-python
 				// applies the same rule.
 				if absOff < task.Offset || absOff >= task.EndOffset() {
+					gate.reached(ev.Match.LineNumber)
 					return nil
 				}
 				subs := make([]rxtypes.Submatch, len(ev.Match.Submatches))
@@ -367,15 +398,16 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 					// narrows this down post-hoc per Python parity.
 					PatternIDs: append([]string(nil), patternOrder...),
 				})
-				// Charge the shared cap as the match arrives, so the
-				// worker that spends the last of it stops every
-				// sibling immediately instead of at the end of its
-				// chunk.
-				req.Budget.Charge()
+				// Charge the shared cap as soon as the match's window
+				// is read (at once without -A), so the worker that
+				// spends the last of it stops every sibling within a
+				// few lines instead of at the end of its chunk.
+				gate.matched(ev.Match.LineNumber)
 			case RgEventContext:
 				if ev.Context == nil {
 					return nil
 				}
+				gate.reached(ev.Context.LineNumber)
 				// Same range-containment dedup as the match branch —
 				// context lines reported by rg outside THIS chunk's
 				// assigned range belong to an adjacent chunk's output.
@@ -401,6 +433,17 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	// stdin for us; the stdin goroutine's defer does that reliably.
 	groupErr := g.Wait()
 	waitErr := rgCmd.Wait()
+
+	// A run that a cancel stopped (the cap, or the caller) may hold
+	// matches whose windows it never finished reading; they were not
+	// counted, so they are reported as lines of the windows around them.
+	// A run that read its whole input finishes every window it can, and
+	// those matches count now.
+	if ctx.Err() != nil {
+		mu.matches, mu.contexts = matchesAsContext(mu.matches, mu.contexts, gate.uncounted())
+	} else {
+		gate.inputEnded()
+	}
 
 	elapsed := time.Since(start)
 	result := ChunkResult{

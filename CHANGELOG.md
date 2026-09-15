@@ -488,6 +488,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace capped by `--max-results` gives the matches it keeps the
+  lines after them that `--after` asks for, as the trace without the
+  cap does. On a plain file the match that reached the cap stopped
+  ripgrep before it wrote those lines (`-A 2 --max-results=3` gave the
+  third match no line after it), and so could the matches of other
+  chunks stopped at the same moment. On a gzip, bzip2, xz or zstd file,
+  and on a seekable zstd file, a match cut by the cap was dropped from
+  the window of the last match kept, together with the lines after it.
+  A match is now counted against the cap once its window is read, and
+  a match read only to complete a window, or cut by the cap, is a line
+  of the windows around it.
+
 - `rx samples --lines` and `GET /v1/samples?lines=` on a gzip, bzip2,
   xz or zstd file, or on a seekable zstd file without an index, answer
   a line asked for twice once, as for a plain file: `--lines=2,2`,

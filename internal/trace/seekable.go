@@ -290,16 +290,18 @@ func ProcessSeekable(
 	sort.SliceStable(matches, func(i, j int) bool {
 		return matches[i].Offset < matches[j].Offset
 	})
-	sort.SliceStable(contexts, func(i, j int) bool {
-		return contexts[i].Offset < contexts[j].Offset
-	})
 
 	// Final hard cap — the cooperative cancel may overshoot (a batch
 	// that started before cancel can still produce matches past the
-	// cap). Truncate to the exact cap for the caller's contract.
+	// cap). Truncate to the exact cap for the caller's contract. A match
+	// cut here can be a line of the window of a match kept, so it stays
+	// as a context line.
 	if maxResults != nil && len(matches) > *maxResults {
-		matches = matches[:*maxResults]
+		matches, contexts = matchesAsContext(matches, contexts, len(matches)-*maxResults)
 	}
+	sort.SliceStable(contexts, func(i, j int) bool {
+		return contexts[i].Offset < contexts[j].Offset
+	})
 
 	return matches, contexts, time.Since(start), nil
 }
@@ -569,7 +571,7 @@ func scanFrameBatch(
 		// request was abandoned, and not a reason to call the file
 		// unreadable. The chunked path classifies it the same way.
 		if cErr := ctx.Err(); cErr != nil {
-			return matchesFromPartialBatch(ctx, stdout.Bytes(), feeder.segments, locs, patternOrder)
+			return matchesFromPartialBatch(ctx, stdout.Bytes(), feeder.segments, locs, patternOrder, contextAfter)
 		}
 		var ex *exec.ExitError
 		if errors.As(runErr, &ex) {
@@ -617,6 +619,12 @@ func countedFrames(locs []frameLoc) []frameLines {
 // cooperative cancel it is, so a cap that fires mid-batch still returns
 // the matches the batch had already found.
 //
+// The kill can land between a match and the contextAfter lines rg
+// writes after it. Such a match comes back as a context line rather
+// than a match with a shortened window (see unfinishedWindows). The cap
+// counts only batches that finished, so leaving it out never takes the
+// answer below the cap.
+//
 // The parse runs on a context stripped of the cancellation, since the
 // output is already buffered and the only thing left to do is read it.
 func matchesFromPartialBatch(
@@ -625,12 +633,38 @@ func matchesFromPartialBatch(
 	segments []streamSegment,
 	locs []frameLoc,
 	patternOrder []string,
+	contextAfter int,
 ) ([]MatchRaw, []ContextRaw, []frameLines, error) {
 	// rg was killed part-way, so its last line may be cut off; a stream
 	// that cannot be read to the end is expected here, and the matches
 	// read before that point are kept.
 	matches, contexts, _ := remapBatchEvents(context.WithoutCancel(ctx), out, segments, patternOrder)
+	matches, contexts = matchesAsContext(matches, contexts, unfinishedWindows(matches, contexts, contextAfter))
 	return matches, contexts, countedFrames(locs), context.Canceled
+}
+
+// unfinishedWindows counts the latest matches of a stopped rg run whose
+// trailing windows rg did not finish writing.
+//
+// rg writes the contextAfter lines after a match right after it, each
+// as a context event or, when it matches too, as a match event, so a
+// match with at least contextAfter events after it has its whole
+// window. Both slices are in the order rg wrote them, which is offset
+// order, and a match short of its window has only such matches after
+// it.
+func unfinishedWindows(matches []MatchRaw, contexts []ContextRaw, contextAfter int) int {
+	unfinished := 0
+	for i := len(matches) - 1; i >= 0; i-- {
+		laterMatches := len(matches) - 1 - i
+		laterContexts := len(contexts) - sort.Search(len(contexts), func(j int) bool {
+			return contexts[j].Offset > matches[i].Offset
+		})
+		if laterMatches+laterContexts >= contextAfter {
+			break
+		}
+		unfinished++
+	}
+	return unfinished
 }
 
 // remapBatchEvents parses the rg --json stream emitted for a batch and
