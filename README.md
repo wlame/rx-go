@@ -5,7 +5,7 @@ and seekable compression of very large log files. Wraps
 [ripgrep](https://github.com/BurntSushi/ripgrep) and adds parallel
 chunked search, native decompression (gzip, xz, bz2, zstd), frame-level
 parallel zstd, line-offset indexes, result caching, and an HTTP API
-with an embedded SPA — all in a single static binary (~13 MB, no runtime
+with an embedded SPA — all in a single static binary (~14 MB, no runtime
 deps beyond `rg`).
 
 Built for multi-GB log files; designed to scale to ~100 GB.

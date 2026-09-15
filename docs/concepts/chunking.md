@@ -8,11 +8,11 @@ scan**, bit-for-bit, while using every CPU core available.
 
 ## The problem
 
-A single file, 1.3 GB. A single regex, `error`. One worker takes
-~100 seconds. We'd like this to finish in ~25 seconds with 4 workers.
+A single file, 6.3 GB. A single regex. One worker takes 1.45 s with
+the file in the page cache; four workers take 0.52 s.
 
-Obvious approach: divide the file into four 325 MB ranges and scan each
-in parallel. Problem: the byte range `0..325MB` might end in the middle
+Obvious approach: divide the file into four equal byte ranges and scan
+each in parallel. Problem: the byte range `0..325MB` might end in the middle
 of a line. If a match `error` straddles that boundary, it's either
 missed (if neither chunk contains the whole line) or duplicated (if
 both chunks overlap it).
@@ -108,16 +108,17 @@ one, they cost a linear pass.
 
 ### Scaling
 
-On a literal-dense pattern (many matches per unit of input), `rx`
-scales near-linearly with worker count up to the physical core count:
+A rare literal over a 6.3 GB log in the page cache, on a 16-core Mac,
+by `RX_WORKERS`:
 
-- 1 worker: ~70 s on 1.3 GB
-- 2 workers: ~44 s (1.59×)
-- 4 workers: ~35 s (1.97×)
-- 8 workers: ~36 s (plateau — hyperthreads don't help CPU-bound regex)
+- 1 worker: 1.45 s
+- 2 workers: 1.03 s (1.41×)
+- 4 workers: 0.52 s (2.80×)
+- 8 workers: 0.46 s (3.18×)
+- 16 workers: 0.50 s (plateau)
 
-Beyond physical cores, gains are minimal because the workload is
-memory-bandwidth-bound, not CPU-bound.
+Past 4-8 workers the gains stop: the scan is bound by memory bandwidth
+and by the work outside it. See [performance](../performance.md#worker-scaling).
 
 ### Regex complexity
 

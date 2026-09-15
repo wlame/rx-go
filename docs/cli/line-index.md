@@ -20,9 +20,9 @@ hundred kilobytes). Once an index exists, any operation that needs to
 seek to a specific line can do so in O(1) — without an index, the same
 operation scans the file linearly counting `\n`s.
 
-`rx index` builds, re-uses, inspects, or deletes these indexes. On a
-warm cache it's effectively free: reading the cached index for a 260 MB
-file takes ~10 ms.
+`rx index` builds, re-uses, inspects, or deletes these indexes. With a
+valid index already stored it is effectively free: `rx index` on a
+465 MB log then takes 11 ms, process start included.
 
 By default, `rx` only indexes files **≥ 50 MB**. Smaller files don't
 need the overhead — a linear scan is fast enough. The threshold is
@@ -259,15 +259,16 @@ cache entry is valid as long as the source file hasn't changed. See
 
 ### Performance characteristics
 
-- **Warm read** (valid cache): ~10 ms regardless of file size. JSON
-  parsing dominates.
-- **Cold build**: single-threaded. Roughly real-time-per-GB on fast
-  NVMe disks; slower on HDD or network mounts.
-- **`--analyze`**: 2-4x slower than a plain build due to line-length
-  gathering.
-- **Memory**: the builder holds the full line-offset slice in memory
-  before emit. On a 260 MB source file this peaks around 256 MB RSS.
-  On a 100 GB file, memory would be significant — future work.
+Measured with the files in the page cache:
+
+- **Warm read** (valid cache): 11 ms for the 465 MB log.
+- **Cold build**: one sequential pass; 142 ms for the 465 MB log,
+  2.2 s for a 6.3 GB log. Slower when the file comes from disk.
+- **`--analyze`**: far slower than a plain build, because every line
+  goes through every detector: 18.2 s for the 465 MB log.
+- **Memory**: the builder keeps only the sparse checkpoints; peak RSS
+  was 22 MB for the 465 MB log, 23 MB for the 6.3 GB log and 31 MB for
+  the analyzed build.
 
 ## Tips and gotchas
 

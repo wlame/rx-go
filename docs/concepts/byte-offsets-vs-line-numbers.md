@@ -61,8 +61,8 @@ return current byte position
 ```
 
 This scans from the start of the file to line N. For N = 1,000 this
-is microseconds. For N = 10,000,000 on a 1.3 GB file, this takes
-multiple seconds.
+is quick (12 ms for the whole `rx samples` call). For N = 40,000,000 in
+a 6.3 GB log, it took 2.46 s.
 
 ### With an index
 
