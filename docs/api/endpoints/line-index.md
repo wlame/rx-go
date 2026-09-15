@@ -167,7 +167,7 @@ in-process CLI) and the `RX_ANALYZE_WINDOW_LINES` env var. See
 | `400 Bad Request` | Below size threshold; `analyze` conflicts with cache reuse |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |
-| `409 Conflict` | Another index task for the same path is already running |
+| `409 Conflict` | A task for the same path is already running — an index or a compress task |
 
 ### Error examples
 

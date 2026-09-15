@@ -174,8 +174,13 @@ body:
 `GET /v1/tasks/{id}` until `status == "completed"` or `status ==
 "failed"`. See [api/endpoints/tasks](../api/endpoints/tasks.md).
 
-One task per `(path, operation)` pair at a time. Duplicate POSTs
-return the existing task's ID with `409 Conflict`.
+One task per path at a time, whatever the operation: while an index
+task runs for a file, a second index request for it *and* a compress
+request for it get `409 Conflict`, and the other way round. The `409`
+body names the running task in `task_id`. Its `detail` sentence names
+the operation of the refused request, not of the running task: a
+compress refused because an index task runs reads `Compression already
+in progress for … (task: <the index task's ID>)`.
 
 Finished tasks are swept from memory every 5 minutes if older than
 `RX_TASK_TTL_MINUTES` (default 60). A finished index task keeps its

@@ -451,6 +451,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The caching and line-index docs describe the files rx writes. The
+  trace cache lives under `trace_cache/<patterns_hash>/`; its key has no
+  `--max-results` (a capped request is answered from a full entry);
+  writes use a temporary file and a rename with no `fsync`; the mtime is
+  compared exactly; and an index is valid only at the current format
+  version (5) with its size, mtime, inode, ctime and fingerprint
+  unchanged. The sample index is a real version-5 one with `[line,
+  offset]` checkpoints 1 MB apart, and an index build keeps only the
+  checkpoints in memory (about 22 MB RSS for a 6.3 GB log). `serve`
+  runs one task per path whatever the operation, so an index task
+  refuses a compress of the same file with `409` and the other way
+  round.
+
 - The trace and samples docs describe the answers rx gives. HTTP trace
   takes no context window, so `context_lines` holds each match's own
   line and `before_context`/`after_context` are `null` there.

@@ -76,7 +76,7 @@ for measured sizes and times.
 | `400 Bad Request` | Output file exists and `force=false`; bad `frame_size`; body is not valid JSON |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
-| `409 Conflict` | Another compress task for the same input is already running |
+| `409 Conflict` | A task for the same input path is already running — a compress or an index task |
 | `422 Unprocessable Entity` | Body fails the schema: `input_path` missing, a field of the wrong type, an unknown field, or `compression_level` outside 1-22 |
 
 ## Path sandbox
