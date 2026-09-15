@@ -226,7 +226,10 @@ Status: `400`. See [frame size syntax](#frame-size-syntax).
 ```
 
 Status: `409`. Poll `GET /v1/tasks/{task_id}` with the `task_id` of the
-body; the sentence names the same task.
+body; the sentence names the same task. One task holds a path whatever
+its operation, so a running index build also refuses a compress of
+the file; the sentence then starts with `Indexing already in progress`
+and `task_id` is the index task's.
 
 ## Performance notes
 

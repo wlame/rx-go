@@ -75,3 +75,63 @@ func TestTaskConflict_BodyNamesTheRunningTask(t *testing.T) {
 		})
 	}
 }
+
+// TestTaskConflict_DetailNamesTheRunningOperation asserts that a 409
+// refused because another operation holds the path names that running
+// operation, not the refused one: an index request refused while a
+// compress runs says "Compression already in progress", and the
+// task_id is the compress task's.
+func TestTaskConflict_DetailNamesTheRunningOperation(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	root := t.TempDir()
+	input := filepath.Join(root, "app.log")
+	if err := os.WriteFile(input, []byte("a log line\n"), 0o600); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	validated, err := paths.ValidatePathWithinRoots(input)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	cases := []struct {
+		running    string
+		route      string
+		body       string
+		wantDetail string
+	}{
+		{"compress", "/v1/index", `{"path": "` + input + `", "analyze": true}`, "Compression already in progress for "},
+		{"index", "/v1/compress", `{"input_path": "` + input + `"}`, "Indexing already in progress for "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.running+" running", func(t *testing.T) {
+			manager := tasks.New(tasks.Config{})
+			running, _ := manager.Create(validated, tc.running)
+			ts := httptest.NewServer(NewServer(Config{AppVersion: "unit-test", TaskManager: manager}))
+			t.Cleanup(ts.Close)
+
+			resp, err := http.Post(ts.URL+tc.route, "application/json", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("post: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("status = %d, want 409", resp.StatusCode)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body["task_id"] != running.TaskID {
+				t.Errorf("task_id = %v, want the running task %s", body["task_id"], running.TaskID)
+			}
+			detail, _ := body["detail"].(string)
+			if !strings.HasPrefix(detail, tc.wantDetail) || !strings.HasSuffix(detail, "(task: "+running.TaskID+")") {
+				t.Errorf("detail = %q, want %q… naming task %s", detail, tc.wantDetail, running.TaskID)
+			}
+		})
+	}
+}

@@ -95,10 +95,7 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 
 	task, isNew := s.cfg.TaskManager.Create(validated, "compress")
 	if !isNew {
-		return nil, ErrTaskConflict(fmt.Sprintf(
-			"Compression already in progress for %s (task: %s)",
-			req.InputPath, task.TaskID,
-		), task.TaskID)
+		return nil, runningTaskConflict(req.InputPath, task)
 	}
 
 	// Snapshot task state before spawning the goroutine to avoid
