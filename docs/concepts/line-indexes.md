@@ -9,13 +9,13 @@ checkpoint, whatever the file size.
 ## The file format
 
 An index is stored as a JSON document with the full `UnifiedFileIndex`
-schema, format version 5. The critical field is `line_index`. The
+schema, format version 6. The critical field is `line_index`. The
 start of the index `rx samples` built for a 465 MB log (most of the
 other members trimmed; `rx index --info --json` prints all of them):
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "source_path": "/var/log/app.log-2025121008",
   "source_modified_at": "2025-12-27T17:30:57.775888",
   "source_size_bytes": 487561499,
@@ -167,7 +167,7 @@ Don't bother when:
 ## Cache invalidation
 
 An index is valid as long as its format version is the current one
-(5) and the source file hasn't changed. `rx` checks:
+(6) and the source file hasn't changed. `rx` checks:
 
 1. `version` equals the current format version; an index of another
    version is treated as absent
@@ -226,9 +226,16 @@ lookup and does not use the index. `rx samples --offsets` decompresses
 up to the last offset and uses the index only to start counting lines
 at the nearest checkpoint.
 
-For **seekable zstd** (produced by `rx compress`), each checkpoint also
-names its frame, so a lookup decompresses only the frames that hold the
-wanted lines. See [compression](compression.md).
+For **seekable zstd** (produced by `rx compress`, or by another
+seekable encoder), each checkpoint also names its frame, so a lookup
+decompresses only the frames that hold the wanted lines. The index's
+`frames` table gives each frame's `first_line`, the line that holds the
+frame's first byte, and the lines it ends. `rx compress` ends every
+frame at a line break; another encoder may cut a frame mid-line, and a
+line longer than a frame spans frames that end no line. Such a frame
+has `line_count` 0 and `last_line` one less than `first_line`, and the
+next frame starts on the same line, so every line number stays the one
+the plain text gives. See [compression](compression.md).
 
 ## Implementation notes
 

@@ -488,6 +488,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Seekable zstd files whose frames do not end at line breaks (written
+  by another encoder, which may cut a frame mid-line or inside a line
+  longer than a frame) are numbered as their text. The index counted a
+  frame holding no line break as holding one line, so every later
+  frame, and every `rx samples --lines` answer after it, was one line
+  too high per such frame; on a 465 MB log cut into 64 KB frames the
+  last frame claimed line 1439124 of 1436842. A line longer than a
+  frame also came back cut short. A full `rx trace` of such a file
+  left every match after the first such frame at `-1`, and the trace
+  cache stored them under their line number inside their frame. The
+  index format is now version 6 and the trace cache version 5, so
+  indexes and caches written before are rebuilt; `rx compress` output
+  was never affected.
+
 - `rx samples --lines=-1` and `GET /v1/samples?lines=-1` on a gzip,
   bzip2, xz or zstd file (and on a seekable zstd file without an
   index) name the last line when the text does not end with a line

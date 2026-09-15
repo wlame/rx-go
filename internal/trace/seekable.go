@@ -45,6 +45,10 @@ type frameLoc struct {
 	batchStart int64 // offset in concat buffer where this frame starts
 	info       seekable.FrameInfo
 	lineCount  int // number of '\n' bytes in this frame's decompressed data
+	// decoded says the writer decompressed this frame, so lineCount
+	// is its real count. A frame inside a line longer than a frame
+	// holds no '\n', so a zero count alone cannot say "not read".
+	decoded bool
 }
 
 // readSeekTable is a small wrapper around seekable.ReadSeekTable that
@@ -510,6 +514,7 @@ func scanFrameBatch(
 			// locs AFTER rgCmd.Wait() returns (happens-before edge
 			// established by reading from writerDone below).
 			locs[i].lineCount = bytesCountByte(data, '\n')
+			locs[i].decoded = true
 			if _, werr := pw.Write(data); werr != nil {
 				// Reader side closed — rg exited early (e.g. ctx
 				// cancel or cap-cancel). Stop silently; no error
@@ -580,12 +585,13 @@ func scanFrameBatch(
 }
 
 // countedFrames reports the newline count measured for each frame the
-// writer got through. A frame the writer never reached counted nothing
-// and is left out, so the caller can tell "zero lines" from "not read".
+// writer got through, zero included. A frame the writer never reached
+// counted nothing and is left out, so the caller can tell "zero lines"
+// from "not read".
 func countedFrames(locs []frameLoc) []frameLines {
 	out := make([]frameLines, 0, len(locs))
 	for _, loc := range locs {
-		if loc.lineCount > 0 {
+		if loc.decoded {
 			out = append(out, frameLines{frameIdx: loc.frameIdx, lines: loc.lineCount})
 		}
 	}

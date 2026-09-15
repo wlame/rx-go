@@ -96,7 +96,13 @@ func BuildAndCopyText(zstPath string, text io.Writer) (*Result, error) {
 		FrameSizeTarget: table.Frames[0].DecompressedSize,
 	}
 
-	currentLine := int64(1)
+	// linesBefore is the number of line breaks in the text before the
+	// frame being read, so the frame's first byte is on line
+	// linesBefore+1. endsAtLineStart says whether the text read so far
+	// is empty or ends with a line break, which decides whether a line
+	// is still open when the last frame ends.
+	linesBefore := int64(0)
+	endsAtLineStart := true
 	for i, frame := range table.Frames {
 		data, dErr := decoder.DecompressFrame(zstPath, frame.Index, table)
 		if dErr != nil {
@@ -106,22 +112,22 @@ func BuildAndCopyText(zstPath string, text io.Writer) (*Result, error) {
 			return nil, fmt.Errorf("copy text of frame %d of %s: %w", frame.Index, zstPath, wErr)
 		}
 
-		// A frame boundary can fall mid-line, so a frame's line count is
-		// the number of newlines it contains: the line that continues
-		// into the next frame belongs to whichever frame terminates it.
-		// The exception is the last frame, where text after the final
-		// newline is a real line that nothing will terminate.
-		linesInFrame := int64(bytes.Count(data, []byte{'\n'}))
+		lineBreaks := int64(bytes.Count(data, []byte{'\n'}))
+		if len(data) > 0 {
+			endsAtLineStart = data[len(data)-1] == '\n'
+		}
 		isLastFrame := i == len(table.Frames)-1
-		if isLastFrame && len(data) > 0 && data[len(data)-1] != '\n' {
-			linesInFrame++
-		}
+		linesEnded := linesEndedInFrame(lineBreaks, isLastFrame, endsAtLineStart)
 
-		firstLine := currentLine
-		lastLine := currentLine
-		if linesInFrame > 0 {
-			lastLine = currentLine + linesInFrame - 1
-		}
+		// INVARIANT: a frame's first line is the line that holds its
+		// first byte, and the lines it holds are the ones it ends, so
+		// its last line is first + ended - 1. A frame boundary can fall
+		// mid-line, and a frame inside a line longer than a frame ends
+		// no line at all: it holds zero lines (last = first - 1) and the
+		// next frame starts on the same line. Counting such a frame as
+		// holding a line numbered every later frame one line too high.
+		firstLine := linesBefore + 1
+		lastLine := firstLine + linesEnded - 1
 
 		frameIndex := frame.Index
 		result.Frames = append(result.Frames, rxtypes.FrameLineInfo{
@@ -132,25 +138,39 @@ func BuildAndCopyText(zstPath string, text io.Writer) (*Result, error) {
 			DecompressedSize:   frame.DecompressedSize,
 			FirstLine:          firstLine,
 			LastLine:           lastLine,
-			LineCount:          lastLine - firstLine + 1,
+			LineCount:          linesEnded,
 		})
+		// The frame's checkpoint names the line holding its first byte,
+		// which is not always where that line starts.
 		result.LineIndex = append(result.LineIndex, rxtypes.LineIndexEntry{
 			LineNumber: firstLine,
 			ByteOffset: frame.DecompressedOffset,
 			FrameIndex: &frameIndex,
 		})
 
-		if linesInFrame > CheckpointLineInterval {
+		if linesEnded > CheckpointLineInterval {
 			result.LineIndex = append(result.LineIndex,
 				interiorCheckpoints(data, frame, firstLine)...)
 		}
 
-		currentLine = lastLine + 1
-		result.LineCount += linesInFrame
+		linesBefore += lineBreaks
+		result.LineCount += linesEnded
 		result.DecompressedSizeBytes += frame.DecompressedSize
 	}
 
 	return result, nil
+}
+
+// linesEndedInFrame is the number of lines a frame ends: one per line
+// break in it, plus, in the last frame, the line that no break ends
+// when the text does not finish with one. That last line can be open
+// since an earlier frame, so whether it exists is a property of the
+// whole text (textEndsAtLineStart), not of the last frame's bytes.
+func linesEndedInFrame(lineBreaks int64, isLastFrame, textEndsAtLineStart bool) int64 {
+	if isLastFrame && !textEndsAtLineStart {
+		return lineBreaks + 1
+	}
+	return lineBreaks
 }
 
 // interiorCheckpoints records a checkpoint every CheckpointLineInterval

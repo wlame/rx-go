@@ -150,10 +150,9 @@ func answerOneWindow(
 // contain lines first..last and returns their text, plus the byte offset
 // of each line in the decompressed stream.
 //
-// The run starts one frame earlier than the frame holding `first`,
-// because a line is attributed to the frame containing its terminating
-// newline and its text may begin in the frame before. Starting there
-// makes every wanted line complete; the run's own first line is the
+// The run starts at a frame whose first byte lies on a line before
+// `first` (see frameRunFor), so line `first` begins inside the run and
+// every wanted line is complete. The run's own first line can be a
 // partial one, and it is never in the wanted range.
 func readLinesFromFrames(
 	path string,
@@ -208,18 +207,25 @@ func readLinesFromFrames(
 // decompressed to read lines first..last, and reports false when the
 // range starts past the end of the file.
 //
-// The run begins one frame before the frame holding `first`, because a
-// line is attributed to the frame containing its terminating newline and
-// its text may begin in the frame before. That extra frame is what makes
-// the wanted lines complete, and it is the only overhead: for a single
-// line the run is two frames whatever the file's size.
+// A frame's FirstLine is the line holding its first byte, and that line
+// may have begun frames earlier: a line longer than a frame spans
+// frames that hold no line break. The run therefore starts at the last
+// frame whose first byte is on a line before `first` — line `first`
+// begins after that byte — or at frame 0 for line 1. For a file whose
+// frames end at line breaks that is the frame holding `first` or the
+// one before it, so a single line costs one or two frames whatever the
+// file's size. The run ends at the frame that ends line `last`.
 func frameRunFor(frames []rxtypes.FrameLineInfo, first, last int64) (start, end int, ok bool) {
-	start = frameHoldingLine(frames, first)
-	if start < 0 {
+	if frameHoldingLine(frames, first) < 0 {
 		return 0, 0, false
 	}
-	if start > 0 {
-		start--
+	// sort.Search returns the first frame starting on line `first` or
+	// later; the frame before it is the last one starting earlier.
+	start = sort.Search(len(frames), func(i int) bool {
+		return frames[i].FirstLine >= first
+	}) - 1
+	if start < 0 {
+		start = 0
 	}
 	end = frameHoldingLine(frames, last)
 	if end < 0 {
@@ -228,8 +234,11 @@ func frameRunFor(frames []rxtypes.FrameLineInfo, first, last int64) (start, end 
 	return start, end, true
 }
 
-// frameHoldingLine returns the index of the frame whose line range
-// contains `line`, or -1 when the line is past the end of the file.
+// frameHoldingLine returns the index of the frame that ends `line` (the
+// first frame whose LastLine reaches it), or -1 when the line is past the
+// end of the file. A frame that ends no line has LastLine = FirstLine-1,
+// so LastLine never decreases from frame to frame and the binary search
+// holds.
 func frameHoldingLine(frames []rxtypes.FrameLineInfo, line int64) int {
 	found := sort.Search(len(frames), func(i int) bool {
 		return frames[i].LastLine >= line

@@ -43,12 +43,18 @@ import (
 // it was analyzed with, so a cached analysis is reused only for a
 // request that would produce the same one.
 //
+// Version 6: in a seekable-zstd index, a frame that holds no line break
+// (inside a line longer than a frame, or empty) holds zero lines, and
+// the next frame starts on the same line. Version 5 counted it as
+// holding one, which numbered every later frame and checkpoint one line
+// too high for each such frame.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 5
+const Version = 6
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp

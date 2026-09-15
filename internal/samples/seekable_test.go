@@ -165,10 +165,10 @@ func TestSeekable_MatchesThePlainFile(t *testing.T) {
 	}
 }
 
-// The budget: one line is answered from two frames, whatever the file's
-// size. The extra frame is the one before, which holds the head of a
-// line that ends in the wanted frame.
-func TestSeekable_OneLineCostsTwoFrames(t *testing.T) {
+// The budget: one line is answered from at most two frames, whatever
+// the file's size: the frame holding it, and the one before when the
+// line is the first the frame holds, since its head may be there.
+func TestSeekable_OneLineCostsAtMostTwoFrames(t *testing.T) {
 	zstPath, loader, totalBytes := makeIndexedSeekable(t, 50000, 64*1024)
 
 	idx, err := loader(zstPath)
@@ -184,8 +184,8 @@ func TestSeekable_OneLineCostsTwoFrames(t *testing.T) {
 	if !ok {
 		t.Fatal("no run for a line that exists")
 	}
-	if got := end - start + 1; got != 2 {
-		t.Errorf("frames decompressed for one line: got %d, want 2", got)
+	if got := end - start + 1; got < 1 || got > 2 {
+		t.Errorf("frames decompressed for one line: got %d, want 1 or 2", got)
 	}
 
 	read := frames[end].DecompressedOffset + frames[end].DecompressedSize - frames[start].DecompressedOffset
