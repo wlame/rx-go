@@ -314,6 +314,13 @@ chunk after one of them has an offset but no line number yet.
   the lines from the start of the file up to the last such match. The
   answer is the one the index gives; only the time to reach it differs.
 
+A seekable `.zst` is scanned frame by frame, and a capped scan can leave
+the matches of a frame unnumbered when an earlier frame was not
+scanned. The same three rules apply to its decompressed text: with an
+index, the frame table points to the frame before the match and only
+the frames from there are decompressed; without one the match keeps
+`-1`; with `--no-index` the text is decompressed from the first byte.
+
 ### Performance characteristics
 
 - **Scales near-linearly** up to physical core count on literal-dense
