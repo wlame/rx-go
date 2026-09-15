@@ -53,11 +53,23 @@ func resolveCompressedLines(
 		// no single line and leaves it zero.
 		line int64
 	}
+	//
+	// Two positions with the same key (a line asked for twice, or N and
+	// the negative position that resolves to N) ask for the same window,
+	// so it is kept once; a second copy would read every line of the
+	// window into the answer twice.
 	windows := make([]window, 0, len(req.Lines))
+	hasWindow := make(map[string]bool, len(req.Lines))
+	addWindow := func(w window) {
+		if !hasWindow[w.key] {
+			hasWindow[w.key] = true
+			windows = append(windows, w)
+		}
+	}
 	for _, v := range req.Lines {
 		if v.IsRange() {
 			key := fmt.Sprintf("%d-%d", v.Start, *v.End)
-			windows = append(windows, window{key: key, start: v.Start, end: *v.End})
+			addWindow(window{key: key, start: v.Start, end: *v.End})
 			resp.Samples[key] = []string{}
 			resp.Lines[key] = -1
 			continue
@@ -83,7 +95,7 @@ func resolveCompressedLines(
 			start = 1
 		}
 		key := strconv.FormatInt(line, 10)
-		windows = append(windows, window{
+		addWindow(window{
 			key: key, start: start, end: line + int64(req.AfterContext), line: line,
 		})
 		// Pre-populate so a window past the end of the file still

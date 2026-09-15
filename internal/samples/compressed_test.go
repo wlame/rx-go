@@ -191,6 +191,51 @@ func TestResolveCountsAnUnterminatedLastLineOfACompressedFile(t *testing.T) {
 	}
 }
 
+// Two positions that name the same line, written twice, as N and -N,
+// or as the same range, are one window. A compressed file answers it
+// once, as the plain file does, rather than once per position.
+func TestResolveAnswersALineAskedForTwiceOnce(t *testing.T) {
+	text, _ := variedLog(400, 9)
+	dir := t.TempDir()
+	plainPath := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(plainPath, text, 0o600); err != nil {
+		t.Fatalf("write plain: %v", err)
+	}
+	positions := map[string]string{
+		"a line twice":                "2,2",
+		"a line and its negative":     "400,-1",
+		"a range twice":               "5-7,5-7",
+		"a line inside another's run": "9,10,9",
+	}
+	for what, csv := range positions {
+		spec, err := ParseCSV(csv)
+		if err != nil {
+			t.Fatalf("ParseCSV(%q): %v", csv, err)
+		}
+		request := func(path string, loader IndexLoader) Request {
+			return Request{Path: path, Lines: spec, BeforeContext: 1, AfterContext: 1, IndexLoader: loader}
+		}
+		plain, err := Resolve(request(plainPath, NoIndex))
+		if err != nil {
+			t.Fatalf("resolve plain: %v", err)
+		}
+		for name, path := range compressedCopiesOf(t, text, dir) {
+			for how, loader := range loadersFor(t, path) {
+				t.Run(what+"/"+name+"/"+how, func(t *testing.T) {
+					got, err := Resolve(request(path, loader))
+					if err != nil {
+						t.Fatalf("resolve: %v", err)
+					}
+					if !reflect.DeepEqual(got.Lines, plain.Lines) || !reflect.DeepEqual(got.Samples, plain.Samples) {
+						t.Errorf("got lines %v samples %q, want lines %v samples %q",
+							got.Lines, got.Samples, plain.Lines, plain.Samples)
+					}
+				})
+			}
+		}
+	}
+}
+
 // TestResolveReportsTheByteOffsetOfACompressedLine pins the offset a
 // compressed file reports for a line.
 //

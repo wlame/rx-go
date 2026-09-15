@@ -488,6 +488,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx samples --lines` and `GET /v1/samples?lines=` on a gzip, bzip2,
+  xz or zstd file, or on a seekable zstd file without an index, answer
+  a line asked for twice once, as for a plain file: `--lines=2,2`,
+  `--lines=5-7,5-7`, or `N` with the negative position that names the
+  same line. Every line of the window came back once per position.
+
 - `rx trace` of a seekable zstd file whose frames do not end at line
   breaks matches every line whole. Each frame was scanned on its own,
   so a line that a frame boundary cut was matched as two fragments:
