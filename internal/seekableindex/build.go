@@ -17,6 +17,7 @@ package seekableindex
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/wlame/rx-go/internal/seekable"
@@ -54,6 +55,20 @@ type Result struct {
 // an index that describes the wrong frames is worse than none, because
 // every later lookup trusts it.
 func Build(zstPath string) (*Result, error) {
+	return BuildAndCopyText(zstPath, io.Discard)
+}
+
+// BuildAndCopyText is Build that also writes the file's decompressed
+// text to text, one frame after another in file order, as each frame is
+// decoded. The concatenated writes are exactly the file's text, so a
+// caller that needs to read every line (the analysis does) gets it from
+// the same single decompression pass that builds the frame table.
+//
+// A write that fails stops the build, and the error returned wraps the
+// writer's error: a caller reading the copy through an io.Pipe makes the
+// build stop by closing its end, and a result is never returned for a
+// pass whose copy was cut short.
+func BuildAndCopyText(zstPath string, text io.Writer) (*Result, error) {
 	file, err := os.Open(zstPath)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", zstPath, err)
@@ -86,6 +101,9 @@ func Build(zstPath string) (*Result, error) {
 		data, dErr := decoder.DecompressFrame(zstPath, frame.Index, table)
 		if dErr != nil {
 			return nil, fmt.Errorf("decompress frame %d of %s: %w", frame.Index, zstPath, dErr)
+		}
+		if _, wErr := text.Write(data); wErr != nil {
+			return nil, fmt.Errorf("copy text of frame %d of %s: %w", frame.Index, zstPath, wErr)
 		}
 
 		// A frame boundary can fall mid-line, so a frame's line count is

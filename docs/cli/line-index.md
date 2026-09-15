@@ -297,13 +297,22 @@ Measured with the files in the page cache:
     holds each frame's line range.
 
     `rx compress` builds this index for you unless you pass
-    `--no-index`.
+    `--no-index`. That index has no analysis: `rx index --analyze
+    big.log.zst` adds the line-length statistics and the anomalies,
+    computed on the decompressed text in the same pass that reads the
+    frames. They are the same as for the decompressed file, line numbers
+    and byte offsets included. Without `--analyze` a seekable index
+    leaves the line-length statistics out.
 
 !!! warning "Other compressed formats have no random access"
     gzip, bzip2, xz and plain (non-seekable) zstd are indexed through
     their decompressor, so the line numbers and byte offsets describe
     the text inside — but a lookup still streams from the start,
-    because the format offers nowhere else to begin.
+    because the format offers nowhere else to begin. `--analyze` works
+    on every compressed format and analyses the text inside. A
+    compressed tar archive (`.tar.gz`, `.tgz` and the like) is not
+    text: `rx index` lists it under `skipped`, and `POST /v1/index`
+    answers `400` with "… is not a text file".
 
 ## See also
 

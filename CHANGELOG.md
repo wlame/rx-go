@@ -469,6 +469,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx index --analyze` and `POST /v1/index` with `"analyze": true`
+  analyse a seekable `.zst`. They answered `analysis_performed: false`
+  with no line-length statistics and no anomalies, and built the index
+  again on every request, since the cached one never had the analysis
+  asked for. The decompressed text now goes through the same detectors
+  as a plain file's, in the pass that reads the frames, so the analysis
+  equals that of the decompressed copy, line numbers and byte offsets
+  included. gzip, bzip2, xz and plain zstd were already analysed; a
+  compressed tar archive is still refused as not text (`400` over HTTP,
+  `skipped` in the CLI).
+
 - A `409` from `POST /v1/index` or `POST /v1/compress` names the
   operation of the task that holds the path. An index request refused
   because a compress of the file runs said "Indexing already in

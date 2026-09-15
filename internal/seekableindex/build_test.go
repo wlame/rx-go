@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -221,5 +222,48 @@ func TestBuild_CheckpointsSerializeAsThreeElementArrays(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(encoded), "[[1,0,0]") {
 		t.Errorf("first checkpoint: got %s…, want [[1,0,0]…", string(encoded)[:24])
+	}
+}
+
+// BuildAndCopyText hands the caller the file's whole text, frame after
+// frame, during the one pass that builds the frame table.
+func TestBuildAndCopyText_WritesTheDecompressedText(t *testing.T) {
+	textPath, zstPath := makeSeekable(t, 3000, 4*1024)
+	want, err := os.ReadFile(textPath) //nolint:gosec // path is under t.TempDir()
+	if err != nil {
+		t.Fatalf("read text: %v", err)
+	}
+
+	var text bytes.Buffer
+	got, err := BuildAndCopyText(zstPath, &text)
+	if err != nil {
+		t.Fatalf("BuildAndCopyText: %v", err)
+	}
+	if !bytes.Equal(text.Bytes(), want) {
+		t.Errorf("copied %d bytes that differ from the %d-byte text", text.Len(), len(want))
+	}
+	plain, err := Build(zstPath)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got.LineCount != plain.LineCount || len(got.Frames) != len(plain.Frames) {
+		t.Errorf("copying the text changed the index: %d lines in %d frames, want %d in %d",
+			got.LineCount, len(got.Frames), plain.LineCount, len(plain.Frames))
+	}
+}
+
+// failingWriter refuses every write, as a reader that stopped would.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// A text copy that cannot be written stops the build with that error:
+// an index whose analysis was never fed must not come back as complete.
+func TestBuildAndCopyText_StopsWhenTheCopyFails(t *testing.T) {
+	_, zstPath := makeSeekable(t, 3000, 4*1024)
+	refused := errors.New("reader went away")
+
+	if _, err := BuildAndCopyText(zstPath, failingWriter{err: refused}); !errors.Is(err, refused) {
+		t.Errorf("BuildAndCopyText error = %v, want one wrapping %v", err, refused)
 	}
 }
