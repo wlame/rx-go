@@ -490,6 +490,13 @@ func (e *Engine) RunWithOptions(
 				cachedMatches = b.cacheInfo.Matches
 			}
 			reconstructStart := time.Now()
+			// Under a cap only the first max_results matches of this file
+			// by offset can survive the engine's cut, so the pass stops
+			// after them; without one it rebuilds every cached match.
+			maxMatches := 0
+			if opts.MaxResults != nil {
+				maxMatches = *opts.MaxResults
+			}
 			reMatches, reContexts, rerr := ReconstructFromCache(ReconstructRequest{
 				SourcePath:    b.path,
 				Cached:        cachedMatches,
@@ -499,6 +506,7 @@ func (e *Engine) RunWithOptions(
 				ContextBefore: opts.ContextBefore,
 				ContextAfter:  opts.ContextAfter,
 				UseIndex:      !opts.NoIndex,
+				MaxMatches:    maxMatches,
 			})
 			if rerr != nil {
 				skipped = append(skipped, b.path)

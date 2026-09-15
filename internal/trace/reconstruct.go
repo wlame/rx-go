@@ -14,6 +14,17 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
+// reconstructBufferBytes is the read buffer of a reconstruction pass. A
+// pass stops at the line after the last match it needs, so it reads at
+// most this much past that line.
+const reconstructBufferBytes = 256 * 1024
+
+// openForReconstruct opens the source a reconstruction pass reads.
+// Tests replace it to count the bytes read.
+var openForReconstruct = func(path string) (io.ReadSeekCloser, error) {
+	return os.Open(path)
+}
+
 // ReconstructRequest describes one cache hit to rebuild.
 type ReconstructRequest struct {
 	SourcePath    string
@@ -24,6 +35,11 @@ type ReconstructRequest struct {
 	ContextBefore int
 	ContextAfter  int
 	UseIndex      bool
+	// MaxMatches, when above 0, is the trace's max_results. The engine
+	// keeps the first max_results matches by offset, so the pass stops
+	// once it holds that many and has read the lines their context can
+	// reach (see contextReachPastLastMatch). 0 rebuilds every match.
+	MaxMatches int
 }
 
 // ReconstructFromCache rebuilds full matches and their context lines
@@ -70,9 +86,16 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 	afterWanted := 0
 	next := 0 // index into cached
 
-	r := bufio.NewReaderSize(src.reader, 256*1024)
+	// lastLineToRead is 0 until the pass holds MaxMatches matches, and
+	// then the last line it still has to read.
+	lastLineToRead := 0
+
+	r := bufio.NewReaderSize(src.reader, reconstructBufferBytes)
 	pos, line := src.startOffset, src.startLine
 	for next < len(cached) || afterWanted > 0 {
+		if lastLineToRead > 0 && line > lastLineToRead {
+			break
+		}
 		raw, readErr := r.ReadBytes('\n')
 		if len(raw) == 0 && readErr != nil {
 			break
@@ -120,6 +143,9 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 			if req.ContextAfter > afterWanted {
 				afterWanted = req.ContextAfter
 			}
+			if lastLineToRead == 0 && req.MaxMatches > 0 && len(matches) >= req.MaxMatches {
+				lastLineToRead = line + contextReachPastLastMatch(req.ContextBefore, req.ContextAfter)
+			}
 		}
 
 		before.push(line, text)
@@ -132,6 +158,22 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 		}
 	}
 	return matches, ctxLines, nil
+}
+
+// contextReachPastLastMatch is how many lines past the last match a
+// trace keeps a pass must still read so the context of that match is
+// exactly what a pass over every cached match gives it.
+//
+// buildContextDict fills a match's window with the context lines of
+// every match within width = max(before, after) lines on either side,
+// and a match emits its leading context when its own line is read. So
+// a context line inside the last kept window, at most width lines past
+// it, can come from a match up to before lines further on. Reading
+// that far, and treating the lines as the full pass does (matches past
+// the cap included; the engine's cut drops them), gives the same
+// context lines; past it, nothing reaches a kept window.
+func contextReachPastLastMatch(before, after int) int {
+	return max(before, after) + before
 }
 
 // matchFromCached turns one cached record plus the text of the line it
@@ -177,7 +219,7 @@ type reconstructSource struct {
 // positions it so the first cached match is reached with room to spare
 // for its leading context.
 func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstructSource, error) {
-	f, err := os.Open(req.SourcePath)
+	f, err := openForReconstruct(req.SourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("reconstruct: open %s: %w", req.SourcePath, err)
 	}
