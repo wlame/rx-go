@@ -138,19 +138,19 @@ reports the same offset and line for each match (403366791 and
 1191541 for one match in a 465 MB log), and the `lines` map of
 `rx samples --lines` on the `.gz` reports that offset too.
 
-What is missing is a way to reach such a position without decompressing
-everything before it, so `rx samples` refuses `--offsets` on a
-compressed file (exit 2, `Byte offsets are not supported for
-compressed files; use lines instead`). Use `--lines` with the
-`absolute_line_number` of the match instead.
-
-A capped trace of a seekable zstd file can leave a match without a line
-number (`-1`); there is then no `samples` call that resolves it. Run
-the search without `--max-results`, or on the plain file.
+`rx samples --offsets` takes the same positions, so `--lines=N` and
+`--offsets=` the offset of line N lead to each other on a compressed
+file as on a plain one. A capped trace of a seekable zstd file can
+leave a match without a line number (`-1`); `rx samples --offsets=…`
+with the match's offset resolves it. The cost differs by format: a
+gzip, bzip2, xz or plain zstd file is decompressed from its first byte
+up to the last offset asked about, while an indexed seekable zstd file
+decompresses the frames around each offset.
 
 Seekable zstd files produced by [`rx compress`](../cli/compress.md)
-make line lookups cheap: `samples --lines` decompresses only the frames
-holding the wanted lines. Byte offsets are refused there too.
+make lookups cheap: `samples --lines` decompresses only the frames
+holding the wanted lines, and `samples --offsets` only the frames around
+the wanted offsets.
 
 ## Implications
 
@@ -165,8 +165,8 @@ holding the wanted lines. Byte offsets are refused there too.
   90 ms without one.
 
 - **On compressed files, prefer seekable zstd.** A gzip, bzip2, xz or
-  plain zstd file is streamed in full for every line lookup, and twice
-  for `--lines=-N`.
+  plain zstd file is streamed in full for every line lookup, twice for
+  `--lines=-N`, and up to the last offset for an offset lookup.
 
 ## Related
 

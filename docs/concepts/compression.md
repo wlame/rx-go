@@ -26,15 +26,15 @@ requires decompressing the first 500 MB of output first.
 This has three consequences for `rx`:
 
 1. **Byte offsets are positions in the decompressed text, and
-   `samples` cannot seek to them.** Every offset `rx` reports for a
+   reaching one means decompressing up to it.** Every offset `rx` reports for a
    compressed file — a trace match, the `lines` map of `samples` — is a
    position in the decompressed text, the same number the plain copy of
    the file gives. A `NullPointerException` match in a 465 MB log is at
    offset 403366791, line 1191541, in the plain file, its `.gz` copy and
-   a seekable `.zst` made from it alike. Reaching that position again
-   means decompressing up to it, so `rx samples --offsets` refuses a
-   compressed file (`Byte offsets are not supported for compressed
-   files; use lines instead`, exit 2). `--lines` works.
+   a seekable `.zst` made from it alike. `rx samples --offsets` takes
+   the same positions and answers with the same lines; on a gzip,
+   bzip2, xz or plain zstd file it decompresses from the first byte up
+   to the line holding the last offset.
 2. **Line-number lookups require streaming.** `rx samples --lines=N`
    on a `.gz` file streams the decompressor from the start, counts
    newlines, and captures content at line N. Sub-linear time is
@@ -214,7 +214,7 @@ frame.
 ## Related concepts
 
 - [Byte offsets vs line numbers](byte-offsets-vs-line-numbers.md) —
-  why `samples` takes no byte offsets for compressed data
+  what a byte offset means in compressed data
 - [Line indexes](line-indexes.md) — how line lookups work with and
   without random access
 - [Caching](caching.md) — compressed-file indexes still cache

@@ -14,13 +14,6 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
-// ErrOffsetsOnCompressed is returned when byte offsets are asked of a
-// compressed file. A byte offset in the compressed bytes does not name
-// a position in the text, and the offsets a search reports are in the
-// decompressed stream, which cannot be seeked to. Line numbers work.
-var ErrOffsetsOnCompressed = errors.New(
-	"byte offsets are not supported for compressed files; use lines instead")
-
 // resolveCompressedLines answers a line-mode request by streaming the
 // file through its decompressor once, keeping only the lines the
 // request asks for.
@@ -34,10 +27,6 @@ func resolveCompressedLines(
 	format compression.Format,
 	resp *rxtypes.SamplesResponse,
 ) error {
-	if len(req.Offsets) > 0 {
-		return ErrOffsetsOnCompressed
-	}
-
 	needTotalLines := false
 	for _, v := range req.Lines {
 		if !v.IsRange() && v.Start < 0 {

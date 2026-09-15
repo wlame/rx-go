@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rx samples --offsets` and `GET /v1/samples?offsets=` answer for a
+  gzip, bzip2, xz, zstd or seekable zstd file. An offset is a position
+  in the decompressed text, the coordinate `rx trace` reports, and the
+  answer is the line the plain copy of the file gives for it, so
+  `--lines=N` and `--offsets=` the offset of line N lead to each other
+  on every format. Both used to refuse the request (exit 2, `400`),
+  which left a `-1` line from a capped trace of a compressed file with
+  no way to resolve it. An indexed seekable zstd file decompresses only
+  the frames around each offset; the other formats decompress from the
+  first byte up to the last offset asked about. A frame table whose
+  line numbers do not add up to the file's line count is not used.
+  Additive; the contract stays 1.3.
+
 - A test parses every `rx` command in the README and the docs with the
   real command tree, so a wrong flag, a bad value or a long flag
   written without `=` fails the build instead of a reader's shell.
@@ -468,6 +481,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human output prints `?` for a line number that stayed unknown.
 
 ### Fixed
+
+- `rx samples --offsets` fails with the error when the file cannot be
+  read part-way through, instead of answering the offsets after the
+  failure as past the end of the file (`-1`).
 
 - `rx index --analyze` and `POST /v1/index` with `"analyze": true`
   analyse a seekable `.zst`. They answered `analysis_performed: false`

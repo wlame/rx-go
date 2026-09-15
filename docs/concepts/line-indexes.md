@@ -221,8 +221,10 @@ An index has about one checkpoint per MB of source: 9.3 KB for the
 For compressed files, the `line_index` entries point into the
 **decompressed** content, but seeking in a compressed stream requires
 decompressing up to the byte offset. For `.gz`, `.bz2`, `.xz`, and
-plain `.zst`, `rx samples` streams the whole file for every lookup and
-does not use the index.
+plain `.zst`, `rx samples --lines` streams the whole file for every
+lookup and does not use the index. `rx samples --offsets` decompresses
+up to the last offset and uses the index only to start counting lines
+at the nearest checkpoint.
 
 For **seekable zstd** (produced by `rx compress`), each checkpoint also
 names its frame, so a lookup decompresses only the frames that hold the

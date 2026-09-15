@@ -90,43 +90,47 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		AfterContext:  req.AfterContext,
 		Samples:       map[string][]string{},
 	}
-	// A compressed file has its own path: there is nothing to seek to,
-	// so the stream is read once and the wanted lines are kept. Doing
-	// this here rather than in a caller is what keeps `rx samples` and
-	// GET /v1/samples answering the same way — the CLI used to send a
-	// compressed file down the plain-text path and print its bytes.
-	if format, _ := compression.DetectFromPath(req.Path); format != compression.FormatNone {
+	format, _ := compression.DetectFromPath(req.Path)
+	if format != compression.FormatNone {
 		resp.IsCompressed = true
 		name := string(format)
 		resp.CompressionFormat = &name
-		// A seekable .zst with a frame index can decompress just the
-		// frames holding the wanted lines. Without an index it streams
-		// like any other archive: the answer is the same, only slower,
-		// which is what an index is for.
-		if len(req.Offsets) == 0 && seekable.IsSeekable(req.Path) {
-			err := resolveSeekableLines(req, resp)
-			if err == nil {
-				return resp, nil
-			}
-			if !errors.Is(err, errNoFrameIndex) {
-				return nil, err
-			}
-		}
-		if err := resolveCompressedLines(req, format, resp); err != nil {
+	}
+
+	// Byte offsets take one path for every file: the offsets are
+	// positions in the file's text, the decompressed stream for a
+	// compressed file, and the text source decides how that text is
+	// reached. Doing this here rather than in a caller is what keeps
+	// `rx samples` and GET /v1/samples answering the same way.
+	if req.Mode() == OffsetsMode {
+		if err := resolveOffsets(req, resp, textSourceFor(req)); err != nil {
 			return nil, err
 		}
 		return resp, nil
 	}
 
-	switch req.Mode() {
-	case OffsetsMode:
-		if err := resolveOffsets(req, resp); err != nil {
-			return nil, err
-		}
-	case LinesMode:
+	if !resp.IsCompressed {
 		if err := resolveLines(req, resp); err != nil {
 			return nil, err
 		}
+		return resp, nil
+	}
+
+	// A seekable .zst with a frame index can decompress just the frames
+	// holding the wanted lines. Without an index it streams like any
+	// other archive: the answer is the same, only slower, which is what
+	// an index is for.
+	if seekable.IsSeekable(req.Path) {
+		err := resolveSeekableLines(req, resp)
+		if err == nil {
+			return resp, nil
+		}
+		if !errors.Is(err, errNoFrameIndex) {
+			return nil, err
+		}
+	}
+	if err := resolveCompressedLines(req, format, resp); err != nil {
+		return nil, err
 	}
 	return resp, nil
 }
@@ -148,7 +152,7 @@ type window struct {
 }
 
 // resolveOffsets answers every byte offset in the request from one
-// sequential pass over the file.
+// sequential pass over the file's text.
 //
 // A caller with a batch of match offsets — which is how the viewer asks
 // after a capped search — used to pay a full scan per offset, once to
@@ -156,20 +160,28 @@ type window struct {
 // resolves the line numbers and collects the windows together, keeping
 // the last few lines in a ring so a window that reaches backwards is
 // already in hand.
-func resolveOffsets(req Request, resp *rxtypes.SamplesResponse) error {
-	fi, err := os.Stat(req.Path)
-	if err != nil {
-		return err
-	}
-	fileSize := fi.Size()
-
+//
+// text says how the pass reaches the file's text: a plain file is read
+// as it is, a compressed one through its decompressor, and either
+// starts near the first offset when an index says where that is. The
+// pass itself is the same for every file, which is what keeps a plain
+// file and its compressed copies answering identically.
+func resolveOffsets(req Request, resp *rxtypes.SamplesResponse, text textSource) error {
 	windows := make([]*window, 0, len(req.Offsets))
+	var textSize int64 = -1
 	for _, v := range req.Offsets {
 		start := v.Start
 		if start < 0 {
 			// Python parity: a negative offset counts back from the end
 			// and the response reports the resolved positive value.
-			start = fileSize + start
+			if textSize < 0 {
+				size, err := text.size()
+				if err != nil {
+					return err
+				}
+				textSize = size
+			}
+			start = textSize + start
 			if start < 0 {
 				start = 0
 			}
@@ -183,33 +195,22 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse) error {
 	}
 	sort.SliceStable(windows, func(i, j int) bool { return windows[i].start < windows[j].start })
 
-	var idx *rxtypes.UnifiedFileIndex
-	if req.IndexLoader != nil {
-		idx, _ = req.IndexLoader(req.Path)
-	}
-	// The pass may start at a checkpoint before the first offset, as
-	// long as it leaves room for the leading context.
-	startOffset, startLine := int64(0), int64(1)
-	if idx != nil && len(windows) > 0 {
-		startOffset, startLine = checkpointBefore(idx, windows[0].start, req.BeforeContext)
-	}
-
-	f, err := openFileForSamples(req.Path)
+	// The pass may start at a line before the first offset, as long as
+	// it leaves room for the leading context.
+	cursor, err := text.openNear(windows[0].start, req.BeforeContext)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	if startOffset > 0 {
-		if _, seekErr := f.Seek(startOffset, io.SeekStart); seekErr != nil {
-			return seekErr
-		}
-	}
+	defer func() { _ = cursor.close() }()
 
 	before := newLineRing(req.BeforeContext)
-	r := bufio.NewReaderSize(f, readBufferFor(windows[len(windows)-1].start-startOffset))
-	pos, lineNum, next := startOffset, startLine, 0
+	r := bufio.NewReaderSize(cursor, readBufferFor(windows[len(windows)-1].start-cursor.offset))
+	pos, lineNum, next := cursor.offset, cursor.line, 0
 	for {
 		raw, readErr := r.ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return readErr
+		}
 		if len(raw) == 0 && readErr != nil {
 			break
 		}

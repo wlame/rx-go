@@ -306,32 +306,6 @@ Or force analysis (bypasses the threshold):
 rx index /tmp/small.log --analyze
 ```
 
-## Byte-offset mode rejected on compressed file
-
-### Symptom
-
-```text
-Byte offsets are not supported for compressed files. Use 'lines' parameter instead.
-```
-
-### Cause
-
-Byte offsets into a compressed stream have no stable decompressed
-semantics. `rx` refuses the combination to avoid returning wrong
-results.
-
-### Fix
-
-Use line-offset mode (`--lines`) instead. For random access on
-compressed data, re-encode the file as seekable zstd:
-
-```bash
-rx compress /var/log/huge.log.gz --frame-size=2M
-# Produces /var/log/huge.log.gz.zst
-```
-
-See [concepts/compression](concepts/compression.md).
-
 ## Server startup fails with bind error
 
 ### Symptom
