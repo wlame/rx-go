@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -135,4 +136,94 @@ func TestTraceOfASeekableFileWithSplitFramesNumbersEveryMatch(t *testing.T) {
 	if !reflect.DeepEqual(cached, fresh) {
 		t.Errorf("the cached answer differs from the scan's")
 	}
+}
+
+// traceDocument runs `rx trace --json` and returns its answer without
+// the fields that name the file or the run: the path, the file table,
+// the chunk counts, the time, the request ID and the command line.
+func traceDocument(t *testing.T, env []string, args ...string) map[string]any {
+	t.Helper()
+	code, stdout, stderr := runRxEnv(t, env, append([]string{"trace", "--json"}, args...)...)
+	if code != 0 {
+		t.Fatalf("rx trace %v exited %d: %s", args, code, stderr)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("decode trace JSON: %v", err)
+	}
+	for _, key := range []string{"path", "files", "file_chunks", "time", "request_id", "cli_command"} {
+		delete(doc, key)
+	}
+	return doc
+}
+
+// A full `rx trace` of a seekable .zst whose frames split lines answers
+// as a trace of the plain file does, in every field of every match and
+// every context window: scanned with the cache empty, read back from
+// the trace cache, and with --no-index. The pattern matches every line,
+// so each frame boundary falls inside a matching line, and the end of
+// the 200 KB line, which lies frames away from its start.
+func TestTraceOfASeekableFileWithSplitFramesEqualsThePlainFile(t *testing.T) {
+	text, plain, _ := writeSplitFrameCopies(t)
+	// 8 KB frames make about 400 of them, so the scan crosses the
+	// boundaries between batches of frames as well as between frames.
+	zst := filepath.Join(t.TempDir(), "split8k.log.zst")
+	seekablefile.Write(t, zst, seekablefile.SplitEvery(text, 8<<10))
+	args := []string{`^LINE \d+ \w+ [0-9a-f]{48}|y{5}$`, "--before=1", "--after=1"}
+
+	want := traceDocument(t, []string{"RX_CACHE_DIR=" + t.TempDir()}, append(args, plain, "--no-cache")...)
+	if n := len(want["matches"].([]any)); n != 40000 {
+		t.Fatalf("the plain trace found %d matches; the fixture has 40000 lines", n)
+	}
+
+	cacheDir := t.TempDir()
+	env := []string{"RX_LARGE_FILE_MB=1", "RX_CACHE_DIR=" + cacheDir}
+	cold := traceDocument(t, env, append(args, zst)...)
+	written := traceCacheFiles(t, cacheDir)
+	warm := traceDocument(t, env, append(args, zst)...)
+	if !maps.Equal(traceCacheFiles(t, cacheDir), written) {
+		t.Fatal("the second trace scanned the file instead of reading the cache")
+	}
+	noIndex := traceDocument(t, []string{"RX_CACHE_DIR=" + t.TempDir()}, append(args, zst, "--no-index")...)
+
+	for name, got := range map[string]map[string]any{"cache empty": cold, "cache hit": warm, "--no-index": noIndex} {
+		if diff := firstDifference(got, want); diff != "" {
+			t.Errorf("%s: the trace of the .zst differs from the trace of the plain file: %s", name, diff)
+		}
+	}
+}
+
+// firstDifference names the first place where two decoded JSON values
+// differ, or returns "" when they are equal.
+func firstDifference(got, want any) string {
+	switch w := want.(type) {
+	case map[string]any:
+		g, ok := got.(map[string]any)
+		if !ok || len(g) != len(w) {
+			return fmt.Sprintf("got %.200v, want %.200v", got, want)
+		}
+		for _, key := range slices.Sorted(maps.Keys(w)) {
+			if diff := firstDifference(g[key], w[key]); diff != "" {
+				return key + ": " + diff
+			}
+		}
+	case []any:
+		g, ok := got.([]any)
+		if !ok {
+			return fmt.Sprintf("got %.200v, want a list", got)
+		}
+		for i := range min(len(g), len(w)) {
+			if diff := firstDifference(g[i], w[i]); diff != "" {
+				return fmt.Sprintf("[%d] %s", i, diff)
+			}
+		}
+		if len(g) != len(w) {
+			return fmt.Sprintf("got %d items, want %d", len(g), len(w))
+		}
+	default:
+		if !reflect.DeepEqual(got, want) {
+			return fmt.Sprintf("got %.200v, want %.200v", got, want)
+		}
+	}
+	return ""
 }

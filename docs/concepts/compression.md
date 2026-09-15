@@ -149,7 +149,12 @@ The output is the same whatever the worker count.
   piped to a single `ripgrep`; `file_chunks` reports 1
 - A seekable zstd file is scanned frame-parallel: batches of frames go
   to separate workers, and `file_chunks` reports the frame count (114
-  for the log above, `Parallel chunks: 114` in human output)
+  for the log above, `Parallel chunks: 114` in human output). Frames
+  need not end at line breaks: where another encoder cut a frame
+  mid-line, or a line is longer than a frame, a worker skips the end
+  of the line its batch begins inside and reads on into the next
+  frames to finish its own last line, so every line is matched whole,
+  by one worker
 - Either way, offsets and line numbers are those of the decompressed
   text
 

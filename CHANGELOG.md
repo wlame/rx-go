@@ -488,6 +488,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` of a seekable zstd file whose frames do not end at line
+  breaks matches every line whole. Each frame was scanned on its own,
+  so a line that a frame boundary cut was matched as two fragments:
+  `line_text` and `submatches` held a fragment at the frame's first
+  byte, a match the boundary cut in two was lost, and a pattern
+  anchored at a line start could match a fragment. On a 465 MB log cut
+  into 64 KB frames, 12 of 4338 matches came back as fragments. Batches
+  of frames now meet at line breaks: a worker skips the end of the line
+  its batch begins inside and reads on into the next frames to finish
+  its own last line. Such files are now scanned 100 frames per worker,
+  as `rx compress` output always was, instead of one frame at a time,
+  which takes a full trace of that log from 9.6 s to 0.3 s. `rx
+  compress` output is scanned as fast as before.
+
 - A trace answered from the trace cache gives the lines around a match
   their byte offset, `absolute_offset` in `context_lines`, as the scan
   that filled the cache does. They came back as `-1`.

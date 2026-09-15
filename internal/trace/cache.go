@@ -43,7 +43,10 @@ import (
 // Version 5: a full scan of a seekable-zstd file numbers every match.
 // A frame that holds no line break broke the frame-by-frame count in
 // version 4, and the matches after it were stored with their line
-// number inside their own frame.
+// number inside their own frame. Every match is also stored at the
+// offset of its whole line: version 4 scanned a file whose frames cut
+// lines frame by frame, so a match could be stored at the offset of a
+// line fragment, and a match a frame boundary cut in two was missing.
 //
 // rx-python writes version 3, so each backend treats the other's trace
 // caches as absent.

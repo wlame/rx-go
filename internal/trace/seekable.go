@@ -30,25 +30,83 @@ import (
 // scans in one subprocess pipeline. Batching amortizes rg startup cost
 // — 100 matches Python's heuristic (rx-python/src/rx/trace_compressed.py).
 //
-// Batching is SAFE only when frames are line-aligned (each frame ends
-// with '\n'). If frames split lines across boundaries, batching would
-// produce mangled line numbers across frame joins. rx-go's own encoder
-// emits line-aligned frames; files produced by t2sz --no-newline-align
-// are detected at runtime and fall back to batch=1.
+// A batch is a run of frames, and frames need not end at line breaks:
+// rx's own encoder cuts them there, but another encoder can cut
+// anywhere, inside a line longer than a frame too. The batch therefore
+// owns lines rather than bytes, as scanFrameBatch describes, and any
+// file can be batched.
 const framesPerBatch = 100
 
-// frameLoc captures where a frame's decompressed bytes land in a
-// concatenated batch buffer, plus metadata needed to translate rg
-// batch-local line numbers back to file-absolute line numbers.
+// frameLoc records what the writer learned about one frame of its
+// batch: its newline count, which places the frames after it in the
+// file.
 type frameLoc struct {
-	frameIdx   int
-	batchStart int64 // offset in concat buffer where this frame starts
-	info       seekable.FrameInfo
-	lineCount  int // number of '\n' bytes in this frame's decompressed data
+	frameIdx  int
+	lineCount int // number of '\n' bytes in this frame's decompressed data
 	// decoded says the writer decompressed this frame, so lineCount
 	// is its real count. A frame inside a line longer than a frame
 	// holds no '\n', so a zero count alone cannot say "not read".
 	decoded bool
+}
+
+// streamSegment is a run of one frame's text that the writer handed to
+// ripgrep. ripgrep reports an event by its position in its own input and
+// by its line number in that input; the segment holding that position
+// turns both into the frame's terms.
+type streamSegment struct {
+	frame       seekable.FrameInfo
+	streamStart int64 // where the run begins in ripgrep's input
+	fileStart   int64 // where the run begins in the file's text
+	// lineShift turns ripgrep's line number into the line's number
+	// inside its frame: the frame's line breaks before fileStart, less
+	// the line breaks ripgrep was given before streamStart.
+	lineShift int
+}
+
+// segmentHolding returns the segment that holds byte streamOffset of
+// ripgrep's input. Segments are recorded in input order, so a binary
+// search finds the last one starting at or before the offset.
+func segmentHolding(segments []streamSegment, streamOffset int64) (streamSegment, bool) {
+	i := sort.Search(len(segments), func(i int) bool {
+		return segments[i].streamStart > streamOffset
+	}) - 1
+	if i < 0 {
+		return streamSegment{}, false
+	}
+	return segments[i], true
+}
+
+// batchFeeder writes a batch's text into ripgrep's input and records a
+// streamSegment wherever a new run of a frame begins. Only the writer
+// goroutine of scanFrameBatch touches it until that goroutine is done.
+type batchFeeder struct {
+	w        io.Writer // ripgrep's input
+	written  int64     // bytes written so far
+	newlines int       // '\n' bytes written so far
+	segments []streamSegment
+}
+
+// beginRun records that the bytes written next come from frame,
+// starting at byte fileStart of the text, after frameNewlines line
+// breaks of that frame that ripgrep is not given.
+func (b *batchFeeder) beginRun(frame seekable.FrameInfo, fileStart int64, frameNewlines int) {
+	b.segments = append(b.segments, streamSegment{
+		frame:       frame,
+		streamStart: b.written,
+		fileStart:   fileStart,
+		lineShift:   frameNewlines - b.newlines,
+	})
+}
+
+// write hands p, which holds newlines line breaks, to ripgrep. An error
+// means ripgrep stopped reading: it exited, or the scan was canceled.
+func (b *batchFeeder) write(p []byte, newlines int) error {
+	if _, err := b.w.Write(p); err != nil {
+		return fmt.Errorf("%w: %w", errRipgrepStoppedReading, err)
+	}
+	b.written += int64(len(p))
+	b.newlines += newlines
+	return nil
 }
 
 // readSeekTable is a small wrapper around seekable.ReadSeekTable that
@@ -104,22 +162,10 @@ func ProcessSeekable(
 		return nil, nil, time.Since(start), nil
 	}
 
-	// Detect line-alignment by decompressing frame 0. A line-aligned
-	// file ends every frame with '\n'.
-	dec := seekable.NewDecoder()
-	firstFrame, err := dec.DecompressFrame(path, 0, tbl)
-	if err != nil {
-		return nil, nil, time.Since(start), fmt.Errorf("ProcessSeekable: decompress frame 0: %w", err)
-	}
-	batchSize := framesPerBatch
-	if len(firstFrame) == 0 || firstFrame[len(firstFrame)-1] != '\n' {
-		batchSize = 1
-	}
-
 	// Build the list of frame-index batches.
 	var batches [][]int
-	for i := 0; i < tbl.NumFrames; i += batchSize {
-		end := i + batchSize
+	for i := 0; i < tbl.NumFrames; i += framesPerBatch {
+		end := i + framesPerBatch
 		if end > tbl.NumFrames {
 			end = tbl.NumFrames
 		}
@@ -296,25 +342,6 @@ var decompressFrameForBatch = func(dec *frameDecoder, frame seekable.FrameInfo) 
 	return out, nil
 }
 
-// scanFrameBatch decompresses a batch of consecutive frames and
-// streams them through an io.Pipe to rg, avoiding materialization of
-// the whole batch in memory. The writer goroutine decompresses one
-// frame at a time and writes it to the pipe; rg reads from the other
-// end concurrently. Memory footprint is O(1) frame in flight
-// (occasionally 2 due to pipe buffering) instead of O(N × frame_size).
-//
-// Match line numbers are remapped from batch-local to frame-local
-// (via linesBefore in the frameLoc table). Match byte offsets are
-// remapped from pipe-cumulative to absolute decompressed file offsets
-// via binary search. Both remaps use the pre-computed locs slice.
-//
-// Uses compression.AcquireDecoder / ReleaseDecoder to avoid
-// the ~2 MB per-frame decoding-table allocation — one decoder per
-// batch is reused across all frames in the batch via stateless
-// DecodeAll calls.
-//
-// Parity: rx-python/src/rx/trace_compressed.py::process_seekable_zstd_frame_batch
-
 // numberFramesAgainstTheFile turns frame-relative line numbers into the
 // file's own, in place.
 //
@@ -399,6 +426,31 @@ type frameLines struct {
 	lines    int
 }
 
+// scanFrameBatch scans the lines a batch of consecutive frames owns
+// with one rg process, and returns rg's matches and context lines in
+// the file's offsets, numbered within their frames.
+//
+// INVARIANT: every line of the text is scanned whole, by exactly one
+// batch, wherever the frame boundaries fall. A batch's input to rg
+// runs from just after the first line break at or after the batch's
+// first byte (from byte 0 for the first batch) to the first line
+// break at or after the end of its frames, that break included (to
+// the end of the text for the last batch). Two batches next to each
+// other meet at the same line break, so neither waits for the other.
+// feedBatchLines says how the input is built.
+//
+// The writer goroutine decompresses one frame at a time and streams it
+// to rg through an io.Pipe, so memory holds about one frame in flight
+// (occasionally two, with pipe buffering) rather than the whole batch.
+// It records a streamSegment for every run of a frame it writes, and
+// remapBatchEvents turns rg's positions and line numbers back into the
+// file's with them.
+//
+// Uses compression.AcquireDecoder / ReleaseDecoder to avoid the ~2 MB
+// per-frame decoding-table allocation: one decoder per batch is reused
+// across all frames in the batch via stateless DecodeAll calls.
+//
+// Parity: rx-python/src/rx/trace_compressed.py::process_seekable_zstd_frame_batch
 func scanFrameBatch(
 	ctx context.Context,
 	path string,
@@ -424,30 +476,14 @@ func scanFrameBatch(
 	}
 	defer func() { _ = f.Close() }()
 
-	// Pre-compute the frame location table. Each locs[i] records:
-	//   - batchStart: cumulative bytes of THIS frame's start in the
-	//     pipe stream (0 for the first frame, sum of prior
-	//     DecompressedSize for subsequent frames).
-	//   - info: the FrameInfo, so DecompressedOffset is the file-
-	//     absolute offset anchor for this frame.
-	//   - lineCount: '\n' count in the frame's decompressed bytes.
-	//     UNKNOWN at this point (we haven't decompressed yet). Filled
-	//     lazily by the writer goroutine as it processes each frame.
-	//
-	// We size locs up front so the writer's index-into-locs writes
-	// don't race with the later remap read — but remap only happens
-	// after the errgroup has Wait()ed, establishing a happens-before
-	// edge. See the "Wait()" barrier below.
+	// One entry per frame of the batch; the writer goroutine fills in
+	// each frame's newline count as it decompresses it. The slice is
+	// sized up front, and the main goroutine reads it only after the
+	// writer is done (the <-writerDone barrier below), so the two never
+	// touch it at the same time.
 	locs := make([]frameLoc, len(frameIdxs))
-	var runningStart int64
 	for i, fi := range frameIdxs {
-		locs[i] = frameLoc{
-			frameIdx:   fi,
-			batchStart: runningStart,
-			info:       tbl.Frames[fi],
-			// lineCount filled by writer goroutine
-		}
-		runningStart += tbl.Frames[fi].DecompressedSize
+		locs[i] = frameLoc{frameIdx: fi}
 	}
 
 	// Build rg argv (same as ProcessChunk).
@@ -478,49 +514,25 @@ func scanFrameBatch(
 	var stderr strings.Builder
 	rgCmd.Stderr = &stderr
 
-	// Writer goroutine: decompress frames sequentially into the pipe.
-	// Must ALWAYS close pw so rg sees EOF and exits. pw.CloseWithError
-	// propagates any decompression failure to the reader side, where
-	// rg will exit cleanly with whatever data it already received.
+	// Writer goroutine: write the batch's lines into the pipe. It must
+	// ALWAYS close pw so rg sees EOF and exits. pw.CloseWithError hands
+	// a decompression failure or a cancel to the reader side, where rg
+	// sees its input end and exits with what it already received; a
+	// later pw.Close does not overwrite that error.
 	//
-	// We launch this BEFORE rgCmd.Start() because exec.Cmd with
-	// Stdin=*io.PipeReader works as long as the reader stays open
-	// until rg has consumed its stdin; starting writer first keeps
-	// the semantics symmetric with the other-rx-go reference.
+	// The feeder, like locs, belongs to this goroutine until writerDone
+	// closes; the main goroutine reads feeder.segments only after that.
+	feeder := &batchFeeder{w: pw}
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
 		defer func() { _ = pw.Close() }()
-
-		// Acquire one decoder per batch; release at exit. Reusing it
-		// across all frames in the batch avoids a ~2 MB allocation per
-		// frame.
-		zd := compression.AcquireDecoder()
-		defer compression.ReleaseDecoder(zd)
-
-		dec := &frameDecoder{f: f, zd: zd}
-		for i, fi := range frameIdxs {
-			if cerr := ctx.Err(); cerr != nil {
-				_ = pw.CloseWithError(cerr)
-				return
-			}
-			data, derr := decompressFrameForBatch(dec, tbl.Frames[fi])
-			if derr != nil {
-				_ = pw.CloseWithError(derr)
-				return
-			}
-			// Record '\n' count now that we have the decompressed
-			// bytes. Safe because the main goroutine only reads
-			// locs AFTER rgCmd.Wait() returns (happens-before edge
-			// established by reading from writerDone below).
-			locs[i].lineCount = bytesCountByte(data, '\n')
-			locs[i].decoded = true
-			if _, werr := pw.Write(data); werr != nil {
-				// Reader side closed — rg exited early (e.g. ctx
-				// cancel or cap-cancel). Stop silently; no error
-				// to propagate, rg's Wait will surface the cancel.
-				return
-			}
+		ferr := feedBatchLines(ctx, feeder, f, tbl, frameIdxs, locs)
+		// errRipgrepStoppedReading means rg exited early (a cap fired or
+		// the scan was canceled): nothing to hand on, rg's own exit
+		// reports what happened.
+		if ferr != nil && !errors.Is(ferr, errRipgrepStoppedReading) {
+			_ = pw.CloseWithError(ferr)
 		}
 	}()
 
@@ -546,7 +558,8 @@ func scanFrameBatch(
 
 	// Wait for the writer to finish. After Run returns and pr is
 	// closed, writerDone closes promptly on every path. This barrier
-	// establishes a happens-before edge for locs[i].lineCount below.
+	// establishes a happens-before edge for locs and feeder.segments
+	// below.
 	<-writerDone
 
 	if runErr != nil {
@@ -556,7 +569,7 @@ func scanFrameBatch(
 		// request was abandoned, and not a reason to call the file
 		// unreadable. The chunked path classifies it the same way.
 		if cErr := ctx.Err(); cErr != nil {
-			return matchesFromPartialBatch(ctx, stdout.Bytes(), locs, patternOrder)
+			return matchesFromPartialBatch(ctx, stdout.Bytes(), feeder.segments, locs, patternOrder)
 		}
 		var ex *exec.ExitError
 		if errors.As(runErr, &ex) {
@@ -574,7 +587,7 @@ func scanFrameBatch(
 	// Thread the parent ctx so a cancellation during parsing (e.g. the
 	// outer errgroup was canceled because a sibling batch failed) can
 	// abort the StreamEvents loop..
-	matches, contexts, err = remapBatchEvents(ctx, stdout.Bytes(), locs, patternOrder)
+	matches, contexts, err = remapBatchEvents(ctx, stdout.Bytes(), feeder.segments, patternOrder)
 	if err != nil {
 		// A cancel arrives as context.Canceled, which the caller treats
 		// as cooperative and keeps the matches read so far; any other
@@ -609,19 +622,22 @@ func countedFrames(locs []frameLoc) []frameLines {
 func matchesFromPartialBatch(
 	ctx context.Context,
 	out []byte,
+	segments []streamSegment,
 	locs []frameLoc,
 	patternOrder []string,
 ) ([]MatchRaw, []ContextRaw, []frameLines, error) {
 	// rg was killed part-way, so its last line may be cut off; a stream
 	// that cannot be read to the end is expected here, and the matches
 	// read before that point are kept.
-	matches, contexts, _ := remapBatchEvents(context.WithoutCancel(ctx), out, locs, patternOrder)
+	matches, contexts, _ := remapBatchEvents(context.WithoutCancel(ctx), out, segments, patternOrder)
 	return matches, contexts, countedFrames(locs), context.Canceled
 }
 
-// remapBatchEvents parses the rg --json stream emitted for a batch of
-// concatenated frames and translates each event's absolute_offset into
-// the file's decompressed coordinate system.
+// remapBatchEvents parses the rg --json stream emitted for a batch and
+// places each event in the file: its offset in the decompressed text,
+// its line number within its frame, and the frame that holds it.
+// segments, recorded while the batch's input was written, say where
+// each run of that input came from.
 //
 // ctx propagates from the parent scanner — if the outer context is
 // canceled mid-parse (a cap fired, an errgroup sibling failed, or the
@@ -631,7 +647,7 @@ func matchesFromPartialBatch(
 func remapBatchEvents(
 	ctx context.Context,
 	rgStdout []byte,
-	locs []frameLoc,
+	segments []streamSegment,
 	patternOrder []string,
 ) ([]MatchRaw, []ContextRaw, error) {
 	var matches []MatchRaw
@@ -650,49 +666,34 @@ func remapBatchEvents(
 			if ev.Match == nil {
 				return nil
 			}
-			info, offInFrame, linesBefore, ok := locateInBatch(locs, ev.Match.AbsoluteOffset)
+			seg, ok := segmentHolding(segments, ev.Match.AbsoluteOffset)
 			if !ok {
 				return nil
-			}
-			absOff := info.DecompressedOffset + offInFrame
-			// rg's line_number is 1-based within the batch.
-			// Batch-local line N corresponds to (lines_in_previous_frames + intra-frame line).
-			// Until first_line is wired, we report the batch-local number;
-			// the engine will refine these when the unified index is
-			// available for the file.
-			absLine := ev.Match.LineNumber - linesBefore
-			if absLine < 1 {
-				absLine = ev.Match.LineNumber
 			}
 			subs := make([]rxtypes.Submatch, len(ev.Match.Submatches))
 			for i, sm := range ev.Match.Submatches {
 				subs[i] = rxtypes.Submatch{Text: sm.Text(), Start: sm.Start, End: sm.End}
 			}
 			matches = append(matches, MatchRaw{
-				Offset:       absOff,
-				LineNumber:   absLine,
+				Offset:       seg.fileStart + ev.Match.AbsoluteOffset - seg.streamStart,
+				LineNumber:   ev.Match.LineNumber + seg.lineShift,
 				LineText:     trimTrailingNewline(ev.Match.Lines.Text),
 				Submatches:   subs,
 				PatternIDs:   append([]string(nil), patternOrder...),
 				IsCompressed: true,
-				FrameIndex:   info.Index,
+				FrameIndex:   seg.frame.Index,
 			})
 		case RgEventContext:
 			if ev.Context == nil {
 				return nil
 			}
-			info, offInFrame, linesBefore, ok := locateInBatch(locs, ev.Context.AbsoluteOffset)
+			seg, ok := segmentHolding(segments, ev.Context.AbsoluteOffset)
 			if !ok {
 				return nil
 			}
-			absOff := info.DecompressedOffset + offInFrame
-			absLine := ev.Context.LineNumber - linesBefore
-			if absLine < 1 {
-				absLine = ev.Context.LineNumber
-			}
 			contexts = append(contexts, ContextRaw{
-				Offset:     absOff,
-				LineNumber: absLine,
+				Offset:     seg.fileStart + ev.Context.AbsoluteOffset - seg.streamStart,
+				LineNumber: ev.Context.LineNumber + seg.lineShift,
 				LineText:   trimTrailingNewline(ev.Context.Lines.Text),
 			})
 		}
@@ -701,21 +702,156 @@ func remapBatchEvents(
 	return matches, contexts, streamErr
 }
 
-// locateInBatch maps a batch-local offset to (frameInfo, offset-within-frame,
-// lines-before-this-frame). Returns ok=false if the offset is past the
-// last frame (shouldn't normally happen unless rg invents numbers).
-func locateInBatch(locs []frameLoc, batchOffset int64) (seekable.FrameInfo, int64, int, bool) {
-	var running int64
-	linesBefore := 0
-	for _, l := range locs {
-		next := running + l.info.DecompressedSize
-		if batchOffset < next {
-			return l.info, batchOffset - running, linesBefore, true
+// errRipgrepStoppedReading reports that a write into rg's input failed
+// because rg no longer reads it: it exited early, or the scan was
+// canceled. It ends the writer without an error of its own.
+var errRipgrepStoppedReading = errors.New("rg stopped reading its input")
+
+// feedBatchLines writes the lines a batch owns into rg's input, and
+// counts the line breaks of each of the batch's frames into locs on
+// the way.
+//
+// A batch other than the first skips its text up to and including the
+// first line break at or after its first byte. Those bytes end a line
+// that starts before the batch, or, when the frame before the batch
+// ends with a line break, they are the batch's first line, which the
+// batch before reads instead. A batch other than the last then reads on
+// past its last frame, up to and including the first line break at or
+// after the end of its frames: the line break the next batch skips to.
+//
+// A batch whose frames hold no line break at all owns no line: its
+// frames lie inside a line that an earlier batch reads in full, and it
+// writes nothing.
+//
+// On a file whose frames end at line breaks, as rx compress writes
+// them, a batch thus hands its first line to the batch before and reads
+// the next batch's first line in its place: the same amount of text,
+// and nothing decoded twice beyond that one line.
+func feedBatchLines(
+	ctx context.Context,
+	feeder *batchFeeder,
+	f *os.File,
+	tbl *seekable.SeekTable,
+	frameIdxs []int,
+	locs []frameLoc,
+) error {
+	// Acquire one decoder per batch; release at exit. Reusing it
+	// across all frames in the batch avoids a ~2 MB allocation per
+	// frame.
+	zd := compression.AcquireDecoder()
+	defer compression.ReleaseDecoder(zd)
+	dec := &frameDecoder{f: f, zd: zd}
+
+	skipping := frameIdxs[0] > 0
+	for i, fi := range frameIdxs {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		running = next
-		linesBefore += l.lineCount
+		frame := tbl.Frames[fi]
+		data, err := decompressFrameForBatch(dec, frame)
+		if err != nil {
+			return err
+		}
+		locs[i].lineCount = bytesCountByte(data, '\n')
+		locs[i].decoded = true
+
+		from, skippedLineBreaks := 0, 0
+		if skipping {
+			lineBreak := bytes.IndexByte(data, '\n')
+			if lineBreak < 0 {
+				continue // all of it lies inside a line an earlier batch reads
+			}
+			from, skippedLineBreaks, skipping = lineBreak+1, 1, false
+		}
+		if from == len(data) {
+			continue // nothing of this frame is the batch's to scan
+		}
+		feeder.beginRun(frame, frame.DecompressedOffset+int64(from), skippedLineBreaks)
+		if err := feeder.write(data[from:], locs[i].lineCount-skippedLineBreaks); err != nil {
+			return err
+		}
 	}
-	return seekable.FrameInfo{}, 0, 0, false
+
+	last := frameIdxs[len(frameIdxs)-1]
+	if skipping || last+1 >= tbl.NumFrames {
+		// Either no line starts in this batch, or no frame follows it.
+		return nil
+	}
+	return feedThroughNextLineBreak(ctx, feeder, f, tbl, last+1)
+}
+
+// lineEndReadSize is how much decompressed text feedThroughNextLineBreak
+// asks for at a time. A log line is far shorter, so reading past a
+// batch's last frame usually decodes one zstd block of the next frame
+// and stops.
+const lineEndReadSize = 16 << 10
+
+// feedThroughNextLineBreak writes the text from the first byte of frame
+// next up to and including the first line break into rg's input,
+// through as many frames as the line takes. At the end of the text it
+// stops without one.
+//
+// It decodes the frames as a stream and stops at the line break rather
+// than decoding each frame whole, so on a file whose frames end at line
+// breaks it costs one line and about one zstd block per batch.
+func feedThroughNextLineBreak(
+	ctx context.Context,
+	feeder *batchFeeder,
+	f *os.File,
+	tbl *seekable.SeekTable,
+	next int,
+) error {
+	// Concurrency 1 makes the stream decoder synchronous: it decodes a
+	// block when Read asks for bytes, rather than decoding ahead in
+	// goroutines of its own, so stopping early leaves no work behind.
+	zd, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+	if err != nil {
+		return fmt.Errorf("create zstd stream decoder: %w", err)
+	}
+	defer zd.Close()
+
+	buf := make([]byte, lineEndReadSize)
+	for fi := next; fi < tbl.NumFrames; fi++ {
+		frame := tbl.Frames[fi]
+		// A SectionReader limits the decoder to this frame's compressed
+		// bytes and reads them with ReadAt, so it shares no file cursor.
+		if err := zd.Reset(io.NewSectionReader(f, frame.CompressedOffset, frame.CompressedSize)); err != nil {
+			return fmt.Errorf("decompress frame at %d: %w", frame.CompressedOffset, err)
+		}
+		// No line break of this frame comes before its first byte.
+		feeder.beginRun(frame, frame.DecompressedOffset, 0)
+		found, err := feedThroughLineBreak(ctx, feeder, zd, buf)
+		if err != nil || found {
+			return err
+		}
+	}
+	return nil // the text ends without a final line break
+}
+
+// feedThroughLineBreak copies text from r into rg's input up to and
+// including its first line break, and says whether it found one before
+// r ended.
+func feedThroughLineBreak(ctx context.Context, feeder *batchFeeder, r io.Reader, buf []byte) (bool, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		n, readErr := r.Read(buf)
+		if lineBreak := bytes.IndexByte(buf[:n], '\n'); lineBreak >= 0 {
+			return true, feeder.write(buf[:lineBreak+1], 1)
+		}
+		if n > 0 {
+			if err := feeder.write(buf[:n], 0); err != nil {
+				return false, err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return false, nil
+		}
+		if readErr != nil {
+			return false, fmt.Errorf("decompress a frame after the batch: %w", readErr)
+		}
+	}
 }
 
 // bytesCountByte counts how many `target` bytes appear in data. Used
