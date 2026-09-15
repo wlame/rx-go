@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/internal/webapi"
 )
@@ -88,7 +90,13 @@ func shellWords(t *testing.T, command string) []string {
 // subcommand of the real command tree and parses its flags and arguments
 // as `rx` would, without running the command.
 func parseWithCommandTree(words []string) error {
-	root := newRootCmd()
+	return parseWithRoot(newRootCmd(), words)
+}
+
+// parseWithRoot is parseWithCommandTree on a root the caller built, for
+// a caller that first adds what cobra adds only inside Execute, such as
+// the completion command.
+func parseWithRoot(root *cobra.Command, words []string) error {
 	sub, rest, err := root.Find(words)
 	if err != nil {
 		return err
