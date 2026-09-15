@@ -188,7 +188,8 @@ func TestCacheStoresFileLineNumbers(t *testing.T) {
 }
 
 // TestCacheHitRebuildsContextLines covers the context window a cache hit
-// has to rebuild from the source.
+// has to rebuild from the source: every line of it equals the scan's in
+// every field, its byte offset included.
 func TestCacheHitRebuildsContextLines(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_LARGE_FILE_MB", "1")
@@ -225,6 +226,9 @@ func TestCacheHitRebuildsContextLines(t *testing.T) {
 			if lines[i].AbsoluteLineNumber != freshLines[i].AbsoluteLineNumber {
 				t.Fatalf("%s line %d: cache numbers it %d, fresh %d",
 					key, i, lines[i].AbsoluteLineNumber, freshLines[i].AbsoluteLineNumber)
+			}
+			if lines[i] != freshLines[i] {
+				t.Fatalf("%s line %d: cache %+v, fresh %+v", key, i, lines[i], freshLines[i])
 			}
 		}
 	}

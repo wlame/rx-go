@@ -488,6 +488,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace answered from the trace cache gives the lines around a match
+  their byte offset, `absolute_offset` in `context_lines`, as the scan
+  that filled the cache does. They came back as `-1`.
+
 - `rx trace --json` gives each match the window `--before` and
   `--after` ask for, each on its own: `-B 12 -A 1` gave a match up to 12
   lines after it, because the window used the larger of the two on both
