@@ -93,7 +93,8 @@ is skipped — not an error, just an efficiency choice:
 
 ```text
 No files indexed.
-Skipped 1 files (below threshold or not text)
+Skipped 1 files:
+  /tmp/small.log: file size 3712 bytes is below threshold 52428800 bytes
 ```
 
 Run the same command again. The second run prints only

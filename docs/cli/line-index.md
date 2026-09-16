@@ -82,7 +82,17 @@ Indexed and analyzed 1 files in 0.1s
 
 The per-anomaly line ranges, severities and descriptions appear only in
 `--json`. When nothing was indexed the output is `No files indexed.`
-followed by the skipped-file count. rx-python prints the same layout.
+Skipped files follow the indexed ones, each with its reason:
+
+```text
+No files indexed.
+Skipped 2 files:
+  /var/log/tiny.log: file size 17 bytes is below threshold 52428800 bytes
+  /var/log/logs.tar.gz: not a text file
+```
+
+rx-python prints the same layout, except that it gives only the count of
+skipped files.
 
 ## Examples
 
@@ -194,14 +204,20 @@ The response envelope:
 ```json
 {
   "indexed": [ { ... }, ... ],
-  "skipped": [ "/var/log/tiny.log", "/var/log/also-tiny.log" ],
+  "skipped": [ "/var/log/tiny.log", "/var/log/logs.tar.gz" ],
+  "skip_reasons": [
+    { "path": "/var/log/tiny.log", "reason": "file size 17 bytes is below threshold 52428800 bytes" },
+    { "path": "/var/log/logs.tar.gz", "reason": "not a text file" }
+  ],
   "errors":  [ { "path": "/var/log/broken", "error": "permission denied" } ],
   "total_time": 12.34
 }
 ```
 
-Below-threshold files land in `skipped` (not `errors`) — rx-go treats
-this as a normal outcome, not a failure.
+Below-threshold files and files that are not text land in `skipped`
+(not `errors`) — rx-go treats this as a normal outcome, not a failure.
+`skip_reasons` gives the reason for each, in the same order, in the
+words `POST /v1/index` answers its `400` with.
 
 ### Threshold override
 
@@ -311,8 +327,9 @@ Measured with the files in the page cache:
     because the format offers nowhere else to begin. `--analyze` works
     on every compressed format and analyses the text inside. A
     compressed tar archive (`.tar.gz`, `.tgz` and the like) is not
-    text: `rx index` lists it under `skipped`, and `POST /v1/index`
-    answers `400` with "… is not a text file".
+    text: `rx index` lists it under `skipped` with the reason
+    `not a text file`, and `POST /v1/index` answers `400` with
+    "… is not a text file".
 
 ## See also
 

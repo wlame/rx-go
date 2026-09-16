@@ -160,7 +160,7 @@ Build an index when:
 Don't bother when:
 
 - The file is small (< 50 MB by default — `rx index` skips it and says
-  `Skipped 1 files (below threshold or not text)`)
+  why: `file size … bytes is below threshold 52428800 bytes`)
 - You'll only read the file once
 - You only need byte offsets (they don't need an index at all)
 

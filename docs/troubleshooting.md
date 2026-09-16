@@ -276,7 +276,8 @@ Output:
 
 ```text
 No files indexed.
-Skipped 1 files (below threshold or not text)
+Skipped 1 files:
+  /tmp/small.log: file size 3712 bytes is below threshold 52428800 bytes
 ```
 
 ### Cause
