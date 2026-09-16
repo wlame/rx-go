@@ -20,16 +20,19 @@ import (
 
 // MaxTraceContextLines is the most context lines a trace request may ask
 // for on each side of a match, through context, before_context or
-// after_context; a larger value is refused with a 422.
+// after_context; a larger value is refused with a 422. GET /v1/samples
+// holds its context, before_context and after_context to the same cap:
+// a lookup of many positions multiplies its answer by the window just as
+// a trace of many matches does, and a wider read is a line range.
 //
 // Every match carries its own window, so the window multiplies the size
 // of an answer: at this cap one match brings at most 201 lines. That is
 // room for a long stack trace around a log line. A wider read around one
 // place in a file is what GET /v1/samples is for.
 //
-// The parameters' struct tags spell the same number (`maximum:"100"`),
-// because a tag cannot name a constant; a test compares the published
-// maximum with this value.
+// The parameters' struct tags of both operations spell the same number
+// (`maximum:"100"`), because a tag cannot name a constant; tests compare
+// the published maximums with this value.
 const MaxTraceContextLines = 100
 
 // traceInput is the query-string shape for GET /v1/trace.
