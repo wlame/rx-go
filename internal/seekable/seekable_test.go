@@ -320,7 +320,7 @@ var errInjectedInitFailure = errors.New("injected: zstd init failed")
 // closeSpyEncoder wraps a real workerEncoder and records how many times
 // Close() was invoked. Used by the leak test to verify that all
 // encoders built before an injected failure get their Close() called
-// exactly once by encodeParallel's cleanup defer.
+// exactly once by the encoder's cleanup defer.
 type closeSpyEncoder struct {
 	inner      workerEncoder
 	closeCount int
@@ -339,7 +339,7 @@ func (s *closeSpyEncoder) Close() error {
 }
 
 // TestEncodeParallel_EncoderClosedOnInitError covers
-// when the zstd factory fails mid-loop during encodeParallel
+// when the zstd factory fails mid-loop during
 // worker init, all encoders built BEFORE the failure must be Close()d.
 //
 // Before the fix, the cleanup defer was installed AFTER the
@@ -348,7 +348,7 @@ func (s *closeSpyEncoder) Close() error {
 //
 // Detection strategy: wrap each real encoder in a closeSpyEncoder that
 // counts Close() calls. Inject a factory that builds `failAt` real
-// spies, then returns an error on the next call. After encodeParallel
+// spies, then returns an error on the next call. After Encode
 // returns, assert each spy saw exactly one Close().
 //
 // This test MUST fail on HEAD before the fix (defer-after-loop skips

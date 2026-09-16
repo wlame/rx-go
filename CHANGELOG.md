@@ -488,6 +488,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx compress --workers=N` holds one batch of N frames in memory
+  instead of the whole input; the output is unchanged.
+
 - `rx trace --before/--after` context windows hold only the lines next
   to their match in the file. In a capped trace, a line the scan could
   not number kept the number ripgrep gave it inside its chunk or frame,
