@@ -19,9 +19,11 @@ package trace
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 )
 
 // ripgrep emits newline-delimited JSON on stdout when invoked with
@@ -60,6 +62,12 @@ const (
 // via custom UnmarshalJSON so the caller gets a string either way.
 type RgText struct {
 	Text string
+	// Size is the payload's length in bytes as ripgrep read it: the
+	// length of Text for a UTF-8 payload, and of the decoded bytes for a
+	// base64 one, whose Text is the base64 string. For a line it counts
+	// the line break too, so the line's first byte plus Size is where the
+	// next line starts.
+	Size int
 }
 
 // UnmarshalJSON handles both `{"text": "..."}` (UTF-8 happy path) and
@@ -81,6 +89,7 @@ func (t *RgText) UnmarshalJSON(data []byte) error {
 	}
 	if raw.Text != nil {
 		t.Text = *raw.Text
+		t.Size = len(t.Text)
 		return nil
 	}
 	if raw.Bytes != nil {
@@ -88,9 +97,17 @@ func (t *RgText) UnmarshalJSON(data []byte) error {
 		// actual bytes; we keep the raw string so the event is still
 		// routable by type. Python's rg_json.py does the same.
 		t.Text = *raw.Bytes
+		t.Size = base64DecodedSize(t.Text)
 		return nil
 	}
 	return nil
+}
+
+// base64DecodedSize is the number of bytes the standard base64 string
+// encoded decodes to. ripgrep writes padded base64, so the length
+// follows from the string's length and its padding without decoding it.
+func base64DecodedSize(encoded string) int {
+	return base64.StdEncoding.DecodedLen(len(encoded)) - strings.Count(encoded[max(0, len(encoded)-2):], "=")
 }
 
 // RgPath models `{"text": "/path/to/file"}` or null for stdin.

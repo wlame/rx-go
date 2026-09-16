@@ -68,21 +68,30 @@ type ReconstructRequest struct {
 //
 // Parity: rx-python/src/rx/trace_cache.py::reconstruct_match_data.
 func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.ContextLine, error) {
+	matches, ctxLines, _, err := reconstructLines(req)
+	return matches, ctxLines, err
+}
+
+// reconstructLines is ReconstructFromCache that also reports where each
+// line it returns ends, keyed by where it starts: the engine links the
+// lines of a context window through those ends.
+func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.ContextLine, map[int64]int64, error) {
 	if len(req.Cached) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	cached := append([]rxtypes.TraceCacheMatch(nil), req.Cached...)
 	sort.SliceStable(cached, func(i, j int) bool { return cached[i].Offset < cached[j].Offset })
 
 	src, err := openReconstructSource(req, cached[0].Offset)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer func() { _ = src.close() }()
 
 	flags := matchFlagsFrom(req.RgExtraArgs)
 	matches := make([]rxtypes.Match, 0, len(cached))
 	var ctxLines []rxtypes.ContextLine
+	ends := map[int64]int64{} // where each line returned ends, by where it starts
 	emitted := map[int]bool{} // context line numbers already emitted
 
 	before := newLineRing(req.ContextBefore)
@@ -108,6 +117,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 
 		if afterWanted > 0 && !emitted[line] {
 			emitted[line] = true
+			ends[pos] = end
 			ctxLines = append(ctxLines, rxtypes.ContextLine{
 				RelativeLineNumber: line,
 				AbsoluteLineNumber: line,
@@ -128,6 +138,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 					continue
 				}
 				emitted[prev.number] = true
+				ends[prev.offset] = prev.end
 				ctxLines = append(ctxLines, rxtypes.ContextLine{
 					RelativeLineNumber: prev.number,
 					AbsoluteLineNumber: prev.number,
@@ -136,6 +147,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 				})
 			}
 			emitted[line] = true
+			ends[pos] = end
 			for _, cm := range cached[first:next] {
 				m, mErr := matchFromCached(cm, text, line, req, flags)
 				if mErr != nil {
@@ -151,16 +163,16 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 			}
 		}
 
-		before.push(ringLine{number: line, offset: pos, text: text})
+		before.push(ringLine{number: line, offset: pos, end: end, text: text})
 		pos, line = end, line+1
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				return matches, ctxLines, fmt.Errorf("reconstruct %s: %w", req.SourcePath, readErr)
+				return matches, ctxLines, ends, fmt.Errorf("reconstruct %s: %w", req.SourcePath, readErr)
 			}
 			break
 		}
 	}
-	return matches, ctxLines, nil
+	return matches, ctxLines, ends, nil
 }
 
 // contextReachPastLastMatch is how many lines past the last match a
@@ -272,10 +284,11 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 // ============================================================================
 
 // ringLine is one remembered line: its number, the byte offset of its
-// first byte, and its text.
+// first byte, where it ends (its line break included), and its text.
 type ringLine struct {
 	number int
 	offset int64
+	end    int64
 	text   string
 }
 

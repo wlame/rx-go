@@ -242,8 +242,9 @@ a context line.
 
 - `absolute_line_number` is `-1` (human output: `?`) for a match a
   capped scan could not number; `relative_line_number` is then the
-  line's number within its chunk, not in the file. When the absolute
-  number is known, the two are equal. See
+  line's number within its chunk, not in the file, counted from the
+  chunk's first line, so a context line just before the chunk has 0 or
+  below. When the absolute number is known, the two are equal. See
   [line number resolution](#line-number-resolution).
 - `scanned_files` lists the files found by walking a directory you
   named; it is empty when every path is a file. `files` lists every
@@ -266,7 +267,13 @@ absolute_offset}`, where `absolute_offset` is the byte offset of the
 line's first byte in the file's text, from a scan and from the trace
 cache alike. A window holds at most `--before` lines ahead of its
 match and at most `--after` lines past it, each bound on its own, and a
-line in that range that matches too is part of it. Without a context
+line in that range that matches too is part of it. The lines of a
+window are the ones next to its match in the file's text, found by
+byte offset, so a window is right even where a capped scan left line
+numbers unknown, and whole across the edges of chunks and frames: a
+scan, the trace cache and `--no-index` give the same windows. The
+context section of the human output prints only lines with a known
+number. Without a context
 flag every window is just the matched line. Over HTTP there is no context window; see
 [`GET /v1/trace`](../api/endpoints/trace.md).
 
@@ -295,7 +302,12 @@ is split across workers. See [configuration](../configuration.md).
 
 Each worker spawns a `ripgrep` process scoped to its byte range. Results
 are accumulated in per-worker slices and merged at the end — no shared
-lock on the hot path.
+lock on the hot path. With `--before` or `--after`, a worker also hands
+ripgrep that many lines before and after its range, so a match next to
+the edge of a chunk has its whole window; a match on those lines
+belongs to the chunk beside it, which reports it. A seekable `.zst` is
+scanned in batches of frames the same way, and the lines before a
+batch usually cost decoding the one frame before it.
 
 ### Cache hit path
 

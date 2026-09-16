@@ -226,6 +226,9 @@ func (e *Engine) RunWithOptions(
 	// -------------------------------------------------------------------
 	var allMatches []rxtypes.Match
 	var allContexts []contextWithFile
+	// Where every line above ends, by where it starts. The context
+	// windows are put together from it (see buildContextDict).
+	ends := lineEnds{}
 	// Completed scans whose answer goes into the trace cache, keyed by
 	// path. A file gets an entry only when caching was wanted before its
 	// scan started (see scanToCache) and the scan read every chunk.
@@ -300,6 +303,7 @@ func (e *Engine) RunWithOptions(
 			numbered := true
 			for _, res := range chunkResults {
 				for _, rm := range res.Matches {
+					ends.record(fileID, rm.Offset, rm.End)
 					absLine := -1
 					if numbered {
 						absLine = startLine + rm.LineNumber - 1
@@ -323,6 +327,7 @@ func (e *Engine) RunWithOptions(
 					}
 				}
 				for _, rc := range res.Contexts {
+					ends.record(fileID, rc.Offset, rc.End)
 					lineNum, absLine := rc.LineNumber, -1
 					if numbered {
 						absLine = startLine + rc.LineNumber - 1
@@ -382,6 +387,7 @@ func (e *Engine) RunWithOptions(
 			// unknown made a search of a .gz look less informative than
 			// the same search of the text inside it.
 			for _, rm := range rawMatches {
+				ends.record(fileID, rm.Offset, rm.End)
 				matchedIDs := IdentifyMatchingPatterns(
 					rm.LineText, rm.Submatches,
 					patternIDs, patternOrder, opts.RgExtraArgs,
@@ -395,6 +401,7 @@ func (e *Engine) RunWithOptions(
 				}
 			}
 			for _, rc := range rawContexts {
+				ends.record(fileID, rc.Offset, rc.End)
 				absLine := -1
 				if rc.LineNumber >= 1 {
 					absLine = rc.LineNumber
@@ -441,6 +448,7 @@ func (e *Engine) RunWithOptions(
 			// its matches unnumbered rather than numbered from the
 			// wrong place.
 			for _, rm := range rawMatches {
+				ends.record(fileID, rm.Offset, rm.End)
 				matchedIDs := IdentifyMatchingPatterns(
 					rm.LineText, rm.Submatches,
 					patternIDs, patternOrder, opts.RgExtraArgs,
@@ -459,6 +467,7 @@ func (e *Engine) RunWithOptions(
 				}
 			}
 			for _, rc := range rawContexts {
+				ends.record(fileID, rc.Offset, rc.End)
 				lineNum, absLine := rc.LineNumber, -1
 				if rc.AbsoluteLine >= 1 {
 					lineNum, absLine = rc.AbsoluteLine, rc.AbsoluteLine
@@ -497,7 +506,7 @@ func (e *Engine) RunWithOptions(
 			if opts.MaxResults != nil {
 				maxMatches = *opts.MaxResults
 			}
-			reMatches, reContexts, rerr := ReconstructFromCache(ReconstructRequest{
+			reMatches, reContexts, reEnds, rerr := reconstructLines(ReconstructRequest{
 				SourcePath:    b.path,
 				Cached:        cachedMatches,
 				Patterns:      patterns,
@@ -514,6 +523,9 @@ func (e *Engine) RunWithOptions(
 			}
 			prometheus.RecordTraceCacheReconstruction(time.Since(reconstructStart))
 			allMatches = append(allMatches, reMatches...)
+			for start, end := range reEnds {
+				ends.record(fileID, start, end)
+			}
 			for _, cl := range reContexts {
 				allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
 			}
@@ -551,7 +563,7 @@ func (e *Engine) RunWithOptions(
 	// rather than while the chunks are read.
 	fireMatchHooks(ctx, opts.HookFirer, allMatches, fileIDs, patternIDs)
 
-	contextDict := buildContextDict(allMatches, uncutMatches, allContexts, opts.ContextBefore, opts.ContextAfter)
+	contextDict := buildContextDict(allMatches, uncutMatches, allContexts, ends, opts.ContextBefore, opts.ContextAfter)
 
 	// -------------------------------------------------------------------
 	// Phase 5: write caches for large completed scans
@@ -825,48 +837,68 @@ func fireOnFile(ctx context.Context, hf HookFirer, path string, fileStart time.T
 	})
 }
 
+// lineAt names one line of one file by the offset of its first byte,
+// which no other line of the file shares.
+type lineAt struct {
+	fileID string
+	offset int64
+}
+
+// lineEnds records where each line a scan reported ends, by where it
+// starts: the offset one past the line's last byte, its line break
+// included, which is where the next line starts. Every scan path knows
+// it exactly (ripgrep reports each line whole, and the cache-hit pass
+// reads the file), and it is what links a line to its neighbors.
+type lineEnds map[lineAt]int64
+
+// record notes that the line of fileID starting at start ends at end.
+// A line holds at least its line break or one character, so an end
+// that is not past the start is no end at all and is not recorded.
+func (e lineEnds) record(fileID string, start, end int64) {
+	if end > start {
+		e[lineAt{fileID: fileID, offset: start}] = end
+	}
+}
+
 // buildContextDict groups context lines around each match in matches,
 // keyed by "<pattern>:<file>:<offset>".
 //
-// A match's window is its own line plus every line of the same file
-// from contextBefore lines before it to contextAfter lines after it,
+// A match's window is its own line plus the contextBefore lines just
+// before it and the contextAfter lines just after it in the same file,
 // each bound applied on its own: `-B 12 -A 1` gives at most 12 lines
 // before and 1 after. The lines come from two places. ripgrep reports
 // the lines around a match as context, and a line in the window that
-// matches too as a match of its own, so both are looked up by line
-// number; a line that several patterns match appears once. The matched
-// lines come from found, every match the scan found, which a result cap
-// may have cut matches from: a match past the cap is still a line of
-// the window of the last match kept.
+// matches too as a match of its own; a line that several patterns
+// match appears once. The matched lines come from found, every match
+// the scan found, which a result cap may have cut matches from: a
+// match past the cap is still a line of the window of the last match
+// kept.
+//
+// INVARIANT: a window holds only lines next to its match in the file.
+// The window is walked line by line through byte offsets: the line
+// before a line is the one that ends where it starts, and the line
+// after it starts where it ends. Line numbers play no part, because a
+// scan a cap cut short leaves some lines numbered from the start of
+// their chunk or frame, and such a number names a different line in
+// every chunk. The walk stops at the first line no scan reported, so a
+// window can come out short but never holds a line from elsewhere.
 func buildContextDict(
 	matches []rxtypes.Match,
 	found []rxtypes.Match,
 	contexts []contextWithFile,
+	ends lineEnds,
 	contextBefore, contextAfter int,
 ) map[string][]rxtypes.ContextLine {
 	out := make(map[string][]rxtypes.ContextLine)
-	hasContext := contextBefore > 0 || contextAfter > 0
-
-	// Index every line a window can take by file and line number.
-	// Walking the whole slice per match is quadratic, and a large scan
-	// produces tens of thousands of both.
-	type lineKey struct {
-		fileID string
-		line   int
-	}
-	byLine := make(map[lineKey]rxtypes.ContextLine, len(contexts)+len(found))
-	if hasContext {
-		for _, cwf := range contexts {
-			byLine[lineKey{fileID: cwf.fileID, line: cwf.ctx.RelativeLineNumber}] = cwf.ctx
-		}
+	lines := windowLines{byStart: map[lineAt]rxtypes.ContextLine{}, startOfLineEndingAt: map[lineAt]int64{}}
+	if contextBefore > 0 || contextAfter > 0 {
 		for _, m := range found {
-			if m.RelativeLineNumber == nil {
-				continue
+			if m.RelativeLineNumber != nil {
+				lines.add(lineAt{fileID: m.File, offset: m.Offset}, matchedLineAsContext(m), ends)
 			}
-			key := lineKey{fileID: m.File, line: *m.RelativeLineNumber}
-			if _, seen := byLine[key]; !seen {
-				byLine[key] = matchedLineAsContext(m)
-			}
+		}
+		for _, cwf := range contexts {
+			lines.add(lineAt{fileID: cwf.fileID, offset: cwf.ctx.AbsoluteOffset}, cwf.ctx, ends)
 		}
 	}
 
@@ -874,25 +906,76 @@ func buildContextDict(
 		if m.RelativeLineNumber == nil {
 			continue
 		}
-		matchLine := *m.RelativeLineNumber
 		key := fmt.Sprintf("%s:%s:%d", m.Pattern, m.File, m.Offset)
+		matched := lineAt{fileID: m.File, offset: m.Offset}
 
-		// The matched line itself, then the lines around it in order.
 		window := []rxtypes.ContextLine{matchedLineAsContext(m)}
-		for d := -contextBefore; d <= contextAfter; d++ {
-			if d == 0 {
-				continue // matched line already added
+		for at, i := matched, 0; i < contextBefore; i++ {
+			prev, ok := lines.before(at)
+			if !ok {
+				break
 			}
-			if cl, ok := byLine[lineKey{fileID: m.File, line: matchLine + d}]; ok {
-				window = append(window, cl)
-			}
+			window = append(window, lines.byStart[prev])
+			at = prev
 		}
-		sort.SliceStable(window, func(i, j int) bool {
-			return window[i].RelativeLineNumber < window[j].RelativeLineNumber
+		for at, i := matched, 0; i < contextAfter; i++ {
+			next, ok := lines.after(at, ends)
+			if !ok {
+				break
+			}
+			window = append(window, lines.byStart[next])
+			at = next
+		}
+		sort.Slice(window, func(i, j int) bool {
+			return window[i].AbsoluteOffset < window[j].AbsoluteOffset
 		})
 		out[key] = window
 	}
 	return out
+}
+
+// windowLines holds every line a context window can take, by where it
+// starts, and the reverse link from where a line ends back to where it
+// starts.
+type windowLines struct {
+	byStart             map[lineAt]rxtypes.ContextLine
+	startOfLineEndingAt map[lineAt]int64
+}
+
+// add records line, which starts at at, unless a line already recorded
+// there says as much. Two scans can both report a line, one of them
+// with its number and the other, cut short by a cap, without it; the
+// numbered copy is kept. A line whose end is unknown cannot be linked
+// to its neighbors and is left out.
+func (w windowLines) add(at lineAt, line rxtypes.ContextLine, ends lineEnds) {
+	end, known := ends[at]
+	if !known {
+		return
+	}
+	if have, seen := w.byStart[at]; seen && (have.AbsoluteLineNumber >= 1 || line.AbsoluteLineNumber < 1) {
+		return
+	}
+	w.byStart[at] = line
+	w.startOfLineEndingAt[lineAt{fileID: at.fileID, offset: end}] = at.offset
+}
+
+// before returns the line just before the line starting at at: the one
+// that ends where it starts.
+func (w windowLines) before(at lineAt) (lineAt, bool) {
+	start, ok := w.startOfLineEndingAt[at]
+	return lineAt{fileID: at.fileID, offset: start}, ok
+}
+
+// after returns the line just after the line starting at at: the one
+// that starts where it ends.
+func (w windowLines) after(at lineAt, ends lineEnds) (lineAt, bool) {
+	end, ok := ends[at]
+	if !ok {
+		return lineAt{}, false
+	}
+	next := lineAt{fileID: at.fileID, offset: end}
+	_, reported := w.byStart[next]
+	return next, reported
 }
 
 // matchedLineAsContext is a match's line in the form a window lists it.

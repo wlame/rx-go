@@ -488,6 +488,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace --before/--after` context windows hold only the lines next
+  to their match in the file. In a capped trace, a line the scan could
+  not number kept the number ripgrep gave it inside its chunk or frame,
+  and windows looked their lines up by number, so a window could hold a
+  line from another part of the file: on a 465 MB log, the window of
+  line 9 held lines from bytes 48757329 and 317021164, and up to 153 of
+  500 windows were wrong. Windows are now put together by
+  byte offset, from the line that ends where a line starts and the line
+  that starts where it ends. A cold scan also lost the part of a window
+  that lay in the next chunk of a plain file or the next batch of
+  frames of a seekable zstd file, while the trace cache had it; each
+  worker now hands ripgrep the `--before` lines before its range and the
+  `--after` lines after it, so a scan, a cache hit and `--no-index`
+  answer the same. A seekable batch that finished as the cap fired
+  could keep a match without the lines after it.
+
 - The context section of `rx trace --samples` prints only lines whose
   number in the file is known. A line a capped scan could not number
   was printed at the number ripgrep gave it inside its chunk, on

@@ -145,7 +145,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `pattern` | string | Pattern ID (key into `patterns`) |
 | `file` | string | File ID (key into `files`) |
 | `offset` | int64 | Byte offset of the line start |
-| `relative_line_number` | int | The same number as `absolute_line_number` when that is known; otherwise the line's number within the chunk or frame that found it |
+| `relative_line_number` | int | The same number as `absolute_line_number` when that is known; otherwise the line's number within the chunk or frame that found it, counted from its first line |
 | `absolute_line_number` | int | The line's 1-based number in the file, or `-1` when a scan cut short by `max_results` did not read the bytes before the match |
 | `line_text` | string | Full matched line |
 | `submatches` | array | `{text, start, end}` per regex submatch |

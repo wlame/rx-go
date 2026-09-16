@@ -153,7 +153,13 @@ func TestContextWindowOfTheLastKeptMatchHoldsAMatchPastTheCap(t *testing.T) {
 	found := []rxtypes.Match{match(100), match(101)}
 	contexts := []contextWithFile{context(98), context(99), context(102)}
 
-	windows := buildContextDict(kept, found, contexts, 2, 2)
+	// Each line is 100 bytes long, so it ends where the next starts.
+	ends := lineEnds{}
+	for line := 98; line <= 102; line++ {
+		ends.record("f1", int64(line*100), int64(line*100+100))
+	}
+
+	windows := buildContextDict(kept, found, contexts, ends, 2, 2)
 	var got []int
 	for _, cl := range windows["p1:f1:10000"] {
 		got = append(got, cl.AbsoluteLineNumber)
@@ -217,7 +223,7 @@ func TestAStoppedSeekableBatchKeepsOnlyMatchesWithWholeWindows(t *testing.T) {
 	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: int64(len(text))}, lineShift: 0}}
 	locs := []frameLoc{{frameIdx: 0, lineCount: 8, decoded: true}}
 
-	matches, contexts, _, err := matchesFromPartialBatch(context.Background(), cut, segments, locs, []string{"p1"}, 2)
+	matches, contexts, _, err := matchesFromPartialBatch(context.Background(), cut, wholeStream(segments), locs, []string{"p1"}, 2)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}

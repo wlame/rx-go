@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -174,5 +176,38 @@ func TestStreamEvents_Cancellation(t *testing.T) {
 		func(ev *RgEvent, err error) error { return nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled, got %v", err)
+	}
+}
+
+// A line's Size is its length in bytes as ripgrep read it, line break
+// included, for a UTF-8 line and for one ripgrep sends as base64
+// because it is not valid UTF-8. The next line starts that many bytes
+// after the line's first byte.
+func TestRgText_SizeIsTheLineLengthInBytes(t *testing.T) {
+	requireRipgrep(t)
+	lines := []string{"plain NEEDLE\n", "café NEEDLE →\n", "bad \xff\xfe NEEDLE\n", "last NEEDLE"}
+	input := strings.Join(lines, "")
+	cmd := exec.Command("rg", "--json", "--no-config", "-e", "NEEDLE", "-")
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rg: %v", err)
+	}
+	var sizes []int
+	err = StreamEvents(context.Background(), bytes.NewReader(out), func(ev *RgEvent, parseErr error) error {
+		if parseErr == nil && ev != nil && ev.Type == RgEventMatch {
+			sizes = append(sizes, ev.Match.Lines.Size)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamEvents: %v", err)
+	}
+	var want []int
+	for _, line := range lines {
+		want = append(want, len(line))
+	}
+	if fmt.Sprint(sizes) != fmt.Sprint(want) {
+		t.Errorf("sizes %v, want %v", sizes, want)
 	}
 }
