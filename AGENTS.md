@@ -246,8 +246,9 @@ Data flow for `rx trace "pattern" big.log`:
    builds first), `rx trace` without `--max-results`, and `rx compress`.
    An HTTP request never builds an index inside itself: `GET /v1/samples`
    starts or joins a background `index` task, one per file and file
-   identity (`internal/webapi/samples_index.go`), waits up to
-   `RX_SAMPLES_WAIT_SECONDS` and answers `202` with the task after that.
+   identity (`internal/webapi/samples_index.go`); a request with
+   `Prefer: respond-async` waits up to `RX_SAMPLES_WAIT_SECONDS` and
+   answers `202` with the task after that, any other waits for the build.
    Every new file-reading path gets a budget test that uses
    `counting.InjectOpen` and asserts the byte count.
 4. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.

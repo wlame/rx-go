@@ -14,11 +14,13 @@ and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
 - **First lookup in a large or compressed file:** when no index is
   cached, one is built and stored first — for any compressed file, and
   for a plain file of `RX_LARGE_FILE_MB` (50 MB) or more. The build runs
-  as a background `index` task, and the request waits for it up to
-  `RX_SAMPLES_WAIT_SECONDS` (5 s by default). A small file's build ends
-  in time and the request answers `200` with the lines; a large one's
-  does not, and the request answers [`202`](#response-202-accepted) with
-  the task. `RX_NO_INDEX=true` on the server turns the build off.
+  as a background `index` task, and the request waits for it. With
+  `Prefer: respond-async` it waits up to `RX_SAMPLES_WAIT_SECONDS` (5 s
+  by default): a small file's build ends in time and the request answers
+  `200` with the lines; a large one's does not, and the request answers
+  [`202`](#response-202-accepted) with the task. Without the header the
+  request waits for the build and answers `200`. `RX_NO_INDEX=true` on
+  the server turns the build off.
 - **Plain file with an index:** seeks to the nearest checkpoint before
   the first wanted line and reads through the last one. Line 700000 of
   the 465 MB log took 13 ms from the CLI.
@@ -49,6 +51,12 @@ GET /v1/samples?path=...&offsets=...
 | `context` | `int` | no | `3` | Lines before AND after each target, at most 100 (`-1` = default) |
 | `before_context` | `int` | no | `3` | Lines before (overrides `context`), at most 100 (`-1` = default) |
 | `after_context` | `int` | no | `3` | Lines after (overrides `context`), at most 100 (`-1` = default) |
+
+### Request header
+
+| Header | Value | Description |
+|---|---|---|
+| `Prefer` | `respond-async` | Lets the server answer [`202`](#response-202-accepted) with the task building the file's line index when the build outlasts `RX_SAMPLES_WAIT_SECONDS` ([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240)). Without it the request waits for the build, however long, and answers `200`. |
 
 Exactly one of `offsets` / `lines` must be provided. Both-set or
 neither-set returns `400`. For a compressed file both are positions in
@@ -112,9 +120,10 @@ and `offsets=20,30-50,9999&context=0` on the same file answers
 
 ## Response — 202 Accepted
 
-When the file's line index is still being built after
-`RX_SAMPLES_WAIT_SECONDS`, the answer names the build's task instead of
-the lines:
+When the request sends `Prefer: respond-async` and the file's line index
+is still being built after `RX_SAMPLES_WAIT_SECONDS`, the answer names
+the build's task instead of the lines, with the header
+`Preference-Applied: respond-async`:
 
 ```json
 {
@@ -140,7 +149,16 @@ its index serves every later request. A request for a file that changed
 after the build started does not wait for that build and is answered
 from the file.
 
-`rx samples` never answers this way: the CLI waits for the build.
+A request without `Prefer: respond-async` never gets a `202`: it waits
+for the same shared build and answers `200`, as a client written before
+contract 1.4 expects. `rx samples` never answers this way either: the
+CLI waits for the build.
+
+```bash
+curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
+    --data-urlencode 'path=/var/log/core.log.gz' --data-urlencode 'lines=1-100' \
+    -o answer.json -w '%{http_code}\n'
+```
 
 ### Response fields
 
@@ -167,7 +185,7 @@ client-side and iterate accordingly.
 | Code | When |
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
-| `202 Accepted` | The file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
+| `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
 | `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |

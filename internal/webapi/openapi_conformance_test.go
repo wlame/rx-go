@@ -123,11 +123,12 @@ func jsonPointer(tokens ...string) string {
 type apiCall struct {
 	label    string
 	method   string
-	template string     // the operation's path as the document lists it
-	path     string     // the concrete path requested
-	query    url.Values // nil for none
-	body     any        // nil for none; a string is sent as it is
-	want     int        // 0 accepts any status the operation declares
+	template string      // the operation's path as the document lists it
+	path     string      // the concrete path requested
+	query    url.Values  // nil for none
+	body     any         // nil for none; a string is sent as it is
+	header   http.Header // extra request headers; nil for none
+	want     int         // 0 accepts any status the operation declares
 }
 
 // conformanceRun sends calls to one server and checks each answer
@@ -215,6 +216,9 @@ func (r *conformanceRun) send(call apiCall) (int, string, []byte) {
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, values := range call.header {
+		req.Header[name] = values
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -471,7 +475,8 @@ func TestOpenAPIConformance_SamplesWhileTheIndexBuildsAnswersAsDeclared(t *testi
 	task, _ := manager.Create(held, "index")
 	pending := run.check(apiCall{label: "samples while the index builds", method: http.MethodGet,
 		template: "/v1/samples", path: "/v1/samples",
-		query: url.Values{"path": {held}, "lines": {"10"}}, want: http.StatusAccepted})
+		query: url.Values{"path": {held}, "lines": {"10"}}, header: http.Header{"Prefer": {"respond-async"}},
+		want: http.StatusAccepted})
 	if pending["task_id"] != task.TaskID {
 		t.Fatalf("202 names task %v, want the build's %s", pending["task_id"], task.TaskID)
 	}
