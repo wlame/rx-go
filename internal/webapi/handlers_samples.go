@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -38,9 +39,35 @@ type samplesInput struct {
 	AfterContext  int    `query:"after_context" minimum:"-1" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
 }
 
-// samplesOutput wraps the SamplesResponse body.
+// samplesOutput is the answer of GET /v1/samples: 200 with an
+// rxtypes.SamplesResponse, or 202 with an rxtypes.TaskResponse naming the
+// index build the lookup is waiting for.
+//
+// huma reads the status from the Status field when the output struct
+// has one. Body is `any` because the two statuses carry different
+// bodies; the OpenAPI document gets the schema of each from the
+// operation's declared responses (samplesResponses), which huma keeps
+// rather than deriving one from this type.
 type samplesOutput struct {
-	Body rxtypes.SamplesResponse
+	Status int
+	Body   any
+}
+
+// samplesResponses declares the two success answers of GET /v1/samples
+// beside its error answers.
+func samplesResponses(api huma.API) map[string]*huma.Response {
+	registry := api.OpenAPI().Components.Schemas
+	responses := errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
+		http.StatusNotFound, http.StatusUnprocessableEntity,
+		http.StatusInternalServerError)
+	responses[strconv.Itoa(http.StatusOK)] = jsonResponse("OK",
+		registry.Schema(reflect.TypeOf(rxtypes.SamplesResponse{}), true, "SamplesResponse"))
+	responses[strconv.Itoa(http.StatusAccepted)] = jsonResponse(
+		"The file's line index is being built and did not finish within the server's wait "+
+			"(RX_SAMPLES_WAIT_SECONDS). The body names the build's task: poll GET /v1/tasks/{task_id} "+
+			"until it ends, then send the same request again.",
+		registry.Schema(reflect.TypeOf(rxtypes.TaskResponse{}), true, "TaskResponse"))
+	return responses
 }
 
 // nilIfNegative returns *int pointing to n when n>=0; returns nil when
@@ -70,10 +97,8 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		Description: "Use this endpoint to view actual content around matches from /v1/trace.",
 		Tags:        []string{"Context"},
 		// No 503: samples reads the file itself and never runs ripgrep.
-		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
-			http.StatusNotFound, http.StatusUnprocessableEntity,
-			http.StatusInternalServerError),
-	}, func(_ context.Context, in *samplesInput) (out *samplesOutput, err error) {
+		Responses: samplesResponses(api),
+	}, func(ctx context.Context, in *samplesInput) (out *samplesOutput, err error) {
 		start := time.Now()
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.
@@ -153,11 +178,19 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		// there is no query parameter for it, because the decision
 		// belongs to whoever runs the server rather than to a caller.
 		//
-		// Analysis is deliberately not run: nothing on this path reads
-		// its output, and a full anomaly pass to answer one line is work
-		// nobody asked for.
-		if !config.GetBoolEnv("RX_NO_INDEX", false) {
-			buildIndexForSamples(validated, stat.Size())
+		// The build runs as a background task shared by every request
+		// for the file. This request waits for it up to the server's
+		// wait and answers 202 with the task when the build takes
+		// longer, so the first look at a 50 GB file does not hold an
+		// HTTP request open while all of it is read.
+		if !config.GetBoolEnv("RX_NO_INDEX", false) && samples.NeedsIndexBuild(validated, stat.Size()) {
+			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, s.cfg.SamplesIndexWait)
+			if waitErr != nil {
+				return nil, waitErr
+			}
+			if pending != nil {
+				return &samplesOutput{Status: http.StatusAccepted, Body: *pending}, nil
+			}
 		}
 
 		// One resolver for both file kinds and both entry points: it
@@ -199,33 +232,6 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		resp.CLICommand = &cli
 
 		observeSamplesResult(start, len(parsedOffsets)+len(parsedLines), before, after)
-		return &samplesOutput{Body: *resp}, nil
+		return &samplesOutput{Status: http.StatusOK, Body: *resp}, nil
 	})
-}
-
-// buildIndexForSamples builds and stores a line index for path when one
-// would help and none is cached.
-//
-// A failure is deliberately silent: the index is an accelerator, the
-// answer is the same without it, and refusing to serve a request because
-// its index could not be written would be the wrong trade. The caller
-// asked for lines, not for an index.
-//
-// `rx samples` does the same thing in internal/clicommand.
-func buildIndexForSamples(path string, size int64) {
-	if existing, err := index.LoadForSource(path); err == nil && existing != nil {
-		return
-	}
-	// A compressed file always benefits: without an index every lookup
-	// decompresses from the start. A plain file only pays for itself
-	// once it is big enough that a scan is worth avoiding, which is the
-	// same threshold `rx index` uses.
-	if !compression.IsCompressed(path) && size < int64(config.LargeFileMB())*1024*1024 {
-		return
-	}
-	idx, err := index.Build(path, index.BuildOptions{})
-	if err != nil {
-		return
-	}
-	_, _ = index.Save(idx)
 }

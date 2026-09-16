@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/output"
@@ -202,11 +201,14 @@ func runSamples(out io.Writer, p samplesParams) error {
 	// answer is identical either way — an index only changes how fast it
 	// is reached.
 	//
-	// Analysis is deliberately not run: it is a different feature,
-	// nothing on this path reads its output, and a full anomaly pass to
-	// answer one line is work nobody asked for.
-	if !p.noIndex {
-		buildIndexForSamples(p.path, info.Size())
+	// The CLI waits for the build however long it takes: a command has
+	// no client to hand a task to, and `rx serve` answers 202 only
+	// because an HTTP request should not hang for minutes. A failed
+	// build is silent: the index is an accelerator, the answer is the
+	// same without it, and refusing to read a file because its index
+	// could not be written would be the wrong trade.
+	if !p.noIndex && samples.NeedsIndexBuild(p.path, info.Size()) {
+		_, _, _ = samples.BuildIndex(p.path, nil)
 	}
 
 	loader := func(path string) (*rxtypes.UnifiedFileIndex, error) {
@@ -325,29 +327,4 @@ func sortedPositionKeys(m map[string]int64) []string {
 		return keys[i] < keys[j]
 	})
 	return keys
-}
-
-// buildIndexForSamples builds and stores a line index for path when one
-// would help and none is cached.
-//
-// A failure is deliberately silent: the index is an accelerator, the
-// answer is the same without it, and refusing to read a file because its
-// index could not be written would be the wrong trade. The caller has
-// asked for lines, not for an index.
-func buildIndexForSamples(path string, size int64) {
-	if existing, err := index.LoadForSource(path); err == nil && existing != nil {
-		return
-	}
-	// A compressed file always benefits: without an index every lookup
-	// decompresses from the start. A plain file only pays for itself
-	// once it is big enough that a scan is worth avoiding, which is the
-	// same threshold `rx index` uses.
-	if !compression.IsCompressed(path) && size < int64(config.LargeFileMB())*1024*1024 {
-		return
-	}
-	idx, err := index.Build(path, index.BuildOptions{})
-	if err != nil {
-		return
-	}
-	_, _ = index.Save(idx)
 }

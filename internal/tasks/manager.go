@@ -1,7 +1,8 @@
 // Package tasks implements the background-task manager that backs
-// POST /v1/index and POST /v1/compress — long-running operations
-// that the HTTP layer wants to run asynchronously and have the client
-// poll via GET /v1/tasks/{id}.
+// POST /v1/index, POST /v1/compress and the index builds GET
+// /v1/samples waits for — long-running operations that the HTTP layer
+// wants to run asynchronously and have the client poll via
+// GET /v1/tasks/{id}.
 //
 // Features from the Python port (rx-python/src/rx/task_manager.py):
 //
@@ -96,6 +97,39 @@ type Task struct {
 	// rxtypes.IndexTaskResult or rxtypes.CompressTaskResult); nil until
 	// then. The manager stores it without looking inside.
 	Result any
+
+	// done is closed when the task first reaches a terminal status.
+	// Go note: a closed channel is a broadcast. Every goroutine blocked
+	// in a receive on it (`<-done`, or a `select` case) wakes at once,
+	// and every later receive returns immediately, so any number of
+	// waiters can watch one task without registering anywhere. Shared by
+	// the clones Get returns, which is what lets a caller wait on it
+	// outside the manager's lock.
+	done chan struct{}
+
+	// progress, when set, says how far the task's work has got; see
+	// ReportProgress. Shared by the clones too.
+	progress ProgressFunc
+}
+
+// ProgressFunc reports how far a task's work has got, as a fraction
+// from 0 to 1, and false while that is not known. It is called from the
+// goroutine that serves a status request while the worker goroutine
+// keeps working, so it must be safe to call concurrently with the work
+// (an atomic counter read, typically).
+type ProgressFunc func() (fraction float64, known bool)
+
+// Progress returns the fraction of the task's work done, or nil when
+// the task reports none.
+func (t *Task) Progress() *float64 {
+	if t.progress == nil {
+		return nil
+	}
+	fraction, known := t.progress()
+	if !known {
+		return nil
+	}
+	return &fraction
 }
 
 // IsTerminal reports whether the task is done (completed or failed).
@@ -238,6 +272,7 @@ func (m *Manager) Create(path, operation string) (*Task, bool) {
 		Operation: operation,
 		Status:    StatusQueued,
 		StartedAt: time.Now().UTC(),
+		done:      make(chan struct{}),
 	}
 	m.tasks[task.TaskID] = task
 	m.pathLocks[path] = task.TaskID
@@ -282,6 +317,10 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 	if !ok {
 		return false
 	}
+	// Whether the task had already ended before this update: only the
+	// first transition to a terminal status closes done, since closing
+	// a closed channel panics.
+	wasTerminal := task.IsTerminal()
 	if status != "" {
 		task.Status = status
 	}
@@ -290,6 +329,9 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 	}
 	if result != nil {
 		task.Result = result
+	}
+	if task.IsTerminal() && !wasTerminal {
+		close(task.done)
 	}
 	if task.IsTerminal() {
 		now := time.Now().UTC()
@@ -316,6 +358,39 @@ func (m *Manager) Complete(taskID string, result any) bool {
 // Fail marks a task as failed with the given error message.
 func (m *Manager) Fail(taskID string, errMsg string) bool {
 	return m.Update(taskID, StatusFailed, errMsg, nil)
+}
+
+// Done returns a channel that is closed when the task ends, completed
+// or failed, and false when no such task exists. A receive from it
+// blocks until then; a task that has already ended returns a channel
+// that is already closed.
+//
+// This is how a caller waits for a task it did not start: an HTTP
+// request that needs the result of a running build selects on this
+// channel and on its own deadline, and whichever comes first decides
+// its answer. The task keeps running either way.
+func (m *Manager) Done(taskID string) (<-chan struct{}, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return nil, false
+	}
+	return task.done, true
+}
+
+// ReportProgress gives a task the function its status reads progress
+// from. The worker calls it once, when it starts; every status request
+// after that calls fn. Returns false when no such task exists.
+func (m *Manager) ReportProgress(taskID string, fn ProgressFunc) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return false
+	}
+	task.progress = fn
+	return true
 }
 
 // Get returns a task by ID. Returns (nil, false) if not found.

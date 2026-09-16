@@ -16,6 +16,7 @@ type TaskResponse struct {
 // Operation is "compress" or "index". Status transitions:
 // "queued" → "running" → ("completed" | "failed"). Result is nil until
 // Status == "completed"; Error is nil unless Status == "failed".
+// Progress is nil for a task that does not report it.
 type TaskStatusResponse struct {
 	TaskID      string     `json:"task_id"`
 	Status      string     `json:"status"`
@@ -24,6 +25,7 @@ type TaskStatusResponse struct {
 	StartedAt   *string    `json:"started_at"`
 	CompletedAt *string    `json:"completed_at"`
 	Error       *string    `json:"error"`
+	Progress    *float64   `json:"progress" doc:"Share of the task's input read so far, from 0 to 1. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading."`
 	Result      TaskResult `json:"result"`
 }
 

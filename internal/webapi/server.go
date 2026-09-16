@@ -16,6 +16,7 @@ import (
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/prometheus"
+	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/internal/trace"
 )
@@ -57,6 +58,18 @@ type Config struct {
 	// ShutdownTimeout is how long Shutdown waits for in-flight requests
 	// to drain before forcibly killing the server. Defaults to 10s.
 	ShutdownTimeout time.Duration
+
+	// SamplesIndexWait is how long GET /v1/samples waits for a line
+	// index it needs to be built before answering 202 with the build's
+	// task. Zero takes RX_SAMPLES_WAIT_SECONDS, or 5 s
+	// (config.SamplesIndexWait).
+	SamplesIndexWait time.Duration
+
+	// buildSamplesIndex builds and stores the index a samples lookup
+	// waits for; samples.BuildIndex unless a test replaces it. Set here,
+	// before the server starts, so no handler goroutine can read it
+	// while it changes.
+	buildSamplesIndex samplesIndexBuilder
 }
 
 // Server owns the http.Server, chi router, and huma API instance.
@@ -68,6 +81,10 @@ type Server struct {
 	router chi.Router
 	api    huma.API
 	http   *http.Server
+
+	// samplesIndex runs the index builds GET /v1/samples waits for,
+	// one per file at a time.
+	samplesIndex *samplesIndexBuilds
 
 	// Exported for handler helpers (e.g. integration tests that need
 	// to fire a direct http.Handler call).
@@ -105,9 +122,10 @@ func NewServer(cfg Config) *Server {
 	api := humachi.New(router, humaCfg)
 
 	s := &Server{
-		cfg:    cfg,
-		router: router,
-		api:    api,
+		cfg:          cfg,
+		router:       router,
+		api:          api,
+		samplesIndex: newSamplesIndexBuilds(cfg.TaskManager, cfg.Logger, cfg.buildSamplesIndex),
 	}
 
 	// Schemas huma cannot reflect from the Go types; they must be in
@@ -170,6 +188,12 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 10 * time.Second
+	}
+	if cfg.SamplesIndexWait == 0 {
+		cfg.SamplesIndexWait = config.SamplesIndexWait()
+	}
+	if cfg.buildSamplesIndex == nil {
+		cfg.buildSamplesIndex = samples.BuildIndex
 	}
 }
 
