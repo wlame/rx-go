@@ -488,6 +488,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The context section of `rx trace --samples` prints only lines whose
+  number in the file is known. A line a capped scan could not number
+  was printed at the number ripgrep gave it inside its chunk, on
+  another line's place, and a match without a number marked such a
+  line as a match.
+
 - A trace capped by `--max-results` gives the matches it keeps the
   lines after them that `--after` asks for, as the trace without the
   cap does. On a plain file the match that reached the cap stopped

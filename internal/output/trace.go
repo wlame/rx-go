@@ -40,9 +40,10 @@ type FileContext struct {
 // line number is what removes the repeats; a line that is the match line
 // of any match is marked as one.
 //
-// Lines whose number is unknown (-1, which happens on a chunk-scanned
-// file without an index) are dropped: they cannot be placed in the file
-// and printing them in the wrong order would be worse than omitting them.
+// Lines whose number is unknown (absolute_line_number -1, which a capped
+// scan of a chunked file without an index leaves) are dropped: they
+// cannot be placed in the file, and printing them at the number ripgrep
+// gave them inside their chunk would put them on another line's place.
 func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 	if resp == nil || len(resp.ContextLines) == 0 {
 		return nil
@@ -115,24 +116,19 @@ type matchKey struct {
 func matchLineNumbers(resp *rxtypes.TraceResponse) map[matchKey]bool {
 	marks := map[matchKey]bool{}
 	for _, m := range resp.Matches {
-		n := m.AbsoluteLineNumber
-		if n < 1 && m.RelativeLineNumber != nil {
-			n = *m.RelativeLineNumber
-		}
-		if n >= 1 {
+		if n := m.AbsoluteLineNumber; n >= 1 {
 			marks[matchKey{fileID: m.File, line: n}] = true
 		}
 	}
 	return marks
 }
 
-// contextLineNumber prefers the absolute line number and falls back to
-// the chunk-relative one, which is the same thing on an unchunked file.
+// contextLineNumber is the line's number in the file, or 0 when the
+// scan could not count it. The relative number is not a fallback: where
+// it differs from the absolute one it counts from the start of a chunk,
+// and every chunk has a line of that number.
 func contextLineNumber(cl rxtypes.ContextLine) int {
-	if cl.AbsoluteLineNumber >= 1 {
-		return cl.AbsoluteLineNumber
-	}
-	return cl.RelativeLineNumber
+	return max(cl.AbsoluteLineNumber, 0)
 }
 
 // fileIDFromContextKey splits a "pattern:file:offset" context key. The
