@@ -13,8 +13,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/compressfile"
 	"github.com/wlame/rx-go/internal/index"
-	"github.com/wlame/rx-go/internal/seekable"
 )
 
 // NewCompressCommand builds the `rx compress` cobra command.
@@ -80,7 +80,8 @@ func NewCompressCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Output directory (uses source filename with .zst extension)")
 	cmd.Flags().StringVar(&frameSize, "frame-size", "4M", "Target frame size (e.g. 4M, 16MB)")
 	cmd.Flags().IntVarP(&level, "level", "l", 3, "zstd compression level (1-22)")
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite existing output")
+	cmd.Flags().BoolVarP(&force, "force", "f", false,
+		"Overwrite existing output; re-encode an input that is already seekable zstd")
 	cmd.Flags().BoolVar(&buildIdx, "build-index", true,
 		"Build line index after compression")
 	cmd.Flags().BoolVar(&noIndex, "no-index", false, "Skip building line index after compression")
@@ -251,59 +252,44 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	}
 	outputPath = validatedOutput
 
+	// A compound archive, a seekable input without --force and an output
+	// that is the input are refused before the "already exists" rule, so
+	// the message names the real reason.
+	if refusal := compressfile.Check(inputPath, outputPath, p.force); refusal != nil {
+		entry["error"] = compressErrorMessage(refusal)
+		return entry, ExitGenericError
+	}
+
 	if _, existsErr := os.Stat(outputPath); existsErr == nil && !p.force {
 		entry["error"] = fmt.Sprintf(
 			"output file already exists: %s (use --force to overwrite)", outputPath)
 		return entry, ExitGenericError
 	}
 
-	// Encode.
-	src, err := os.Open(inputPath)
-	if err != nil {
-		entry["error"] = err.Error()
-		return entry, ExitGenericError
-	}
-	defer func() { _ = src.Close() }()
-
-	dst, err := os.Create(outputPath)
-	if err != nil {
-		entry["error"] = err.Error()
-		return entry, ExitGenericError
-	}
-	defer func() { _ = dst.Close() }()
-
-	enc := seekable.NewEncoder(seekable.EncoderConfig{
-		FrameSize: int(frameBytes),
-		Level:     p.level,
-		Workers:   workers,
+	// Decompress and encode through the path POST /v1/compress uses: a
+	// gzip, bzip2, xz or zstd input is written as its text, so the
+	// output traces like the decompressed file.
+	result, err := compressfile.Compress(context.Background(), compressfile.Options{
+		InputPath:        inputPath,
+		OutputPath:       outputPath,
+		FrameSize:        int(frameBytes),
+		Level:            p.level,
+		Workers:          workers,
+		ReencodeSeekable: p.force,
 	})
-	tbl, err := enc.Encode(context.Background(), src, info.Size(), dst)
 	if err != nil {
-		entry["error"] = fmt.Sprintf("encode: %s", err.Error())
+		entry["error"] = compressErrorMessage(err)
 		return entry, ExitGenericError
-	}
-	if err := dst.Sync(); err != nil {
-		entry["error"] = fmt.Sprintf("fsync: %s", err.Error())
-		return entry, ExitGenericError
-	}
-
-	outInfo, _ := os.Stat(outputPath)
-	compressedSize := outInfo.Size()
-	decompressedSize := info.Size()
-	var ratio float64
-	if compressedSize > 0 {
-		// Python's compression_ratio is decompressed/compressed (a value
-		// >= 1 for actual compression). Mirror that convention here.
-		ratio = float64(decompressedSize) / float64(compressedSize)
-		ratio = float64(int(ratio*100)) / 100 // round to 2 decimals like Python
 	}
 
 	entry["success"] = true
 	entry["output"] = outputPath
-	entry["compressed_size"] = compressedSize
-	entry["decompressed_size"] = decompressedSize
-	entry["frame_count"] = len(tbl.Frames)
-	entry["compression_ratio"] = ratio
+	entry["compressed_size"] = result.CompressedSize
+	entry["decompressed_size"] = result.DecompressedSize
+	entry["frame_count"] = result.FrameCount
+	// compression_ratio is decompressed/compressed (a value >= 1 for
+	// actual compression), rounded down to 2 decimals like rx-python.
+	entry["compression_ratio"] = result.Ratio()
 
 	// Index the file just written, so `samples --lines=N` on it can
 	// decompress one frame instead of walking the stream. A failure here
@@ -327,6 +313,15 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	}
 
 	return entry, ExitSuccess
+}
+
+// compressErrorMessage words a compressfile error for the CLI: the
+// refusal of a seekable input names the flag that lifts it.
+func compressErrorMessage(err error) string {
+	if errors.Is(err, compressfile.ErrAlreadySeekable) {
+		return err.Error() + " (use --force to re-encode it)"
+	}
+	return err.Error()
 }
 
 // writeCompressHuman — plain-text (non-JSON) summary. One line per file.

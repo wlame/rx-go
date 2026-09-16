@@ -26,11 +26,31 @@ gave 41.6 MB. For files that will be searched, sampled, or
 line-indexed repeatedly, the random-access gain outweighs the size
 cost.
 
-`rx compress` encodes the bytes of the input file as they are. A
-`.gz`, `.bz2`, `.xz` or `.zst` input is **not** decompressed first: the
-result is a seekable zstd of the compressed bytes, which `rx` cannot
-search as text. Decompress first (`gunzip -k app.log.gz`), then
-compress the plain file.
+### Compressed input
+
+The output always holds the input's **text**. A plain file is encoded
+as it is. A gzip, bzip2, xz or plain (not seekable) zstd file is
+decompressed on the fly and its text is encoded, so a trace of
+`app.log.gz.zst` finds the same matches, line numbers and offsets as a
+trace of the decompressed `app.log`, and its index counts the text's
+lines. The format is recognized by the extension (`.gz`, `.bz2`, `.xz`,
+`.zst`, ...) and, without one, by the leading magic bytes. The text is
+streamed through the encoder, never held in memory whole, and
+`decompressed_size` reports its size.
+
+The default output name appends `.zst` to the input name, so
+`app.log.gz` becomes `app.log.gz.zst`; use `--output` for another name.
+
+Three inputs are refused, and nothing is written for them:
+
+| Input | Message |
+|---|---|
+| A compound archive (`.tar.gz`, `.tgz`, `.tar.zst`, `.tar.xz`, `.tar.bz2`, ...) | `compound archives (tar.gz, etc.) are not supported`: its text is a tar stream, not lines |
+| A file that is already seekable zstd | `already a seekable zstd file (use --force to re-encode it)`: rx reads it as it is. With `--force` its text is encoded again with this run's `--frame-size` and `--level` |
+| An output path that is the input file, by any name | `the output path is the input file`: creating the output would destroy the input before it is read |
+
+A truncated or corrupt compressed input fails that file with the
+decoder's error, and the partial output is removed.
 
 ## Flags
 
@@ -40,7 +60,7 @@ compress the plain file.
 | `--output-dir` | `string` | — | Output directory; uses `<basename>.zst` inside |
 | `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB` |
 | `-l`, `--level` | `int` | `3` | zstd level `1`-`22`; the encoder has four settings: `1`, `2`-`5`, `6`-`9`, `10`-`22` |
-| `-f`, `--force` | `bool` | `false` | Overwrite existing output |
+| `-f`, `--force` | `bool` | `false` | Overwrite existing output; re-encode an input that is already seekable zstd |
 | `--build-index` | `bool` | `true` | Build the frame index for the `.zst` that was written |
 | `--no-index` | `bool` | `false` | Turns `--build-index` off |
 | `--workers` | `int` | `1` | Parallel encoder goroutines (1..N) |
@@ -166,14 +186,25 @@ level, and 1.71 s instead of 4.77 s at level 19. The output is the same
 for any worker count. I/O is single-threaded at the output side, so
 extreme worker counts provide diminishing returns.
 
-### Force overwrite and re-encode
+### Compress a gzipped log
 
 ```bash
-rx compress existing-output.zst --force --level=9
+rx compress /var/log/audit-2026-03.log.gz
 ```
 
-Overwrite a previously-compressed file with a higher-level encoding.
-Without `--force`, `rx` errors out if the output exists.
+Writes `/var/log/audit-2026-03.log.gz.zst`, which holds the text of the
+gzipped log: `rx trace` and `rx samples` on it answer as on the
+decompressed file, and `samples --lines=N` decompresses one frame.
+
+### Re-encode a seekable file
+
+```bash
+rx compress /var/log/audit-2026-03.zst --force --frame-size=1M -o /var/log/audit-2026-03-1m.zst
+```
+
+Without `--force`, a seekable `.zst` input is refused. With it, the
+text is decompressed and encoded again with 1 MiB frames. `--force`
+also lets the command overwrite an existing output.
 
 ### JSON wrapper
 
@@ -291,10 +322,11 @@ decoders ignore it.
     cannot enter the directory unless they share the group. Set
     permissions manually after compression if you need wider access.
 
-!!! warning "Compressed input is not decompressed"
-    `rx compress file.gz` writes `file.gz.zst`, a seekable zstd of the
-    gzip bytes; its index counts lines in those bytes, not in the text.
-    Decompress the file first.
+!!! note "A compressed input costs its decompression"
+    `rx compress file.gz` decompresses the whole file once, on one
+    core, before the frames reach the encoder. xz decompression in
+    particular is slower than the encoder; expect the decompressor's
+    speed, not the encoder's, for such inputs.
 
 ## See also
 

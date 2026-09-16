@@ -25,12 +25,23 @@ Content-Type: application/json
 | `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`) |
 | `compression_level` | int | no | `3` | zstd level: 1-22 |
 | `build_index` | bool | no | `true` | Build the line index of the compressed file after compressing it |
-| `force` | bool | no | `false` | Overwrite existing output |
+| `force` | bool | no | `false` | Overwrite existing output, and re-encode an input that is already seekable zstd |
 
 Every default is the default of the matching
 [`rx compress`](../../cli/compress.md) flag (`--output`, `--frame-size`,
 `--level`, `--build-index`, `--force`), so a request that leaves a field
 out compresses the way the CLI does without that flag.
+
+### Compressed input
+
+The task writes the input's text, exactly as
+[`rx compress`](../../cli/compress.md#compressed-input) does: a gzip,
+bzip2, xz or plain zstd input is decompressed on the fly, so the output
+traces like the decompressed file, and `decompressed_size` in the
+result is the size of that text. A compound archive (`.tar.gz` and its
+kin), a seekable zstd input without `"force": true`, and an
+`output_path` that is the input file are refused with `400` before a
+task is created.
 
 ### Frame size syntax
 
@@ -73,7 +84,7 @@ for measured sizes and times.
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued |
-| `400 Bad Request` | Output file exists and `force=false`; bad `frame_size`; body is not valid JSON |
+| `400 Bad Request` | Output file exists and `force=false`; the input is a compound archive, or seekable zstd and `force=false`; `output_path` is the input file; bad `frame_size`; body is not valid JSON |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
 | `409 Conflict` | A task for the same input path is already running — a compress or an index task |
@@ -181,8 +192,8 @@ When the task completes, its `result` field contains a
 | `input_path` | string | Source file |
 | `output_path` | string | Destination `.zst` file |
 | `compressed_size` | int64 | Bytes on disk after encoding |
-| `decompressed_size` | int64 | Original file size |
-| `compression_ratio` | number | `decompressed / compressed`; below 1 when the input does not compress, such as a file that is already compressed |
+| `decompressed_size` | int64 | Size of the text the output holds: the input's size for a plain file, its decompressed size for a compressed one |
+| `compression_ratio` | number | `decompressed / compressed`; below 1 when the text does not compress, such as random bytes |
 | `frame_count` | int | Number of independent zstd frames |
 | `total_lines` | int64 \| null | Line count from the index; `null` when no index was built |
 | `index_built` | bool | Whether the line index was built and saved |
@@ -199,6 +210,15 @@ When the task completes, its `result` field contains a
 ```
 
 Status: `400`. Set `"force": true` or choose a different `output_path`.
+
+### Input that is already seekable zstd
+
+```json
+{ "detail": "/var/log/audit-2026-03.zst: already a seekable zstd file (set \"force\": true to re-encode it)" }
+```
+
+Status: `400`. With `"force": true` the text is decompressed and
+encoded again with the request's `frame_size` and `compression_level`.
 
 ### Invalid compression level
 
