@@ -119,7 +119,9 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	// A seekable .zst with a frame index can decompress just the frames
 	// holding the wanted lines. Without an index it streams like any
 	// other archive: the answer is the same, only slower, which is what
-	// an index is for.
+	// an index is for. Its index's checkpoints sit at frame starts,
+	// which are not always line starts, so the stream does not start
+	// from one.
 	if seekable.IsSeekable(req.Path) {
 		err := resolveSeekableLines(req, resp)
 		if err == nil {
@@ -128,11 +130,26 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		if !errors.Is(err, errNoFrameIndex) {
 			return nil, err
 		}
+		if err := resolveCompressedLines(req, format, nil, resp); err != nil {
+			return nil, err
+		}
+		return resp, nil
 	}
-	if err := resolveCompressedLines(req, format, resp); err != nil {
+	if err := resolveCompressedLines(req, format, loadIndexOrNone(req), resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// loadIndexOrNone returns the request's index, or nil when the loader
+// has none or cannot provide it: an index only makes the answer faster,
+// so a missing or unreadable one costs time, never correctness.
+func loadIndexOrNone(req Request) *rxtypes.UnifiedFileIndex {
+	if req.IndexLoader == nil {
+		return nil
+	}
+	idx, _ := req.IndexLoader(req.Path)
+	return idx
 }
 
 // ============================================================================

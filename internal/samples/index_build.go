@@ -18,10 +18,10 @@ import (
 //   - a plain file seeks to the checkpoint before the wanted line or
 //     offset;
 //   - a gzip, bzip2, xz or plain zstd stream still decompresses from its
-//     first byte, but a byte-offset lookup starts counting lines at the
-//     checkpoint instead of splitting every line before it, and takes
-//     the text's length for an offset counted from the end from the
-//     index;
+//     first byte, but a lookup starts counting lines at the checkpoint
+//     instead of splitting every line before it, and takes the line
+//     count (or the text's length) for a position counted from the end
+//     from the index instead of decompressing the whole stream first;
 //   - a seekable zstd file decompresses only the frames the index's
 //     frame table names.
 //

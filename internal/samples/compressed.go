@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 
@@ -16,15 +15,21 @@ import (
 
 // resolveCompressedLines answers a line-mode request by streaming the
 // file through its decompressor once, keeping only the lines the
-// request asks for.
+// request asks for, and stopping after the last of them.
 //
-// There is no index into a compressed stream to seek with, so the pass
-// is sequential and the whole file goes past. A negative line number
-// costs a second pass, since the last line cannot be known before the
-// end is reached.
+// A compressed stream cannot be entered in the middle, so the pass
+// always decompresses from the first byte; how far it goes is what the
+// request decides. idx, the file's line index or nil, helps twice: its
+// line count resolves a line counted from the end, which otherwise costs
+// a first pass over the whole stream to count the lines, and its
+// checkpoint before the first wanted line lets the pass drop the bytes
+// before it without splitting them into lines. idx must be an index
+// whose checkpoints are line starts in the text, which a seekable
+// file's (at frame starts) are not.
 func resolveCompressedLines(
 	req Request,
 	format compression.Format,
+	idx *rxtypes.UnifiedFileIndex,
 	resp *rxtypes.SamplesResponse,
 ) error {
 	needTotalLines := false
@@ -36,7 +41,7 @@ func resolveCompressedLines(
 	}
 	var totalLines int64
 	if needTotalLines {
-		n, err := streamCountLines(req.Path, format)
+		n, err := streamLineCount(req.Path, format, idx)
 		if err != nil {
 			return err
 		}
@@ -108,24 +113,29 @@ func resolveCompressedLines(
 		resp.Lines[key] = -1
 	}
 
-	f, err := os.Open(req.Path)
+	if len(windows) == 0 {
+		// Only line 0 was asked for, which needs no reading.
+		return nil
+	}
+	firstLine, lastLine := windows[0].start, windows[0].end
+	for _, w := range windows[1:] {
+		firstLine = min(firstLine, w.start)
+		lastLine = max(lastLine, w.end)
+	}
+
+	cursor, err := openStreamAtLine(req.Path, format, idx, firstLine)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	dec, err := compression.NewReader(f, format)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dec.Close() }()
+	defer func() { _ = cursor.close() }()
 
 	// The byte offsets recorded here are positions in the decompressed
 	// stream, which is the coordinate system a search of the same file
 	// reports its matches in. Reporting -1 left the two surfaces
 	// speaking different languages about the same line.
-	r := bufio.NewReaderSize(dec, 256*1024)
-	var lineNum, pos int64
-	for {
+	r := bufio.NewReaderSize(cursor, 64*1024)
+	lineNum, pos := cursor.line-1, cursor.offset
+	for lineNum < lastLine {
 		raw, readErr := r.ReadBytes('\n')
 		if len(raw) > 0 {
 			lineNum++
@@ -147,6 +157,31 @@ func resolveCompressedLines(
 			return readErr
 		}
 	}
+	return nil
+}
+
+// openStreamAtLine returns the text of a compressed stream from the
+// start of a line at or before line: the index checkpoint before it
+// when idx has one, else the first byte.
+func openStreamAtLine(path string, format compression.Format, idx *rxtypes.UnifiedFileIndex, line int64) (*textCursor, error) {
+	text := streamedText{path: path, format: format}
+	offset, startLine := chooseSeekOrigin(idx, line)
+	cursor, err := text.openAt(offset)
+	if err != nil {
+		return nil, err
+	}
+	cursor.line = startLine
+	return cursor, nil
+}
+
+// streamLineCount returns the number of lines in a compressed stream:
+// the index's count when there is an index, else a count over the whole
+// decompressed stream.
+func streamLineCount(path string, format compression.Format, idx *rxtypes.UnifiedFileIndex) (int64, error) {
+	if idx != nil && idx.LineCount != nil {
+		return *idx.LineCount, nil
+	}
+	return streamCountLines(path, format)
 }
 
 // trimNewline drops the line terminator a reader keeps, so the text
@@ -163,16 +198,12 @@ func trimNewline(s string) string {
 // ends is counted too: it is a line, and -1 has to name it as it does
 // in the plain copy of the same text.
 func streamCountLines(path string, format compression.Format) (int64, error) {
-	f, err := os.Open(path)
+	cursor, err := streamedText{path: path, format: format}.openAt(0)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = f.Close() }()
-	dec, err := compression.NewReader(f, format)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = dec.Close() }()
+	defer func() { _ = cursor.close() }()
+	dec := cursor
 
 	var n int64
 	// endsAtLineStart is true while the text read so far is empty or
