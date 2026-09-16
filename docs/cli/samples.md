@@ -43,10 +43,10 @@ on a 465 MB log already in the page cache:
 - The first lookup in a file of `RX_LARGE_FILE_MB` (50 MB) or more
   with no cached index reads the whole file to build one: 137 ms.
 
-A gzip, bzip2, xz or plain zstd file is streamed to its end for every
-lookup, whatever the line (1.6 s on the 113 MB `.gz` of that log). A
-seekable zstd file with an index decompresses only the frames that hold
-the wanted lines.
+A gzip, bzip2, xz or plain zstd file is decompressed from its first
+byte up to the last wanted line, then the read stops. A seekable zstd
+file with an index decompresses only the frames that hold the wanted
+lines.
 
 ## Flags
 
@@ -54,7 +54,7 @@ the wanted lines.
 |------|------|---------|-------------|
 | `-b`, `--offsets` | `string` | — | Comma-separated byte offsets / ranges |
 | `-l`, `--lines` | `string` | — | Comma-separated 1-based line numbers / ranges |
-| `-c`, `--context` | `int` | `3` | Lines before AND after each target |
+| `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100) |
 | `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context` |
 | `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context` |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
@@ -77,11 +77,19 @@ usage error (exit 2) rather than a silent fall back to `auto`.
 A lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in
 any compressed file, builds a line index if none is cached, so the
 next lookup in the same file is fast. That first lookup reads the whole
-file. The build runs without analysis. Only a seekable zstd file uses
-the index among compressed formats; a gzip, bzip2, xz or plain zstd
-lookup streams either way. `--no-index` turns the build off and the
-lookup reads the file without an index — slower, same answer. rx-python
-behaves identically, and so does `GET /v1/samples`.
+file, and `rx samples` waits for it however long it takes. The build
+runs without analysis. Every format uses the index: a plain file seeks
+to its checkpoints, a seekable zstd file decodes only the frames its
+frame table names, and a gzip, bzip2, xz or plain zstd stream, which
+must still be decompressed from its first byte, takes its line count
+for a line counted from the end and starts counting lines at the
+checkpoint before the first wanted one. `--no-index` turns the build off
+and the lookup reads the file without an index — slower, same answer.
+
+`GET /v1/samples` builds the same index as a background task shared by
+every request for the file, and answers `202` with the task when the
+build outlasts `RX_SAMPLES_WAIT_SECONDS`; see
+[`GET /v1/samples`](../api/endpoints/samples.md#response-202-accepted).
 
 ### Context at the ends of the file
 
@@ -240,11 +248,10 @@ line the plain copy of the file gives. `--lines=N` and `--offsets=` the
 offset of line N lead to each other.
 
 A gzip, bzip2, xz or plain (non-seekable) zstd file has no way in except
-from its first byte. In line mode `rx` streams the decompressor to the
-end of the file and captures lines as it passes them, so every lookup
-costs one full decompression, whatever the line. In offset mode it
-decompresses up to the line holding the last offset asked about and
-stops there; with an index it also skips counting the lines before the
+from its first byte. In line mode `rx` decompresses up to the last
+wanted line and captures lines as it passes them; in offset mode, up to
+the line holding the last offset asked about. Either way the read stops
+there, and with an index it also skips counting the lines before the
 nearest checkpoint. A seekable `.zst` with an index decompresses only
 the frames around the wanted lines or offsets. For random access on
 compressed data, use [`rx compress`](compress.md) to re-encode as
@@ -312,10 +319,12 @@ Measured on a 465 MB log in the page cache, whole command included:
     are. That is how a match a capped trace left without a line number
     (`-1`) gets one, on a compressed file as on a plain one.
 
-!!! note "Negative line numbers on compressed files cost a second pass"
-    On a gzip, bzip2, xz or plain zstd file, `--lines=-1` streams the
-    file once to count its lines and once more to read them. On a plain
-    file a negative line is cheap.
+!!! note "Negative line numbers on compressed files need the line count"
+    On a gzip, bzip2, xz or plain zstd file, `--lines=-1` takes the line
+    count from the index and decompresses the stream once to the end.
+    Without an index (`--no-index`) it streams the file once to count its
+    lines and once more to read them. On a plain file a negative line is
+    cheap.
 
 !!! warning "`--regex` is cosmetic, not a filter"
     `--regex` only controls highlight styling in the terminal. It

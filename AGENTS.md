@@ -95,7 +95,7 @@ the position, with a range sorting by its left-hand value
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
 | `internal/frontend/` | Downloads and extracts the viewer bundle |
-| `internal/tasks/` | In-memory background task manager for `POST /v1/index` and `/v1/compress` |
+| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress` and the index builds `GET /v1/samples` waits for; a task's done channel and progress |
 | `internal/prometheus/` | Metrics behind an `atomic.Bool` enable gate (off in CLI, on in `serve`) |
 | `internal/output/` | Shared human-readable formatting |
 | `internal/testparity/` | Harness that runs `../rx-python` and diffs output |
@@ -242,8 +242,13 @@ Data flow for `rx trace "pattern" big.log`:
    of another version as absent, so the bump also gets a
    `../tickets/PARITY-DEBT.md` row.
 3. **Bounded reads.** No code path reads more bytes than the request needs,
-   except `rx index` (new index), `rx trace` without `--max-results`, and
-   `rx compress`. Every new file-reading path gets a budget test that uses
+   except an index build (`rx index`, and the index a samples lookup
+   builds first), `rx trace` without `--max-results`, and `rx compress`.
+   An HTTP request never builds an index inside itself: `GET /v1/samples`
+   starts or joins a background `index` task, one per file and file
+   identity (`internal/webapi/samples_index.go`), waits up to
+   `RX_SAMPLES_WAIT_SECONDS` and answers `202` with the task after that.
+   Every new file-reading path gets a budget test that uses
    `counting.InjectOpen` and asserts the byte count.
 4. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
    Never add `omitempty` to a schema-documented wire field; use explicit nulls.

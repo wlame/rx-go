@@ -6,28 +6,29 @@ configurable context. HTTP equivalent of [`rx samples`](../../cli/samples.md).
 ## Purpose
 
 Given a file and a set of addresses, return the targeted lines plus
-surrounding context. Supports both byte-offset and line-offset modes.
-Works on uncompressed files in both modes and on compressed files
-(gzip, bzip2, xz, zstd, seekable zstd) in line-offset mode only.
+surrounding context. Supports both byte-offset and line-offset modes, on uncompressed files
+and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
 
 ### What a request reads
 
 - **First lookup in a large or compressed file:** when no index is
-  cached, the request first builds and stores one — for any compressed
-  file, and for a plain file of `RX_LARGE_FILE_MB` (50 MB) or more. That
-  reads the whole file inside the request: 137 ms for a 465 MB log
-  already in the page cache, longer from disk. `RX_NO_INDEX=true` on the
-  server turns it off. The build is not shared between concurrent
-  requests and has no deadline.
+  cached, one is built and stored first — for any compressed file, and
+  for a plain file of `RX_LARGE_FILE_MB` (50 MB) or more. The build runs
+  as a background `index` task, and the request waits for it up to
+  `RX_SAMPLES_WAIT_SECONDS` (5 s by default). A small file's build ends
+  in time and the request answers `200` with the lines; a large one's
+  does not, and the request answers [`202`](#response-202-accepted) with
+  the task. `RX_NO_INDEX=true` on the server turns the build off.
 - **Plain file with an index:** seeks to the nearest checkpoint before
   the first wanted line and reads through the last one. Line 700000 of
   the 465 MB log took 13 ms from the CLI.
 - **Plain file without an index:** reads from byte 0 to the last wanted
   line, then stops — 12 ms for lines 1-1000, 90 ms for line 700000 of
   the same log.
-- **gzip, bzip2, xz, plain zstd:** streams the whole decompressed file
-  for every request, whatever lines are asked, index or not — 1.6 s for
-  a 113 MB `.gz` of that log.
+- **gzip, bzip2, xz, plain zstd:** decompresses from the first byte up
+  to the last wanted line, then stops. A line counted from the end takes
+  the line count from the index; without one it costs a full pass to
+  count the lines first.
 - **Seekable zstd with an index:** decompresses only the frames that
   hold the wanted lines.
 
@@ -45,9 +46,9 @@ GET /v1/samples?path=...&offsets=...
 | `path` | `string` | yes | — | File path (must be a file, not a directory) |
 | `offsets` | `string` | one of two | — | Comma-separated byte offsets / ranges |
 | `lines` | `string` | one of two | — | Comma-separated 1-based line numbers / ranges |
-| `context` | `int` | no | `3` | Lines before AND after each target (`-1` = default) |
-| `before_context` | `int` | no | `3` | Lines before (overrides `context`) (`-1` = default) |
-| `after_context` | `int` | no | `3` | Lines after (overrides `context`) (`-1` = default) |
+| `context` | `int` | no | `3` | Lines before AND after each target, at most 100 (`-1` = default) |
+| `before_context` | `int` | no | `3` | Lines before (overrides `context`), at most 100 (`-1` = default) |
+| `after_context` | `int` | no | `3` | Lines after (overrides `context`), at most 100 (`-1` = default) |
 
 Exactly one of `offsets` / `lines` must be provided. Both-set or
 neither-set returns `400`. For a compressed file both are positions in
@@ -72,7 +73,9 @@ The `-1` sentinel is the "not provided" marker for `context`,
 `before_context`, and `after_context` (huma query params can't
 distinguish absent from `0`). Omit the param entirely or pass `-1` to
 get the default `3`. `before_context` and `after_context`, `0`
-included, override `context`.
+included, override `context`. Each is capped at 100 lines, the cap
+`/v1/trace` has; a larger value is a `422`. A wider read is a line
+range (`lines=100-1100`), which has no cap.
 
 The response's `before_context` and `after_context` echo the window
 the request asked for. Each window is clamped at line 1 and at the last
@@ -107,6 +110,38 @@ and `offsets=20,30-50,9999&context=0` on the same file answers
 `"offsets": {"20": 2, "30-50": 3, "9999": -1}` with
 `"samples": {"20": ["LINE 2 payload"], "30-50": ["LINE 3 payload", "LINE 4 payload"], "9999": null}`.
 
+## Response — 202 Accepted
+
+When the file's line index is still being built after
+`RX_SAMPLES_WAIT_SECONDS`, the answer names the build's task instead of
+the lines:
+
+```json
+{
+  "task_id": "1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
+  "status": "running",
+  "message": "Building the line index of /var/log/core.log; poll GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10 and ask again when it completes",
+  "path": "/var/log/core.log",
+  "started_at": "2026-10-03T18:12:04.512330Z"
+}
+```
+
+Poll [`GET /v1/tasks/{task_id}`](tasks.md) until its `status` is
+`completed` or `failed` (its `progress` says how far the build has
+read), then send the same request again. A failed build does not fail
+the lookup: the next request reads the file without an index, slower
+and with the same answer.
+
+There is one build per file at a time, shared by every request for it:
+a second request while it runs gets the same `task_id`, and so does a
+request while a `POST /v1/index` task for the file runs. A request that
+gives up waiting, or whose client disconnects, leaves the build running;
+its index serves every later request. A request for a file that changed
+after the build started does not wait for that build and is answered
+from the file.
+
+`rx samples` never answers this way: the CLI waits for the build.
+
 ### Response fields
 
 | Field | Type | Description |
@@ -132,9 +167,11 @@ client-side and iterate accordingly.
 | Code | When |
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
+| `202 Accepted` | The file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
 | `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |
+| `422 Unprocessable Entity` | A context count above 100, or a missing `path` |
 | `500 Internal Server Error` | Resolver failure; logged with stack |
 
 Samples reads the file itself and never runs `ripgrep`, so it answers on
@@ -186,7 +223,7 @@ curl -sG 'http://127.0.0.1:7777/v1/samples' \
     | jq '.samples'
 ```
 
-### Compressed file (line mode only)
+### Compressed file
 
 ```bash
 curl -sG 'http://127.0.0.1:7777/v1/samples' \
@@ -246,7 +283,7 @@ Status: `400`.
 - Multiple addresses in one request are amortized — the file is
   opened once and walked once
 - Compressed line-mode (except seekable zstd with an index) streams the
-  whole decompressed file
+  decompressed file up to the last wanted line
 
 ## See also
 

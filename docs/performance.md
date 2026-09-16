@@ -39,8 +39,8 @@ where this table says otherwise:
 | `rx samples --lines=START-END` (plain file) | with an index, from the nearest checkpoint before START to END; without one, from byte 0 to END |
 | `rx samples --lines=N --context=K` (plain file) | the same, for the window `N-K` to `N+K` |
 | `rx samples --offsets=A-B` (plain file) | from the nearest checkpoint before A (or byte 0 without an index) to about B, to number the lines |
-| **First `rx samples` lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in any compressed file, with no cached index** | **the whole file, to build and store the index**, inside the call (CLI or `GET /v1/samples`); not shared between concurrent requests and without a deadline. `--no-index` or `RX_NO_INDEX` turns it off |
-| **`rx samples --lines` on a gzip, bzip2, xz or plain zstd file** | **the whole decompressed stream, every time**, whatever lines are asked; twice for a negative line |
+| First `rx samples` lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in any compressed file, with no cached index | the whole file, once, to build and store the index — an index build, as `rx index` does. Over HTTP it runs as a background `index` task shared by every request for the file; a request waits for it up to `RX_SAMPLES_WAIT_SECONDS` (5 s) and then answers `202` with the task, so no request reads the whole file itself. `rx samples` waits for the build. `--no-index` or `RX_NO_INDEX` turns it off |
+| `rx samples --lines` on a gzip, bzip2, xz or plain zstd file | the decompressed stream from its first byte up to the last wanted line (and up to one decoder block past it); a negative line needs the line count, which an index gives, and without one costs a first pass over the whole stream |
 | `rx samples --lines` on a seekable zstd file with an index | the frames holding the wanted lines |
 | `rx trace --max-results=M` | **early-cancel**: as soon as the collector has M matches, in-flight ripgrep subprocesses are killed and queued chunks are skipped; numbering a match the cap left unnumbered reads from the nearest index checkpoint, or nothing without an index (or from byte 0 with `--no-index`) |
 | `rx trace` (no cap) | full file — this is the design |
@@ -50,10 +50,16 @@ where this table says otherwise:
 | `GET /v1/index` (cached) | the cached JSON index file only; no source-file access |
 | Webhook dispatch | non-blocking fire-and-forget; full queue = drop with metric, never blocks trace |
 
-The bold rows are known exceptions to "no more than the result
-requires". The bounds are enforced by byte-budget unit tests (for
+No row is an exception to "no more than the result requires": the
+reads of a whole file are an index build, a search without a cap and a
+compression, whose results need every byte. A samples request never
+reads a whole file for the index it wants; that build is a background
+task.
+
+The bounds are enforced by byte-budget unit tests (for
 example `internal/samples/resolver_budget_test.go`,
-`internal/samples/batch_offsets_budget_test.go` and
+`internal/samples/batch_offsets_budget_test.go`,
+`internal/samples/compressed_lines_budget_test.go` and
 `internal/trace/maxresults_budget_test.go`) that wrap the I/O with a
 counting reader and assert on bytes actually read, so a regression of
 the form "the output is correct but we read more than necessary" is
@@ -192,7 +198,8 @@ Build an index when:
 - The file is queried more than once
 
 `rx samples` builds one by itself on the first lookup in such a file,
-so an explicit `rx index` moves that cost to a time you choose.
+and `GET /v1/samples` starts one as a background task, so an explicit
+`rx index` moves that cost to a time you choose.
 
 Skip the index when:
 
