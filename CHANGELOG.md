@@ -139,6 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx serve` installs viewer releases from 0.2.0 up to, not including,
+  0.5.0 (it was 0.4.0), so viewer 0.4.0, the one that matches this
+  backend's contract 1.3, is installed automatically.
+
 - `rx index` says why it skipped each file. The human output lists every
   skipped file with its reason under `Skipped N files:` instead of the
   single line `Skipped N files (below threshold or not text)`, and
