@@ -130,7 +130,7 @@ func TestCompressPost_RefusesWhatItCannotCompress(t *testing.T) {
 			"compound archives (tar.gz, etc.) are not supported"},
 		{"output is the input",
 			rxtypes.CompressRequest{InputPath: plain, OutputPath: &plain, FrameSize: "4M", CompressionLevel: 3, Force: true},
-			"the output path is the input file"},
+			`the output path is the input file (set "output_path" to another file)`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

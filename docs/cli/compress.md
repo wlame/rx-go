@@ -31,15 +31,22 @@ cost.
 The output always holds the input's **text**. A plain file is encoded
 as it is. A gzip, bzip2, xz or plain (not seekable) zstd file is
 decompressed on the fly and its text is encoded, so a trace of
-`app.log.gz.zst` finds the same matches, line numbers and offsets as a
+`app.log.zst` written from `app.log.gz` finds the same matches, line numbers and offsets as a
 trace of the decompressed `app.log`, and its index counts the text's
 lines. The format is recognized by the extension (`.gz`, `.bz2`, `.xz`,
 `.zst`, ...) and, without one, by the leading magic bytes. The text is
 streamed through the encoder, never held in memory whole, and
 `decompressed_size` reports its size.
 
-The default output name appends `.zst` to the input name, so
-`app.log.gz` becomes `app.log.gz.zst`; use `--output` for another name.
+The default output name is the input's name with its compression
+suffix (`.gz`, `.gzip`, `.bz2`, `.bzip2`, `.xz`, `.zst`, `.zstd`, in any
+case) replaced by `.zst`, since the output holds the text:
+`app.log.gz` becomes `app.log.zst`. Any other name gets `.zst`
+appended: `app.log` becomes `app.log.zst`. The suffix decides, not the
+file's bytes. An output that already exists is refused without
+`--force`. A plain zstd input named `app.log.zst` would get its own
+name, so it is refused unless `--output` names another file; use
+`--output` for any other name.
 
 Three inputs are refused, and nothing is written for them:
 
@@ -47,7 +54,7 @@ Three inputs are refused, and nothing is written for them:
 |---|---|
 | A compound archive (`.tar.gz`, `.tgz`, `.tar.zst`, `.tar.xz`, `.tar.bz2`, ...) | `compound archives (tar.gz, etc.) are not supported`: its text is a tar stream, not lines |
 | A file that is already seekable zstd | `already a seekable zstd file (use --force to re-encode it)`: rx reads it as it is. With `--force` its text is encoded again with this run's `--frame-size` and `--level` |
-| An output path that is the input file, by any name | `the output path is the input file`: creating the output would destroy the input before it is read |
+| An output path that is the input file, by any name (the default name of a plain `app.log.zst` included) | `the output path is the input file (use --output to name another file)`: creating the output would destroy the input before it is read. `--force` does not lift it |
 
 A truncated or corrupt compressed input fails that file with the
 decoder's error, and the partial output is removed.
@@ -56,8 +63,8 @@ decoder's error, and the partial output is removed.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-o`, `--output` | `string` | `<PATH>.zst` | Output file path (single-file only) |
-| `--output-dir` | `string` | — | Output directory; uses `<basename>.zst` inside |
+| `-o`, `--output` | `string` | the default output name, beside `PATH` | Output file path (single-file only). The default name is `PATH`'s base name with a compression suffix replaced by `.zst`, or with `.zst` appended (see [compressed input](#compressed-input)) |
+| `--output-dir` | `string` | — | Output directory; uses the default output name inside |
 | `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB` |
 | `-l`, `--level` | `int` | `3` | zstd level `1`-`22`; the encoder has four settings: `1`, `2`-`5`, `6`-`9`, `10`-`22` |
 | `-f`, `--force` | `bool` | `false` | Overwrite existing output; re-encode an input that is already seekable zstd |
@@ -71,7 +78,7 @@ only valid with exactly one input path.
 
 When search roots are configured, the destination is validated against
 them exactly like the input path: `--output`, `--output-dir` and the
-derived `<PATH>.zst` default must all resolve inside a root, or the file
+derived default output path must all resolve inside a root, or the file
 is reported as failed and nothing is written. See
 [the path sandbox](../concepts/security.md#path-sandbox-search-root).
 
@@ -171,7 +178,8 @@ rx compress /var/log/audit-2026-03.log -o /backup/audit-2026-03.zst
 rx compress /var/log/audit-*.log --output-dir=/backup/logs/
 ```
 
-Each input file is written to `/backup/logs/<basename>.zst`. The
+Each input file is written to `/backup/logs/<basename>.zst`
+(`audit-2026-03.log.zst`; a `.gz` input loses its `.gz`). The
 directory is auto-created with permissions `0750` if it doesn't exist.
 
 ### Parallel encoding
@@ -192,7 +200,7 @@ extreme worker counts provide diminishing returns.
 rx compress /var/log/audit-2026-03.log.gz
 ```
 
-Writes `/var/log/audit-2026-03.log.gz.zst`, which holds the text of the
+Writes `/var/log/audit-2026-03.log.zst`, which holds the text of the
 gzipped log: `rx trace` and `rx samples` on it answer as on the
 decompressed file, and `samples --lines=N` decompresses one frame.
 

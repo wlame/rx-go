@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/seekable"
@@ -90,6 +91,31 @@ func (r Result) Ratio() float64 {
 	}
 	ratio := float64(r.DecompressedSize) / float64(r.CompressedSize)
 	return float64(int(ratio*100)) / 100
+}
+
+// outputSuffix ends the name of every file rx compress writes.
+const outputSuffix = ".zst"
+
+// DefaultOutputName is the file name rx compress and POST /v1/compress
+// give the output when the caller names none; the caller puts it beside
+// the input or in the requested directory.
+//
+// The output holds the input's text, so a compression suffix the input
+// name ends with (.gz, .gzip, .bz2, .bzip2, .xz, .zst, .zstd, in any
+// case) is replaced by ".zst": app.log.gz becomes app.log.zst. Any
+// other name gets ".zst" appended: app.log becomes app.log.zst. A plain
+// zstd input named app.log.zst therefore names itself; Check refuses
+// that pair, so the input is never overwritten.
+//
+// The suffix alone decides, not the file's bytes: a name says nothing
+// about which part of it is a format, so app.log holding gzip bytes
+// keeps its ".log".
+func DefaultOutputName(inputPath string) string {
+	name := filepath.Base(inputPath)
+	if compression.FormatFromExtension(name) != compression.FormatNone {
+		name = strings.TrimSuffix(name, filepath.Ext(name))
+	}
+	return name + outputSuffix
 }
 
 // Check reports why inputPath cannot be compressed to outputPath, or nil

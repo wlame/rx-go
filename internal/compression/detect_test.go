@@ -53,15 +53,15 @@ func TestDetectByExtension(t *testing.T) {
 		{"foo.log", FormatNone},
 		{"foo", FormatNone},
 		// Compound archive should ignore the extension match.
-		// NOTE: detectByExtension itself only checks the final extension;
+		// NOTE: FormatFromExtension itself only checks the final extension;
 		// the compound-archive gate is in DetectFromPath. So at this level
 		// the .gz part of .tar.gz DOES match as gzip.
 		{"foo.tar.gz", FormatGzip}, // raw extension check
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
-			if got := detectByExtension(tc.path); got != tc.want {
-				t.Errorf("detectByExtension(%q) = %q, want %q", tc.path, got, tc.want)
+			if got := FormatFromExtension(tc.path); got != tc.want {
+				t.Errorf("FormatFromExtension(%q) = %q, want %q", tc.path, got, tc.want)
 			}
 		})
 	}

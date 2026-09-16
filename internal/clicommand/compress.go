@@ -72,12 +72,12 @@ func NewCompressCommand(out io.Writer) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVarP(&output, "output", "o", "", "Output .zst path (default: PATH.zst)")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Output .zst path (default: PATH with a compression suffix replaced by .zst, else PATH.zst)")
 	// --output-dir exists for parity with rx-python:
 	// src/rx/cli/compress.py accepts --output-dir=DIR and writes
 	// {dir}/{basename}.zst (auto-creating DIR via os.makedirs(exist_ok=True)).
 	// Mutually exclusive with --output.
-	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Output directory (uses source filename with .zst extension)")
+	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Output directory (uses the default output name inside it)")
 	cmd.Flags().StringVar(&frameSize, "frame-size", "4M", "Target frame size (e.g. 4M, 16MB)")
 	cmd.Flags().IntVarP(&level, "level", "l", 3, "zstd compression level (1-22)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false,
@@ -227,21 +227,19 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 
 	// Resolve output path. Precedence (Python parity):
 	//   --output        → exact path given
-	//   --output-dir    → {dir}/{basename}.zst
-	//   neither         → {sourceDir}/{basename}.zst
+	//   --output-dir    → {dir}/{default name}
+	//   neither         → {sourceDir}/{default name}
 	//
-	// Python uses pathlib's .name (already excludes dir) and strips a
-	// known compression suffix if present; we reproduce .name with
-	// filepath.Base. (Suffix stripping is not yet done on the Go side even
-	// for the default case; keeping the behavior consistent preserves the
-	// existing parity status.)
+	// The default name is the input's base name with a compression
+	// suffix replaced by .zst (app.log.gz → app.log.zst), the rule
+	// POST /v1/compress uses too (compressfile.DefaultOutputName).
 	outputPath := p.output
 	if outputPath == "" {
-		if p.outputDir != "" {
-			outputPath = filepath.Join(p.outputDir, filepath.Base(inputPath)+".zst")
-		} else {
-			outputPath = inputPath + ".zst"
+		dir := p.outputDir
+		if dir == "" {
+			dir = filepath.Dir(inputPath)
 		}
+		outputPath = filepath.Join(dir, compressfile.DefaultOutputName(inputPath))
 	}
 	// SECURITY: the output path is a write target, so it goes through the
 	// same sandbox as the input. The validated form is what gets created.
@@ -315,11 +313,23 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	return entry, ExitSuccess
 }
 
-// compressErrorMessage words a compressfile error for the CLI: the
-// refusal of a seekable input names the flag that lifts it.
+// compressRefusalHints names, for a compressfile refusal, the flag that
+// gets past it. The first entry whose error matches (errors.Is) wins.
+var compressRefusalHints = []struct {
+	err  error
+	hint string
+}{
+	{compressfile.ErrAlreadySeekable, " (use --force to re-encode it)"},
+	{compressfile.ErrOutputIsInput, " (use --output to name another file)"},
+}
+
+// compressErrorMessage words a compressfile error for the CLI, with the
+// hint compressRefusalHints holds for it.
 func compressErrorMessage(err error) string {
-	if errors.Is(err, compressfile.ErrAlreadySeekable) {
-		return err.Error() + " (use --force to re-encode it)"
+	for _, h := range compressRefusalHints {
+		if errors.Is(err, h.err) {
+			return err.Error() + h.hint
+		}
 	}
 	return err.Error()
 }
