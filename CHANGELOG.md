@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The docs state the one way a line index, the trace cache or
+  `--no-index` may change a trace answer: a line number that is `-1`
+  without them may be the true line number with them. Every other field
+  is equal, `-1` means "not computed", and a number rx fills in is the
+  line holding the match's offset. Behavior is unchanged; see
+  `docs/concepts/caching.md`, `docs/cli/trace.md` and
+  `docs/api/endpoints/trace.md`.
+
 ## [0.3.0] - 2026-10-03
 
 ### Added

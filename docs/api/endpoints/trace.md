@@ -164,6 +164,12 @@ log with no index:
 {"offset": 365779981, "absolute_line_number": -1, "relative_line_number": 70}
 ```
 
+The same request can come back with such a line numbered once the file
+has a line index, or when the trace cache answers it. That is the only
+way an index or the cache changes an answer: every other field is
+equal, `-1` means "not computed", and a number rx fills in is always the
+line that holds the match's offset.
+
 ## Status codes
 
 | Code | When |

@@ -192,6 +192,20 @@ Data flow for `rx trace "pattern" big.log`:
    builds each answer twice, once with the cache empty and once with a
    freshly built index, and compares them.
 
+   The rule the comparison applies, to an index, to the trace cache and
+   to `--no-index` alike: every field of the two answers is equal,
+   except that a line number which is `-1` in one answer may be the
+   true line number in the other. `-1` means "not computed". A number
+   that is filled in is the line holding the byte offset, and
+   `relative_line_number` beside it carries the same number. Tests
+   compare trace answers through `internal/testutil/traceanswer`:
+   `RequireAgree` applies this rule, and `RequireSame` is its strict
+   form for two scans that ran to the end, where neither answer has a
+   `-1`. A capped search of a chunked plain file keeps whichever
+   matches its workers found first, so two capped runs can hold
+   different matches; a test that compares capped answers uses a
+   layout where the matches kept are fixed.
+
    There is exactly one thing an index does change, and it is *whether* a
    line number is known rather than *what* it is. A scan cut short by
    `--max-results` never read the bytes before the chunk that won, so
@@ -202,8 +216,11 @@ Data flow for `rx trace "pattern" big.log`:
    the number regardless asks `samples --offsets=…`, which answers a
    whole batch in one pass, or passes `--no-index`: that reads and
    writes no index and counts from byte 0 up to the last unnumbered
-   match, so the flag changes the cost and never the answer. A number
-   rx does report is identical either way.
+   match, so the flag changes the cost and never the answer. The trace
+   cache numbers them too: a cache hit reads the file again from the
+   nearest checkpoint, or from byte 0, so a capped trace answered from
+   it numbers every line it returns. A number rx does report is
+   identical either way.
 
    An index is used only when it still describes the file it was built
    from. That means the format version matches exactly — an index from

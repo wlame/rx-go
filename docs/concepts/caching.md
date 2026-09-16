@@ -106,6 +106,16 @@ matching lines, took 0.69 s from its 119 MB entry and 16 ms to scan.
 The cached answer numbers every line it returns, which a capped scan of
 a plain file may leave as `-1`.
 
+That is the only difference a cache or a line index may make to an
+answer. With them or without them, and with `--no-index`, every field
+of an answer is equal, except that a line number which is `-1` in one
+answer may be the true line number in the other. `-1` means "not
+computed", never "no such line", and a number rx fills in is always the
+line that holds the match's byte offset. (A capped search of a chunked
+plain file may keep different matches on each run whatever the cache
+holds; see [the matches a capped search returns are
+arbitrary](../cli/trace.md#the-matches-a-capped-search-returns-are-arbitrary).)
+
 Anomaly detection writes no files of its own. An analysis is part of
 the file's line index, which records the window and the detectors (each
 with its version) it ran with; a later `--analyze` request with another
