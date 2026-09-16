@@ -3,16 +3,15 @@ package trace
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -252,39 +251,6 @@ func TestCappedTraceOfASeekableFileShowsTheFileLinesAroundEachMatch(t *testing.T
 	}
 }
 
-// comparableAnswer is a trace answer as a parsed JSON document, without
-// the fields that differ between two runs of one request.
-func comparableAnswer(t *testing.T, resp *rxtypes.TraceResponse) map[string]any {
-	t.Helper()
-	raw, err := json.Marshal(resp)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	for _, field := range []string{"time", "request_id", "cli_command"} {
-		delete(doc, field)
-	}
-	return doc
-}
-
-// requireEqualAnswers fails when two answers differ, naming the first
-// window that does.
-func requireEqualAnswers(t *testing.T, name string, got, want *rxtypes.TraceResponse) {
-	t.Helper()
-	if reflect.DeepEqual(comparableAnswer(t, got), comparableAnswer(t, want)) {
-		return
-	}
-	for key, window := range want.ContextLines {
-		if !reflect.DeepEqual(got.ContextLines[key], window) {
-			t.Fatalf("%s: window %s differs:\n got %+v\nwant %+v", name, key, got.ContextLines[key], window)
-		}
-	}
-	t.Fatalf("%s: answers differ outside the context windows", name)
-}
-
 // Scenario: one match next to each chunk boundary, alternately the
 // chunk's first line, the line before it and the chunk's second line,
 // so its window reaches across the boundary and no other match's window
@@ -319,11 +285,11 @@ func TestWindowsAcrossAChunkBoundaryAreTheSameColdWarmAndWithoutAnIndex(t *testi
 	checkWindowsByOffset(t, cold, table, before, after)
 	requireTraceCache(t, path)
 	warm := cappedTraceFromCache(t, path, []string{"NEEDLE"}, opts)
-	requireEqualAnswers(t, "cache hit", warm, cold)
+	traceanswer.RequireSame(t, "cache hit", warm, cold)
 	noIndex := traceOnce(t, path, []string{"NEEDLE"}, Options{
 		ContextBefore: before, ContextAfter: after, NoCache: true, NoIndex: true,
 	})
-	requireEqualAnswers(t, "--no-index", noIndex, cold)
+	traceanswer.RequireSame(t, "--no-index", noIndex, cold)
 }
 
 // Scenario: the same for a seekable zstd file, with one match next to
@@ -365,11 +331,11 @@ func TestWindowsAcrossABatchBoundaryAreTheSameColdWarmAndWithoutAnIndex(t *testi
 			checkWindowsByOffset(t, cold, markedTable, before, after)
 			requireTraceCache(t, path)
 			warm := traceOnce(t, path, []string{"NEEDLE"}, opts)
-			requireEqualAnswers(t, "cache hit", warm, cold)
+			traceanswer.RequireSame(t, "cache hit", warm, cold)
 			noIndex := traceOnce(t, path, []string{"NEEDLE"}, Options{
 				ContextBefore: before, ContextAfter: after, NoCache: true, NoIndex: true,
 			})
-			requireEqualAnswers(t, "--no-index", noIndex, cold)
+			traceanswer.RequireSame(t, "--no-index", noIndex, cold)
 		})
 	}
 }
