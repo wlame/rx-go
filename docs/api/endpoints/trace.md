@@ -9,11 +9,11 @@ Execute a regex scan across one or more paths with parallel chunking,
 returning match byte offsets and line numbers. Supports webhook
 callbacks for progress notifications.
 
-Over HTTP a trace takes no context window: there are no `context`,
-`before_context` or `after_context` parameters, nor `no_cache`,
-`no_index` or `no_recursive`. A parameter the operation does not
-declare is ignored, so `&context=3` changes nothing. For lines around
-the matches, pass their offsets to [`GET /v1/samples`](samples.md).
+Every option of `rx trace` that shapes the answer has a query
+parameter: the matching flags, the context window (`context`,
+`before_context`, `after_context`) and the switches `no_cache`,
+`no_index` and `no_recursive`. An answer is the one `rx trace --json`
+gives with the same flags, and its `cli_command` carries them.
 
 ## Request
 
@@ -37,6 +37,12 @@ GET /v1/trace?path=...&regexp=...&max_results=...
 | `line_regexp` | `bool` | no | `false` | Match only whole lines (ripgrep `-x`) |
 | `fixed_strings` | `bool` | no | `false` | Treat every pattern as literal text (ripgrep `-F`) |
 | `pcre2` | `bool` | no | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
+| `context` | `int` | no | `0` | Lines before and after each match (`rx trace --context`), at most 100 |
+| `before_context` | `int` | no | `-1` (the `context` value) | Lines before each match (`--before`, `-B`); wins over `context`, `0` included. At most 100 |
+| `after_context` | `int` | no | `-1` (the `context` value) | Lines after each match (`--after`, `-A`); wins over `context`, `0` included. At most 100 |
+| `no_cache` | `bool` | no | `false` | Neither read nor write the trace cache (`--no-cache`) |
+| `no_index` | `bool` | no | `false` | Read and write no line index; a match a capped scan left unnumbered is numbered by counting from the start of the file (`--no-index`) |
+| `no_recursive` | `bool` | no | `false` | For a directory path, search only the files directly inside it (`--no-recursive`) |
 
 Repeat `path` and `regexp` to supply multiple values:
 
@@ -70,6 +76,43 @@ A value is `true` or `false` (`1` and `0` also work); anything else is a
 like any other pattern ripgrep cannot compile. These parameters arrived
 with contract version 1.3; a client can read the version from
 [`GET /health`](health.md) before relying on them.
+
+### Context window
+
+`context`, `before_context` and `after_context` are the `-C`, `-B` and
+`-A` of [`rx trace`](../../cli/trace.md#context-flags-precedence), resolved the same
+way: a given `before_context` or `after_context` wins over `context`,
+`0` included, and `-1` (the default) means "take `context`". The window
+fills `context_lines`, and the answer echoes it in `before_context` and
+`after_context`:
+
+```text
+GET /v1/trace?path=/var/log/app.log&regexp=panic&context=3&after_context=10
+```
+
+```json
+"before_context": 3,
+"after_context": 10,
+"cli_command": "rx trace /var/log/app.log --regexp=panic --context=3 --after=10"
+```
+
+Every match carries its own window, so the window multiplies the size
+of the answer. Each side is capped at 100 lines; a larger value, or a
+value below the minimum, is a `422`, and the OpenAPI document declares
+the bound as the parameter's `maximum`. For a wider read around one
+place in a file, pass its offset to [`GET /v1/samples`](samples.md).
+
+### Cache, index and recursion
+
+`no_cache`, `no_index` and `no_recursive` are the switches of the same
+name in `rx trace`. `no_cache` and `no_index` change how rx reaches an
+answer, never what it is, apart from the one difference stated under
+[the line numbers](#matches-shape): with `no_index`, a capped scan
+numbers every match it returns by counting lines from the start of the
+file, where it would otherwise use a line index or report `-1`.
+`no_recursive` changes which files a directory path covers.
+
+These six parameters arrived with contract version 1.4.
 
 ### Required parameter validation
 
@@ -134,8 +177,8 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `skipped_files` | `string[]` | Files skipped (binary, size limit, etc.) |
 | `max_results` | `int \| null` | The cap that was applied, or null |
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it |
-| `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); over HTTP each entry holds only the match's own line, as `{relative_line_number, absolute_line_number, line_text, absolute_offset}`. The lines around a match appear only from `rx trace --samples` |
-| `before_context`, `after_context` | `int \| null` | Always `null` over HTTP; the CLI reports the window `--samples` used |
+| `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); each entry is the match's window, the match's own line included, as `{relative_line_number, absolute_line_number, line_text, absolute_offset}`. Without a context window an entry holds only the match's own line; see [`rx trace`](../../cli/trace.md#match-with-prepost-context) for how a window is built |
+| `before_context`, `after_context` | `int \| null` | The window used on each side, or `null` when it is `0` |
 | `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
 
 ### `matches[]` shape
@@ -178,7 +221,7 @@ line that holds the match's offset.
 | `400 Bad Request` | `max_results` missing when `hook_on_match` is set; invalid hook URL; bad regex |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | A requested path doesn't exist |
-| `422 Unprocessable Entity` | Missing required `path` or `regexp` param |
+| `422 Unprocessable Entity` | Missing required `path` or `regexp` param; a parameter of the wrong type; a context count above 100 or below its minimum |
 | `500 Internal Server Error` | Engine failure; logged with stack |
 | `503 Service Unavailable` | `ripgrep` not available |
 

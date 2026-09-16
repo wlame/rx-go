@@ -182,8 +182,8 @@ Per-invocation flags:
 
 | Flag | Effect |
 |---|---|
-| `--no-cache` (on `rx trace`) | Disable trace cache for this invocation — no read, no write |
-| `--no-index` (on `rx trace`) | Neither read nor write a line index; count lines from the start of the file instead (same answer) |
+| `--no-cache` (on `rx trace`), `no_cache=true` (on `GET /v1/trace`) | Disable trace cache for this invocation — no read, no write |
+| `--no-index` (on `rx trace`), `no_index=true` (on `GET /v1/trace`) | Neither read nor write a line index; count lines from the start of the file instead (same answer) |
 | `--no-index` (on `rx samples`), `RX_NO_INDEX` | Neither build nor read a line index for this lookup |
 
 ### Edge cases

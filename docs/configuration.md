@@ -58,10 +58,12 @@ See [concepts/chunking](concepts/chunking.md).
 The trace cache is turned off per invocation; there is no variable for
 it:
 
-- `--no-cache` on `rx trace` — don't consult or write the trace cache
-- `--no-index` on `rx trace` — neither read nor write a line index;
-  lines a capped scan left unnumbered are counted from the start of the
-  file instead (same answer)
+- `--no-cache` on `rx trace`, `no_cache=true` on `GET /v1/trace` —
+  don't consult or write the trace cache
+- `--no-index` on `rx trace`, `no_index=true` on `GET /v1/trace` —
+  neither read nor write a line index; lines a capped scan left
+  unnumbered are counted from the start of the file instead (same
+  answer)
 
 | Variable | Default | Description |
 |---|---|---|

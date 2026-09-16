@@ -18,6 +18,20 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
+// MaxTraceContextLines is the most context lines a trace request may ask
+// for on each side of a match, through context, before_context or
+// after_context; a larger value is refused with a 422.
+//
+// Every match carries its own window, so the window multiplies the size
+// of an answer: at this cap one match brings at most 201 lines. That is
+// room for a long stack trace around a log line. A wider read around one
+// place in a file is what GET /v1/samples is for.
+//
+// The parameters' struct tags spell the same number (`maximum:"100"`),
+// because a tag cannot name a constant; a test compares the published
+// maximum with this value.
+const MaxTraceContextLines = 100
+
 // traceInput is the query-string shape for GET /v1/trace.
 //
 // Notes on huma tag semantics:
@@ -56,6 +70,38 @@ type traceInput struct {
 	LineRegexp   bool `query:"line_regexp" doc:"Match only whole lines (ripgrep -x)"`
 	FixedStrings bool `query:"fixed_strings" doc:"Treat every pattern as literal text (ripgrep -F)"`
 	PCRE2        bool `query:"pcre2" doc:"Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)"`
+
+	// The context window of `rx trace --context`, `--before` and
+	// `--after` (-C, -B, -A), spelled as GET /v1/samples spells it.
+	// context is 0 when absent, which is also the CLI's default.
+	// before_context and after_context use -1 for "not given, take
+	// context": huma forbids pointer query parameters, and a given 0
+	// must still win over context, as --before=0 does on the command
+	// line. The maximum is MaxTraceContextLines.
+	Context       int `query:"context" minimum:"0" maximum:"100" default:"0" example:"3" doc:"Context lines before and after each match (rx trace --context). Fills context_lines, before_context and after_context of the answer."`
+	BeforeContext int `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each match (rx trace --before); wins over context, 0 included. -1 = the context value."`
+	AfterContext  int `query:"after_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines after each match (rx trace --after); wins over context, 0 included. -1 = the context value."`
+
+	// The switches of `rx trace --no-cache`, `--no-index` and
+	// `--no-recursive`. Each changes how rx reaches the answer, or which
+	// files a directory path covers, and never the answer for a file.
+	NoCache     bool `query:"no_cache" doc:"Neither read nor write the trace cache (rx trace --no-cache)"`
+	NoIndex     bool `query:"no_index" doc:"Read and write no line index; a match a capped scan left unnumbered is numbered by counting lines from the start of the file (rx trace --no-index)"`
+	NoRecursive bool `query:"no_recursive" doc:"Search only the files directly inside a directory path, not its subdirectories (rx trace --no-recursive)"`
+}
+
+// contextWindow returns the lines to show before and after each match,
+// resolved the way `rx trace` resolves --context, --before and --after:
+// a given before_context or after_context wins over context, 0 included.
+func (in *traceInput) contextWindow() (before, after int) {
+	before, after = in.Context, in.Context
+	if in.BeforeContext >= 0 {
+		before = in.BeforeContext
+	}
+	if in.AfterContext >= 0 {
+		after = in.AfterContext
+	}
+	return before, after
 }
 
 // matchingFlags reports which matching flags the query turned on, keyed
@@ -204,12 +250,18 @@ func registerTraceHandlers(s *Server, api huma.API) {
 
 		// Run the engine.
 		matchingFlags := in.matchingFlags()
+		before, after := in.contextWindow()
 		start := time.Now()
 		resp, err := s.cfg.Engine.RunWithOptions(ctx, validatedPaths, in.Regexp, trace.Options{
-			MaxResults:  maxResultsPtr,
-			RgExtraArgs: trace.RipgrepArgs(matchingFlags),
-			HookFirer:   firer,
-			RequestID:   reqID,
+			MaxResults:    maxResultsPtr,
+			RgExtraArgs:   trace.RipgrepArgs(matchingFlags),
+			ContextBefore: before,
+			ContextAfter:  after,
+			NoCache:       in.NoCache,
+			NoIndex:       in.NoIndex,
+			NoRecursive:   in.NoRecursive,
+			HookFirer:     firer,
+			RequestID:     reqID,
 		})
 		if err != nil {
 			// A pattern ripgrep cannot compile is the caller's mistake,
@@ -242,6 +294,12 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			"regexp":           in.Regexp,
 			"matching_flags":   selectedFlagNames(matchingFlags),
 			"max_results":      maxResultsPtr,
+			"context":          in.Context,
+			"before_context":   nilIfNegative(in.BeforeContext),
+			"after_context":    nilIfNegative(in.AfterContext),
+			"no_cache":         in.NoCache,
+			"no_index":         in.NoIndex,
+			"no_recursive":     in.NoRecursive,
 			"request_id":       in.RequestID,
 			"hook_on_file":     in.HookOnFile,
 			"hook_on_match":    in.HookOnMatch,

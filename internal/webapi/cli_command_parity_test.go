@@ -98,6 +98,7 @@ func TestBuildCLICommand_UsesTheEqualsFormForEveryLongFlag(t *testing.T) {
 	// flag or nothing.
 	valuelessFlags := map[string]bool{
 		"--force": true, "--analyze": true, "--info": true, "--json": true,
+		"--no-cache": true, "--no-index": true, "--no-recursive": true,
 	}
 	for _, flag := range trace.MatchingFlags {
 		valuelessFlags["--"+flag.Long] = true

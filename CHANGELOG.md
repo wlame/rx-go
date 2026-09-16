@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GET /v1/trace` takes the remaining options of `rx trace` as query
+  parameters: `context`, `before_context` and `after_context` (the
+  `--context`, `--before` and `--after` window, resolved the same way:
+  a given `before_context` or `after_context` wins over `context`, `0`
+  included, and `-1` means "take `context`"), and `no_cache`,
+  `no_index` and `no_recursive`. An answer equals the one
+  `rx trace --json` gives with the same flags, so `context_lines`,
+  `before_context` and `after_context` now carry the window over HTTP
+  too, and `cli_command` renders every one of them. Each context count
+  is capped at 100 lines per side; above it the request is a `422`, and
+  the OpenAPI document declares the bound. The contract version is now
+  1.4.
+
 ### Changed
 
 - The docs state the one way a line index, the trace cache or
