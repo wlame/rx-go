@@ -279,6 +279,12 @@ Data flow for `rx trace "pattern" big.log`:
   `testdata/` for CLI output and the OpenAPI spec. Integration tests in
   `internal/webapi/*_integration_test.go` use `httptest` and a real viewer
   tarball fixture (`internal/webapi/testdata/rx-viewer-v0.2.0-dist.tar.gz`).
+- `internal/webapi/openapi_conformance_test.go` calls every operation over
+  the real router and validates each answer against the golden OpenAPI
+  document's schema for its status (JSON Schema 2020-12, test-only
+  dependency `santhosh-tekuri/jsonschema`). It fails on an undeclared
+  status and on an operation no call reaches: a new operation or error
+  status gets a call there.
 - Byte-budget tests for anything that reads files. Binary-level tests for exit
   codes and `--help` (run the built binary, assert `$?`).
 - `t.TempDir()` and `t.Setenv()`; `t.Parallel()` and `t.Setenv()` are mutually
