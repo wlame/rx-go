@@ -2,21 +2,17 @@ package compressfile
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"github.com/klauspost/compress/zstd"
-	"github.com/ulikunitz/xz"
-
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/seekable"
+	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 )
 
 // logText is the text every fixture holds: lines that read "LINE <n>",
@@ -27,56 +23,6 @@ func logText(lines int) []byte {
 		fmt.Fprintf(&b, "LINE %d level=info message=request served in %d ms\n", n, n%97)
 	}
 	return b.Bytes()
-}
-
-// compressedCopy encodes text in one format. It returns nil when the
-// format needs a tool the host lacks (bzip2: Go only decodes it).
-func compressedCopy(t *testing.T, format string, text []byte) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	switch format {
-	case "gzip":
-		w := gzip.NewWriter(&buf)
-		_, _ = w.Write(text)
-		if err := w.Close(); err != nil {
-			t.Fatalf("gzip: %v", err)
-		}
-	case "xz":
-		w, err := xz.NewWriter(&buf)
-		if err != nil {
-			t.Fatalf("xz writer: %v", err)
-		}
-		_, _ = w.Write(text)
-		if err := w.Close(); err != nil {
-			t.Fatalf("xz: %v", err)
-		}
-	case "zstd":
-		w, err := zstd.NewWriter(nil)
-		if err != nil {
-			t.Fatalf("zstd writer: %v", err)
-		}
-		buf.Write(w.EncodeAll(text, nil))
-		_ = w.Close()
-	case "seekable zstd":
-		enc := seekable.NewEncoder(seekable.EncoderConfig{FrameSize: 1024})
-		if _, err := enc.Encode(context.Background(), bytes.NewReader(text), int64(len(text)), &buf); err != nil {
-			t.Fatalf("seekable: %v", err)
-		}
-	case "bzip2":
-		if _, err := exec.LookPath("bzip2"); err != nil {
-			return nil
-		}
-		cmd := exec.Command("bzip2", "-c")
-		cmd.Stdin = bytes.NewReader(text)
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("bzip2: %v", err)
-		}
-		buf.Write(out)
-	default:
-		t.Fatalf("unknown format %q", format)
-	}
-	return buf.Bytes()
 }
 
 // decompressedText reads a seekable zstd file back as text.
@@ -117,7 +63,7 @@ func TestCompress_WritesTheTextOfACompressedInput(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.format, func(t *testing.T) {
 			t.Parallel()
-			body := compressedCopy(t, tc.format, text)
+			body := compressedcopy.Encode(t, tc.format, text)
 			if body == nil {
 				t.Skipf("no %s binary on PATH to write the fixture", tc.format)
 			}
@@ -185,7 +131,7 @@ func TestCompress_SeekableInputIsRefusedUnlessReencodingIsAsked(t *testing.T) {
 	text := logText(2000)
 	dir := t.TempDir()
 	input := filepath.Join(dir, "app.log.zst")
-	if err := os.WriteFile(input, compressedCopy(t, "seekable zstd", text), 0o600); err != nil {
+	if err := os.WriteFile(input, compressedcopy.Encode(t, compressedcopy.SeekableZstd, text), 0o600); err != nil {
 		t.Fatalf("write input: %v", err)
 	}
 	output := filepath.Join(dir, "reframed.zst")
@@ -224,7 +170,7 @@ func TestCheck_RefusesWhatCannotBeCompressed(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 	archive := filepath.Join(dir, "logs.tar.gz")
-	if err := os.WriteFile(archive, compressedCopy(t, "gzip", []byte("not a tar")), 0o600); err != nil {
+	if err := os.WriteFile(archive, compressedcopy.Encode(t, compressedcopy.Gzip, []byte("not a tar")), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -253,7 +199,7 @@ func TestCompress_CorruptInputFailsWithTheDecoderError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	input := filepath.Join(dir, "app.log.gz")
-	body := compressedCopy(t, "gzip", logText(2000))
+	body := compressedcopy.Encode(t, compressedcopy.Gzip, logText(2000))
 	// Cut the stream short: the gzip reader reports an unexpected EOF.
 	if err := os.WriteFile(input, body[:len(body)/2], 0o600); err != nil {
 		t.Fatalf("write input: %v", err)
