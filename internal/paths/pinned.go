@@ -21,16 +21,23 @@ import (
 // actually opened and refuses it when it is not that file. Whatever a
 // path leads to by the time of the read, only the checked file is read.
 //
-// The identity itself is taken through an os.Root opened at the search
-// root (see statInsideRoot): os.Root resolves a path one component at a
-// time and refuses to leave the directory it was opened at, so a
-// directory swapped for a link to /etc while the check runs cannot make
-// the check record a file outside the root.
+// The identity itself is taken by walking the checked location down
+// from the search root one directory at a time, refusing any symbolic
+// link on the way (see statInsideRoot). A directory swapped for a link
+// while the check runs — to /etc, or into a hidden directory of the
+// root — fails the check instead of having the file it leads to
+// recorded as the checked one.
 
 // ErrFileChanged reports that a path no longer leads to the file that
 // was checked: it was replaced, or a symbolic link on the way to it was
 // retargeted, after the check.
 var ErrFileChanged = errors.New("file changed after it was checked")
+
+// pinBeforeStat, when set, runs inside Pin after the path has been
+// resolved and checked and before the identity of its file is recorded.
+// Tests set it to change the tree inside that window; it is nil
+// otherwise.
+var pinBeforeStat func()
 
 // Pinned is a file a caller may read, pinned to the file its path led
 // to when it was checked.
@@ -153,7 +160,13 @@ func pinCanonical(path, canonical string) (Pinned, error) {
 			return Pinned{}, err
 		}
 	}
+	if pinBeforeStat != nil {
+		pinBeforeStat()
+	}
 	info, err := statCanonical(canonical, roots)
+	if errors.Is(err, ErrFileChanged) {
+		return Pinned{}, fmt.Errorf("%w: %s", ErrFileChanged, path)
+	}
 	if err != nil {
 		return Pinned{}, err
 	}
@@ -167,7 +180,8 @@ func pinCanonical(path, canonical string) (Pinned, error) {
 
 // statCanonical stats canonical without following a final link. Inside
 // a sandbox the stat goes through statInsideRoot, so it cannot describe
-// a file outside the root that holds canonical.
+// a file anywhere but at canonical itself: not outside the root, not in
+// a hidden directory.
 func statCanonical(canonical string, roots []string) (os.FileInfo, error) {
 	for _, root := range roots {
 		if rel, ok := relativeToRoot(root, canonical); ok {
@@ -191,18 +205,79 @@ func relativeToRoot(root, canonical string) (string, bool) {
 	return "", false
 }
 
-// statInsideRoot stats rel below root through an os.Root.
+// statInsideRoot stats rel below root, one component at a time, and
+// refuses to pass through a symbolic link.
 //
-// Go note: os.Root (Go 1.24+) holds an open directory and resolves every
-// name relative to it one component at a time, following a symbolic
-// link only while it stays inside that directory. A component that was
-// swapped for a link leading out of root since the canonical path was
-// computed makes the stat fail instead of describing the file outside.
+// rel is a canonical path (every link resolved, every component
+// checked against the hidden rule), so the file it names is reached
+// without following any link. Finding a link on the way, or a
+// directory that is not the one its name held a moment earlier, means
+// the tree was changed after the check; the result is then an error
+// wrapping ErrFileChanged, never the stat of the file the change leads
+// to. Whatever identity is recorded is therefore one of a file that sat
+// at the checked location: inside root and with no hidden component.
+//
+// Go note: os.Root (Go 1.24+) holds an open directory and resolves the
+// names given to its methods relative to it, refusing any name or link
+// that would lead out of it. Each step below opens the next directory
+// relative to the one already open, so no step looks the path up from
+// the top again; os.Root alone would still follow a link that stays
+// inside the directory (into a hidden one, say), which is what the
+// per-step check adds.
 func statInsideRoot(root, rel string) (os.FileInfo, error) {
-	r, err := os.OpenRoot(root)
+	dir, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = r.Close() }()
-	return r.Lstat(rel)
+	// dir moves down the tree in the loop; the deferred function closes
+	// whichever directory is open when statInsideRoot returns.
+	defer func() { _ = dir.Close() }()
+	if rel == "." {
+		return dir.Stat(".")
+	}
+	names := strings.Split(rel, string(filepath.Separator))
+	last := len(names) - 1
+	for _, name := range names[:last] {
+		child, err := openRealSubdir(dir, name)
+		if err != nil {
+			return nil, err
+		}
+		_ = dir.Close()
+		dir = child
+	}
+	// Lstat: a final component that became a link is described as a
+	// link, and the caller refuses it.
+	return dir.Lstat(names[last])
+}
+
+// openRealSubdir opens the directory name inside parent, and only when
+// name is a real directory rather than a symbolic link.
+//
+// The check and the open are two look-ups, so the open itself is
+// checked too: the directory opened must be the very one (device and
+// inode) the Lstat saw under name. A name swapped for a link between
+// the two look-ups opens the link's target, which is not that
+// directory, and is refused.
+func openRealSubdir(parent *os.Root, name string) (*os.Root, error) {
+	entry, err := parent.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if entry.Mode()&fs.ModeSymlink != 0 {
+		return nil, ErrFileChanged
+	}
+	child, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := child.Stat(".")
+	if err != nil {
+		_ = child.Close()
+		return nil, err
+	}
+	if !os.SameFile(entry, opened) {
+		_ = child.Close()
+		return nil, ErrFileChanged
+	}
+	return child, nil
 }

@@ -139,6 +139,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A file that changed is skipped (`skipped_files`) or refused (`file
   changed after it was checked`), never read. A directory walk lists
   each directory through a handle checked the same way.
+- The check of a path records the identity of the checked file only.
+  When a directory on the path was swapped, while the check ran, for a
+  link into a hidden directory of the root (or to another directory),
+  the check recorded the file the link led to, and later reads accepted
+  it: a hidden file could be read without `--hidden`. The check now
+  walks down from the search root one directory at a time and fails
+  with `file changed after it was checked` on any link it meets there.
 - One line can no longer make a trace hold gigabytes in memory.
   ripgrep reports a matched line whole, plus about 50 bytes for every
   submatch on it, and rx read each report whole: a search for `x` over a
