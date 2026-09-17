@@ -91,8 +91,8 @@ func New() *Engine { return &Engine{} }
 //     c. Seekable zstd  — ProcessSeekable (frame-parallel)
 //     d. Cache hit      — reconstruct from disk (ReconstructMatchData)
 //  4. Runs each bucket through its path, collects MatchRaw.
-//  5. Applies IdentifyMatchingPatterns to turn "matched some pattern"
-//     into "matched these pattern IDs".
+//  5. Decides which patterns match each matched line (creditPatterns)
+//     and reports the line once per pattern, with its own submatches.
 //  6. Sorts, truncates to max_results, resolves absolute line numbers
 //     (for chunked files that lack them), and builds a TraceResponse.
 //     OnFile fires as each file's scan finishes; OnMatch fires once per
@@ -315,6 +315,17 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
+			credits, cerr := creditPatterns(ctx, creditRequest{
+				source: b.src, lines: allChunkMatches(chunkResults),
+				patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs,
+			})
+			if cerr != nil {
+				if fatal := creditFailureEndsTrace(ctx, cerr); fatal != nil {
+					return nil, fatal
+				}
+				skipped = append(skipped, b.path)
+				continue
+			}
 			// Turn ripgrep's chunk-relative line numbers into file
 			// absolute ones. Chunks are newline-aligned, so the
 			// newlines counted while feeding the chunks before this one
@@ -326,6 +337,7 @@ func (e *Engine) RunWithOptions(
 			// rather than a wrong one.
 			startLine := 1
 			numbered := true
+			line := 0 // index of rm in credits, which lists every chunk's matches in turn
 			for _, res := range chunkResults {
 				for _, rm := range res.Matches {
 					ends.record(fileID, rm.Offset, rm.End)
@@ -333,9 +345,8 @@ func (e *Engine) RunWithOptions(
 					if numbered {
 						absLine = startLine + rm.LineNumber - 1
 					}
-					matchedIDs := identifyRawMatch(rm, patternIDs, patternOrder, opts.RgExtraArgs)
-					for _, pid := range matchedIDs {
-						m := toMatch(pid, fileID, rm)
+					for _, credit := range credits[line] {
+						m := toMatch(credit, fileID, rm)
 						m.AbsoluteLineNumber = absLine
 						if absLine > 0 {
 							// rx-python reports the absolute number in
@@ -347,6 +358,7 @@ func (e *Engine) RunWithOptions(
 							cacheEntry.Matches = append(cacheEntry.Matches, m)
 						}
 					}
+					line++
 				}
 				for _, rc := range res.Contexts {
 					ends.record(fileID, rc.Offset, rc.End)
@@ -405,15 +417,25 @@ func (e *Engine) RunWithOptions(
 					continue
 				}
 			}
+			credits, crErr := creditPatterns(ctx, creditRequest{
+				source: b.src, lines: rawMatches,
+				patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs,
+			})
+			if crErr != nil {
+				if fatal := creditFailureEndsTrace(ctx, crErr); fatal != nil {
+					return nil, fatal
+				}
+				skipped = append(skipped, b.path)
+				continue
+			}
 			// The whole file goes through one ripgrep, so the line
 			// numbers it reports are the file's own. Reporting them as
 			// unknown made a search of a .gz look less informative than
 			// the same search of the text inside it.
-			for _, rm := range rawMatches {
+			for i, rm := range rawMatches {
 				ends.record(fileID, rm.Offset, rm.End)
-				matchedIDs := identifyRawMatch(rm, patternIDs, patternOrder, opts.RgExtraArgs)
-				for _, pid := range matchedIDs {
-					m := toMatch(pid, fileID, rm)
+				for _, credit := range credits[i] {
+					m := toMatch(credit, fileID, rm)
 					if rm.LineNumber >= 1 {
 						m.AbsoluteLineNumber = rm.LineNumber
 					}
@@ -463,16 +485,26 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
+			credits, crErr := creditPatterns(ctx, creditRequest{
+				source: b.src, lines: rawMatches,
+				patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs,
+			})
+			if crErr != nil {
+				if fatal := creditFailureEndsTrace(ctx, crErr); fatal != nil {
+					return nil, fatal
+				}
+				skipped = append(skipped, b.path)
+				continue
+			}
 			// Frames carry their own line numbering, which the scan
 			// turns into the file's by counting the lines of the frames
 			// before each one. A frame the scan never reached leaves
 			// its matches unnumbered rather than numbered from the
 			// wrong place.
-			for _, rm := range rawMatches {
+			for i, rm := range rawMatches {
 				ends.record(fileID, rm.Offset, rm.End)
-				matchedIDs := identifyRawMatch(rm, patternIDs, patternOrder, opts.RgExtraArgs)
-				for _, pid := range matchedIDs {
-					m := toMatch(pid, fileID, rm)
+				for _, credit := range credits[i] {
+					m := toMatch(credit, fileID, rm)
 					if rm.AbsoluteLine >= 1 {
 						m.AbsoluteLineNumber = rm.AbsoluteLine
 						m.RelativeLineNumber = ptrInt(rm.AbsoluteLine)
@@ -765,22 +797,44 @@ func linesCut(matches []MatchRaw, contexts []ContextRaw) bool {
 	return false
 }
 
-// toMatch turns a MatchRaw + pattern_id + file_id into the final
-// rxtypes.Match. Wraps pointer-conversion for line number + line text.
-func toMatch(pid, fileID string, rm MatchRaw) rxtypes.Match {
+// toMatch turns a matched line and one pattern it is credited to into
+// the final rxtypes.Match: the line's place and text, and that pattern's
+// own submatches. Wraps pointer-conversion for line number + line text.
+func toMatch(credit patternCredit, fileID string, rm MatchRaw) rxtypes.Match {
 	line := rm.LineNumber
 	text := rm.LineText
 	return rxtypes.Match{
-		Pattern:             pid,
+		Pattern:             credit.patternID,
 		File:                fileID,
 		Offset:              rm.Offset,
 		RelativeLineNumber:  &line,
 		AbsoluteLineNumber:  -1, // resolved later if possible
 		LineText:            &text,
-		Submatches:          rm.Submatches,
+		Submatches:          credit.submatches,
 		LineTextTruncated:   rm.LineTextTruncated,
-		SubmatchesTruncated: rm.SubmatchesTruncated,
+		SubmatchesTruncated: credit.submatchesTruncated,
 	}
+}
+
+// allChunkMatches lists the matches of every chunk, chunk after chunk.
+func allChunkMatches(results []ChunkResult) []MatchRaw {
+	var out []MatchRaw
+	for _, res := range results {
+		out = append(out, res.Matches...)
+	}
+	return out
+}
+
+// creditFailureEndsTrace returns the error that ends the whole trace
+// when deciding a file's patterns failed with err, and nil when only
+// that file is lost (it is then reported as skipped, like a file whose
+// scan failed). A pattern ripgrep refuses dooms every file, and a
+// canceled request stops the trace.
+func creditFailureEndsTrace(ctx context.Context, err error) error {
+	if errors.Is(err, ErrInvalidPattern) {
+		return err
+	}
+	return ctx.Err()
 }
 
 // fireMatchHooks calls OnMatch once for each match of the answer, in
