@@ -112,9 +112,9 @@ func TestParseEvent_BytesField(t *testing.T) {
 	if ev.Type != RgEventMatch {
 		t.Fatalf("type = %s, want match", ev.Type)
 	}
-	// bytes-wrapped lines still produce a non-empty Text string.
-	if ev.Match.Lines.Text == "" {
-		t.Errorf("Lines.Text is empty; want base64 literal preserved")
+	// A bytes-wrapped payload holds the bytes it stands for.
+	if ev.Match.Lines.Text != "hello\n" || ev.Match.Path.Text != "foo" {
+		t.Errorf("Lines.Text = %q, Path.Text = %q; want the decoded bytes \"hello\\n\" and \"foo\"", ev.Match.Lines.Text, ev.Match.Path.Text)
 	}
 }
 

@@ -274,7 +274,7 @@ func boundedLineText(kept []byte, size int64, limit int) (text string, cut bool)
 			return whole, false
 		}
 	}
-	return string(kept[:formText.cutAt(kept, limit)]), true
+	return string(kept[:characterCut(kept, limit)]), true
 }
 
 // ============================================================================

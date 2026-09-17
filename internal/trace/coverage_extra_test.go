@@ -431,7 +431,7 @@ func TestComputePatternsHash_Stability(t *testing.T) {
 
 // ripgrep wraps every string in a payload object: {"text": …} for
 // UTF-8, {"bytes": "<base64>"} for anything else, or null. Each reads
-// into an RgText, the base64 form unchanged.
+// into an RgText holding the bytes the payload stands for.
 func TestParseEvent_PayloadForms(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -440,7 +440,7 @@ func TestParseEvent_PayloadForms(t *testing.T) {
 	}{
 		{"null", "null", ""},
 		{"text", `{"text": "hello"}`, "hello"},
-		{"bytes_b64", `{"bytes": "aGVsbG8="}`, "aGVsbG8="}, // "hello" base64
+		{"bytes_b64", `{"bytes": "aGVsbG8="}`, "hello"}, // "hello" base64
 		{"empty", `{}`, ""},
 	}
 	for _, tc := range cases {

@@ -205,6 +205,13 @@ pattern anchored with `^` does not match a line that starts with the
 mark. rx does not transcode UTF-16: a plain UTF-16 file is binary and
 skipped, and a compressed copy is searched as its bytes.
 
+A line that is not valid UTF-8 (a stray Latin-1 byte, a character cut
+short) is searched as its bytes. Human output prints those bytes, as
+`rx samples` does; in `--json` each byte that is not part of a valid
+character reads as U+FFFD, the same in `rx samples --json`. Submatch
+`start` and `end` count the line's bytes, so on such a line they do not
+index the decoded `line_text`.
+
 ### Structured output for piping
 
 ```bash

@@ -126,8 +126,8 @@ func TestParseEvent_BytesPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ev.Begin.Path.Text != "aGVsbG8=" {
-		t.Errorf("Path.Text = %q, want base64 literal stored unchanged", ev.Begin.Path.Text)
+	if ev.Begin.Path.Text != "hello" {
+		t.Errorf("Path.Text = %q, want the decoded bytes \"hello\"", ev.Begin.Path.Text)
 	}
 }
 
