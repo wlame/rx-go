@@ -572,6 +572,13 @@ happens at all.
 - Tying up the server with a tree of links that lead sideways to other
   directories (6 levels × 6 links = 46,656 paths to one file) — blocked
   by searching each directory once per walk
+- Exhausting the server's memory with one search for a common
+  character over a file with a very long line (ripgrep reports the line
+  whole, plus about 50 bytes per submatch: some 5 GB for a 100 MB line)
+  — blocked by reading ripgrep's output without holding it and keeping
+  at most `RX_MAX_LINE_TEXT_BYTES` of a line and
+  `RX_MAX_SUBMATCHES_PER_LINE` submatches; see
+  [long lines](../api/endpoints/trace.md#long-lines)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range
@@ -584,8 +591,10 @@ happens at all.
   within the sandbox; with it, anyone who has the one shared token can.
   This is by design; see "Intended use, first" above.
 - **DoS** — no built-in rate limiting. A single client can
-  simultaneously launch N traces and exhaust CPU. Use a reverse
-  proxy or a process supervisor that caps concurrent requests.
+  simultaneously launch N traces and exhaust CPU. Each line costs a
+  bounded amount of memory, but an uncapped trace still holds every
+  match it returns. Use a reverse proxy or a process supervisor that
+  caps concurrent requests, and `max_results`.
 - **Exposure to an untrusted network** — there is no TLS, and the
   optional token travels in clear text. This is the scope decision at
   the top of the page, not a bug. Put `rx` behind a perimeter.

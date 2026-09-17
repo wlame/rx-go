@@ -144,8 +144,10 @@ func countLinesToOffsets(src sandbox.Pinned, start rxtypes.LineIndexEntry, wante
 	r := bufio.NewReaderSize(f, lineCountBufferBytes)
 	pos, line, next := start.ByteOffset, start.LineNumber, 0
 	for next < len(wanted) {
-		chunk, readErr := r.ReadBytes('\n')
-		end := pos + int64(len(chunk))
+		// Only the line's length is needed: none of it is kept, so a
+		// line of any length costs one read buffer.
+		_, size, readErr := readBoundedLine(r, nil, 0)
+		end := pos + size
 		// Every wanted offset that falls inside this line takes its number.
 		for next < len(wanted) && wanted[next] < end {
 			if wanted[next] >= pos {

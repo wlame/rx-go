@@ -24,7 +24,14 @@ type ContextRow struct {
 	// IsMatch marks a line a pattern actually matched, printed with ':'
 	// where a context line gets '-'.
 	IsMatch bool
+	// Truncated marks a line whose Text is only its first bytes (the
+	// answer's line_text_truncated), printed with cutLineMarker after it.
+	Truncated bool
 }
+
+// cutLineMarker follows the text of a line the answer holds only the
+// first bytes of, so a reader does not take them for the whole line.
+const cutLineMarker = " [line truncated]"
 
 // FileContext is the merged context for one file, in line order.
 type FileContext struct {
@@ -51,8 +58,8 @@ func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 
 	matchLines := matchLineNumbers(resp)
 
-	// file id -> line number -> text, so repeated lines collapse.
-	byFile := map[string]map[int]string{}
+	// file id -> line number -> line, so repeated lines collapse.
+	byFile := map[string]map[int]rxtypes.ContextLine{}
 	for key, lines := range resp.ContextLines {
 		fileID, ok := fileIDFromContextKey(key)
 		if !ok {
@@ -60,7 +67,7 @@ func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 		}
 		perLine := byFile[fileID]
 		if perLine == nil {
-			perLine = map[int]string{}
+			perLine = map[int]rxtypes.ContextLine{}
 			byFile[fileID] = perLine
 		}
 		for _, cl := range lines {
@@ -68,7 +75,7 @@ func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 			if n < 1 {
 				continue
 			}
-			perLine[n] = cl.LineText
+			perLine[n] = cl
 		}
 	}
 
@@ -90,8 +97,9 @@ func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 			}
 			current = append(current, ContextRow{
 				LineNumber: n,
-				Text:       perLine[n],
+				Text:       perLine[n].LineText,
 				IsMatch:    matchLines[matchKey{fileID: fileID, line: n}],
+				Truncated:  perLine[n].LineTextTruncated,
 			})
 			prev = n
 		}
@@ -145,7 +153,8 @@ func fileIDFromContextKey(key string) (string, bool) {
 //
 // Each line is "<number><marker> <text>", where the marker is ':' for a
 // match and '-' for context, and the numbers in one file are right-
-// aligned. Blocks within a file are separated by "--".
+// aligned. A line the answer cut ends with cutLineMarker. Blocks within
+// a file are separated by "--".
 func FormatContextSection(contexts []FileContext, before, after int) string {
 	if len(contexts) == 0 {
 		return ""
@@ -164,7 +173,11 @@ func FormatContextSection(contexts []FileContext, before, after int) string {
 				if row.IsMatch {
 					marker = ":"
 				}
-				fmt.Fprintf(&b, "%*d%s %s\n", width, row.LineNumber, marker, row.Text)
+				suffix := ""
+				if row.Truncated {
+					suffix = cutLineMarker
+				}
+				fmt.Fprintf(&b, "%*d%s %s%s\n", width, row.LineNumber, marker, row.Text, suffix)
 			}
 		}
 	}

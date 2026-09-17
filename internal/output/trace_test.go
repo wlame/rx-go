@@ -194,3 +194,22 @@ func TestFormatContextSection_EmptyWhenNoContext(t *testing.T) {
 		t.Errorf("got %q, want empty", got)
 	}
 }
+
+// A line the answer cut is printed with a marker after its text, so a
+// reader does not take its first bytes for the whole line.
+func TestFormatContextSection_MarksACutLine(t *testing.T) {
+	resp := baseResponse()
+	cut := ctxLine(4, "line fo")
+	cut.LineTextTruncated = true
+	resp.ContextLines["p1:f1:29"][2] = cut
+	resp.ContextLines["p1:f1:67"][0] = cut
+
+	got := FormatContextSection(BuildFileContexts(resp), 1, 1)
+
+	if !strings.Contains(got, "\n4- line fo [line truncated]\n") {
+		t.Errorf("the cut line 4 should carry the marker:\n%s", got)
+	}
+	if strings.Count(got, "[line truncated]") != 1 {
+		t.Errorf("only line 4 is cut:\n%s", got)
+	}
+}

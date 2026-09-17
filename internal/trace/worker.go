@@ -108,9 +108,15 @@ type MatchRaw struct {
 	// counts, which are the only way to place a frame in the file.
 	AbsoluteLine int
 	LineText     string
-	Submatches   []rxtypes.Submatch
-	PatternIDs   []string // all pattern IDs (assigned by engine post-hoc)
-	IsCompressed bool
+	// LineTextTruncated is true when LineText holds only the first
+	// RX_MAX_LINE_TEXT_BYTES bytes of the line.
+	LineTextTruncated bool
+	Submatches        []rxtypes.Submatch
+	// SubmatchesTruncated is true when Submatches may leave some of the
+	// line's submatches out (see RgMatchData.SubmatchesTruncated).
+	SubmatchesTruncated bool
+	PatternIDs          []string // all pattern IDs (assigned by engine post-hoc)
+	IsCompressed        bool
 	// FrameIndex is the seekable-zstd frame that holds the match. Only
 	// the seekable path sets it; elsewhere it is 0 and means nothing.
 	FrameIndex int
@@ -118,11 +124,67 @@ type MatchRaw struct {
 
 // ContextRaw mirrors MatchRaw for context lines.
 type ContextRaw struct {
-	Offset       int64
-	End          int64 // see MatchRaw.End
-	LineNumber   int
-	AbsoluteLine int // see MatchRaw.AbsoluteLine; 0 when unknown
-	LineText     string
+	Offset            int64
+	End               int64 // see MatchRaw.End
+	LineNumber        int
+	AbsoluteLine      int // see MatchRaw.AbsoluteLine; 0 when unknown
+	LineText          string
+	LineTextTruncated bool // see MatchRaw.LineTextTruncated
+}
+
+// truncated reports whether the answer holds only part of this match's
+// line or of its submatches.
+func (m MatchRaw) truncated() bool {
+	return m.LineTextTruncated || m.SubmatchesTruncated
+}
+
+// rawMatchLine builds the MatchRaw for the line of a match event that
+// starts at offset in the file's text and has number lineNumber, as the
+// caller counts them. Submatches are added by withSubmatches when the
+// match is reported as one.
+func rawMatchLine(d *RgMatchData, offset int64, lineNumber int) MatchRaw {
+	return MatchRaw{
+		Offset:            offset,
+		End:               offset + int64(d.Lines.Size),
+		LineNumber:        lineNumber,
+		LineText:          reportedLineText(d.Lines),
+		LineTextTruncated: d.Lines.Truncated,
+	}
+}
+
+// withSubmatches adds a match event's submatches to its line, and every
+// pattern of the search as a candidate; the engine narrows the patterns
+// down afterwards (IdentifyMatchingPatterns).
+func (m MatchRaw) withSubmatches(d *RgMatchData, patternOrder []string) MatchRaw {
+	m.Submatches = make([]rxtypes.Submatch, len(d.Submatches))
+	for i, sm := range d.Submatches {
+		m.Submatches[i] = rxtypes.Submatch{Text: sm.Text(), Start: sm.Start, End: sm.End}
+	}
+	m.SubmatchesTruncated = d.SubmatchesTruncated
+	m.PatternIDs = append([]string(nil), patternOrder...)
+	return m
+}
+
+// rawContextLine builds the ContextRaw for the line of a context event,
+// placed as rawMatchLine places a match's.
+func rawContextLine(d *RgContextData, offset int64, lineNumber int) ContextRaw {
+	return ContextRaw{
+		Offset:            offset,
+		End:               offset + int64(d.Lines.Size),
+		LineNumber:        lineNumber,
+		LineText:          reportedLineText(d.Lines),
+		LineTextTruncated: d.Lines.Truncated,
+	}
+}
+
+// reportedLineText is a line's text as an answer reports it: without
+// its line break. A cut text has no break to strip, and is left alone:
+// under multiline search a line break inside the text can end up last.
+func reportedLineText(t RgText) string {
+	if t.Truncated {
+		return t.Text
+	}
+	return trimTrailingNewline(t.Text)
 }
 
 // matchAsContext reports a match as a line of the windows around it.
@@ -134,11 +196,12 @@ type ContextRaw struct {
 // trace without the cap gives that line.
 func matchAsContext(m MatchRaw) ContextRaw {
 	return ContextRaw{
-		Offset:       m.Offset,
-		End:          m.End,
-		LineNumber:   m.LineNumber,
-		AbsoluteLine: m.AbsoluteLine,
-		LineText:     m.LineText,
+		Offset:            m.Offset,
+		End:               m.End,
+		LineNumber:        m.LineNumber,
+		AbsoluteLine:      m.AbsoluteLine,
+		LineText:          m.LineText,
+		LineTextTruncated: m.LineTextTruncated,
 	}
 }
 
@@ -387,12 +450,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 				// which starts with the lead-in. input.fileOffset turns
 				// it into a position in the file.
 				absOff := input.fileOffset(ev.Match.AbsoluteOffset)
-				line := MatchRaw{
-					Offset:     absOff,
-					End:        absOff + int64(ev.Match.Lines.Size),
-					LineNumber: input.chunkLine(ev.Match.LineNumber),
-					LineText:   trimTrailingNewline(ev.Match.Lines.Text),
-				}
+				line := rawMatchLine(ev.Match, absOff, input.chunkLine(ev.Match.LineNumber))
 				// Dedup filter: only keep matches whose absolute start
 				// offset falls within THIS chunk's assigned half-open
 				// range [task.Offset, task.EndOffset()). A match in the
@@ -409,19 +467,9 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 					gate.reached(ev.Match.LineNumber)
 					return nil
 				}
-				subs := make([]rxtypes.Submatch, len(ev.Match.Submatches))
-				for i, sm := range ev.Match.Submatches {
-					subs[i] = rxtypes.Submatch{
-						Text:  sm.Text(),
-						Start: sm.Start,
-						End:   sm.End,
-					}
-				}
-				line.Submatches = subs
 				// pattern IDs are the FULL set — engine.identify
 				// narrows this down post-hoc per Python parity.
-				line.PatternIDs = append([]string(nil), patternOrder...)
-				mu.matches = append(mu.matches, line)
+				mu.matches = append(mu.matches, line.withSubmatches(ev.Match, patternOrder))
 				// Charge the shared cap as soon as the match's window
 				// is read (at once without -A), so the worker that
 				// spends the last of it stops every sibling within a
@@ -436,12 +484,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 				// lead-in or the tail is what completes the window of a
 				// match next to the chunk's edge.
 				absOff := input.fileOffset(ev.Context.AbsoluteOffset)
-				mu.contexts = append(mu.contexts, ContextRaw{
-					Offset:     absOff,
-					End:        absOff + int64(ev.Context.Lines.Size),
-					LineNumber: input.chunkLine(ev.Context.LineNumber),
-					LineText:   trimTrailingNewline(ev.Context.Lines.Text),
-				})
+				mu.contexts = append(mu.contexts, rawContextLine(ev.Context, absOff, input.chunkLine(ev.Context.LineNumber)))
 			default:
 				// begin/end/summary — ignored for per-chunk processing.
 			}

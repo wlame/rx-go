@@ -211,6 +211,10 @@
           "line_text": {
             "type": "string"
           },
+          "line_text_truncated": {
+            "description": "True when line_text holds only the first RX_MAX_LINE_TEXT_BYTES bytes of a longer line.",
+            "type": "boolean"
+          },
           "relative_line_number": {
             "format": "int64",
             "type": "integer"
@@ -220,7 +224,8 @@
           "relative_line_number",
           "absolute_line_number",
           "line_text",
-          "absolute_offset"
+          "absolute_offset",
+          "line_text_truncated"
         ],
         "type": "object"
       },
@@ -860,6 +865,10 @@
               "null"
             ]
           },
+          "line_text_truncated": {
+            "description": "True when line_text holds only the first RX_MAX_LINE_TEXT_BYTES bytes of a longer line.",
+            "type": "boolean"
+          },
           "offset": {
             "format": "int64",
             "type": "integer"
@@ -882,6 +891,10 @@
               "array",
               "null"
             ]
+          },
+          "submatches_truncated": {
+            "description": "True when submatches may leave some of the line's submatches out: the line had more than RX_MAX_SUBMATCHES_PER_LINE, or line_text is cut and the list covers only the text it holds.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -891,7 +904,9 @@
           "relative_line_number",
           "absolute_line_number",
           "line_text",
-          "submatches"
+          "submatches",
+          "line_text_truncated",
+          "submatches_truncated"
         ],
         "type": "object"
       },

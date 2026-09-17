@@ -223,7 +223,8 @@ func TestAStoppedSeekableBatchKeepsOnlyMatchesWithWholeWindows(t *testing.T) {
 	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: int64(len(text))}, lineShift: 0}}
 	locs := []frameLoc{{frameIdx: 0, lineCount: 8, decoded: true}}
 
-	matches, contexts, _, err := matchesFromPartialBatch(context.Background(), cut, wholeStream(segments), locs, []string{"p1"}, 2)
+	events, _ := readBatchEvents(context.Background(), bytes.NewReader(cut))
+	matches, contexts, _, err := matchesFromPartialBatch(events, wholeStream(segments), locs, []string{"p1"}, 2)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}

@@ -14,7 +14,6 @@ import (
 	"github.com/wlame/rx-go/internal/compression"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
-	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // ErrUnsupportedCompression is returned by ProcessCompressed when asked
@@ -180,33 +179,16 @@ func ProcessCompressed(
 			if ev.Match == nil {
 				return nil
 			}
+			// The whole stream goes through one rg, so its offsets and
+			// line numbers are already the decompressed text's.
+			line := rawMatchLine(ev.Match, ev.Match.AbsoluteOffset, ev.Match.LineNumber)
+			line.IsCompressed = true
 			if lastWindowLine > 0 {
 				// Past the cap: a line of the last match's window.
-				outContexts = append(outContexts, ContextRaw{
-					Offset:     ev.Match.AbsoluteOffset,
-					End:        ev.Match.AbsoluteOffset + int64(ev.Match.Lines.Size),
-					LineNumber: ev.Match.LineNumber,
-					LineText:   trimTrailingNewline(ev.Match.Lines.Text),
-				})
+				outContexts = append(outContexts, matchAsContext(line))
 				return stopAfterWindow(ev.Match.LineNumber, lastWindowLine)
 			}
-			subs := make([]rxtypes.Submatch, len(ev.Match.Submatches))
-			for i, sm := range ev.Match.Submatches {
-				subs[i] = rxtypes.Submatch{
-					Text:  sm.Text(),
-					Start: sm.Start,
-					End:   sm.End,
-				}
-			}
-			outMatches = append(outMatches, MatchRaw{
-				Offset:       ev.Match.AbsoluteOffset, // already decompressed-stream-relative
-				End:          ev.Match.AbsoluteOffset + int64(ev.Match.Lines.Size),
-				LineNumber:   ev.Match.LineNumber,
-				LineText:     trimTrailingNewline(ev.Match.Lines.Text),
-				Submatches:   subs,
-				PatternIDs:   append([]string(nil), patternOrder...),
-				IsCompressed: true,
-			})
+			outMatches = append(outMatches, line.withSubmatches(ev.Match, patternOrder))
 			matchCount++
 			if maxResults != nil && matchCount >= *maxResults {
 				lastWindowLine = ev.Match.LineNumber + contextAfter
@@ -216,12 +198,7 @@ func ProcessCompressed(
 			if ev.Context == nil {
 				return nil
 			}
-			outContexts = append(outContexts, ContextRaw{
-				Offset:     ev.Context.AbsoluteOffset,
-				End:        ev.Context.AbsoluteOffset + int64(ev.Context.Lines.Size),
-				LineNumber: ev.Context.LineNumber,
-				LineText:   trimTrailingNewline(ev.Context.Lines.Text),
-			})
+			outContexts = append(outContexts, rawContextLine(ev.Context, ev.Context.AbsoluteOffset, ev.Context.LineNumber))
 			if lastWindowLine > 0 {
 				return stopAfterWindow(ev.Context.LineNumber, lastWindowLine)
 			}

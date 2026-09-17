@@ -333,10 +333,7 @@ func (e *Engine) RunWithOptions(
 					if numbered {
 						absLine = startLine + rm.LineNumber - 1
 					}
-					matchedIDs := IdentifyMatchingPatterns(
-						rm.LineText, rm.Submatches,
-						patternIDs, patternOrder, opts.RgExtraArgs,
-					)
+					matchedIDs := identifyRawMatch(rm, patternIDs, patternOrder, opts.RgExtraArgs)
 					for _, pid := range matchedIDs {
 						m := toMatch(pid, fileID, rm)
 						m.AbsoluteLineNumber = absLine
@@ -365,6 +362,7 @@ func (e *Engine) RunWithOptions(
 							AbsoluteLineNumber: absLine,
 							LineText:           rc.LineText,
 							AbsoluteOffset:     rc.Offset,
+							LineTextTruncated:  rc.LineTextTruncated,
 						},
 					})
 				}
@@ -378,7 +376,7 @@ func (e *Engine) RunWithOptions(
 			}
 			// A chunk cut short leaves numbered false; only a scan that
 			// read every chunk describes the whole planned file.
-			if cacheEntry != nil && numbered {
+			if cacheEntry != nil && numbered && !chunksCutALine(chunkResults) {
 				toCache[b.path] = cacheEntry
 			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, countMatchesForFile(allMatches, fileID))
@@ -413,10 +411,7 @@ func (e *Engine) RunWithOptions(
 			// the same search of the text inside it.
 			for _, rm := range rawMatches {
 				ends.record(fileID, rm.Offset, rm.End)
-				matchedIDs := IdentifyMatchingPatterns(
-					rm.LineText, rm.Submatches,
-					patternIDs, patternOrder, opts.RgExtraArgs,
-				)
+				matchedIDs := identifyRawMatch(rm, patternIDs, patternOrder, opts.RgExtraArgs)
 				for _, pid := range matchedIDs {
 					m := toMatch(pid, fileID, rm)
 					if rm.LineNumber >= 1 {
@@ -438,6 +433,7 @@ func (e *Engine) RunWithOptions(
 						AbsoluteLineNumber: absLine,
 						LineText:           rc.LineText,
 						AbsoluteOffset:     rc.Offset,
+						LineTextTruncated:  rc.LineTextTruncated,
 					},
 				})
 			}
@@ -474,10 +470,7 @@ func (e *Engine) RunWithOptions(
 			// wrong place.
 			for _, rm := range rawMatches {
 				ends.record(fileID, rm.Offset, rm.End)
-				matchedIDs := IdentifyMatchingPatterns(
-					rm.LineText, rm.Submatches,
-					patternIDs, patternOrder, opts.RgExtraArgs,
-				)
+				matchedIDs := identifyRawMatch(rm, patternIDs, patternOrder, opts.RgExtraArgs)
 				for _, pid := range matchedIDs {
 					m := toMatch(pid, fileID, rm)
 					if rm.AbsoluteLine >= 1 {
@@ -504,13 +497,14 @@ func (e *Engine) RunWithOptions(
 						AbsoluteLineNumber: absLine,
 						LineText:           rc.LineText,
 						AbsoluteOffset:     rc.Offset,
+						LineTextTruncated:  rc.LineTextTruncated,
 					},
 				})
 			}
 			// Without a result cap ProcessSeekable either reads every
 			// frame or returns an error, so a scan that got here is
 			// complete.
-			if cacheEntry != nil {
+			if cacheEntry != nil && !linesCut(rawMatches, rawContexts) {
 				toCache[b.path] = cacheEntry
 			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size,
@@ -594,7 +588,8 @@ func (e *Engine) RunWithOptions(
 	// Phase 5: write caches for large completed scans
 	// -------------------------------------------------------------------
 	// toCache only holds scans started without a result cap, so a
-	// capped answer never reaches the cache.
+	// capped answer never reaches the cache, and only scans whose answer
+	// cuts no line (see linesCut).
 	for _, scan := range toCache {
 		SaveScannedFile(*scan, patterns, opts.RgExtraArgs)
 	}
@@ -737,19 +732,54 @@ func patternIDsMap(patterns []string) map[string]string {
 	return out
 }
 
+// chunksCutALine reports whether any line the chunks returned, matched
+// or context, holds only part of its text or submatches.
+func chunksCutALine(results []ChunkResult) bool {
+	for _, res := range results {
+		if linesCut(res.Matches, res.Contexts) {
+			return true
+		}
+	}
+	return false
+}
+
+// linesCut reports whether any of the lines holds only part of its text
+// or submatches.
+//
+// Such a scan is not written to the trace cache. A cache hit rebuilds
+// each line from the file and its submatches from the text it keeps, so
+// a submatch that runs past a cut would come back ending at the cut,
+// where the scan reports its true end: a hit would answer differently.
+// The scan is repeated instead.
+func linesCut(matches []MatchRaw, contexts []ContextRaw) bool {
+	for _, m := range matches {
+		if m.truncated() {
+			return true
+		}
+	}
+	for _, c := range contexts {
+		if c.LineTextTruncated {
+			return true
+		}
+	}
+	return false
+}
+
 // toMatch turns a MatchRaw + pattern_id + file_id into the final
 // rxtypes.Match. Wraps pointer-conversion for line number + line text.
 func toMatch(pid, fileID string, rm MatchRaw) rxtypes.Match {
 	line := rm.LineNumber
 	text := rm.LineText
 	return rxtypes.Match{
-		Pattern:            pid,
-		File:               fileID,
-		Offset:             rm.Offset,
-		RelativeLineNumber: &line,
-		AbsoluteLineNumber: -1, // resolved later if possible
-		LineText:           &text,
-		Submatches:         rm.Submatches,
+		Pattern:             pid,
+		File:                fileID,
+		Offset:              rm.Offset,
+		RelativeLineNumber:  &line,
+		AbsoluteLineNumber:  -1, // resolved later if possible
+		LineText:            &text,
+		Submatches:          rm.Submatches,
+		LineTextTruncated:   rm.LineTextTruncated,
+		SubmatchesTruncated: rm.SubmatchesTruncated,
 	}
 }
 
@@ -973,6 +1003,7 @@ func matchedLineAsContext(m rxtypes.Match) rxtypes.ContextLine {
 		AbsoluteLineNumber: m.AbsoluteLineNumber,
 		LineText:           text,
 		AbsoluteOffset:     m.Offset,
+		LineTextTruncated:  m.LineTextTruncated,
 	}
 }
 

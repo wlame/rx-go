@@ -22,7 +22,7 @@ func TestSubmatchesFromPattern_HonorsRipgrepMatchingFlags(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			subs := submatchesFromPattern(tc.pattern, tc.line, matchFlagsFrom(tc.flags))
+			subs, _ := submatchesFromPattern(tc.pattern, tc.line, matchFlagsFrom(tc.flags), 100)
 
 			got := make([]string, 0, len(subs))
 			for _, s := range subs {

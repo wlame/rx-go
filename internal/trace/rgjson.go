@@ -17,13 +17,10 @@
 package trace
 
 import (
-	"bufio"
+	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"io"
-	"strings"
 )
 
 // ripgrep emits newline-delimited JSON on stdout when invoked with
@@ -54,60 +51,23 @@ const (
 // ============================================================================
 
 // RgText models ripgrep's `{"text": "..."}` object that wraps strings.
-// ripgrep wraps strings this way to leave room for future encoding
-// variants (e.g. `{"bytes": "..."}` for non-UTF-8 payloads).
 //
 // When a line contains bytes that are not valid UTF-8, ripgrep emits
-// `{"bytes": "<base64>"}` instead of `{"text": ...}`. We capture both
-// via custom UnmarshalJSON so the caller gets a string either way.
+// `{"bytes": "<base64>"}` instead of `{"text": ...}`. Text then holds
+// base64 too: of the bytes kept, which are all of them unless Truncated.
 type RgText struct {
 	Text string
 	// Size is the payload's length in bytes as ripgrep read it: the
-	// length of Text for a UTF-8 payload, and of the decoded bytes for a
-	// base64 one, whose Text is the base64 string. For a line it counts
-	// the line break too, so the line's first byte plus Size is where the
-	// next line starts.
+	// length of the text for a UTF-8 payload, and of the decoded bytes for
+	// a base64 one. For a line it counts the line break too, so the line's
+	// first byte plus Size is where the next line starts. It is the whole
+	// payload's length even when Text holds only part of it.
 	Size int
-}
-
-// UnmarshalJSON handles both `{"text": "..."}` (UTF-8 happy path) and
-// `{"bytes": "<base64>"}` (non-UTF-8 fallback). The base64 payload is
-// decoded and stored in Text verbatim; downstream code does lossy
-// UTF-8 interpretation if needed, which is what Python also does.
-func (t *RgText) UnmarshalJSON(data []byte) error {
-	// Fast path: null.
-	if string(data) == "null" {
-		t.Text = ""
-		return nil
-	}
-	var raw struct {
-		Text  *string `json:"text"`
-		Bytes *string `json:"bytes"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	if raw.Text != nil {
-		t.Text = *raw.Text
-		t.Size = len(t.Text)
-		return nil
-	}
-	if raw.Bytes != nil {
-		// Decoding base64 is deferred to the caller if they need the
-		// actual bytes; we keep the raw string so the event is still
-		// routable by type. Python's rg_json.py does the same.
-		t.Text = *raw.Bytes
-		t.Size = base64DecodedSize(t.Text)
-		return nil
-	}
-	return nil
-}
-
-// base64DecodedSize is the number of bytes the standard base64 string
-// encoded decodes to. ripgrep writes padded base64, so the length
-// follows from the string's length and its padding without decoding it.
-func base64DecodedSize(encoded string) int {
-	return base64.StdEncoding.DecodedLen(len(encoded)) - strings.Count(encoded[max(0, len(encoded)-2):], "=")
+	// Truncated is true when Text holds only the first bytes of the
+	// payload: a line longer than RX_MAX_LINE_TEXT_BYTES, or a submatch
+	// that runs past the end of such a cut line. A line's text that is
+	// cut never ends with its line break.
+	Truncated bool
 }
 
 // RgPath models `{"text": "/path/to/file"}` or null for stdin.
@@ -147,12 +107,17 @@ type RgBeginData struct {
 // When the caller uses ReadAt to feed a chunk via stdin, the worker
 // must translate AbsoluteOffset back into file coordinates before
 // deduplication. See worker.go.
+//
+// Submatches holds at most RX_MAX_SUBMATCHES_PER_LINE entries and, when
+// Lines is truncated, only those that start inside Lines.Text;
+// SubmatchesTruncated is true when any were left out.
 type RgMatchData struct {
-	Path           RgPath       `json:"path"`
-	Lines          RgText       `json:"lines"`
-	LineNumber     int          `json:"line_number"`
-	AbsoluteOffset int64        `json:"absolute_offset"`
-	Submatches     []RgSubmatch `json:"submatches"`
+	Path                RgPath       `json:"path"`
+	Lines               RgText       `json:"lines"`
+	LineNumber          int          `json:"line_number"`
+	AbsoluteOffset      int64        `json:"absolute_offset"`
+	Submatches          []RgSubmatch `json:"submatches"`
+	SubmatchesTruncated bool         `json:"-"`
 }
 
 // RgContextData is the payload of a context event (-A/-B/-C flags).
@@ -232,171 +197,94 @@ type RgEvent struct {
 // skip unknowns silently can check errors.Is and continue.
 var ErrUnknownEvent = errors.New("unknown ripgrep event type")
 
-// ParseEvent parses a single JSON line from `rg --json` stdout.
+// ParseEvent parses a single event from `rg --json` stdout, bounded the
+// way StreamEvents bounds it (see eventScanner).
 //
-// Empty lines and `null` produce (nil, nil) so a straight-line reader
-// loop doesn't have to special-case whitespace. Malformed JSON returns
-// an error; unknown event types return ErrUnknownEvent so the caller
-// can tell "skip" from "fatal".
+// Empty input and `null` produce (nil, nil). Output that is not an
+// event returns an error wrapping ErrMalformedEvent; an event of a type
+// rx does not model returns ErrUnknownEvent beside it, so the caller can
+// tell "skip" from "fatal".
 //
 // Parity note: Python's parse_rg_json_event returns None for BOTH
 // malformed JSON and unknown events, and logs a warning. rx-go is
 // stricter — we surface malformed JSON as an error so test failures
 // point at the real problem instead of getting swallowed.
 func ParseEvent(line []byte) (*RgEvent, error) {
-	// Trim leading/trailing whitespace — rg only uses '\n', but be
-	// defensive against test stubs that inject '\r\n'.
-	start, end := 0, len(line)
-	for start < end && (line[start] == ' ' || line[start] == '\t' || line[start] == '\r' || line[start] == '\n') {
-		start++
-	}
-	for end > start && (line[end-1] == ' ' || line[end-1] == '\t' || line[end-1] == '\r' || line[end-1] == '\n') {
-		end--
-	}
-	if start == end {
-		return nil, nil
-	}
-	trimmed := line[start:end]
-	if string(trimmed) == "null" {
-		return nil, nil
-	}
-
-	// Peek at the `type` field first so we only unmarshal the correct
-	// data shape. This avoids overhead of repeated reflection in the
-	// encoding/json code paths for the large stats payloads.
-	var envelope struct {
-		Type RgEventType     `json:"type"`
-		Data json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(trimmed, &envelope); err != nil {
+	s := newEventScanner(bytes.NewReader(line), currentEventLimits())
+	if _, err := s.peekNonSpace(); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	ev := &RgEvent{Type: envelope.Type}
-
-	switch envelope.Type {
-	case RgEventBegin:
-		var d RgBeginData
-		if err := json.Unmarshal(envelope.Data, &d); err != nil {
-			return nil, err
-		}
-		ev.Begin = &d
-	case RgEventMatch:
-		var d RgMatchData
-		if err := json.Unmarshal(envelope.Data, &d); err != nil {
-			return nil, err
-		}
-		ev.Match = &d
-	case RgEventContext:
-		var d RgContextData
-		if err := json.Unmarshal(envelope.Data, &d); err != nil {
-			return nil, err
-		}
-		ev.Context = &d
-	case RgEventEnd:
-		var d RgEndData
-		if err := json.Unmarshal(envelope.Data, &d); err != nil {
-			return nil, err
-		}
-		ev.End = &d
-	case RgEventSummary:
-		var d RgSummaryData
-		if err := json.Unmarshal(envelope.Data, &d); err != nil {
-			return nil, err
-		}
-		ev.Summary = &d
-	default:
-		// Surface unknown types so callers can choose to ignore them
-		// without paying the cost of pretending it was a normal parse.
-		return ev, ErrUnknownEvent
+	ev, err := s.readEvent()
+	if err != nil {
+		return ev, err
+	}
+	if _, err := s.peekNonSpace(); !errors.Is(err, io.EOF) {
+		return nil, malformed("more than one value in one event")
 	}
 	return ev, nil
 }
 
-// eventReadBufferSize is the size of StreamEvents' read buffer. It is
-// not a limit: an event longer than this is gathered piece by piece.
-// Most events (one log line and its submatches) fit in it, and those
-// are parsed straight out of the buffer without a copy.
+// eventReadBufferSize is the size of the event reader's buffer. It is
+// not a limit on an event: strings stream through it and the parts of
+// an event rx does not keep are skipped as they pass.
 const eventReadBufferSize = 64 * 1024
 
-// StreamEvents reads r line-by-line and returns events one at a time
-// via a callback. The callback receives each successfully-parsed event
-// and an error for parsing failures. Return a non-nil error from the
-// callback to stop iteration early (it will propagate up).
+// StreamEvents reads rg's --json output and returns events one at a
+// time via a callback. The callback receives each successfully-parsed
+// event, or an error for output that is not an event; return a non-nil
+// error from it to stop iteration early (it will propagate up). A
+// callback that passes over an error gets the events from the next line
+// on.
 //
-// An event has no length limit, because ripgrep puts none on it: a
-// matched line of any length is one event, and every submatch on the
-// line adds an object to it, so a 1 MB line on which the pattern
-// matches each character makes an event of about 50 MB. Such a line
-// is answered like any other, at the cost of holding its event in
-// memory while it is parsed — ripgrep holds the line itself too.
+// ripgrep puts no limit on an event: a matched line of any length is
+// one event, and every submatch on the line adds an object of about 50
+// bytes to it, so a 1 MB line on which the pattern matches each
+// character makes an event of about 50 MB. StreamEvents never holds an
+// event whole. It keeps at most RX_MAX_LINE_TEXT_BYTES of a line's text
+// and RX_MAX_SUBMATCHES_PER_LINE of its submatches, and marks what it
+// left out (RgText.Truncated, RgMatchData.SubmatchesTruncated); a line's
+// offset, number and size are always exact. The limits are read once,
+// when the stream starts.
 //
 // A caller that stops reading before r ends must also stop the process
 // writing r, or that process blocks on a full pipe for ever. ProcessChunk
 // and ProcessCompressed kill rg when StreamEvents returns an error.
 func StreamEvents(ctx context.Context, r io.Reader, cb func(*RgEvent, error) error) error {
-	reader := bufio.NewReaderSize(r, eventReadBufferSize)
-	// long is reused across events for the ones larger than the buffer.
-	var long []byte
+	s := newEventScanner(r, currentEventLimits())
 	for {
-		var line []byte
-		var readErr error
-		line, long, readErr = readEventLine(reader, long[:0])
-		// A last event without a final newline arrives together with
-		// io.EOF, so the line is handled before the error is.
-		if len(line) > 0 {
-			// Check cancellation between lines. The caller can bail out
-			// at any time without waiting for the subprocess to close
-			// stdout.
-			if err := ctx.Err(); err != nil {
-				return err
+		if _, err := s.peekNonSpace(); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
 			}
-			if cbErr := handleEventLine(line, cb); cbErr != nil {
+			return err
+		}
+		// Check cancellation between events. The caller can bail out at
+		// any time without waiting for the subprocess to close stdout.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ev, err := s.readEvent()
+		switch {
+		case errors.Is(err, ErrUnknownEvent), err == nil && ev == nil:
+			// Unknown event types and `null` are skipped, as rx-python
+			// skips them.
+			continue
+		case errors.Is(err, ErrMalformedEvent):
+			// Resume at the next line in case the callback goes on.
+			s.skipLine()
+			if cbErr := cb(nil, err); cbErr != nil {
 				return cbErr
 			}
-		}
-		if errors.Is(readErr, io.EOF) {
-			return nil
-		}
-		if readErr != nil {
-			return readErr
-		}
-	}
-}
-
-// readEventLine returns the next line of reader, newline included.
-//
-// bufio.Reader.ReadSlice returns a view into the reader's own buffer,
-// valid until the next read, and bufio.ErrBufferFull when the line does
-// not fit in it. In that case the pieces are appended to long, which
-// grows as far as the line needs; the grown slice is returned so the
-// caller can reuse its capacity for the next long line. The returned
-// line is valid only until the next call.
-func readEventLine(reader *bufio.Reader, long []byte) (line, grown []byte, err error) {
-	for {
-		piece, err := reader.ReadSlice('\n')
-		if errors.Is(err, bufio.ErrBufferFull) {
-			long = append(long, piece...)
 			continue
+		case err != nil:
+			// The reader itself failed.
+			return err
 		}
-		if len(long) == 0 {
-			// The whole line fitted in the buffer: no copy.
-			return piece, long, err
+		if cbErr := cb(ev, nil); cbErr != nil {
+			return cbErr
 		}
-		long = append(long, piece...)
-		return long, long, err
 	}
-}
-
-// handleEventLine parses one line of rg's output and hands it to cb.
-// Unknown event types and blank lines are skipped, as rx-python skips
-// them; a line that is not valid JSON reaches cb as its error argument.
-func handleEventLine(line []byte, cb func(*RgEvent, error) error) error {
-	ev, err := ParseEvent(line)
-	if errors.Is(err, ErrUnknownEvent) {
-		err = nil
-	}
-	if ev == nil && err == nil {
-		return nil
-	}
-	return cb(ev, err)
 }

@@ -139,6 +139,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A file that changed is skipped (`skipped_files`) or refused (`file
   changed after it was checked`), never read. A directory walk lists
   each directory through a handle checked the same way.
+- One line can no longer make a trace hold gigabytes in memory.
+  ripgrep reports a matched line whole, plus about 50 bytes for every
+  submatch on it, and rx read each report whole: a search for `x` over a
+  file with one 100 MB line of `x` cost about 5 GB per worker, so one
+  `GET /v1/trace` could exhaust a server. rx now reads ripgrep's output
+  without holding it and keeps, per matched or context line, at most
+  `RX_MAX_LINE_TEXT_BYTES` of its text (default 1 MiB, cut at the start
+  of a UTF-8 character) and at most `RX_MAX_SUBMATCHES_PER_LINE`
+  submatches (default 10,000), only those that start inside the text
+  kept. New response fields say what was left out:
+  `line_text_truncated` on a match and on a `context_lines` entry, and
+  `submatches_truncated` on a match (always `true` on a cut line). The
+  offset, both line numbers and every other match are exact, on plain,
+  compressed and seekable files, from the CLI and over HTTP alike; a
+  line within the bounds is answered as before. A cut line is credited
+  to every pattern of the search, since the part left out may match any
+  of them. A trace whose answer cuts a line is not written to the trace
+  cache. The seekable-zstd path no longer buffers ripgrep's whole output
+  for a batch of frames, and a trace-cache hit and the line numbering of
+  a capped trace read a long line without holding it. The human output
+  prints a cut line with ` [line truncated]` after it. Output from
+  ripgrep that is not a JSON event is still an error that stops the
+  scan. Part of contract 1.4.
 
 ## [0.3.0] - 2026-10-03
 

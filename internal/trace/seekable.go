@@ -22,7 +22,6 @@ import (
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
-	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // ============================================================================
@@ -575,10 +574,18 @@ func scanFrameBatch(
 	// stays bounded to ~O(1 frame in flight).
 	pr, pw := io.Pipe()
 
-	rgCmd := exec.CommandContext(ctx, "rg", rgArgs...)
+	// rg runs under its own context so the reader below can kill it when
+	// rg's output cannot be parsed, without canceling the caller's
+	// context. exec.CommandContext kills the process when that context
+	// ends; the deferred cancel releases its resources on every return.
+	rgCtx, killRg := context.WithCancel(ctx)
+	defer killRg()
+	rgCmd := exec.CommandContext(rgCtx, "rg", rgArgs...)
 	rgCmd.Stdin = pr
-	var stdout bytes.Buffer
-	rgCmd.Stdout = &stdout
+	rgStdout, err := rgCmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("scanFrameBatch: rg stdout pipe: %w", err)
+	}
 	var stderr strings.Builder
 	rgCmd.Stderr = &stderr
 
@@ -604,41 +611,69 @@ func scanFrameBatch(
 		}
 	}()
 
-	// Run rg. Cmd.Run waits for rg to exit AFTER its stdin (pr) hits
-	// EOF, which happens when the writer goroutine calls pw.Close().
-	// If rg exits early (e.g. killed by ctx cancel via
-	// exec.CommandContext), pr.Read returns ErrClosedPipe inside the
-	// writer's pw.Write, and the writer aborts cleanly.
-	runErr := rgCmd.Run()
+	if startErr := rgCmd.Start(); startErr != nil {
+		// Nobody will read pr: closing it ends the writer's next write.
+		_ = pr.Close()
+		<-writerDone
+		return nil, nil, nil, fmt.Errorf("scanFrameBatch: rg start: %w", startErr)
+	}
+
+	// Read rg's events as rg writes them. Each one is bounded (see
+	// StreamEvents), so the batch holds about one bounded record per
+	// matched or context line, never rg's whole output. They are placed
+	// in the file after the writer is done, because only then is the
+	// layout of the batch's input complete.
+	//
+	// The read runs on a context stripped of the cancellation: when a cap
+	// cancels the scan, exec.CommandContext kills rg and its output ends
+	// soon after, and every event rg wrote before that is still read. A
+	// read stopped part-way would keep a match without the context lines
+	// rg wrote after it, a window cut short.
+	events, readErr := readBatchEvents(context.WithoutCancel(ctx), rgStdout)
+	if readErr != nil {
+		// INVARIANT: rg is never waited on while its stdout is unread. The
+		// read stopped early, rg may still have output to write, and with
+		// nobody reading it would block on the full pipe for ever.
+		killRg()
+	}
+	runErr := rgCmd.Wait()
 
 	// Close the read half before waiting for the writer.
 	//
 	// An io.Pipe write blocks until someone reads it, and the only
 	// reader is the copy exec.Cmd runs into rg's stdin. When rg exits
-	// early — killed because a max_results cap fired, or because the
-	// request was canceled — that copy stops, and a writer part-way
-	// through a frame would block on pw.Write forever, taking the
-	// <-writerDone below with it. Closing pr makes that Write return
-	// io.ErrClosedPipe instead, which the writer treats as "the reader
-	// is gone" and exits. Run has already returned here, so exec is
-	// finished with pr and this cannot race it.
+	// early — killed because a max_results cap fired, because the
+	// request was canceled, or because its output could not be read —
+	// that copy stops, and a writer part-way through a frame would block
+	// on pw.Write forever, taking the <-writerDone below with it.
+	// Closing pr makes that Write return io.ErrClosedPipe instead, which
+	// the writer treats as "the reader is gone" and exits. Wait has
+	// already returned here, so exec is finished with pr and this cannot
+	// race it.
 	_ = pr.Close()
 
-	// Wait for the writer to finish. After Run returns and pr is
+	// Wait for the writer to finish. After Wait returns and pr is
 	// closed, writerDone closes promptly on every path. This barrier
 	// establishes a happens-before edge for locs and the feeder's
 	// layout below.
 	<-writerDone
 
+	// A canceled context trumps every other reading of rg's exit.
+	// exec.CommandContext kills rg on cancel, which arrives here as a
+	// signal exit (code -1) — expected when a cap fired or the request
+	// was abandoned, and not a reason to call the file unreadable. The
+	// chunked path classifies it the same way. rg's output may end in
+	// the middle of an event then, so a read error is expected too.
+	if runErr != nil && ctx.Err() != nil {
+		return matchesFromPartialBatch(events, feeder.stream(), locs, patternOrder, contextAfter)
+	}
+	if readErr != nil {
+		// The output could not be parsed past some point: the batch fails
+		// rather than report the matches before it as all. rg was killed
+		// because of it, so its exit is a consequence, not the cause.
+		return nil, nil, countedFrames(locs), fmt.Errorf("read rg output: %w", readErr)
+	}
 	if runErr != nil {
-		// A canceled context trumps every other reading of rg's exit.
-		// exec.CommandContext kills rg on cancel, which arrives here as
-		// a signal exit (code -1) — expected when a cap fired or the
-		// request was abandoned, and not a reason to call the file
-		// unreadable. The chunked path classifies it the same way.
-		if cErr := ctx.Err(); cErr != nil {
-			return matchesFromPartialBatch(ctx, stdout.Bytes(), feeder.stream(), locs, patternOrder, contextAfter)
-		}
 		var ex *exec.ExitError
 		if errors.As(runErr, &ex) {
 			code := ex.ExitCode()
@@ -651,17 +686,25 @@ func scanFrameBatch(
 		}
 	}
 
-	// Parse rg's stdout and remap. rg has finished and its whole output
-	// is in memory, so the parse runs to the end even when a cap cancels
-	// the scan meanwhile: a parse stopped part-way would keep a match
-	// without the context lines rg wrote after it, a window cut short.
-	matches, contexts, err = remapBatchEvents(context.WithoutCancel(ctx), stdout.Bytes(), feeder.stream(), patternOrder)
-	if err != nil {
-		// The output could not be parsed past some point: the batch
-		// fails rather than report the matches before it as all.
-		return matches, contexts, countedFrames(locs), fmt.Errorf("read rg output: %w", err)
-	}
+	matches, contexts = remapBatchEvents(events, feeder.stream(), patternOrder)
 	return matches, contexts, countedFrames(locs), nil
+}
+
+// readBatchEvents reads rg's output for a batch and keeps its match and
+// context events, in the order rg wrote them. An error comes back
+// beside the events read before it.
+func readBatchEvents(ctx context.Context, rgStdout io.Reader) ([]*RgEvent, error) {
+	var events []*RgEvent
+	err := StreamEvents(ctx, rgStdout, func(ev *RgEvent, parseErr error) error {
+		if parseErr != nil {
+			return parseErr
+		}
+		if ev != nil && (ev.Match != nil || ev.Context != nil) {
+			events = append(events, ev)
+		}
+		return nil
+	})
+	return events, err
 }
 
 // countedFrames reports the newline count measured for each frame the
@@ -678,7 +721,7 @@ func countedFrames(locs []frameLoc) []frameLines {
 	return out
 }
 
-// matchesFromPartialBatch reads whatever ripgrep managed to write
+// matchesFromPartialBatch places whatever ripgrep managed to write
 // before it was killed and hands it back alongside context.Canceled.
 // ProcessSeekable keeps those matches and treats the error as the
 // cooperative cancel it is, so a cap that fires mid-batch still returns
@@ -689,21 +732,14 @@ func countedFrames(locs []frameLoc) []frameLines {
 // than a match with a shortened window (see unfinishedWindows). The cap
 // counts only batches that finished, so leaving it out never takes the
 // answer below the cap.
-//
-// The parse runs on a context stripped of the cancellation, since the
-// output is already buffered and the only thing left to do is read it.
 func matchesFromPartialBatch(
-	ctx context.Context,
-	out []byte,
+	events []*RgEvent,
 	stream batchStream,
 	locs []frameLoc,
 	patternOrder []string,
 	contextAfter int,
 ) ([]MatchRaw, []ContextRaw, []frameLines, error) {
-	// rg was killed part-way, so its last line may be cut off; a stream
-	// that cannot be read to the end is expected here, and the matches
-	// read before that point are kept.
-	matches, contexts, _ := remapBatchEvents(context.WithoutCancel(ctx), out, stream, patternOrder)
+	matches, contexts := remapBatchEvents(events, stream, patternOrder)
 	matches, contexts = matchesAsContext(matches, contexts, unfinishedWindows(matches, contexts, contextAfter))
 	return matches, contexts, countedFrames(locs), context.Canceled
 }
@@ -732,87 +768,45 @@ func unfinishedWindows(matches []MatchRaw, contexts []ContextRaw, contextAfter i
 	return unfinished
 }
 
-// remapBatchEvents parses the rg --json stream emitted for a batch and
-// places each event in the file: its offset in the decompressed text,
-// its line number within its frame, and the frame that holds it.
-// stream, recorded while the batch's input was written, says where each
-// run of that input came from and which lines the batch owns; a match
-// on a line it does not own comes back as a context line.
-//
-// ctx propagates from the parent scanner — if the outer context is
-// canceled mid-parse (a cap fired, an errgroup sibling failed, or the
-// HTTP request was aborted), StreamEvents stops calling the callback
-// and returns the context's error, which comes back beside the matches
-// parsed so far.
-func remapBatchEvents(
-	ctx context.Context,
-	rgStdout []byte,
-	stream batchStream,
-	patternOrder []string,
-) ([]MatchRaw, []ContextRaw, error) {
+// remapBatchEvents places the match and context events rg wrote for a
+// batch in the file: each line's offset in the decompressed text, its
+// line number within its frame, and the frame that holds it. stream,
+// recorded while the batch's input was written, says where each run of
+// that input came from and which lines the batch owns; a match on a
+// line it does not own comes back as a context line.
+func remapBatchEvents(events []*RgEvent, stream batchStream, patternOrder []string) ([]MatchRaw, []ContextRaw) {
 	var matches []MatchRaw
 	var contexts []ContextRaw
-	// A line that is not a valid event stops the parse, as it stops the
-	// chunked and the stream paths: every match after it would be
-	// missing, so the error goes back to the caller beside the matches
-	// parsed so far. rg's output is already complete in memory here, so
-	// stopping early leaves no process blocked on a pipe.
-	streamErr := StreamEvents(ctx, bytes.NewReader(rgStdout), func(ev *RgEvent, parseErr error) error {
-		if parseErr != nil {
-			return parseErr
-		}
-		if ev == nil {
-			return nil
-		}
-		switch ev.Type {
-		case RgEventMatch:
-			if ev.Match == nil {
-				return nil
-			}
+	for _, ev := range events {
+		switch {
+		case ev.Match != nil:
 			seg, ok := segmentHolding(stream.segments, ev.Match.AbsoluteOffset)
 			if !ok {
-				return nil
+				continue
 			}
-			offset := seg.fileStart + ev.Match.AbsoluteOffset - seg.streamStart
-			line := MatchRaw{
-				Offset:       offset,
-				End:          offset + int64(ev.Match.Lines.Size),
-				LineNumber:   ev.Match.LineNumber + seg.lineShift,
-				LineText:     trimTrailingNewline(ev.Match.Lines.Text),
-				IsCompressed: true,
-				FrameIndex:   seg.frame.Index,
-			}
+			line := rawMatchLine(ev.Match,
+				seg.fileStart+ev.Match.AbsoluteOffset-seg.streamStart,
+				ev.Match.LineNumber+seg.lineShift)
+			line.IsCompressed = true
+			line.FrameIndex = seg.frame.Index
 			if !stream.owns(ev.Match.AbsoluteOffset) {
-				// The batch beside this one owns the line and reports
-				// the match; here it is a line of a window.
+				// The batch beside this one owns the line and reports the
+				// match; here it is a line of a window.
 				contexts = append(contexts, matchAsContext(line))
-				return nil
+				continue
 			}
-			line.Submatches = make([]rxtypes.Submatch, len(ev.Match.Submatches))
-			for i, sm := range ev.Match.Submatches {
-				line.Submatches[i] = rxtypes.Submatch{Text: sm.Text(), Start: sm.Start, End: sm.End}
-			}
-			line.PatternIDs = append([]string(nil), patternOrder...)
-			matches = append(matches, line)
-		case RgEventContext:
-			if ev.Context == nil {
-				return nil
-			}
+			matches = append(matches, line.withSubmatches(ev.Match, patternOrder))
+		case ev.Context != nil:
 			seg, ok := segmentHolding(stream.segments, ev.Context.AbsoluteOffset)
 			if !ok {
-				return nil
+				continue
 			}
-			offset := seg.fileStart + ev.Context.AbsoluteOffset - seg.streamStart
-			contexts = append(contexts, ContextRaw{
-				Offset:     offset,
-				End:        offset + int64(ev.Context.Lines.Size),
-				LineNumber: ev.Context.LineNumber + seg.lineShift,
-				LineText:   trimTrailingNewline(ev.Context.Lines.Text),
-			})
+			contexts = append(contexts, rawContextLine(ev.Context,
+				seg.fileStart+ev.Context.AbsoluteOffset-seg.streamStart,
+				ev.Context.LineNumber+seg.lineShift))
 		}
-		return nil
-	})
-	return matches, contexts, streamErr
+	}
+	return matches, contexts
 }
 
 // errRipgrepStoppedReading reports that a write into rg's input failed

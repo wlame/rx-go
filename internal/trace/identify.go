@@ -95,6 +95,34 @@ func IdentifyMatchingPatterns(
 	}
 }
 
+// identifyRawMatch is IdentifyMatchingPatterns for one line a scan
+// reported, which may hold only part of the line (see MatchRaw):
+//
+//   - A cut line is credited to every pattern. A pattern that does not
+//     match the text kept may match the rest, which nobody kept, and by
+//     the invariant above a match labeled with too many patterns is a
+//     smaller error than one that vanishes.
+//   - A whole line whose submatches were capped is credited to every
+//     pattern that matches the line anywhere: the submatches left out
+//     can belong to any of them.
+//   - Any other line goes through IdentifyMatchingPatterns.
+func identifyRawMatch(rm MatchRaw, patternIDs map[string]string, patternOrder, rgExtraArgs []string) []string {
+	switch {
+	case rm.LineTextTruncated:
+		return knownPatternIDs(patternIDs, patternOrder)
+	case rm.SubmatchesTruncated:
+		ids := identifyByFullLineMatch(rm.LineText, patternIDs, patternOrder, matchFlagsFrom(rgExtraArgs))
+		if len(ids) == 0 {
+			// rg matched the line and Go found no pattern that does:
+			// never drop it.
+			return knownPatternIDs(patternIDs, patternOrder)
+		}
+		return ids
+	default:
+		return IdentifyMatchingPatterns(rm.LineText, rm.Submatches, patternIDs, patternOrder, rgExtraArgs)
+	}
+}
+
 // identifyByFullLineMatch is the submatch-less fallback path.
 // Each pattern is tested against the whole line; every pattern that
 // finds at least one match is returned. When none does, the patterns Go
