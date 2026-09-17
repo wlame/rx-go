@@ -144,6 +144,29 @@ func TestDetectFromPath_FallbackToMagicBytes(t *testing.T) {
 	}
 }
 
+// DetectFromOpenFile decides by the name first, as DetectFromPath
+// does, and otherwise by the first bytes of the open file it is given.
+func TestDetectFromOpenFile_NameThenTheOpenFilesBytes(t *testing.T) {
+	gzipMagic := bytes.NewReader([]byte{0x1f, 0x8b, 0x08, 0x00})
+	plain := bytes.NewReader([]byte("LINE 1 plain\n"))
+	cases := []struct {
+		name string
+		file *bytes.Reader
+		want Format
+	}{
+		{"data.log", gzipMagic, FormatGzip},
+		{"data.log", plain, FormatNone},
+		{"data.gz", plain, FormatGzip},
+		{"data.tar.gz", gzipMagic, FormatNone},
+	}
+	for _, tc := range cases {
+		got, err := DetectFromOpenFile(tc.name, tc.file)
+		if err != nil || got != tc.want {
+			t.Errorf("DetectFromOpenFile(%q) = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+}
+
 func TestDetectFromPath_MissingFileIsError(t *testing.T) {
 	_, err := DetectFromPath("/nonexistent/path/foo.log")
 	if err == nil {

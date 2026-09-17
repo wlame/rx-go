@@ -16,9 +16,9 @@ package seekableindex
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -47,15 +47,17 @@ type Result struct {
 }
 
 // Build reads a seekable-zstd file's seek table, decompresses every
-// frame in order and reports which lines each frame holds.
+// frame in order and reports which lines each frame holds. The file is
+// read through r, size bytes long: an open file the caller checked, so
+// no path is looked up again here.
 //
 // The whole file is decompressed once, which is the only way to count
 // lines in it; that cost is why the result is cached. A file whose seek
 // table is missing or corrupt is an error rather than a partial index:
 // an index that describes the wrong frames is worse than none, because
 // every later lookup trusts it.
-func Build(zstPath string) (*Result, error) {
-	return BuildAndCopyText(zstPath, io.Discard)
+func Build(r io.ReaderAt, size int64) (*Result, error) {
+	return BuildAndCopyText(r, size, io.Discard)
 }
 
 // BuildAndCopyText is Build that also writes the file's decompressed
@@ -68,24 +70,17 @@ func Build(zstPath string) (*Result, error) {
 // writer's error: a caller reading the copy through an io.Pipe makes the
 // build stop by closing its end, and a result is never returned for a
 // pass whose copy was cut short.
-func BuildAndCopyText(zstPath string, text io.Writer) (*Result, error) {
-	file, err := os.Open(zstPath)
+//
+// Go note: io.ReaderAt reads at an explicit position and keeps no
+// cursor, so an *os.File passed here can be read by other goroutines at
+// the same time without either moving the other's position.
+func BuildAndCopyText(r io.ReaderAt, size int64, text io.Writer) (*Result, error) {
+	table, err := seekable.ReadSeekTable(r, size)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", zstPath, err)
-	}
-	defer func() { _ = file.Close() }()
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", zstPath, err)
-	}
-
-	table, err := seekable.ReadSeekTable(file, info.Size())
-	if err != nil {
-		return nil, fmt.Errorf("read seek table of %s: %w", zstPath, err)
+		return nil, fmt.Errorf("read seek table: %w", err)
 	}
 	if len(table.Frames) == 0 {
-		return nil, fmt.Errorf("%s has an empty seek table", zstPath)
+		return nil, errors.New("empty seek table")
 	}
 
 	decoder := seekable.NewDecoder()
@@ -104,12 +99,12 @@ func BuildAndCopyText(zstPath string, text io.Writer) (*Result, error) {
 	linesBefore := int64(0)
 	endsAtLineStart := true
 	for i, frame := range table.Frames {
-		data, dErr := decoder.DecompressFrame(zstPath, frame.Index, table)
+		data, dErr := decoder.DecompressFrameAt(r, frame.Index, table)
 		if dErr != nil {
-			return nil, fmt.Errorf("decompress frame %d of %s: %w", frame.Index, zstPath, dErr)
+			return nil, fmt.Errorf("decompress frame %d: %w", frame.Index, dErr)
 		}
 		if _, wErr := text.Write(data); wErr != nil {
-			return nil, fmt.Errorf("copy text of frame %d of %s: %w", frame.Index, zstPath, wErr)
+			return nil, fmt.Errorf("copy text of frame %d: %w", frame.Index, wErr)
 		}
 
 		lineBreaks := int64(bytes.Count(data, []byte{'\n'}))

@@ -290,7 +290,10 @@ one; when they differ, the file is not read. This holds for every read
 of a trace (the chunk scan, gzip and other compressed streams, seekable
 zstd frames, the rebuild of an answer from the trace cache, and the
 numbering of lines a capped search left unknown), for `samples`, for an
-index build and for the input of `rx compress`. A directory walk lists
+index build and for the input of `rx compress`. An index build opens
+the file once and takes everything from that one handle: the format,
+the fingerprint, the lines, a seekable file's seek table and frames,
+and the text `--analyze` reads. A directory walk lists
 each directory through a handle checked the same way, so a directory
 swapped for a link while the walk runs cannot lend it the files of
 another directory.

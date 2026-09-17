@@ -146,6 +146,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it: a hidden file could be read without `--hidden`. The check now
   walks down from the search root one directory at a time and fails
   with `file changed after it was checked` on any link it meets there.
+- An index build reads only the file it checked. A build of a seekable
+  zstd file read the file again by its path after the check, so a link
+  retargeted during `rx index` or `POST /v1/index` (with or without
+  `--analyze`) could index a file outside the roots or a hidden one and
+  report its line count, line lengths and anomalies. Every index build
+  now takes the format, the fingerprint, the text, and a seekable
+  file's seek table and frames from the one handle it opened and
+  checked.
 - One line can no longer make a trace hold gigabytes in memory.
   ripgrep reports a matched line whole, plus about 50 bytes for every
   submatch on it, and rx read each report whole: a search for `x` over a

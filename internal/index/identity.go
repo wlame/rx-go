@@ -48,6 +48,22 @@ type SourceIdentity struct {
 // A fingerprint that cannot be read is left nil rather than reported as
 // an error; MatchesFile then falls back to the other fields.
 func IdentityFromInfo(path string, info os.FileInfo) SourceIdentity {
+	fp, err := SourceFingerprint(path)
+	return identityOf(info, fp, err)
+}
+
+// IdentityFromOpenFile is IdentityFromInfo for a file already open,
+// such as one a pin opened: the fingerprint is read from f, not from a
+// path that may lead elsewhere by now. f's read offset is left where it
+// was.
+func IdentityFromOpenFile(f *os.File, info os.FileInfo) SourceIdentity {
+	fp, err := fingerprintOpenFile(f)
+	return identityOf(info, fp, err)
+}
+
+// identityOf assembles an identity from a stat result and a fingerprint
+// read, leaving the fingerprint nil when the read failed (fpErr).
+func identityOf(info os.FileInfo, fp string, fpErr error) SourceIdentity {
 	inode, changedAt := SourceIdentityFields(info)
 	id := SourceIdentity{
 		SizeBytes:  info.Size(),
@@ -55,7 +71,7 @@ func IdentityFromInfo(path string, info os.FileInfo) SourceIdentity {
 		Inode:      inode,
 		ChangedAt:  changedAt,
 	}
-	if fp, err := SourceFingerprint(path); err == nil {
+	if fpErr == nil {
 		id.Fingerprint = &fp
 	}
 	return id

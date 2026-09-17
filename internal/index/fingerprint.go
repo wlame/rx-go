@@ -39,7 +39,18 @@ func SourceFingerprint(path string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = f.Close() }()
+	return fingerprintOpenFile(f)
+}
 
+// fingerprintOpenFile is SourceFingerprint of a file already open: the
+// one a pin opened, so the digest is of that file whatever its path
+// leads to by now.
+//
+// It reads by position (io.NewSectionReader uses ReadAt), so the
+// file's read offset is left where it was and a caller can fingerprint
+// a file and then read it from the start. io.CopyN fails on a short
+// read, so a file that shrinks during the read gets no fingerprint.
+func fingerprintOpenFile(f *os.File) (string, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return "", err
@@ -51,24 +62,18 @@ func SourceFingerprint(path string) (string, error) {
 	// cannot produce the same digest at two different lengths.
 	_, _ = fmt.Fprintf(h, "%d\n", size)
 
-	head := size
-	if head > fingerprintWindow {
-		head = fingerprintWindow
-	}
+	head := min(size, fingerprintWindow)
 	if head > 0 {
-		if _, err := io.CopyN(h, f, head); err != nil {
-			return "", fmt.Errorf("fingerprint head of %s: %w", path, err)
+		if _, err := io.CopyN(h, io.NewSectionReader(f, 0, head), head); err != nil {
+			return "", fmt.Errorf("fingerprint head of %s: %w", f.Name(), err)
 		}
 	}
 	// Only read a tail window when the file is long enough for it to
 	// cover bytes the head window did not.
 	if size > fingerprintWindow {
-		start := size - fingerprintWindow
-		if _, err := f.Seek(start, io.SeekStart); err != nil {
-			return "", fmt.Errorf("fingerprint tail of %s: %w", path, err)
-		}
-		if _, err := io.CopyN(h, f, fingerprintWindow); err != nil {
-			return "", fmt.Errorf("fingerprint tail of %s: %w", path, err)
+		tail := io.NewSectionReader(f, size-fingerprintWindow, fingerprintWindow)
+		if _, err := io.CopyN(h, tail, fingerprintWindow); err != nil {
+			return "", fmt.Errorf("fingerprint tail of %s: %w", f.Name(), err)
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
