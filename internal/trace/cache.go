@@ -279,8 +279,10 @@ func writeFileAtomically(path string, body []byte) error {
 // ============================================================================
 
 // IsCacheValid returns true when the cache file exists, the version
-// and the patterns hash match, the cache records the scan's chunk
-// count, and the source file is still the file
+// and the patterns hash match, the entry lists the same patterns as
+// the caller (in any order) with every record naming one of them, the
+// cache records the scan's chunk count, and the source file is still
+// the file
 // the cache was built from: the same size, mtime, inode, ctime and
 // fingerprint, compared by index.SourceIdentity.MatchesFile exactly as
 // the line index compares them.
@@ -295,6 +297,10 @@ func IsCacheValid(
 // loadValidCache reads the cache at cachePath and returns it when
 // IsCacheValid accepts it, nil otherwise. One read serves both the
 // check and the caller, so a cache hit loads the file once.
+//
+// The entry it returns is in the caller's pattern order: its Patterns
+// are patterns, and each record's PatternIndex is a position in them
+// (see toReaderPatternOrder).
 func loadValidCache(
 	cachePath string,
 	sourcePath string,
@@ -317,6 +323,16 @@ func loadValidCache(
 	if data.PatternsHash != ComputePatternsHash(patterns, rgFlags) {
 		return nil
 	}
+	// The hash sorts the patterns, so the entry may come from a search
+	// that listed them in another order. Its records are put into this
+	// search's order; an entry that cannot be put into it is a miss.
+	if err := toReaderPatternOrder(data, patterns); err != nil {
+		slog.Default().Warn("trace_cache_inconsistent",
+			"path", cachePath,
+			"error", err.Error(),
+		)
+		return nil
+	}
 	// Every scan has at least one chunk. A cache without the count
 	// cannot report the scan's file_chunks, so it is not used.
 	if data.ChunkCount < 1 {
@@ -326,6 +342,59 @@ func loadValidCache(
 		return nil
 	}
 	return data
+}
+
+// toReaderPatternOrder rewrites the entry data, written by a search with
+// its patterns in the order data.Patterns lists them, for a search with
+// the same patterns in the order readerPatterns lists them: every
+// record's pattern_index becomes the position of its pattern in
+// readerPatterns, and data.Patterns becomes readerPatterns.
+//
+// A pattern given more than once is matched occurrence by occurrence:
+// the k-th copy in the writer's list is the k-th copy in the reader's.
+// Every copy of a pattern matches the same lines, so any pairing gives
+// the scan's answer, and this one is deterministic.
+//
+// It returns an error, and leaves data unchanged, when the two lists are
+// not the same patterns (a hash collision or an edited entry) or a
+// record names a position the writer's list does not have. The caller
+// treats that as a miss, so a record is never credited to a pattern by
+// guess.
+//
+// The work is one pass over each list: O(len(data.Patterns) +
+// len(readerPatterns) + len(data.Matches)).
+func toReaderPatternOrder(data *rxtypes.TraceCacheData, readerPatterns []string) error {
+	if len(data.Patterns) != len(readerPatterns) {
+		return fmt.Errorf("entry has %d patterns, the search has %d", len(data.Patterns), len(readerPatterns))
+	}
+	// readerSlots holds, for each pattern text, the reader's positions
+	// of it not yet paired with a writer position, in increasing order.
+	readerSlots := make(map[string][]int, len(readerPatterns))
+	for i, p := range readerPatterns {
+		readerSlots[p] = append(readerSlots[p], i)
+	}
+	// readerIndex[w] is the reader's position for the writer's position w.
+	readerIndex := make([]int, len(data.Patterns))
+	for w, p := range data.Patterns {
+		slots := readerSlots[p]
+		if len(slots) == 0 {
+			return fmt.Errorf("entry pattern %q is not one of the search's patterns, or is there more often", p)
+		}
+		readerIndex[w], readerSlots[p] = slots[0], slots[1:]
+	}
+	// Check every record before changing any, so a bad entry is left as
+	// it was read.
+	for _, m := range data.Matches {
+		if m.PatternIndex < 0 || m.PatternIndex >= len(readerIndex) {
+			return fmt.Errorf("a record at offset %d names pattern_index %d of %d patterns",
+				m.Offset, m.PatternIndex, len(readerIndex))
+		}
+	}
+	for i := range data.Matches {
+		data.Matches[i].PatternIndex = readerIndex[data.Matches[i].PatternIndex]
+	}
+	data.Patterns = append([]string(nil), readerPatterns...)
+	return nil
 }
 
 // lookupCache is loadValidCache counted as one trace cache lookup: a

@@ -9,6 +9,9 @@ package rxtypes
 // FrameIndex is present only for seekable-zstd caches; for regular
 // files it's omitted from the JSON entirely (pointer + ,omitempty).
 type TraceCacheMatch struct {
+	// PatternIndex is the match's pattern, as a 0-based position in the
+	// entry's Patterns: the order of the search that wrote the entry,
+	// which may differ from the order of a search that reads it.
 	PatternIndex int   `json:"pattern_index"`
 	Offset       int64 `json:"offset"`
 	LineNumber   int64 `json:"line_number"`
@@ -39,13 +42,16 @@ type TraceCacheData struct {
 	// inode, the inode-change time in the SourceModifiedAt layout, and a
 	// digest of the size plus the first and last 64 KiB. Each is null
 	// when it could not be read, and a null field is not compared.
-	SourceInode       *uint64  `json:"source_inode"`
-	SourceChangedAt   *string  `json:"source_changed_at"`
-	SourceFingerprint *string  `json:"source_fingerprint"`
-	Patterns          []string `json:"patterns"`
-	PatternsHash      string   `json:"patterns_hash"`
-	RgFlags           []string `json:"rg_flags"`
-	CreatedAt         string   `json:"created_at"`
+	SourceInode       *uint64 `json:"source_inode"`
+	SourceChangedAt   *string `json:"source_changed_at"`
+	SourceFingerprint *string `json:"source_fingerprint"`
+	// Patterns are the patterns of the search that wrote the entry, in
+	// its order. Every search with the same patterns in any order shares
+	// the entry, since PatternsHash sorts them.
+	Patterns     []string `json:"patterns"`
+	PatternsHash string   `json:"patterns_hash"`
+	RgFlags      []string `json:"rg_flags"`
+	CreatedAt    string   `json:"created_at"`
 	// ChunkCount is the file_chunks value of the scan that wrote the
 	// cache: the number of chunks a plain file was split into, or the
 	// number of frames of a seekable-zstd file. A cache hit reports it,
