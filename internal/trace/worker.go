@@ -58,10 +58,12 @@ type MatchInfo struct {
 // or spawn a goroutine before returning.
 type HookFirer interface {
 	// OnFile is called once per file read, scanned or answered from the
-	// trace cache, with its match count. The count is known only once
-	// the patterns of the trace's matched lines are decided, for every
-	// file at once, so the calls come after the last file is read, in
-	// the order the files were read.
+	// trace cache, with its match count, in the order the files were
+	// read. With one pattern it is called as each file's read ends. With
+	// several, the count is known only once the patterns of the file's
+	// matched lines are decided, which is done for a group of up to
+	// settleEveryFiles files or settleEveryBytes of matched text at a
+	// time, so a call can trail the read of its file by that much.
 	OnFile(ctx context.Context, path string, info FileInfo)
 	// OnMatch is called once per match of the result, after the scan,
 	// in the result's order, with the result's absolute line number (-1
