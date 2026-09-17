@@ -91,12 +91,14 @@ func New() *Engine { return &Engine{} }
 //     c. Seekable zstd  — ProcessSeekable (frame-parallel)
 //     d. Cache hit      — reconstruct from disk (ReconstructMatchData)
 //  4. Runs each bucket through its path, collects MatchRaw.
-//  5. Decides which patterns match each matched line (creditPatterns)
-//     and reports the line once per pattern, with its own submatches.
+//  5. Decides which patterns match each matched line, for every file at
+//     once (settleFiles, creditPatterns), and reports the line once per
+//     pattern, with its own submatches. OnFile fires then for each file
+//     read, in order, with its match count.
 //  6. Sorts, truncates to max_results, resolves absolute line numbers
 //     (for chunked files that lack them), and builds a TraceResponse.
-//     OnFile fires as each file's scan finishes; OnMatch fires once per
-//     match of the result, after this step, with the result's numbers.
+//     OnMatch fires once per match of the result, after this step, with
+//     the result's numbers.
 //  7. Optionally writes new trace caches for large completed scans.
 //  8. Returns the response.
 //
@@ -249,15 +251,37 @@ func (e *Engine) RunWithOptions(
 	if opts.beforeRead != nil {
 		opts.beforeRead()
 	}
-	var allMatches []rxtypes.Match
 	var allContexts []contextWithFile
 	// Where every line above ends, by where it starts. The context
 	// windows are put together from it (see buildContextDict).
 	ends := lineEnds{}
+	// What each file read gave, in bucket order, until it is settled. A
+	// scanned file's lines wait there for their patterns, which are
+	// decided for several files at once (see settleFiles and
+	// settleWhenDue).
+	var outcomes []fileOutcome
+	pendingText := 0 // bytes of matched line text in outcomes
+	var allMatches []rxtypes.Match
 	// Completed scans whose answer goes into the trace cache, keyed by
-	// path. A file gets an entry only when caching was wanted before its
-	// scan started (see scanToCache) and the scan read every chunk.
+	// path (see scannedLines.cacheable).
 	toCache := map[string]*ScannedFile{}
+	settle := func() error {
+		matches, cacheable, lost, err := settleFiles(ctx, opts, outcomes, patternIDs, patternOrder)
+		if err != nil {
+			return err
+		}
+		allMatches = append(allMatches, matches...)
+		for path, entry := range cacheable {
+			toCache[path] = entry
+		}
+		skipped = append(skipped, lost...)
+		outcomes, pendingText = nil, 0
+		return nil
+	}
+	// found counts the matched lines read so far, a cache hit's matches
+	// included. Each line is at least one match, so the cap is reached no
+	// later than it would be on the matches themselves.
+	found := 0
 
 	for _, b := range buckets {
 		select {
@@ -266,7 +290,7 @@ func (e *Engine) RunWithOptions(
 		default:
 		}
 		// Stop early once max_results is hit.
-		if opts.MaxResults != nil && len(allMatches) >= *opts.MaxResults {
+		if opts.MaxResults != nil && found >= *opts.MaxResults {
 			break
 		}
 		fileID := filePathToID[b.path]
@@ -275,6 +299,7 @@ func (e *Engine) RunWithOptions(
 			// gated helper — no-op in CLI mode.
 			prometheus.RecordFileScanned(b.size)
 		}
+		outcome := fileOutcome{fileID: fileID, path: b.path, size: b.size}
 
 		switch b.kind {
 		case "regular":
@@ -300,7 +325,7 @@ func (e *Engine) RunWithOptions(
 			// soon as this file alone contributes enough to close the
 			// overall budget. remainingResults returns nil when no cap
 			// was set at all.
-			remaining := remainingResults(opts.MaxResults, len(allMatches))
+			remaining := remainingResults(opts.MaxResults, found)
 			chunkResults, perr := ProcessAllChunks(
 				ctx, tasks, patternIDs, patternOrder,
 				opts.RgExtraArgs, opts.ContextBefore, opts.ContextAfter,
@@ -315,17 +340,7 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
-			credits, cerr := creditPatterns(ctx, creditRequest{
-				source: b.src, lines: allChunkMatches(chunkResults),
-				patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs,
-			})
-			if cerr != nil {
-				if fatal := creditFailureEndsTrace(ctx, cerr); fatal != nil {
-					return nil, fatal
-				}
-				skipped = append(skipped, b.path)
-				continue
-			}
+			scan := &scannedLines{source: b.src, cacheEntry: cacheEntry}
 			// Turn ripgrep's chunk-relative line numbers into file
 			// absolute ones. Chunks are newline-aligned, so the
 			// newlines counted while feeding the chunks before this one
@@ -337,28 +352,17 @@ func (e *Engine) RunWithOptions(
 			// rather than a wrong one.
 			startLine := 1
 			numbered := true
-			line := 0 // index of rm in credits, which lists every chunk's matches in turn
 			for _, res := range chunkResults {
 				for _, rm := range res.Matches {
 					ends.record(fileID, rm.Offset, rm.End)
-					absLine := -1
+					m := toMatch(patternCredit{}, fileID, rm)
 					if numbered {
-						absLine = startLine + rm.LineNumber - 1
+						m.AbsoluteLineNumber = startLine + rm.LineNumber - 1
+						// rx-python reports the absolute number in both
+						// fields once it knows it.
+						m.RelativeLineNumber = ptrInt(m.AbsoluteLineNumber)
 					}
-					for _, credit := range credits[line] {
-						m := toMatch(credit, fileID, rm)
-						m.AbsoluteLineNumber = absLine
-						if absLine > 0 {
-							// rx-python reports the absolute number in
-							// both fields once it knows it.
-							m.RelativeLineNumber = ptrInt(absLine)
-						}
-						allMatches = append(allMatches, m)
-						if cacheEntry != nil {
-							cacheEntry.Matches = append(cacheEntry.Matches, m)
-						}
-					}
-					line++
+					scan.add(rm, m)
 				}
 				for _, rc := range res.Contexts {
 					ends.record(fileID, rc.Offset, rc.End)
@@ -388,12 +392,10 @@ func (e *Engine) RunWithOptions(
 			}
 			// A chunk cut short leaves numbered false; only a scan that
 			// read every chunk describes the whole planned file.
-			if cacheEntry != nil && numbered && !chunksCutALine(chunkResults) {
-				toCache[b.path] = cacheEntry
-			}
-			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, countMatchesForFile(allMatches, fileID))
+			scan.cacheable = cacheEntry != nil && numbered && !chunksCutALine(chunkResults)
+			outcome.scanned = scan
 		case "compressed":
-			remaining := remainingResults(opts.MaxResults, len(allMatches))
+			remaining := remainingResults(opts.MaxResults, found)
 			format, _ := compression.DetectFromPath(b.path)
 			if format == compression.FormatNone {
 				skipped = append(skipped, b.path)
@@ -417,30 +419,18 @@ func (e *Engine) RunWithOptions(
 					continue
 				}
 			}
-			credits, crErr := creditPatterns(ctx, creditRequest{
-				source: b.src, lines: rawMatches,
-				patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs,
-			})
-			if crErr != nil {
-				if fatal := creditFailureEndsTrace(ctx, crErr); fatal != nil {
-					return nil, fatal
-				}
-				skipped = append(skipped, b.path)
-				continue
-			}
+			scan := &scannedLines{source: b.src}
 			// The whole file goes through one ripgrep, so the line
 			// numbers it reports are the file's own. Reporting them as
 			// unknown made a search of a .gz look less informative than
 			// the same search of the text inside it.
-			for i, rm := range rawMatches {
+			for _, rm := range rawMatches {
 				ends.record(fileID, rm.Offset, rm.End)
-				for _, credit := range credits[i] {
-					m := toMatch(credit, fileID, rm)
-					if rm.LineNumber >= 1 {
-						m.AbsoluteLineNumber = rm.LineNumber
-					}
-					allMatches = append(allMatches, m)
+				m := toMatch(patternCredit{}, fileID, rm)
+				if rm.LineNumber >= 1 {
+					m.AbsoluteLineNumber = rm.LineNumber
 				}
+				scan.add(rm, m)
 			}
 			for _, rc := range rawContexts {
 				ends.record(fileID, rc.Offset, rc.End)
@@ -459,8 +449,7 @@ func (e *Engine) RunWithOptions(
 					},
 				})
 			}
-			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size,
-				countMatchesForFile(allMatches, fileID))
+			outcome.scanned = scan
 		case "seekable":
 			var cacheEntry *ScannedFile
 			if b.info != nil {
@@ -471,7 +460,7 @@ func (e *Engine) RunWithOptions(
 				cacheEntry.Chunks = fileChunkCounts[fileID]
 				cacheEntry.FrameIndexByOffset = map[int64]int{}
 			}
-			remaining := remainingResults(opts.MaxResults, len(allMatches))
+			remaining := remainingResults(opts.MaxResults, found)
 			rawMatches, rawContexts, _, serr := ProcessSeekable(
 				ctx, b.src,
 				patternIDs, patternOrder, opts.RgExtraArgs,
@@ -485,36 +474,20 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
-			credits, crErr := creditPatterns(ctx, creditRequest{
-				source: b.src, lines: rawMatches,
-				patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs,
-			})
-			if crErr != nil {
-				if fatal := creditFailureEndsTrace(ctx, crErr); fatal != nil {
-					return nil, fatal
-				}
-				skipped = append(skipped, b.path)
-				continue
-			}
+			scan := &scannedLines{source: b.src, cacheEntry: cacheEntry}
 			// Frames carry their own line numbering, which the scan
 			// turns into the file's by counting the lines of the frames
 			// before each one. A frame the scan never reached leaves
 			// its matches unnumbered rather than numbered from the
 			// wrong place.
-			for i, rm := range rawMatches {
+			for _, rm := range rawMatches {
 				ends.record(fileID, rm.Offset, rm.End)
-				for _, credit := range credits[i] {
-					m := toMatch(credit, fileID, rm)
-					if rm.AbsoluteLine >= 1 {
-						m.AbsoluteLineNumber = rm.AbsoluteLine
-						m.RelativeLineNumber = ptrInt(rm.AbsoluteLine)
-					}
-					allMatches = append(allMatches, m)
-					if cacheEntry != nil {
-						cacheEntry.Matches = append(cacheEntry.Matches, m)
-						cacheEntry.FrameIndexByOffset[m.Offset] = rm.FrameIndex
-					}
+				m := toMatch(patternCredit{}, fileID, rm)
+				if rm.AbsoluteLine >= 1 {
+					m.AbsoluteLineNumber = rm.AbsoluteLine
+					m.RelativeLineNumber = ptrInt(rm.AbsoluteLine)
 				}
+				scan.add(rm, m)
 			}
 			for _, rc := range rawContexts {
 				ends.record(fileID, rc.Offset, rc.End)
@@ -536,11 +509,8 @@ func (e *Engine) RunWithOptions(
 			// Without a result cap ProcessSeekable either reads every
 			// frame or returns an error, so a scan that got here is
 			// complete.
-			if cacheEntry != nil && !linesCut(rawMatches, rawContexts) {
-				toCache[b.path] = cacheEntry
-			}
-			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size,
-				countMatchesForFile(allMatches, fileID))
+			scan.cacheable = cacheEntry != nil && !linesCut(rawMatches, rawContexts)
+			outcome.scanned = scan
 		case "cached-regular", "cached-seekable":
 			cachedMatches := b.cachedMatch
 			if b.kind == "cached-seekable" {
@@ -573,15 +543,30 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 			prometheus.RecordTraceCacheReconstruction(time.Since(reconstructStart))
-			allMatches = append(allMatches, reMatches...)
+			outcome.matches = reMatches
 			for start, end := range reEnds {
 				ends.record(fileID, start, end)
 			}
 			for _, cl := range reContexts {
 				allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
 			}
-			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, len(reMatches))
 		}
+		if outcome.scanned != nil {
+			found += len(outcome.scanned.lines)
+			pendingText += outcome.scanned.text
+		} else {
+			found += len(outcome.matches)
+		}
+		outcome.readTime = time.Since(fileStart)
+		outcomes = append(outcomes, outcome)
+		if settleWhenDue(len(outcomes), pendingText, len(patternOrder)) {
+			if err := settle(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := settle(); err != nil {
+		return nil, err
 	}
 
 	// -------------------------------------------------------------------
@@ -816,25 +801,145 @@ func toMatch(credit patternCredit, fileID string, rm MatchRaw) rxtypes.Match {
 	}
 }
 
-// allChunkMatches lists the matches of every chunk, chunk after chunk.
-func allChunkMatches(results []ChunkResult) []MatchRaw {
-	var out []MatchRaw
-	for _, res := range results {
-		out = append(out, res.Matches...)
-	}
-	return out
+// fileOutcome is what reading one file gave the trace: the lines a scan
+// matched, still waiting for their patterns, or a cache hit's matches.
+type fileOutcome struct {
+	fileID string
+	path   string
+	size   int64
+	// readTime is how long the scan or the cache-hit pass took; the
+	// OnFile hook reports it.
+	readTime time.Duration
+	// scanned is set for a scan, nil for a cache hit.
+	scanned *scannedLines
+	// matches are a cache hit's matches, already labeled with their
+	// patterns.
+	matches []rxtypes.Match
 }
 
-// creditFailureEndsTrace returns the error that ends the whole trace
-// when deciding a file's patterns failed with err, and nil when only
-// that file is lost (it is then reported as skipped, like a file whose
-// scan failed). A pattern ripgrep refuses dooms every file, and a
-// canceled request stops the trace.
-func creditFailureEndsTrace(ctx context.Context, err error) error {
-	if errors.Is(err, ErrInvalidPattern) {
-		return err
+// scannedLines is one file's matched lines as a scan reported them,
+// before their patterns are decided.
+type scannedLines struct {
+	source sandbox.Pinned
+	lines  []MatchRaw
+	// numbered holds, for each line, its match as the answer reports it,
+	// numbered, with no pattern and no submatches yet.
+	numbered []rxtypes.Match
+	// cacheEntry is the trace-cache record the matches go into, nil when
+	// the answer is not to be cached; cacheable says whether the scan
+	// may be written to it (see scanToCache, chunksCutALine, linesCut).
+	cacheEntry *ScannedFile
+	cacheable  bool
+	// text counts the bytes of the lines' text.
+	text int
+}
+
+// add records one matched line and its numbered match.
+func (s *scannedLines) add(rm MatchRaw, numbered rxtypes.Match) {
+	s.lines = append(s.lines, rm)
+	s.numbered = append(s.numbered, numbered)
+	s.text += len(rm.LineText)
+}
+
+// settleEveryFiles and settleEveryBytes bound how much a trace reads
+// before it settles the files read so far: decides their lines'
+// patterns, builds their matches and fires their OnFile hooks. Settling
+// several files at once costs one ripgrep run per pattern for all of
+// them, where settling each file alone costs that much per file (5 ms
+// or so per run, which doubled the time of a search of many small
+// files); settling within these bounds keeps OnFile a progress report
+// of a long search, never more than this far behind the scan.
+const (
+	settleEveryFiles = 64
+	settleEveryBytes = creditBatchBytes
+)
+
+// settleWhenDue reports whether the files read since the last settle,
+// holding text bytes of matched line text, are to be settled now: with
+// one pattern after every file (there is nothing to decide, so nothing
+// to share), otherwise once they reach settleEveryFiles files or
+// settleEveryBytes of text.
+func settleWhenDue(files, text, patterns int) bool {
+	return patterns == 1 || files >= settleEveryFiles || text >= settleEveryBytes
+}
+
+// settleFiles decides the patterns of every scanned line of outcomes in
+// one creditPatterns call, then, file by file in outcomes' order, builds
+// the matches (one per line and credited pattern), fills the trace-cache
+// records, and fires the OnFile hook. It returns every match, the scans
+// to write to the trace cache by path, and the paths of files lost
+// because their lines could not be credited (reported as skipped, with
+// no match and no hook).
+//
+// The error ends the trace: a pattern ripgrep refuses or a canceled
+// request.
+func settleFiles(
+	ctx context.Context,
+	opts Options,
+	outcomes []fileOutcome,
+	patternIDs map[string]string,
+	patternOrder []string,
+) ([]rxtypes.Match, map[string]*ScannedFile, []string, error) {
+	req := creditRequest{patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs}
+	for _, o := range outcomes {
+		if o.scanned != nil {
+			req.files = append(req.files, creditFile{source: o.scanned.source, lines: o.scanned.lines})
+		}
 	}
-	return ctx.Err()
+	credits, err := creditPatterns(ctx, req)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	var matches []rxtypes.Match
+	toCache := map[string]*ScannedFile{}
+	var lost []string
+	next := 0 // index into credits, which lists the scanned files in order
+	for _, o := range outcomes {
+		fileMatches := o.matches
+		if o.scanned != nil {
+			fc := credits[next]
+			next++
+			if fc.err != nil {
+				lost = append(lost, o.path)
+				continue
+			}
+			fileMatches = creditedMatches(o.scanned, fc.lines)
+			if o.scanned.cacheable {
+				toCache[o.path] = o.scanned.cacheEntry
+			}
+		}
+		matches = append(matches, fileMatches...)
+		fireOnFile(ctx, opts.HookFirer, o.path, o.readTime, o.size, len(fileMatches))
+	}
+	return matches, toCache, lost, nil
+}
+
+// creditedMatches builds a scanned file's matches: one per line and
+// pattern credited to it, with that pattern's submatches, in line order.
+// They also go into the file's trace-cache record, when it has one.
+func creditedMatches(scan *scannedLines, credits [][]patternCredit) []rxtypes.Match {
+	var out []rxtypes.Match
+	for i, numbered := range scan.numbered {
+		for _, credit := range credits[i] {
+			m := numbered
+			// Fresh pointers, so no two matches share one.
+			m.RelativeLineNumber = ptrInt(*numbered.RelativeLineNumber)
+			text := *numbered.LineText
+			m.LineText = &text
+			m.Pattern = credit.patternID
+			m.Submatches = credit.submatches
+			m.SubmatchesTruncated = credit.submatchesTruncated
+			out = append(out, m)
+			if scan.cacheEntry != nil {
+				scan.cacheEntry.Matches = append(scan.cacheEntry.Matches, m)
+				if scan.cacheEntry.FrameIndexByOffset != nil {
+					scan.cacheEntry.FrameIndexByOffset[m.Offset] = scan.lines[i].FrameIndex
+				}
+			}
+		}
+	}
+	return out
 }
 
 // fireMatchHooks calls OnMatch once for each match of the answer, in
@@ -878,25 +983,13 @@ func remainingResults(max *int, have int) *int {
 	return &r
 }
 
-// countMatchesForFile returns how many matches currently belong to
-// fileID. Used for OnFile hook payloads.
-func countMatchesForFile(matches []rxtypes.Match, fileID string) int {
-	n := 0
-	for _, m := range matches {
-		if m.File == fileID {
-			n++
-		}
-	}
-	return n
-}
-
-// fireOnFile invokes the OnFile hook for a finished file scan. Separate
-// helper so the engine's switch statement stays readable.
-func fireOnFile(ctx context.Context, hf HookFirer, path string, fileStart time.Time, size int64, matches int) {
+// fireOnFile invokes the OnFile hook for a file read, with how long the
+// read took and how many matches it gave.
+func fireOnFile(ctx context.Context, hf HookFirer, path string, readTime time.Duration, size int64, matches int) {
 	if hf == nil {
 		return
 	}
-	elapsedMS := int(time.Since(fileStart) / time.Millisecond)
+	elapsedMS := int(readTime / time.Millisecond)
 	hf.OnFile(ctx, path, FileInfo{
 		FileSizeBytes: size,
 		ScanTimeMS:    elapsedMS,

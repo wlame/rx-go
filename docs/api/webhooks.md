@@ -13,7 +13,7 @@ target serves both backends.
 
 | Hook | `event` value | Fires | Typical use |
 |---|---|---|---|
-| `on_file` | `file_scanned` | Once per file, after its scan finishes | Progress tracking in long scans |
+| `on_file` | `file_scanned` | Once per file, after its scan finishes (with several patterns, once its lines' patterns are decided, at most 64 files behind the scan) | Progress tracking in long scans |
 | `on_match` | `match_found` | Once per match of the response, after the scan (requires `max_results`) | Alerting on the matches found |
 | `on_complete` | `trace_complete` | Once per trace request | Completion signaling, persistence |
 

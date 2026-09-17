@@ -52,8 +52,8 @@ import (
 var errLineMatchesNoPattern = errors.New("the line matches none of the patterns")
 
 // creditBatchBytes is about how many bytes of line text one ripgrep run
-// of the check reads. A file with many matched lines is checked in
-// several batches, which run in parallel like the chunks of a scan.
+// of the check reads. Many matched lines are checked in several batches,
+// which run in parallel like the chunks of a scan.
 const creditBatchBytes = 8 << 20
 
 // patternCredit is one pattern a matched line is credited to, with that
@@ -70,56 +70,93 @@ type patternCredit struct {
 	submatchesTruncated bool
 }
 
-// creditRequest is the input of creditPatterns: the lines one file's
-// scan reported, and the search that reported them.
+// creditFile is one file's part of a creditRequest: the lines its scan
+// reported, and the file as the trace pinned it, which is read only for
+// a line the answer cut.
+type creditFile struct {
+	source sandbox.Pinned
+	lines  []MatchRaw
+}
+
+// creditRequest is the input of creditPatterns: the lines the scans of a
+// trace reported, file by file, and the search that reported them.
 type creditRequest struct {
-	// source is the file, as the trace pinned it. It is read only for a
-	// line the answer cut.
-	source       sandbox.Pinned
-	lines        []MatchRaw
+	files        []creditFile
 	patternIDs   map[string]string
 	patternOrder []string
 	rgExtraArgs  []string
 }
 
-// creditPatterns decides, for each of req.lines, the patterns that match
-// it, and returns their credits in the same order as req.lines, each
-// line's credits in pattern order.
+// fileCredits is what creditPatterns decided for one file: for each of
+// its lines, in their order, the patterns credited, in pattern order. err
+// is set instead when the file's lines could not be decided, and the
+// trace then reports the file as skipped.
+type fileCredits struct {
+	lines [][]patternCredit
+	err   error
+}
+
+// lineRef names one line of a creditRequest: req.files[file].lines[line].
+type lineRef struct {
+	file int
+	line int
+}
+
+// creditPatterns decides, for every line of every file of req, the
+// patterns that match it. The result has one entry per file of req, in
+// the same order.
 //
 // With one pattern there is nothing to decide: every line is that
 // pattern's, with the submatches the scan reported, and no ripgrep runs.
 // With more, every pattern runs alone over the lines (see the comment at
-// the top of this file).
+// the top of this file). The lines of all files are checked together, so
+// a search of many small files costs one ripgrep run per pattern and
+// batch, not one per file.
 //
-// It fails when a ripgrep run fails, when a cut line cannot be read
-// again, and with errLineMatchesNoPattern when a line matches no
-// pattern. A line is never credited to a pattern its run did not report.
-func creditPatterns(ctx context.Context, req creditRequest) ([][]patternCredit, error) {
-	if len(req.lines) == 0 {
-		return nil, nil
-	}
+// A file is lost alone (its fileCredits.err) when a run over its lines
+// fails, when its cut lines cannot be read again, or with
+// errLineMatchesNoPattern when one of its lines matches no pattern. The
+// returned error ends the whole trace: a pattern ripgrep refuses
+// (ErrInvalidPattern), or ctx's end. A line is never credited to a
+// pattern its run did not report.
+func creditPatterns(ctx context.Context, req creditRequest) ([]fileCredits, error) {
 	if len(req.patternOrder) == 1 {
 		return creditTheOnlyPattern(req), nil
 	}
+	patterns := len(req.patternOrder)
 
-	// One cell per (line, pattern), written by the run of that pattern
-	// over the batch holding that line. Every cell has exactly one
-	// writer, so the runs share the slice without a lock; g.Wait below
-	// is the happens-before edge for the reads after it.
-	hits := make([]patternHit, len(req.lines)*len(req.patternOrder))
+	// One cell per (file, line, pattern), written by the run of that
+	// pattern over the batch holding that line. Every cell has exactly
+	// one writer, so the runs share the slices without a lock; g.Wait
+	// below is the happens-before edge for the reads after it.
+	hits := make([][]patternHit, len(req.files))
+	for f, file := range req.files {
+		hits[f] = make([]patternHit, len(file.lines)*patterns)
+	}
+	batches := planCreditBatches(req.files)
+	// runErrs holds the failure of each (batch, pattern) run, one writer
+	// per cell like hits.
+	runErrs := make([]error, len(batches)*patterns)
 
 	// errgroup runs the (batch, pattern) checks at most workerLimit at a
-	// time, as many as the chunks of a scan. The first failure cancels
-	// gctx, which kills the ripgrep of every other check still running
-	// (exec.CommandContext), and g.Wait returns that first failure.
+	// time, as many as the chunks of a scan. A run's own failure is kept
+	// in runErrs and loses only the files of its batch; only a failure
+	// that ends the trace is returned to the group, which then cancels
+	// gctx, kills the ripgrep of every run still going
+	// (exec.CommandContext), and hands that failure to g.Wait.
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(workerLimit())
-	for _, batch := range planCreditBatches(req.lines) {
+	for b, batch := range batches {
 		for p, pid := range req.patternOrder {
 			g.Go(func() error {
-				return checkBatchAgainstPattern(gctx, req, batch, pid, func(lineIndex int, hit patternHit) {
-					hits[lineIndex*len(req.patternOrder)+p] = hit
+				err := checkBatchAgainstPattern(gctx, req, batch, pid, func(ref lineRef, hit patternHit) {
+					hits[ref.file][ref.line*patterns+p] = hit
 				})
+				if err != nil && (errors.Is(err, ErrInvalidPattern) || gctx.Err() != nil) {
+					return err
+				}
+				runErrs[b*patterns+p] = err
+				return nil
 			})
 		}
 	}
@@ -131,19 +168,37 @@ func creditPatterns(ctx context.Context, req creditRequest) ([][]patternCredit, 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return creditsFromHits(req, hits)
+	out := make([]fileCredits, len(req.files))
+	for b, batch := range batches {
+		for p := range req.patternOrder {
+			if err := runErrs[b*patterns+p]; err != nil {
+				for _, ref := range batch.lines {
+					out[ref.file].err = err
+				}
+			}
+		}
+	}
+	for f := range req.files {
+		if out[f].err == nil {
+			out[f].lines, out[f].err = creditsFromHits(req, f, hits[f])
+		}
+	}
+	return out, nil
 }
 
 // creditTheOnlyPattern credits every line to the search's one pattern,
 // with the submatches the scan reported.
-func creditTheOnlyPattern(req creditRequest) [][]patternCredit {
-	out := make([][]patternCredit, len(req.lines))
-	for i, line := range req.lines {
-		out[i] = []patternCredit{{
-			patternID:           req.patternOrder[0],
-			submatches:          line.Submatches,
-			submatchesTruncated: line.SubmatchesTruncated,
-		}}
+func creditTheOnlyPattern(req creditRequest) []fileCredits {
+	out := make([]fileCredits, len(req.files))
+	for f, file := range req.files {
+		out[f].lines = make([][]patternCredit, len(file.lines))
+		for i, line := range file.lines {
+			out[f].lines[i] = []patternCredit{{
+				patternID:           req.patternOrder[0],
+				submatches:          line.Submatches,
+				submatchesTruncated: line.SubmatchesTruncated,
+			}}
+		}
 	}
 	return out
 }
@@ -156,12 +211,13 @@ type patternHit struct {
 	submatchesTruncated bool
 }
 
-// creditsFromHits turns the hit cells into each line's credits, in
-// pattern order, and fails on a line no pattern matched.
-func creditsFromHits(req creditRequest, hits []patternHit) ([][]patternCredit, error) {
+// creditsFromHits turns file f's hit cells into each of its lines'
+// credits, in pattern order, and fails on a line no pattern matched.
+func creditsFromHits(req creditRequest, f int, hits []patternHit) ([][]patternCredit, error) {
 	patterns := len(req.patternOrder)
-	out := make([][]patternCredit, len(req.lines))
-	for i, line := range req.lines {
+	file := req.files[f]
+	out := make([][]patternCredit, len(file.lines))
+	for i, line := range file.lines {
 		for p, pid := range req.patternOrder {
 			hit := hits[i*patterns+p]
 			if hit.matched {
@@ -173,7 +229,7 @@ func creditsFromHits(req creditRequest, hits []patternHit) ([][]patternCredit, e
 			}
 		}
 		if len(out[i]) == 0 {
-			return nil, fmt.Errorf("%w: line at offset %d of %s", errLineMatchesNoPattern, line.Offset, req.source.Path())
+			return nil, fmt.Errorf("%w: line at offset %d of %s", errLineMatchesNoPattern, line.Offset, file.source.Path())
 		}
 	}
 	return out, nil
@@ -186,42 +242,48 @@ func creditsFromHits(req creditRequest, hits []patternHit) ([][]patternCredit, e
 // creditBatch is a group of lines one ripgrep run reads, in the order it
 // reads them.
 type creditBatch struct {
-	// lines are indexes into creditRequest.lines.
-	lines []int
-	// fromSource is true for the batch of cut lines, whose whole text is
-	// read again from the file; the others are fed from the text the
-	// answer holds.
+	lines []lineRef
+	// fromSource is true for a batch of one file's cut lines, whose whole
+	// text is read again from that file; the others are fed from the text
+	// the answer holds.
 	fromSource bool
 }
 
-// planCreditBatches splits lines into batches: the whole lines, in their
-// order, in batches of about creditBatchBytes, and every cut line in one
-// more batch, by offset, so the file is read once from front to back.
-func planCreditBatches(lines []MatchRaw) []creditBatch {
+// planCreditBatches splits the lines of files into batches: the whole
+// lines of every file, file after file, in batches of about
+// creditBatchBytes, and then, for each file with cut lines, one batch of
+// them by offset, so that file is read once from front to back.
+func planCreditBatches(files []creditFile) []creditBatch {
 	var batches []creditBatch
 	var current creditBatch
 	var currentBytes int
-	cut := creditBatch{fromSource: true}
-	for i, line := range lines {
-		if line.LineTextTruncated {
-			cut.lines = append(cut.lines, i)
-			continue
+	var cutBatches []creditBatch
+	for f, file := range files {
+		cut := creditBatch{fromSource: true}
+		for i, line := range file.lines {
+			ref := lineRef{file: f, line: i}
+			if line.LineTextTruncated {
+				cut.lines = append(cut.lines, ref)
+				continue
+			}
+			current.lines = append(current.lines, ref)
+			currentBytes += len(line.LineText)
+			if currentBytes >= creditBatchBytes {
+				batches = append(batches, current)
+				current, currentBytes = creditBatch{}, 0
+			}
 		}
-		current.lines = append(current.lines, i)
-		currentBytes += len(line.LineText)
-		if currentBytes >= creditBatchBytes {
-			batches = append(batches, current)
-			current, currentBytes = creditBatch{}, 0
+		if len(cut.lines) > 0 {
+			sort.Slice(cut.lines, func(a, b int) bool {
+				return file.lines[cut.lines[a].line].Offset < file.lines[cut.lines[b].line].Offset
+			})
+			cutBatches = append(cutBatches, cut)
 		}
 	}
 	if len(current.lines) > 0 {
 		batches = append(batches, current)
 	}
-	if len(cut.lines) > 0 {
-		sort.Slice(cut.lines, func(a, b int) bool { return lines[cut.lines[a]].Offset < lines[cut.lines[b]].Offset })
-		batches = append(batches, cut)
-	}
-	return batches
+	return append(batches, cutBatches...)
 }
 
 // fedLength is how many bytes of ripgrep's input a line takes: its whole
@@ -259,7 +321,7 @@ func checkBatchAgainstPattern(
 	req creditRequest,
 	batch creditBatch,
 	pid string,
-	record func(lineIndex int, hit patternHit),
+	record func(ref lineRef, hit patternHit),
 ) error {
 	args := newRgArgs()
 	args = append(args, "-e", req.patternIDs[pid])
@@ -272,16 +334,16 @@ func checkBatchAgainstPattern(
 	// instead of crediting the wrong line.
 	starts := make([]int64, len(batch.lines))
 	var pos int64
-	for k, i := range batch.lines {
+	for k, ref := range batch.lines {
 		starts[k] = pos
-		pos += fedLength(req.lines[i], batch.fromSource)
+		pos += fedLength(req.line(ref), batch.fromSource)
 	}
 
 	feed := func(w io.Writer) error {
 		if batch.fromSource {
-			return feedLinesFromSource(w, req.source, req.lines, batch.lines)
+			return feedLinesFromSource(w, req, batch.lines)
 		}
-		return feedWholeLines(w, req.lines, batch.lines)
+		return feedWholeLines(w, req, batch.lines)
 	}
 	onMatch := func(d *RgMatchData) error {
 		k := sort.Search(len(starts), func(k int) bool { return starts[k] >= d.AbsoluteOffset })
@@ -391,31 +453,38 @@ func runRipgrepOverInput(
 	return ripgrepRun{groupErr: groupErr, waitErr: waitErr, stderr: strings.TrimSpace(stderrBuf.String())}
 }
 
-// feedWholeLines writes the lines at indexes, in that order, each as
-// its text and its line break. The text is the line's own bytes (see
+// line is the line ref names.
+func (req creditRequest) line(ref lineRef) MatchRaw {
+	return req.files[ref.file].lines[ref.line]
+}
+
+// feedWholeLines writes the lines refs name, in that order, each as its
+// text and its line break. The text is the line's own bytes (see
 // RgText), so a line that is not valid UTF-8 is fed as the scan read it.
-func feedWholeLines(w io.Writer, lines []MatchRaw, indexes []int) error {
+func feedWholeLines(w io.Writer, req creditRequest, refs []lineRef) error {
 	bw := bufio.NewWriterSize(w, 64*1024)
-	for _, i := range indexes {
+	for _, ref := range refs {
+		line := req.line(ref)
 		// bufio.Writer keeps its first write error and returns it from
 		// every later call, so checking Flush at the end is enough.
-		_, _ = bw.WriteString(lines[i].LineText)
-		_, _ = bw.WriteString(fedLineBreak(lines[i]))
+		_, _ = bw.WriteString(line.LineText)
+		_, _ = bw.WriteString(fedLineBreak(line))
 	}
 	return bw.Flush()
 }
 
-// feedLinesFromSource writes the whole bytes of the lines at indexes,
-// line break included, read again from the file's text: the file itself
-// for a plain file, its decompressed stream otherwise. indexes are in
-// offset order, so a compressed file is decompressed once, from its
-// start to the end of the last line. Nothing is held: each line is
-// copied through in pieces, however long it is.
+// feedLinesFromSource writes the whole bytes of the lines refs name, all
+// of one file and in offset order, line break included, read again from
+// the file's text: the file itself for a plain file, its decompressed
+// stream otherwise, which is then decompressed once, from its start to
+// the end of the last line. Nothing is held: each line is copied
+// through in pieces, however long it is.
 //
 // The file is read through its pin, so a path that leads elsewhere by
 // now is refused. A line that ends before its recorded end (the file
 // shrank) is an error.
-func feedLinesFromSource(w io.Writer, source sandbox.Pinned, lines []MatchRaw, indexes []int) error {
+func feedLinesFromSource(w io.Writer, req creditRequest, refs []lineRef) error {
+	source := req.files[refs[0].file].source
 	f, err := source.Open()
 	if err != nil {
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)
@@ -427,10 +496,11 @@ func feedLinesFromSource(w io.Writer, source sandbox.Pinned, lines []MatchRaw, i
 	}
 	if format == compression.FormatNone {
 		defer func() { _ = f.Close() }()
-		for _, i := range indexes {
-			length := lines[i].End - lines[i].Offset
-			if _, copyErr := io.CopyN(w, io.NewSectionReader(f, lines[i].Offset, length), length); copyErr != nil {
-				return fmt.Errorf("read the line at offset %d of %s again: %w", lines[i].Offset, source.Path(), copyErr)
+		for _, ref := range refs {
+			line := req.line(ref)
+			length := line.End - line.Offset
+			if _, copyErr := io.CopyN(w, io.NewSectionReader(f, line.Offset, length), length); copyErr != nil {
+				return fmt.Errorf("read the line at offset %d of %s again: %w", line.Offset, source.Path(), copyErr)
 			}
 		}
 		return nil
@@ -444,14 +514,15 @@ func feedLinesFromSource(w io.Writer, source sandbox.Pinned, lines []MatchRaw, i
 	}
 	defer func() { _ = text.Close() }()
 	var pos int64
-	for _, i := range indexes {
-		if _, err := io.CopyN(io.Discard, text, lines[i].Offset-pos); err != nil {
-			return fmt.Errorf("read the line at offset %d of %s again: %w", lines[i].Offset, source.Path(), err)
+	for _, ref := range refs {
+		line := req.line(ref)
+		if _, err := io.CopyN(io.Discard, text, line.Offset-pos); err != nil {
+			return fmt.Errorf("read the line at offset %d of %s again: %w", line.Offset, source.Path(), err)
 		}
-		if _, err := io.CopyN(w, text, lines[i].End-lines[i].Offset); err != nil {
-			return fmt.Errorf("read the line at offset %d of %s again: %w", lines[i].Offset, source.Path(), err)
+		if _, err := io.CopyN(w, text, line.End-line.Offset); err != nil {
+			return fmt.Errorf("read the line at offset %d of %s again: %w", line.Offset, source.Path(), err)
 		}
-		pos = lines[i].End
+		pos = line.End
 	}
 	return nil
 }

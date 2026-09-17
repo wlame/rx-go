@@ -77,6 +77,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(set "output_path" to another file)`. The `output_path` description in
   the OpenAPI document says so; the contract stays 1.3.
 
+- With several patterns, the `file_scanned` webhook of a trace fires
+  for a file once its matched lines' patterns are decided, which is done
+  for up to 64 files (or 8 MiB of matched text) at a time, so the event
+  can trail the scan by up to 63 files; with one pattern it fires as
+  each file's scan ends, as before. Events keep the order the files were
+  read in, and their payload is unchanged.
+
 ### Fixed
 
 - `rx trace` and `GET /v1/trace` answer a line whose ripgrep JSON event
@@ -159,8 +166,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer than `RX_MAX_LINE_TEXT_BYTES` is decided on the whole line,
   read again from the file, rather than credited to every pattern. A
   search with one pattern runs no extra ripgrep and answers as before;
-  with several, each file with matches costs one more ripgrep run per
-  pattern over its matched lines.
+  with several, the matched lines of every file of the search are
+  checked together, one more ripgrep run per pattern for each 8 MiB of
+  matched text (a 465 MB log searched with `-e WARN -e W`: 2.55 s to
+  2.78 s; 1000 small files: 5.7 s to 5.8 s).
 
 ### Security
 
