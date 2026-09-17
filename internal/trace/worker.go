@@ -817,8 +817,21 @@ func isBrokenPipe(err error) bool {
 // later line of the chunk too high and reports a NUL line as two
 // fragments, the second at an offset inside the line. With --text, a
 // NUL line arrives whole, its NUL escaped as \u0000 in the JSON text.
+//
+// --encoding=none makes ripgrep search the bytes rx pipes to it as they
+// are. Its default, auto, looks for a byte-order mark at the start of
+// each input it reads, and every chunk, decompressed stream and batch
+// of seekable frames is one such input: it strips a UTF-8 BOM and
+// transcodes UTF-16 to UTF-8, and its absolute_offset then counts the
+// bytes after that change, not the bytes rx sent. Every offset in an
+// input that starts with a BOM came back 3 bytes short, so samples, the
+// index and a trace-cache hit, which all read the file's bytes, landed
+// on the line before. With none, an offset is a position in rx's bytes,
+// and a UTF-8 BOM is the first three bytes of its line's text, as
+// samples shows it. A pattern anchored with ^ therefore does not match a
+// line that starts with a BOM, as with `rg --encoding=none` and grep.
 func newRgArgs() []string {
-	return []string{"--no-config", "--json", "--no-heading", "--color=never", "--text"}
+	return []string{"--no-config", "--json", "--no-heading", "--color=never", "--text", "--encoding=none"}
 }
 
 // ErrInvalidPattern reports a pattern ripgrep refused to compile. It is
