@@ -192,6 +192,11 @@ each directory is searched once, under its own path when it is reached
 directly as well.
 See [Symlinks inside a directory search](../concepts/security.md#symlinks-inside-a-directory-search).
 
+A plain file whose first 8 KiB hold a NUL byte is binary: it is not
+searched and is listed in `skipped_files`. A NUL byte further on is one
+more byte of its line, as in `rg --text`: the line keeps its number,
+its offset and its whole text, NUL included (`\u0000` in JSON).
+
 ### Structured output for piping
 
 ```bash
