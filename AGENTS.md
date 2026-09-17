@@ -381,9 +381,16 @@ Paste the output. Do not summarize it.
 ## Gotchas
 
 - `os.File.ReadAt` is goroutine-safe; `Read` is not.
-- `bufio.Scanner` truncates lines over 64 KB silently; use a 16 MB buffer as
-  `rgjson.go` does. The chunker's newline lookahead is 256 KB; lines longer than
+- `bufio.Scanner` refuses a line longer than its buffer (64 KB by default)
+  with `bufio.ErrTooLong`. ripgrep puts no limit on one JSON event — a
+  matched line of any length, plus about 50 bytes per submatch — so its
+  output is read with `StreamEvents` (`rgjson.go`), which has no line
+  limit. The chunker's newline lookahead is 256 KB; lines longer than
   that can split a chunk mid-line.
+- Never `Wait` on an `rg` whose stdout nobody reads: a reader that stops
+  early must kill rg first, or rg blocks on the full pipe and the
+  `Wait` never returns. `ProcessChunk` and `ProcessCompressed` kill rg
+  on every early stop; the seekable path buffers rg's whole output.
 - `filepath.Join("/a", "/etc/passwd")` returns `/a/etc/passwd`; check tar
   symlink targets with `filepath.IsAbs` directly.
 - Python's `isoformat()` drops `.000000` when microseconds are zero and writes

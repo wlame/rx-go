@@ -283,7 +283,13 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 		leadLines: bytes.Count(leadIn, newlineBytes),
 	}
 
-	rgCmd := exec.CommandContext(ctx, "rg", rgArgs...)
+	// rg runs under its own context so the pipeline can kill it when one
+	// of its goroutines fails, without canceling the caller's context.
+	// exec.CommandContext kills the process when that context ends; the
+	// deferred cancel releases the context's resources on every return.
+	rgCtx, killRg := context.WithCancel(ctx)
+	defer killRg()
+	rgCmd := exec.CommandContext(rgCtx, "rg", rgArgs...)
 	// Separate the subprocess cost from the rest of the request, so a
 	// slow scan can be told apart from slow bookkeeping around it.
 	rgStart := time.Now()
@@ -310,7 +316,24 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 
 	// errgroup here lets us surface stdin-copy errors alongside the
 	// event-parse errors. Both must finish before we Wait() on rg.
+	//
+	// INVARIANT: rg is never waited on while its stdout is unread. When
+	// either goroutine fails, errgroup cancels gctx and the other one
+	// stops too: the parser stops reading rg's stdout. rg may still have
+	// output to write, and with nobody reading it would block on the
+	// full pipe for ever, so stopOnFailure kills it. Killing rg also
+	// unblocks a feeder stuck writing to rg's stdin (the write fails
+	// with a broken pipe).
 	g, gctx := errgroup.WithContext(ctx)
+	stopOnFailure := func(step func() error) func() error {
+		return func() error {
+			err := step()
+			if err != nil {
+				killRg()
+			}
+			return err
+		}
+	}
 
 	// Goroutine 1: pump the chunk's input into rg stdin, counting the
 	// chunk's own newlines on the way past. The count costs nothing
@@ -321,7 +344,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	// fed is written here and read after g.Wait() below, which is the
 	// happens-before edge that makes a plain variable safe.
 	var fed chunkFeed
-	g.Go(func() error {
+	g.Go(stopOnFailure(func() error {
 		defer func() { _ = rgStdin.Close() }()
 		var feedErr error
 		fed, feedErr = feedChunk(src, input, contextAfter, rgStdin)
@@ -335,7 +358,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 			return nil
 		}
 		return fmt.Errorf("stdin copy: %w", feedErr)
-	})
+	}))
 
 	// Goroutine 2: parse rg --json events and collect matches.
 	var mu struct {
@@ -346,7 +369,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	// the trailing context of that match. Only goroutine 2 touches it
 	// until g.Wait() returns below.
 	gate := newTrailingWindowGate(req.Budget, contextAfter)
-	g.Go(func() error {
+	g.Go(stopOnFailure(func() error {
 		return StreamEvents(gctx, rgStdout, func(ev *RgEvent, parseErr error) error {
 			if parseErr != nil {
 				return parseErr
@@ -423,12 +446,13 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 			}
 			return nil
 		})
-	})
+	}))
 
-	// Wait for both goroutines, THEN Wait on rg. Order matters: if the
-	// parser errors out, we need stdin closed to let rg exit, otherwise
-	// we'd deadlock on rgCmd.Wait(). errgroup.Wait() doesn't close
-	// stdin for us; the stdin goroutine's defer does that reliably.
+	// Wait for both goroutines, THEN Wait on rg. By the time g.Wait
+	// returns, either the parser read rg's stdout to the end (rg has
+	// finished writing and is exiting) or a goroutine failed and
+	// stopOnFailure killed rg, so rgCmd.Wait cannot block on a pipe
+	// nobody reads.
 	groupErr := g.Wait()
 	waitErr := rgCmd.Wait()
 
@@ -452,46 +476,76 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 		Elapsed:  elapsed,
 	}
 
-	// rg exits 1 when no matches found — that's NOT an error for us.
-	// Exit 2 is a real error (bad regex, etc.).
-	//
-	// When exec.CommandContext kills rg on ctx cancellation, ExitCode()
-	// returns -1 (signal, not exit status). this
-	// is EXPECTED during cooperative cancel on max_results cap. If the
-	// outer ctx is canceled, classify the error as context.Canceled
-	// rather than leaking "rg exit -1" to the caller. The ProcessAllChunks
-	// swallow logic depends on this shape.
-	if waitErr != nil {
-		// ctx-canceled trumps all other classifications. If the parent
-		// context is canceled, any rg exit (killed or otherwise) is
-		// expected and we return context.Canceled so the errgroup
-		// signaling works correctly.
-		if ctx.Err() != nil {
-			return result, ctx.Err()
-		}
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
-			code := exitErr.ExitCode()
-			if code != 0 && code != 1 {
-				msg := strings.TrimSpace(stderrBuf.String())
-				// A pattern rg cannot compile is not a property of this
-				// file — it dooms the whole request — so it gets its own
-				// error the caller can recognize instead of being folded
-				// into "this file was skipped".
-				if isRegexParseError(msg) {
-					return ChunkResult{Elapsed: elapsed}, invalidPatternError(msg, patternIDs, patternOrder)
-				}
-				return ChunkResult{Elapsed: elapsed}, fmt.Errorf("rg exit %d: %s", code, msg)
-			}
-		} else if !errors.Is(waitErr, context.Canceled) {
-			return ChunkResult{Elapsed: elapsed}, fmt.Errorf("rg wait: %w", waitErr)
-		}
+	outcomeErr := classifyChunkOutcome(ctx, chunkOutcome{
+		groupErr:   groupErr,
+		waitErr:    waitErr,
+		stderr:     strings.TrimSpace(stderrBuf.String()),
+		patternIDs: patternIDs,
+		order:      patternOrder,
+	})
+	// A canceled run keeps what it found (ProcessAllChunks reports it);
+	// a failed one reports nothing, since its matches cannot be trusted
+	// to be all there are.
+	if outcomeErr != nil && !errors.Is(outcomeErr, context.Canceled) {
+		return ChunkResult{Elapsed: elapsed}, outcomeErr
 	}
-	if groupErr != nil && !errors.Is(groupErr, context.Canceled) {
-		return ChunkResult{Elapsed: elapsed}, groupErr
-	}
+	return result, outcomeErr
+}
 
-	return result, nil
+// chunkOutcome is what ProcessChunk knows once rg and both of its
+// goroutines have finished: the first goroutine failure, rg's exit, and
+// what rg wrote on stderr.
+type chunkOutcome struct {
+	groupErr   error
+	waitErr    error
+	stderr     string
+	patternIDs map[string]string
+	order      []string
+}
+
+// classifyChunkOutcome turns a finished chunk run into ProcessChunk's
+// error, nil when the run succeeded. The checks go from the cause that
+// explains the most to the least:
+//
+//  1. The caller's context ended (a max_results cap, or the request
+//     ended): the context's error, whatever rg's exit says, because rg
+//     was killed on purpose. ProcessAllChunks swallows context.Canceled.
+//  2. rg failed on its own (exit 2 and up): a pattern it cannot compile
+//     dooms the whole request and gets its own error; any other is
+//     "rg exit N".
+//  3. A goroutine failed (rg's output could not be parsed, or the input
+//     could not be read): its error. stopOnFailure killed rg because
+//     of it, so rg's "killed" exit is a consequence, not the cause.
+//  4. Any other abnormal exit of rg, such as a kill from outside.
+//
+// rg's exit 1 means "no match" and is a success.
+func classifyChunkOutcome(ctx context.Context, out chunkOutcome) error {
+	if out.waitErr != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var exitErr *exec.ExitError
+	isExitStatus := errors.As(out.waitErr, &exitErr)
+	// ExitCode is -1 when a signal ended rg; that is not rg's own failure.
+	if isExitStatus && exitErr.ExitCode() > 1 {
+		if isRegexParseError(out.stderr) {
+			return invalidPatternError(out.stderr, out.patternIDs, out.order)
+		}
+		return fmt.Errorf("rg exit %d: %s", exitErr.ExitCode(), out.stderr)
+	}
+	if out.groupErr != nil && !errors.Is(out.groupErr, context.Canceled) {
+		return out.groupErr
+	}
+	switch {
+	case out.waitErr == nil:
+		return nil
+	case isExitStatus && exitErr.ExitCode() < 0:
+		return fmt.Errorf("rg exit %d: %s", exitErr.ExitCode(), out.stderr)
+	case isExitStatus, errors.Is(out.waitErr, context.Canceled):
+		// Exit 0 or 1, or a cancel already accounted for.
+		return nil
+	default:
+		return fmt.Errorf("rg wait: %w", out.waitErr)
+	}
 }
 
 // ProcessAllChunks runs ProcessChunk over every task in parallel,
