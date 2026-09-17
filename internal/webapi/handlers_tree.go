@@ -125,12 +125,11 @@ func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeRespon
 	dirs := make([]os.DirEntry, 0, len(entries))
 	files := make([]os.DirEntry, 0, len(entries))
 	for _, e := range entries {
-		// A hidden entry is unreachable by name while --hidden is off,
-		// so listing it would only offer a link that returns 403.
-		if paths.SkipEntry(e.Name()) {
+		isDir, listed := listedEntry(absPath, e)
+		if !listed {
 			continue
 		}
-		if e.IsDir() {
+		if isDir {
 			dirs = append(dirs, e)
 		} else {
 			files = append(files, e)
@@ -167,8 +166,9 @@ func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeRespon
 
 	out := make([]rxtypes.TreeEntry, 0, len(merged))
 	var totalSize int64
-	for _, e := range merged {
-		entry := buildEntryMetadata(filepath.Join(absPath, e.Name()), e.Name(), e.IsDir())
+	for i, e := range merged {
+		// The first len(dirs) entries of merged are the directories.
+		entry := buildEntryMetadata(filepath.Join(absPath, e.Name()), e.Name(), i < len(dirs))
 		out = append(out, entry)
 		if entry.Size != nil {
 			totalSize += *entry.Size
@@ -188,6 +188,26 @@ func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeRespon
 		resp.TotalSizeHuman = &human
 	}
 	return resp
+}
+
+// listedEntry reports whether the entry e of directory dir belongs in a
+// listing, and whether it is (or leads to) a directory.
+//
+// A listing shows what a caller can open by name. A hidden entry is
+// unreachable while --hidden is off, and so is a symlink that leads out
+// of every search root, into a hidden entry, or nowhere; listing one
+// would only offer a link that returns 403, and would show the size and
+// type of a file outside the roots. A symlink to a directory inside the
+// roots is listed as a directory.
+func listedEntry(dir string, e os.DirEntry) (isDir, listed bool) {
+	if paths.SkipEntry(e.Name()) {
+		return false, false
+	}
+	target := paths.ResolveEntry(filepath.Join(dir, e.Name()), e)
+	if target.Refused != "" {
+		return false, false
+	}
+	return target.IsDir, true
 }
 
 // buildEntryMetadata computes all TreeEntry fields for a single path.
@@ -216,7 +236,7 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 		if children, err := os.ReadDir(entryPath); err == nil {
 			count := 0
 			for _, child := range children {
-				if !paths.SkipEntry(child.Name()) {
+				if _, listed := listedEntry(entryPath, child); listed {
 					count++
 				}
 			}

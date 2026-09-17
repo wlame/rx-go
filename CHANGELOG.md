@@ -77,6 +77,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(set "output_path" to another file)`. The `output_path` description in
   the OpenAPI document says so; the contract stays 1.3.
 
+### Security
+
+- A directory search no longer follows a symbolic link out of
+  `--search-root` or into a hidden entry. `rx trace` on a directory
+  (recursive or `--no-recursive`, CLI and `GET /v1/trace`) and
+  `rx index` on a directory checked only the directory itself, so a
+  link inside it that led to `/etc/passwd`, or to `.private/` without
+  `--hidden`, was searched and its lines returned, while naming the same
+  link was refused with 403 or exit code 4. Every link a walk meets is
+  now resolved and checked as a named path is: one that leads inside a
+  root and is not hidden is followed (a file under the link's own path,
+  a directory descended into); any other is skipped and listed in
+  `skipped_files` (trace) or `skipped` and `skip_reasons` (index, with
+  the reason), and no index is stored for it. A link back to a
+  directory the walk is inside, a link to nothing and a cycle of links
+  are skipped the same way, so no loop can hang a walk. A link to a
+  directory is never searched or listed as a file; with
+  `--no-recursive` it is passed over like any directory. `GET /v1/tree`
+  applies the same rule: it leaves out the links a caller could not
+  open, lists a link to a directory as a `directory`, and no longer
+  reports the size and type of a file outside the roots. Without a
+  sandbox (the CLI without `--search-root`) links are followed wherever
+  they lead. See `docs/concepts/security.md`.
+
 ## [0.3.0] - 2026-10-03
 
 ### Added

@@ -193,7 +193,13 @@ rx index /var/log/ --recursive
 ```
 
 Recursively walks `/var/log/`, indexes any file meeting the size
-threshold, and reports a wrapped JSON envelope:
+threshold, and reports a wrapped JSON envelope. The walk skips entries
+whose name starts with a dot unless `--hidden`, and follows a symbolic
+link only when naming its target would be allowed: with `--search-root`,
+a link that leads outside every root, into a hidden entry or back to a
+directory being walked is listed in `skipped` and `skip_reasons` with
+the reason, and nothing is indexed for it. See
+[Symlinks inside a directory search](../concepts/security.md#symlinks-inside-a-directory-search).
 
 ```bash
 rx index /var/log/ --recursive --json | jq '.indexed | length, .skipped | length, .errors | length'

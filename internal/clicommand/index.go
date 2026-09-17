@@ -314,7 +314,13 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			continue
 		}
 		if info.IsDir() {
-			entries, derr := expandDirForIndex(path, p.recursive)
+			// paths.WalkDir follows a symlink only when naming its
+			// target would be allowed; a refused one is a skip with
+			// the walk's reason, so no index is ever stored for it.
+			entries, derr := paths.WalkDir(path, p.recursive)
+			if derr == nil {
+				derr = firstUnreadableDir(entries)
+			}
 			if derr != nil {
 				result.Errors = append(result.Errors, indexErrorItem{
 					Path:     path,
@@ -323,7 +329,13 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 				})
 				continue
 			}
-			filesToIndex = append(filesToIndex, entries...)
+			for _, entry := range entries {
+				if entry.Refused != "" {
+					result.skip(entry.Path, entry.Refused)
+					continue
+				}
+				filesToIndex = append(filesToIndex, entry.Path)
+			}
 			continue
 		}
 		filesToIndex = append(filesToIndex, path)
@@ -535,50 +547,15 @@ func nilableInt64(p *int64) any {
 	return *p
 }
 
-// expandDirForIndex walks a directory and returns files within it.
-// When recursive is true, walks the whole subtree; otherwise only
-// top-level entries are returned (matches Python's os.listdir vs os.walk
-// split in _handle_info_or_delete).
-func expandDirForIndex(dir string, recursive bool) ([]string, error) {
-	var files []string
-	if recursive {
-		werr := walkFiles(dir, &files)
-		return files, werr
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
+// firstUnreadableDir returns the error of the first subdirectory a walk
+// could not list, or nil. `rx index` on a directory fails as a whole
+// when part of the tree cannot be read, rather than index the rest and
+// report success.
+func firstUnreadableDir(entries []paths.WalkEntry) error {
 	for _, entry := range entries {
-		if entry.IsDir() || paths.SkipEntry(entry.Name()) {
-			continue
+		if entry.ReadErr != nil {
+			return entry.ReadErr
 		}
-		files = append(files, dir+string(os.PathSeparator)+entry.Name())
-	}
-	return files, nil
-}
-
-// walkFiles is a tiny recursive filepath.Walk substitute used only by
-// the index command's --recursive mode.
-func walkFiles(dir string, out *[]string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		// Skipped before the recursion, so a hidden directory is not
-		// descended into either.
-		if paths.SkipEntry(entry.Name()) {
-			continue
-		}
-		full := dir + string(os.PathSeparator) + entry.Name()
-		if entry.IsDir() {
-			if werr := walkFiles(full, out); werr != nil {
-				return werr
-			}
-			continue
-		}
-		*out = append(*out, full)
 	}
 	return nil
 }

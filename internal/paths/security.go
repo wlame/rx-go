@@ -163,21 +163,40 @@ func ValidatePathWithinRoots(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve %q: %w", path, err)
 	}
+	if err := checkCanonical(path, canonical, snapshot); err != nil {
+		return "", err
+	}
+	return absPath, nil
+}
 
+// checkCanonical applies the sandbox rules to canonical, the location
+// path names with every symlink already resolved: it must lie inside
+// one of roots (which are canonical too), and no component below that
+// root may be hidden unless hidden entries are on.
+//
+// path is only used in the error, so the caller's own spelling of the
+// path is what a user reads back.
+//
+// It returns nil, *ErrHiddenPath or *ErrPathOutsideRoots. The two
+// callers are ValidatePathWithinRoots, for a path a caller names, and
+// the directory walk in walk.go, for where a symlink inside a walked
+// directory leads; sharing it is what makes a walk refuse exactly what
+// naming the same entry would.
+func checkCanonical(path, canonical string, roots []string) error {
 	sep := string(filepath.Separator)
-	for _, root := range snapshot {
+	for _, root := range roots {
 		if canonical == root || strings.HasPrefix(canonical, root+sep) {
 			// Inside the sandbox. One more rule: hidden entries below
 			// the root are not served unless asked for. See hidden.go.
 			if !IncludeHidden() {
 				if component := hiddenComponentBelow(root, canonical); component != "" {
-					return "", &ErrHiddenPath{Path: path, Component: component}
+					return &ErrHiddenPath{Path: path, Component: component}
 				}
 			}
-			return absPath, nil
+			return nil
 		}
 	}
-	return "", &ErrPathOutsideRoots{Path: path, Roots: snapshot}
+	return &ErrPathOutsideRoots{Path: path, Roots: roots}
 }
 
 // IsPathWithinRoots is a bool-returning wrapper — useful for UI checks

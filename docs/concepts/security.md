@@ -216,6 +216,51 @@ This means:
 - Symlinks inside the sandbox that point outside are rejected (the
   `EvalSymlinks` step sees the escape)
 
+### Symlinks inside a directory search
+
+A search of a directory reads only what naming the same path would let
+you read. `rx trace` on a directory (recursive or `--no-recursive`),
+`rx index` on a directory (with or without `--recursive`) and the
+`/v1/tree` listing all apply one rule to every symbolic link they meet
+inside the directory:
+
+| Where the link leads | What the walk does |
+|---|---|
+| A file inside a search root, not hidden | Reads it, under the link's own path |
+| A directory inside a search root, not hidden | Descends into it (recursive walks only) |
+| Outside every search root | Skips it, reason `symlink leads outside all search roots` |
+| Into a hidden entry, without `--hidden` | Skips it, reason `symlink leads into hidden entry '.name'; …` |
+| Back to a directory the walk is already inside | Skips it, reason `symlink loop: …`, so a loop cannot hang the walk |
+| Nowhere, or to itself | Skips it, reason `cannot resolve symlink: …` |
+
+The target is checked the way a named path is: its symlinks are
+resolved, the result must lie inside a root, and no component below
+that root may be hidden. So a link that would answer 403 (HTTP) or exit
+code 4 (CLI) when named directly is never searched as part of a
+directory either.
+
+A skipped link appears in `skipped_files` of a trace answer, and in
+`skipped` and `skip_reasons` of `rx index --json`, so you can see that
+part of the tree was not searched. `/v1/tree` leaves it out of the
+listing, as it leaves out hidden entries: listing it would only offer a
+path that returns 403. A link to a directory is never listed or searched
+as a file; with `--no-recursive` it is passed over like any directory.
+
+A file reached both directly and through a link inside the roots is
+searched once under each path, as `rg --follow` does.
+
+Without a sandbox (the CLI without `--search-root`) there is no root to
+stay inside, and naming a link is always allowed: a walk follows links
+wherever they lead, still skipping loops and links that resolve to
+nothing. Entries whose own name starts with a dot are skipped either
+way, unless `--hidden`.
+
+```bash
+ln -s /etc/passwd /var/log/app/passwd.log
+rx --search-root=/var/log trace root /var/log/app --json | jq .skipped_files
+# ["/var/log/app/passwd.log"]
+```
+
 ### Failure modes
 
 - **Configured root doesn't exist**: `rx serve` refuses to start with
@@ -474,6 +519,9 @@ happens at all.
   `--search-root`
 - Reading `~/.ssh`, `~/.aws` and friends when `rx serve` was started
   from a home directory — blocked by the hidden-entry rule
+- Reading a file outside the roots, or a hidden one, through a symlink
+  that someone placed inside a served directory — blocked by checking
+  every symlink a directory search meets as if it were named
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range
