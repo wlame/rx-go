@@ -67,7 +67,7 @@ func TestScanFrameBatch_BoundedMemory(t *testing.T) {
 
 	matches, _, _, err := ProcessSeekable(
 		context.Background(),
-		path,
+		pinForTest(t, path),
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -84,7 +84,7 @@ func TestScanFrameBatch_BoundedMemory(t *testing.T) {
 	// file. If the old batch-materialization path were still in place
 	// (scanFrameBatch calling dec.DecompressFrames in bulk), the seam
 	// would never be reached and the counter would be zero.
-	tbl, err := readSeekTable(path)
+	tbl, err := readSeekTable(pinForTest(t, path))
 	if err != nil {
 		t.Fatalf("readSeekTable: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestScanFrameBatch_MultiFrameOffsetRemap(t *testing.T) {
 
 	matches, _, _, err := ProcessSeekable(
 		context.Background(),
-		path,
+		pinForTest(t, path),
 		map[string]string{"p1": "UNIQUE_LAST_FRAME_MARKER"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)

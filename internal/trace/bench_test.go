@@ -43,7 +43,7 @@ func BenchmarkChunkerGetOffsets(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := GetFileOffsets(p, 1024*1024) // 1 MB chunks
+		_, err := GetFileOffsets(pinForTest(b, p), 1024*1024) // 1 MB chunks
 		if err != nil {
 			b.Fatalf("GetFileOffsets: %v", err)
 		}

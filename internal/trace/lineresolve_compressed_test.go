@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/index"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
 
@@ -65,7 +66,7 @@ func TestLineResolver_CompressedFileWithAnIndexIsNumbered(t *testing.T) {
 				t.Fatalf("save index: %v", err)
 			}
 			matches := unnumberedMatches(offsets, lines)
-			resolveUnknownLineNumbers(map[string]string{"f1": path}, matches, nil, lineResolverFor(Options{}))
+			resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil, lineResolverFor(Options{}))
 			for i, m := range matches {
 				if m.AbsoluteLineNumber != lines[i] {
 					t.Errorf("offset %d: absolute_line_number = %d, want %d", m.Offset, m.AbsoluteLineNumber, lines[i])
@@ -85,7 +86,7 @@ func TestLineResolver_CompressedFileWithoutAnIndexStaysUnknown(t *testing.T) {
 	for name, path := range copies {
 		t.Run(name, func(t *testing.T) {
 			matches := unnumberedMatches(offsets, []int{900})
-			resolveUnknownLineNumbers(map[string]string{"f1": path}, matches, nil, lineResolverFor(Options{}))
+			resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil, lineResolverFor(Options{}))
 			if got := matches[0].AbsoluteLineNumber; got != -1 {
 				t.Errorf("absolute_line_number = %d, want -1 without an index", got)
 			}
@@ -103,7 +104,7 @@ func TestLineResolver_NoIndexCountsTheLinesOfACompressedFile(t *testing.T) {
 	for name, path := range copies {
 		t.Run(name, func(t *testing.T) {
 			matches := unnumberedMatches(offsets, lines)
-			resolveUnknownLineNumbers(map[string]string{"f1": path}, matches, nil,
+			resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil,
 				lineResolverFor(Options{NoIndex: true}))
 			for i, m := range matches {
 				if m.AbsoluteLineNumber != lines[i] {

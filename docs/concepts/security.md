@@ -227,11 +227,21 @@ inside the directory:
 | Where the link leads | What the walk does |
 |---|---|
 | A file inside a search root, not hidden | Reads it, under the link's own path |
-| A directory inside a search root, not hidden | Descends into it (recursive walks only) |
+| A directory inside a search root, not hidden, not searched yet | Descends into it (recursive walks only) |
+| A directory the walk has already searched | Skips it, reason `directory already searched through '<path>'` |
 | Outside every search root | Skips it, reason `symlink leads outside all search roots` |
 | Into a hidden entry, without `--hidden` | Skips it, reason `symlink leads into hidden entry '.name'; …` |
 | Back to a directory the walk is already inside | Skips it, reason `symlink loop: …`, so a loop cannot hang the walk |
 | Nowhere, or to itself | Skips it, reason `cannot resolve symlink: …` |
+
+Each directory is searched at most once per walk, so the work is
+bounded by the number of real directories, however many links lead
+into them. Without that rule six levels of six links to the next level
+made one request search 46,656 paths to one file. The walk follows
+links to directories only after it has searched every real directory
+below the walked one, so a directory reached both directly and through
+a link is searched under its own path, and the link is the one
+reported as skipped.
 
 The target is checked the way a named path is: its symlinks are
 resolved, the result must lie inside a root, and no component below
@@ -247,7 +257,12 @@ path that returns 403. A link to a directory is never listed or searched
 as a file; with `--no-recursive` it is passed over like any directory.
 
 A file reached both directly and through a link inside the roots is
-searched once under each path, as `rg --follow` does.
+searched once under each path, as `rg --follow` does. Only directories
+are searched once.
+
+`/v1/tree` lists one directory per request, so it has no walk to bound:
+every link to a directory inside the roots is listed, as a way to browse
+into it.
 
 Without a sandbox (the CLI without `--search-root`) there is no root to
 stay inside, and naming a link is always allowed: a walk follows links
@@ -260,6 +275,35 @@ ln -s /etc/passwd /var/log/app/passwd.log
 rx --search-root=/var/log trace root /var/log/app --json | jq .skipped_files
 # ["/var/log/app/passwd.log"]
 ```
+
+### A file is read only while it is the file that was checked
+
+A check of a path and the read of it are two separate look-ups. Between
+them, someone who can write in a served directory can retarget a link,
+or replace a file or a directory with a link, and a read by path would
+then reach a file the check never saw.
+
+So rx records what each check found: the device and inode of the file
+the path led to. Every read of a searched file opens the path and then
+compares the identity of the file it actually opened with the recorded
+one; when they differ, the file is not read. This holds for every read
+of a trace (the chunk scan, gzip and other compressed streams, seekable
+zstd frames, the rebuild of an answer from the trace cache, and the
+numbering of lines a capped search left unknown), for `samples`, for an
+index build and for the input of `rx compress`. A directory walk lists
+each directory through a handle checked the same way, so a directory
+swapped for a link while the walk runs cannot lend it the files of
+another directory.
+
+A refused file is reported, never read: a trace lists it in
+`skipped_files`, and `samples` fails with `file changed after it was
+checked`. The path you named is what every answer reports, also when
+it is a link.
+
+The identity itself is taken through a handle on the search root that
+resolves the path one component at a time and refuses to leave the
+root, so even a swap during the check cannot make it record a file
+outside the roots.
 
 ### Failure modes
 
@@ -522,6 +566,12 @@ happens at all.
 - Reading a file outside the roots, or a hidden one, through a symlink
   that someone placed inside a served directory — blocked by checking
   every symlink a directory search meets as if it were named
+- Retargeting such a link, or replacing a checked file or directory with
+  a link, between the check and the read — blocked by reading a file
+  only while its device and inode are the ones the check recorded
+- Tying up the server with a tree of links that lead sideways to other
+  directories (6 levels × 6 links = 46,656 paths to one file) — blocked
+  by searching each directory once per walk
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range

@@ -59,7 +59,7 @@ func TestProcessSeekable_FramesThatSplitLinesAreNumberedAsTheText(t *testing.T) 
 			seekablefile.Write(t, path, frames)
 
 			matches, contexts, _, err := ProcessSeekable(
-				context.Background(), path,
+				context.Background(), pinForTest(t, path),
 				map[string]string{"p1": "LINE"}, []string{"p1"},
 				nil, 1, 1, nil,
 			)
@@ -218,14 +218,14 @@ func TestProcessSeekable_LinesThatFramesSplitAreScannedWhole(t *testing.T) {
 	for layoutName, frames := range layouts {
 		path := filepath.Join(t.TempDir(), "split.log.zst")
 		seekablefile.Write(t, path, frames)
-		tbl, err := readSeekTable(path)
+		tbl, err := readSeekTable(pinForTest(t, path))
 		if err != nil {
 			t.Fatalf("readSeekTable: %v", err)
 		}
 		for patternName, pattern := range patterns {
 			t.Run(layoutName+"/"+patternName, func(t *testing.T) {
 				matches, contexts, _, err := ProcessSeekable(
-					context.Background(), path,
+					context.Background(), pinForTest(t, path),
 					map[string]string{"p1": pattern}, []string{"p1"},
 					nil, 1, 1, nil,
 				)

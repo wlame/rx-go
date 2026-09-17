@@ -51,6 +51,12 @@ type Options struct {
 	// production code leaves it nil. A file answered from the trace
 	// cache is not scanned, so the function is not called for it.
 	afterScan func(path string)
+
+	// beforeRead, when set, runs once after every file has been checked
+	// and classified and before the first byte of any is read. It is a
+	// test seam, unexported like afterScan: a test uses it to retarget
+	// a link or replace a file at the last moment before the read.
+	beforeRead func()
 }
 
 // applyDefaults fills zero fields with sane defaults.
@@ -110,8 +116,8 @@ func (e *Engine) RunWithOptions(
 	// -------------------------------------------------------------------
 	// Phase 0: validate & expand inputs
 	// -------------------------------------------------------------------
-	filePaths, scannedDirs, skipped := expandPaths(paths, !opts.NoRecursive)
-	if len(filePaths) == 0 {
+	files, scannedDirs, skipped := expandPaths(paths, !opts.NoRecursive)
+	if len(files) == 0 {
 		// Nothing to search still answers with the request it was
 		// given: an empty request id and a null path made a skipped
 		// file indistinguishable from a malformed response.
@@ -142,12 +148,19 @@ func (e *Engine) RunWithOptions(
 	for i := range patterns {
 		patternOrder = append(patternOrder, "p"+strconv.Itoa(i+1))
 	}
-	fileIDs := make(map[string]string, len(filePaths))
-	filePathToID := make(map[string]string, len(filePaths))
-	for i, fp := range filePaths {
+	// Each file is reported under the caller's spelling of its path, and
+	// read only through its pin (sources), which refuses a path that no
+	// longer leads to the file expandPaths checked.
+	filePaths := make([]string, len(files))
+	fileIDs := make(map[string]string, len(files))
+	filePathToID := make(map[string]string, len(files))
+	sources := make(map[string]sandbox.Pinned, len(files))
+	for i, src := range files {
 		id := "f" + strconv.Itoa(i+1)
-		fileIDs[id] = fp
-		filePathToID[fp] = id
+		filePaths[i] = src.Path()
+		fileIDs[id] = src.Path()
+		filePathToID[src.Path()] = id
+		sources[id] = src
 	}
 
 	// -------------------------------------------------------------------
@@ -156,6 +169,9 @@ func (e *Engine) RunWithOptions(
 	type fileBucket struct {
 		kind string // "regular" | "compressed" | "seekable" | "cached-regular" | "cached-seekable"
 		path string
+		// src is the file as expandPaths checked it. Every read of the
+		// file goes through it.
+		src  sandbox.Pinned
 		size int64
 		// info is the stat taken when the file was classified, nil when
 		// the stat failed. A plain file's chunks are planned from it and
@@ -171,7 +187,14 @@ func (e *Engine) RunWithOptions(
 	fileChunkCounts := make(map[string]int)
 
 	for _, fp := range filePaths {
-		fi, err := os.Stat(fp)
+		src := sources[filePathToID[fp]]
+		// The current stat, for the size the scan plans from; Stat
+		// refuses it when the path no longer leads to the checked file.
+		fi, err := src.Stat()
+		if errors.Is(err, sandbox.ErrFileChanged) {
+			skipped = append(skipped, fp)
+			continue
+		}
 		var sz int64
 		if err == nil {
 			sz = fi.Size()
@@ -184,16 +207,16 @@ func (e *Engine) RunWithOptions(
 			if !opts.NoCache {
 				if info, cerr := GetCompressedCacheInfo(fp, patterns, opts.RgExtraArgs); cerr == nil {
 					buckets = append(buckets, fileBucket{
-						kind: "cached-seekable", path: fp, size: sz, info: fi, cacheInfo: info,
+						kind: "cached-seekable", path: fp, src: src, size: sz, info: fi, cacheInfo: info,
 					})
 					fileChunkCounts[filePathToID[fp]] = info.ChunkCount
 					continue
 				}
 			}
-			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, size: sz, info: fi})
+			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, src: src, size: sz, info: fi})
 			// Chunk count for seekable = frame count. We fetch it via
 			// the seek table; failure falls back to 1.
-			if tbl, terr := readSeekTable(fp); terr == nil {
+			if tbl, terr := readSeekTable(src); terr == nil {
 				fileChunkCounts[filePathToID[fp]] = tbl.NumFrames
 			} else {
 				fileChunkCounts[filePathToID[fp]] = 1
@@ -201,7 +224,7 @@ func (e *Engine) RunWithOptions(
 			continue
 		}
 		if compression.IsCompressed(fp) {
-			buckets = append(buckets, fileBucket{kind: "compressed", path: fp, size: sz, info: fi})
+			buckets = append(buckets, fileBucket{kind: "compressed", path: fp, src: src, size: sz, info: fi})
 			fileChunkCounts[filePathToID[fp]] = 1
 			continue
 		}
@@ -209,7 +232,7 @@ func (e *Engine) RunWithOptions(
 		if !opts.NoCache && sz >= largeFileThresholdBytes() {
 			if cached, cerr := GetCachedScan(fp, patterns, opts.RgExtraArgs); cerr == nil {
 				buckets = append(buckets, fileBucket{
-					kind: "cached-regular", path: fp, size: sz, info: fi, cachedMatch: cached.Matches,
+					kind: "cached-regular", path: fp, src: src, size: sz, info: fi, cachedMatch: cached.Matches,
 				})
 				// The chunk count of the scan that wrote the cache, so a
 				// cache hit answers exactly what that scan answered.
@@ -217,12 +240,15 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 		}
-		buckets = append(buckets, fileBucket{kind: "regular", path: fp, size: sz, info: fi})
+		buckets = append(buckets, fileBucket{kind: "regular", path: fp, src: src, size: sz, info: fi})
 	}
 
 	// -------------------------------------------------------------------
 	// Phase 3: execute each bucket
 	// -------------------------------------------------------------------
+	if opts.beforeRead != nil {
+		opts.beforeRead()
+	}
 	var allMatches []rxtypes.Match
 	var allContexts []contextWithFile
 	// Where every line above ends, by where it starts. The context
@@ -258,7 +284,7 @@ func (e *Engine) RunWithOptions(
 			}
 			// Plan from the stat taken at classification and record that
 			// stat as the file's identity, before any byte is read.
-			tasks, terr := planFileTasks(b.path, b.info.Size())
+			tasks, terr := planFileTasks(b.src, b.info.Size())
 			if terr != nil {
 				skipped = append(skipped, b.path)
 				continue
@@ -364,7 +390,7 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 			rawMatches, rawContexts, _, cerr := ProcessCompressed(
-				ctx, b.path, format,
+				ctx, b.src, format,
 				patternIDs, patternOrder, opts.RgExtraArgs,
 				opts.ContextBefore, opts.ContextAfter,
 				remaining,
@@ -429,7 +455,7 @@ func (e *Engine) RunWithOptions(
 			}
 			remaining := remainingResults(opts.MaxResults, len(allMatches))
 			rawMatches, rawContexts, _, serr := ProcessSeekable(
-				ctx, b.path,
+				ctx, b.src,
 				patternIDs, patternOrder, opts.RgExtraArgs,
 				opts.ContextBefore, opts.ContextAfter,
 				remaining,
@@ -506,7 +532,7 @@ func (e *Engine) RunWithOptions(
 				maxMatches = *opts.MaxResults
 			}
 			reMatches, reContexts, reEnds, rerr := reconstructLines(ReconstructRequest{
-				SourcePath:    b.path,
+				Source:        b.src,
 				Cached:        cachedMatches,
 				Patterns:      patterns,
 				FileID:        fileID,
@@ -540,7 +566,7 @@ func (e *Engine) RunWithOptions(
 	// over are few; an existing index answers them from the nearest
 	// checkpoint. Files with no index keep the unknown marker rather
 	// than paying for a full pass.
-	resolveUnknownLineNumbers(fileIDs, allMatches, allContexts, lineResolverFor(opts))
+	resolveUnknownLineNumbers(sources, allMatches, allContexts, lineResolverFor(opts))
 
 	sort.SliceStable(allMatches, func(i, j int) bool {
 		if allMatches[i].File != allMatches[j].File {
@@ -629,29 +655,32 @@ type contextWithFile struct {
 // parity). When recursive is false (CLI `--no-recursive`), only the
 // top-level directory entries are scanned.
 //
-// A directory is walked by sandbox.WalkDir, which follows a symlink
-// only when naming its target would be allowed. A symlink it refuses
-// goes into `skipped`, as do binary and unreadable files. Compressed
-// archives (gzip/xz/bz2/zst) are treated as text because ripgrep can
-// read them via decompressors.
-func expandPaths(paths []string, recursive bool) (files, scannedDirs, skipped []string) {
+// Every path is pinned (sandbox.Pin): checked against the search roots
+// and the hidden rule once more, and tied to the file it leads to now,
+// so the scan later reads that file or nothing. A directory is walked
+// by sandbox.WalkPinned, which follows a symlink only when naming its
+// target would be allowed, enters each directory once, and pins every
+// file it reports. A path or entry it refuses goes into `skipped`, as do
+// binary and unreadable files. Compressed archives (gzip/xz/bz2/zst) are
+// treated as text because ripgrep can read them via decompressors.
+func expandPaths(paths []string, recursive bool) (files []sandbox.Pinned, scannedDirs, skipped []string) {
 	for _, p := range paths {
-		fi, err := os.Stat(p)
+		src, err := sandbox.Pin(p)
 		if err != nil {
 			skipped = append(skipped, p)
 			continue
 		}
-		if !fi.IsDir() {
-			if !isTextFile(p) {
+		if !src.Info().IsDir() {
+			if !isTextFile(src) {
 				skipped = append(skipped, p)
 				continue
 			}
-			files = append(files, p)
+			files = append(files, src)
 			continue
 		}
 
 		scannedDirs = append(scannedDirs, p)
-		entries, walkErr := sandbox.WalkDir(p, recursive)
+		entries, walkErr := sandbox.WalkPinned(src, recursive)
 		if walkErr != nil {
 			// The directory itself cannot be listed: report it rather
 			// than answer as if it were empty.
@@ -665,10 +694,10 @@ func expandPaths(paths []string, recursive bool) (files, scannedDirs, skipped []
 				// denied) is passed over; the rest of the tree is
 				// still searched.
 				continue
-			case entry.Refused != "", !isTextFile(entry.Path):
+			case entry.Refused != "", !isTextFile(entry.File):
 				skipped = append(skipped, entry.Path)
 			default:
-				files = append(files, entry.Path)
+				files = append(files, entry.File)
 			}
 		}
 	}
@@ -679,11 +708,11 @@ func expandPaths(paths []string, recursive bool) (files, scannedDirs, skipped []
 // null bytes. Mirrors Python's is_text_file in file_utils.py — we
 // special-case compressed files as "text" since ripgrep (via decompressor)
 // will read them.
-func isTextFile(path string) bool {
-	if compression.IsCompressed(path) {
+func isTextFile(src sandbox.Pinned) bool {
+	if compression.IsCompressed(src.Path()) {
 		return true
 	}
-	f, err := os.Open(path)
+	f, err := src.Open()
 	if err != nil {
 		return false
 	}

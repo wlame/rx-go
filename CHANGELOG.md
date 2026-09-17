@@ -117,6 +117,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports the size and type of a file outside the roots. Without a
   sandbox (the CLI without `--search-root`) links are followed wherever
   they lead. See `docs/concepts/security.md`.
+- A directory search enters each directory once. Links that lead
+  sideways to other directories were followed every time they were met,
+  so six levels of six links to the next level made one `rx trace`,
+  `rx index --recursive` or `GET /v1/trace` search 46,656 paths to one
+  file and run for minutes. A second way into a directory already
+  searched is now skipped, with the reason `directory already searched
+  through '<path>'` in `skip_reasons`, and links to directories are
+  followed only after every real directory, so a directory reached both
+  directly and through a link is searched under its own path. A link to
+  a directory that is also reached directly is therefore no longer
+  searched a second time under the link's path.
+- A file is read only while it is the file that was checked. A link
+  checked while it led inside the root, and retargeted before the read
+  (or a checked file replaced by a link), was read at its new target:
+  outside the roots or hidden. The check now records the file's device
+  and inode, and every read compares the file it opened with them:
+  every read of a trace (chunks, compressed streams, seekable frames,
+  cache hits, line numbering), `samples` (CLI and `GET /v1/samples`),
+  an index build and the input of `rx compress` / `POST /v1/compress`.
+  A file that changed is skipped (`skipped_files`) or refused (`file
+  changed after it was checked`), never read. A directory walk lists
+  each directory through a handle checked the same way.
 
 ## [0.3.0] - 2026-10-03
 

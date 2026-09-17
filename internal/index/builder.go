@@ -32,6 +32,7 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/seekableindex"
@@ -125,15 +126,23 @@ func SatisfiesBuild(idx *rxtypes.UnifiedFileIndex, opts BuildOptions) bool {
 // the file's identity as its first stat saw it, and reads no further
 // than that size, so IsValidForSource can later detect any change.
 //
+// The source is pinned first (paths.Pin): checked as a named path is,
+// against the search roots and the hidden rule, and read only while it
+// is still the file that check saw. A directory walk hands Build paths
+// it checked earlier, and a link among them can be retargeted in
+// between; the pin is what keeps that from indexing a file outside the
+// roots.
+//
 // On success the caller can hand the result straight to Save() or
 // inspect LineIndex in-memory; Build does not write to disk itself.
 func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, error) {
 	started := time.Now()
 
-	info, err := os.Stat(sourcePath)
+	src, err := paths.Pin(sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %w", sourcePath, err)
 	}
+	info := src.Info()
 	if info.IsDir() {
 		return nil, fmt.Errorf("build: %s is a directory", sourcePath)
 	}
@@ -162,7 +171,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// out, and validation falls back to the other fields.
 	identity := IdentityFromInfo(sourcePath, info)
 
-	f, err := os.Open(sourcePath)
+	f, err := src.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", sourcePath, err)
 	}

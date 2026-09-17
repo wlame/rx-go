@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/wlame/rx-go/internal/compression"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -172,18 +173,18 @@ func (b *batchFeeder) write(p []byte, newlines int) error {
 }
 
 // readSeekTable is a small wrapper around seekable.ReadSeekTable that
-// handles the file-open + size-lookup for callers that only have a
-// path string. The seekable package's API takes an io.ReaderAt for
+// handles the file-open + size-lookup for callers that hold a pinned
+// file. The seekable package's API takes an io.ReaderAt for
 // test-friendliness; we'd rather not repeat the boilerplate here.
-func readSeekTable(path string) (*seekable.SeekTable, error) {
-	f, err := os.Open(path)
+func readSeekTable(src sandbox.Pinned) (*seekable.SeekTable, error) {
+	f, err := src.Open()
 	if err != nil {
-		return nil, fmt.Errorf("seekable: open %s: %w", path, err)
+		return nil, fmt.Errorf("seekable: open %s: %w", src.Path(), err)
 	}
 	defer func() { _ = f.Close() }()
 	fi, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("seekable: stat %s: %w", path, err)
+		return nil, fmt.Errorf("seekable: stat %s: %w", src.Path(), err)
 	}
 	return seekable.ReadSeekTable(f, fi.Size())
 }
@@ -205,9 +206,12 @@ func readSeekTable(path string) (*seekable.SeekTable, error) {
 // latest in the file are dropped. Batches run in parallel and the cap
 // cancels the ones still running, so the matches kept are the earliest
 // of those collected, not always the earliest in the file.
+//
+// src is the file pinned when the trace checked it; every batch reads
+// it only if it is still that file.
 func ProcessSeekable(
 	ctx context.Context,
-	path string,
+	src sandbox.Pinned,
 	patternIDs map[string]string,
 	patternOrder []string,
 	rgExtraArgs []string,
@@ -216,7 +220,7 @@ func ProcessSeekable(
 ) (matches []MatchRaw, contexts []ContextRaw, elapsed time.Duration, err error) {
 	start := time.Now()
 
-	tbl, err := readSeekTable(path)
+	tbl, err := readSeekTable(src)
 	if err != nil {
 		return nil, nil, 0, fmt.Errorf("ProcessSeekable: %w", err)
 	}
@@ -296,7 +300,7 @@ func ProcessSeekable(
 				return nil
 			}
 			m, c, counted, berr := scanFrameBatch(
-				gctx, path, tbl, frameIdxs,
+				gctx, src, tbl, frameIdxs,
 				patternIDs, patternOrder, rgExtraArgs,
 				contextBefore, contextAfter,
 			)
@@ -517,7 +521,7 @@ type frameLines struct {
 // Parity: rx-python/src/rx/trace_compressed.py::process_seekable_zstd_frame_batch
 func scanFrameBatch(
 	ctx context.Context,
-	path string,
+	src sandbox.Pinned,
 	tbl *seekable.SeekTable,
 	frameIdxs []int,
 	patternIDs map[string]string,
@@ -534,9 +538,9 @@ func scanFrameBatch(
 	// for every frame's ReadAt. os.File.ReadAt is safe for concurrent
 	// use (pread(2) under the hood on Linux/macOS), though we only use
 	// it single-threaded in the writer goroutine here.
-	f, err := os.Open(path)
+	f, err := src.Open()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("scanFrameBatch: open %s: %w", path, err)
+		return nil, nil, nil, fmt.Errorf("scanFrameBatch: open %s: %w", src.Path(), err)
 	}
 	defer func() { _ = f.Close() }()
 

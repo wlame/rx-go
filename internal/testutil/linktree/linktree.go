@@ -13,6 +13,7 @@ package linktree
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -123,4 +124,51 @@ func Build(t *testing.T) Tree {
 		}
 	}
 	return tree
+}
+
+// FanOut holds the paths of a tree built by BuildFanOut.
+type FanOut struct {
+	// Root is the directory that holds the levels d0, d1, ...
+	Root string
+	// Top is Root/d0, where a search starts.
+	Top string
+	// File is the one file of the tree, in the last level.
+	File string
+	// Levels and Links are the sizes the tree was built with.
+	Levels, Links int
+}
+
+// BuildFanOut creates levels+1 directories Root/d0 … Root/d<levels>.
+// Every directory but the last holds `links` symbolic links l1, l2, …
+// to the next one; the last holds f.log, "LINE 1 NEEDLE".
+//
+// A walk that follows every link the way it meets it reaches f.log
+// links^levels times (6 levels of 6 links: 46,656 paths). A walk that
+// enters each directory once reaches it once.
+func BuildFanOut(t *testing.T, levels, links int) FanOut {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	root := filepath.Join(base, "root")
+	level := func(i int) string { return filepath.Join(root, "d"+strconv.Itoa(i)) }
+	for i := 0; i <= levels; i++ {
+		if err := os.MkdirAll(level(i), 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	for i := 0; i < levels; i++ {
+		for k := 1; k <= links; k++ {
+			link := filepath.Join(level(i), "l"+strconv.Itoa(k))
+			if err := os.Symlink(filepath.Join("..", "d"+strconv.Itoa(i+1)), link); err != nil {
+				t.Fatalf("symlink %s: %v", link, err)
+			}
+		}
+	}
+	file := filepath.Join(level(levels), "f.log")
+	if err := os.WriteFile(file, []byte("LINE 1 NEEDLE\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", file, err)
+	}
+	return FanOut{Root: root, Top: level(0), File: file, Levels: levels, Links: links}
 }

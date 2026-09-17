@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wlame/rx-go/internal/compression"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -55,9 +55,12 @@ var ErrIncompleteStream = errors.New("compressed stream ended early")
 // last one (contextAfter lines), then stops rg via context cancel; a
 // match read in that time is returned as a context line, since it is a
 // line of that window. Nil maxResults means "no limit".
+//
+// source is the file pinned when the trace checked it; it is read only
+// if it is still that file.
 func ProcessCompressed(
 	ctx context.Context,
-	path string,
+	source sandbox.Pinned,
 	format compression.Format,
 	patternIDs map[string]string,
 	patternOrder []string,
@@ -77,14 +80,15 @@ func ProcessCompressed(
 
 	if format == compression.FormatNone {
 		return nil, nil, 0, fmt.Errorf("%w: ProcessCompressed called with FormatNone on %s",
-			ErrUnsupportedCompression, path)
+			ErrUnsupportedCompression, source.Path())
 	}
 
 	// Open the source file. The decompressor wraps this reader; no
-	// subprocess is spawned.
-	src, err := os.Open(path)
+	// subprocess is spawned. Open refuses a path that no longer leads to
+	// the file the trace checked.
+	src, err := source.Open()
 	if err != nil {
-		return nil, nil, time.Since(start), fmt.Errorf("open %s: %w", path, err)
+		return nil, nil, time.Since(start), fmt.Errorf("open %s: %w", source.Path(), err)
 	}
 	// R2M2 contract: compression.NewReader takes ownership of src on
 	// success — its returned wrapper's Close will close src. If
@@ -274,11 +278,11 @@ func ProcessCompressed(
 	// are EXPECTED and should not be logged as corruption.
 	if copyErr != nil && !isCopyTerminationNoise(copyErr) {
 		slog.Default().Warn("compressed_stream_copy_error",
-			"path", path,
+			"path", source.Path(),
 			"format", string(format),
 			"error", copyErr.Error(),
 		)
-		incomplete = fmt.Errorf("%w: %s: %w", ErrIncompleteStream, path, copyErr)
+		incomplete = fmt.Errorf("%w: %s: %w", ErrIncompleteStream, source.Path(), copyErr)
 	}
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 		return nil, nil, elapsed, streamErr

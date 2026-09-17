@@ -338,7 +338,7 @@ func TestProcessCompressed_UnknownFormat(t *testing.T) {
 	p := filepath.Join(dir, "a.log")
 	_ = os.WriteFile(p, []byte("x"), 0o644)
 	_, _, _, err := ProcessCompressed(
-		context.Background(), p, "unknown-format",
+		context.Background(), pinForTest(t, p), "unknown-format",
 		map[string]string{"p1": "x"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -354,7 +354,7 @@ func TestProcessCompressed_NotCompressed(t *testing.T) {
 	p := filepath.Join(dir, "a.log")
 	_ = os.WriteFile(p, []byte("hello\n"), 0o644)
 	_, _, _, err := ProcessCompressed(
-		context.Background(), p, "",
+		context.Background(), pinForTest(t, p), "",
 		map[string]string{"p1": "hello"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)

@@ -3,12 +3,12 @@ package trace
 import (
 	"bufio"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/index"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -18,16 +18,18 @@ import (
 // it reads at most this much past that line.
 const lineCountBufferBytes = 256 * 1024
 
-// openForLineCount opens the file a line count reads. Tests replace it
+// openForLineCount opens the file a line count reads, refusing a path
+// that no longer leads to the file the trace checked. Tests replace it
 // to count the bytes read.
-var openForLineCount = func(path string) (io.ReadSeekCloser, error) {
-	return os.Open(path)
+var openForLineCount = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
+	return src.Open()
 }
 
 // lineResolver maps byte offsets in a file's text to the 1-based
 // numbers of the lines that contain them. An offset missing from the
-// answer stays unknown.
-type lineResolver func(path string, offsets []int64) map[int64]int
+// answer stays unknown, and so does every offset of a file that is no
+// longer the file the trace checked.
+type lineResolver func(src sandbox.Pinned, offsets []int64) map[int64]int
 
 // lineResolverFor picks how a trace numbers the matches its scan could
 // not number itself.
@@ -64,17 +66,17 @@ func lineResolverFor(opts Options) lineResolver {
 // A compressed file's offsets are positions in its decompressed text,
 // and its index describes that text, so it is numbered the same way
 // through the samples resolver, which knows how to reach the text.
-func resolveLinesFromIndex(path string, offsets []int64) map[int64]int {
+func resolveLinesFromIndex(src sandbox.Pinned, offsets []int64) map[int64]int {
 	wanted := uniqueSortedOffsets(offsets)
 	if len(wanted) == 0 {
 		return nil
 	}
-	idx, err := index.LoadForSource(path)
+	idx, err := index.LoadForSource(src.Path())
 	if err != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return nil
 	}
-	if compression.IsCompressed(path) {
-		return numberCompressedText(path, wanted, func(string) (*rxtypes.UnifiedFileIndex, error) {
+	if compression.IsCompressed(src.Path()) {
+		return numberCompressedText(src, wanted, func(string) (*rxtypes.UnifiedFileIndex, error) {
 			return idx, nil
 		})
 	}
@@ -85,21 +87,21 @@ func resolveLinesFromIndex(path string, offsets []int64) map[int64]int {
 	if entry := index.FindNearestCheckpointForOffset(idx, wanted[0]); entry.LineNumber > 0 {
 		start = entry
 	}
-	return countLinesToOffsets(path, start, wanted)
+	return countLinesToOffsets(src, start, wanted)
 }
 
 // resolveLinesByCounting maps byte offsets to line numbers by counting
 // the lines from the start of the file. It reads no index and writes
 // none; the read stops at the line holding the highest offset.
-func resolveLinesByCounting(path string, offsets []int64) map[int64]int {
+func resolveLinesByCounting(src sandbox.Pinned, offsets []int64) map[int64]int {
 	wanted := uniqueSortedOffsets(offsets)
 	if len(wanted) == 0 {
 		return nil
 	}
-	if compression.IsCompressed(path) {
-		return numberCompressedText(path, wanted, samples.NoIndex)
+	if compression.IsCompressed(src.Path()) {
+		return numberCompressedText(src, wanted, samples.NoIndex)
 	}
-	return countLinesToOffsets(path, rxtypes.LineIndexEntry{LineNumber: 1, ByteOffset: 0}, wanted)
+	return countLinesToOffsets(src, rxtypes.LineIndexEntry{LineNumber: 1, ByteOffset: 0}, wanted)
 }
 
 // uniqueSortedOffsets drops negative and repeated offsets and sorts the
@@ -122,14 +124,14 @@ func uniqueSortedOffsets(offsets []int64) []int64 {
 	return wanted
 }
 
-// countLinesToOffsets reads path forward from start, a line whose
+// countLinesToOffsets reads src forward from start, a line whose
 // number and first byte are known, and numbers the line holding each
 // offset in wanted (sorted ascending, none below start). The read is
 // bounded by the span asked about: it stops at the line holding the
 // highest offset. A file that cannot be opened or read answers with
 // whatever was numbered before the failure.
-func countLinesToOffsets(path string, start rxtypes.LineIndexEntry, wanted []int64) map[int64]int {
-	f, err := openForLineCount(path)
+func countLinesToOffsets(src sandbox.Pinned, start rxtypes.LineIndexEntry, wanted []int64) map[int64]int {
+	f, err := openForLineCount(src)
 	if err != nil {
 		return nil
 	}
@@ -166,12 +168,12 @@ func countLinesToOffsets(path string, start rxtypes.LineIndexEntry, wanted []int
 // index points to (or from the first byte without one) and stops at the
 // line holding the highest offset. An offset it cannot number, or a file
 // it cannot read, is left out of the answer and stays unknown.
-func numberCompressedText(path string, wanted []int64, loader samples.IndexLoader) map[int64]int {
+func numberCompressedText(src sandbox.Pinned, wanted []int64, loader samples.IndexLoader) map[int64]int {
 	spec := make([]samples.OffsetOrRange, len(wanted))
 	for i, off := range wanted {
 		spec[i] = samples.OffsetOrRange{Start: off}
 	}
-	resp, err := samples.Resolve(samples.Request{Path: path, Offsets: spec, IndexLoader: loader})
+	resp, err := samples.Resolve(samples.Request{Path: src.Path(), Source: src, Offsets: spec, IndexLoader: loader})
 	if err != nil {
 		return nil
 	}
@@ -187,12 +189,12 @@ func numberCompressedText(path string, wanted []int64, loader samples.IndexLoade
 // resolveUnknownLineNumbers fills in the line numbers left unknown by a
 // canceled scan, in place, for every file resolveLines can answer for.
 //
-// fileIDs maps the response's file IDs ("f1") to paths; matches and
-// context lines carry the ID, so the lookup goes through it. Anything
-// that stays unresolved keeps the unknown marker: a wrong line number
-// is worse than an admitted gap.
+// sources maps the response's file IDs ("f1") to the files the trace
+// checked; matches and context lines carry the ID, so the lookup goes
+// through it. Anything that stays unresolved keeps the unknown marker:
+// a wrong line number is worse than an admitted gap.
 func resolveUnknownLineNumbers(
-	fileIDs map[string]string,
+	sources map[string]sandbox.Pinned,
 	matches []rxtypes.Match,
 	contexts []contextWithFile,
 	resolveLines lineResolver,
@@ -215,11 +217,11 @@ func resolveUnknownLineNumbers(
 
 	resolved := map[string]map[int64]int{}
 	for fileID, offsets := range byFile {
-		path, ok := fileIDs[fileID]
+		src, ok := sources[fileID]
 		if !ok {
 			continue
 		}
-		if lines := resolveLines(path, offsets); len(lines) > 0 {
+		if lines := resolveLines(src, offsets); len(lines) > 0 {
 			resolved[fileID] = lines
 		}
 	}

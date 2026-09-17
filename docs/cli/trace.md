@@ -186,7 +186,10 @@ Entries whose name starts with a dot are skipped unless `--hidden`.
 Symbolic links are followed when naming their target would be allowed:
 with `--search-root`, a link that leads outside every root or into a
 hidden entry is not searched and is listed in `skipped_files` instead.
-A link back to a directory the scan is already inside is skipped too.
+A link back to a directory the scan is already inside is skipped too,
+and so is a second link into a directory the scan has already searched:
+each directory is searched once, under its own path when it is reached
+directly as well.
 See [Symlinks inside a directory search](../concepts/security.md#symlinks-inside-a-directory-search).
 
 ### Structured output for piping

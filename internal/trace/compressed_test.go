@@ -54,7 +54,7 @@ func TestProcessCompressed_Gzip(t *testing.T) {
 
 	matches, _, _, err := ProcessCompressed(
 		context.Background(),
-		p, compression.FormatGzip,
+		pinForTest(t, p), compression.FormatGzip,
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -85,7 +85,7 @@ func TestProcessCompressed_MaxResultsTruncates(t *testing.T) {
 	cap := 3
 	matches, _, _, err := ProcessCompressed(
 		context.Background(),
-		p, compression.FormatGzip,
+		pinForTest(t, p), compression.FormatGzip,
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, &cap,
 	)
@@ -102,7 +102,7 @@ func TestProcessCompressed_NonCompressedError(t *testing.T) {
 	p := mustWriteFile(t, []byte("plain text\n"))
 	_, _, _, err := ProcessCompressed(
 		context.Background(),
-		p, compression.FormatNone,
+		pinForTest(t, p), compression.FormatNone,
 		map[string]string{"p1": "text"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -249,7 +249,7 @@ func TestProcessCompressed_CorruptStreamLogsWarning(t *testing.T) {
 
 	matches, _, _, err := ProcessCompressed(
 		context.Background(),
-		p, compression.FormatGzip,
+		pinForTest(t, p), compression.FormatGzip,
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -294,7 +294,7 @@ func TestProcessCompressed_CleanStreamEmitsNoWarning(t *testing.T) {
 	p := writeGzipFile(t, []byte("alpha error\nbeta\ngamma error\n"))
 	_, _, _, err := ProcessCompressed(
 		context.Background(),
-		p, compression.FormatGzip,
+		pinForTest(t, p), compression.FormatGzip,
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -358,7 +358,7 @@ func TestProcessCompressed_TruncatedStreamKeepsWhatItRead(t *testing.T) {
 
 	matches, _, _, err := ProcessCompressed(
 		context.Background(),
-		truncated, compression.FormatGzip,
+		pinForTest(t, truncated), compression.FormatGzip,
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)

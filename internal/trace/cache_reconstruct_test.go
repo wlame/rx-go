@@ -220,7 +220,7 @@ func TestReconstructFromCacheStartsFromTheIndex(t *testing.T) {
 	}
 
 	matches, _, err := ReconstructFromCache(ReconstructRequest{
-		SourcePath: path,
+		Source: pinForTest(t, path),
 		Cached: []rxtypes.TraceCacheMatch{
 			{PatternIndex: 0, Offset: int64(len(content)) - int64(len("line 200 NEEDLE\n")), LineNumber: 1},
 		},

@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -61,18 +61,18 @@ func textSourceFor(req Request) textSource {
 	}
 	format, _ := compression.DetectFromPath(req.Path)
 	if format == compression.FormatNone {
-		return plainText{path: req.Path, idx: idx}
+		return plainText{src: req.Source, idx: idx}
 	}
 	if seekable.IsSeekable(req.Path) {
-		if text, err := seekableTextFor(req.Path, idx); err == nil {
+		if text, err := seekableTextFor(req.Source, idx); err == nil {
 			return text
 		}
 		// The checkpoints of a seekable file's index sit at frame
 		// starts, which are not always line starts, so a stream must
 		// not start from one: it reads from the first byte instead.
-		return streamedText{path: req.Path, format: format}
+		return streamedText{src: req.Source, format: format}
 	}
-	return streamedText{path: req.Path, format: format, idx: idx}
+	return streamedText{src: req.Source, format: format, idx: idx}
 }
 
 // ============================================================================
@@ -82,12 +82,12 @@ func textSourceFor(req Request) textSource {
 // plainText reads a plain file, seeking to the index checkpoint before
 // the first offset when an index exists.
 type plainText struct {
-	path string
-	idx  *rxtypes.UnifiedFileIndex
+	src paths.Pinned
+	idx *rxtypes.UnifiedFileIndex
 }
 
 func (p plainText) size() (int64, error) {
-	info, err := os.Stat(p.path)
+	info, err := p.src.Stat()
 	if err != nil {
 		return 0, err
 	}
@@ -99,7 +99,7 @@ func (p plainText) openNear(offset int64, before int) (*textCursor, error) {
 	if p.idx != nil {
 		startOffset, startLine = checkpointBefore(p.idx, offset, before)
 	}
-	f, err := openFileForSamples(p.path)
+	f, err := openFileForSamples(p.src)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (p plainText) openNear(offset int64, before int) (*textCursor, error) {
 // so an offset near the start of a large file decompresses only the
 // start of it.
 type streamedText struct {
-	path   string
+	src    paths.Pinned
 	format compression.Format
 	idx    *rxtypes.UnifiedFileIndex
 }
@@ -160,7 +160,7 @@ func (s streamedText) openNear(offset int64, before int) (*textCursor, error) {
 // knows to be the start of a line; the returned cursor's line is 1 and
 // the caller sets it when offset is not 0.
 func (s streamedText) openAt(offset int64) (*textCursor, error) {
-	f, err := openFileForSamples(s.path)
+	f, err := openFileForSamples(s.src)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func (s streamedText) openAt(offset int64) (*textCursor, error) {
 	if offset > 0 {
 		if _, err := io.CopyN(io.Discard, dec, offset); err != nil {
 			_ = dec.Close()
-			return nil, fmt.Errorf("decompress %s up to byte %d: %w", s.path, offset, err)
+			return nil, fmt.Errorf("decompress %s up to byte %d: %w", s.src.Path(), offset, err)
 		}
 	}
 	return &textCursor{Reader: dec, offset: offset, line: 1, close: dec.Close}, nil
@@ -188,7 +188,7 @@ func (s streamedText) openAt(offset int64) (*textCursor, error) {
 // starts in. Only the frames the pass reaches are decompressed, one at
 // a time, so one offset costs a frame or two whatever the file's size.
 type seekableText struct {
-	path    string
+	src     paths.Pinned
 	frames  []rxtypes.FrameLineInfo
 	table   *seekable.SeekTable
 	decoder *seekable.Decoder
@@ -203,7 +203,7 @@ type seekableText struct {
 // frame without a line break as holding a line fails that check, and
 // every line after such a frame would otherwise be numbered one too
 // high.
-func seekableTextFor(path string, idx *rxtypes.UnifiedFileIndex) (*seekableText, error) {
+func seekableTextFor(src paths.Pinned, idx *rxtypes.UnifiedFileIndex) (*seekableText, error) {
 	if idx == nil || idx.Frames == nil || len(*idx.Frames) == 0 || idx.LineCount == nil {
 		return nil, errNoFrameIndex
 	}
@@ -212,7 +212,7 @@ func seekableTextFor(path string, idx *rxtypes.UnifiedFileIndex) (*seekableText,
 		return nil, errNoFrameIndex
 	}
 
-	file, err := os.Open(path)
+	file, err := src.Open()
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +230,7 @@ func seekableTextFor(path string, idx *rxtypes.UnifiedFileIndex) (*seekableText,
 			return nil, errNoFrameIndex
 		}
 	}
-	return &seekableText{path: path, frames: frames, table: table, decoder: seekable.NewDecoder()}, nil
+	return &seekableText{src: src, frames: frames, table: table, decoder: seekable.NewDecoder()}, nil
 }
 
 func (s *seekableText) size() (int64, error) {
@@ -270,7 +270,7 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 		return s.cursorFrom(0, nil, 0, 1), nil
 	}
 
-	data, err := decodeSeekableFrame(s.decoder, s.path, start, s.table)
+	data, err := decodeSeekableFrame(s.decoder, s.src, start, s.table)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 	if lineBreak < 0 {
 		// The table said this frame ends a line, so it is a frame table
 		// that does not describe the file.
-		return nil, fmt.Errorf("frame %d of %s holds no line break", start, s.path)
+		return nil, fmt.Errorf("frame %d of %s holds no line break", start, s.src.Path())
 	}
 	rest := data[lineBreak+1:]
 	offsetAfter := s.frames[start].DecompressedOffset + int64(lineBreak) + 1
@@ -317,7 +317,7 @@ func (r *frameReader) Read(p []byte) (int, error) {
 		if r.next >= len(r.text.table.Frames) {
 			return 0, io.EOF
 		}
-		data, err := decodeSeekableFrame(r.text.decoder, r.text.path, r.next, r.text.table)
+		data, err := decodeSeekableFrame(r.text.decoder, r.text.src, r.next, r.text.table)
 		if err != nil {
 			return 0, err
 		}

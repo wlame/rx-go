@@ -20,6 +20,7 @@ import (
 	"github.com/ulikunitz/xz"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -310,9 +311,9 @@ func TestSeekableOffsets_DecodeOnlyTheFramesAroundTheOffset(t *testing.T) {
 
 	decoded := map[int]int{}
 	orig := decodeSeekableFrame
-	decodeSeekableFrame = func(d *seekable.Decoder, path string, frame int, table *seekable.SeekTable) ([]byte, error) {
+	decodeSeekableFrame = func(d *seekable.Decoder, src paths.Pinned, frame int, table *seekable.SeekTable) ([]byte, error) {
 		decoded[frame]++
-		return orig(d, path, frame, table)
+		return orig(d, src, frame, table)
 	}
 	t.Cleanup(func() { decodeSeekableFrame = orig })
 
@@ -395,8 +396,8 @@ func TestOffsets_AReadErrorIsReportedNotTakenForTheEnd(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	orig := openFileForSamples
-	openFileForSamples = func(p string) (readSeekCloser, error) {
-		f, err := os.Open(p)
+	openFileForSamples = func(src paths.Pinned) (readSeekCloser, error) {
+		f, err := src.Open()
 		if err != nil {
 			return nil, err
 		}

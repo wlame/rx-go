@@ -217,7 +217,7 @@ func TestOutputTheParserRejectsEndsTheScanWithAnError(t *testing.T) {
 			name:  "plain chunk",
 			write: func(t *testing.T) string { return mustWriteFile(t, text) },
 			scan: func(ctx context.Context, path string) error {
-				task := FileTask{FilePath: path, Count: int64(len(text))}
+				task := FileTask{Source: pinForTest(t, path), Count: int64(len(text))}
 				_, err := ProcessChunk(ctx, ChunkRequest{Task: task, PatternIDs: patternIDs, PatternOrder: order})
 				return err
 			},
@@ -226,7 +226,7 @@ func TestOutputTheParserRejectsEndsTheScanWithAnError(t *testing.T) {
 			name:  "gzip stream",
 			write: func(t *testing.T) string { return writeGzipFile(t, text) },
 			scan: func(ctx context.Context, path string) error {
-				_, _, _, err := ProcessCompressed(ctx, path, compression.FormatGzip, patternIDs, order, nil, 0, 0, nil)
+				_, _, _, err := ProcessCompressed(ctx, pinForTest(t, path), compression.FormatGzip, patternIDs, order, nil, 0, 0, nil)
 				return err
 			},
 		},
@@ -234,7 +234,7 @@ func TestOutputTheParserRejectsEndsTheScanWithAnError(t *testing.T) {
 			name:  "seekable frames",
 			write: func(t *testing.T) string { return writeSeekableZstdFile(t, text, 1024) },
 			scan: func(ctx context.Context, path string) error {
-				_, _, _, err := ProcessSeekable(ctx, path, patternIDs, order, nil, 0, 0, nil)
+				_, _, _, err := ProcessSeekable(ctx, pinForTest(t, path), patternIDs, order, nil, 0, 0, nil)
 				return err
 			},
 		},

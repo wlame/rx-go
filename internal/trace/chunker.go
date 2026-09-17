@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/wlame/rx-go/internal/config"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 )
 
 // FileTask describes one chunk of a file — a work unit for the parallel
@@ -29,10 +30,13 @@ import (
 //
 // Parity: this is identical to rx-python/src/rx/file_utils.py::FileTask.
 type FileTask struct {
-	TaskID   int    // zero-based index
-	FilePath string // absolute path recommended
-	Offset   int64  // inclusive start byte (aligned to newline for TaskID>0)
-	Count    int64  // byte count
+	TaskID int // zero-based index
+	// Source is the file, pinned to the file that was checked: the
+	// worker reads it through Source.Open, which refuses a path that
+	// leads elsewhere by then.
+	Source sandbox.Pinned
+	Offset int64 // inclusive start byte (aligned to newline for TaskID>0)
+	Count  int64 // byte count
 }
 
 // EndOffset is the exclusive end byte for this task.
@@ -115,7 +119,7 @@ func findNextNewline(f *os.File, startOffset int64, maxReadBytes int) (int64, er
 // is strictly monotonically increasing (enforced by dedup at the end).
 // If two raw offsets collapse to the same aligned offset (possible
 // near long-line boundaries), the duplicates are pruned silently.
-func GetFileOffsets(path string, fileSize int64) ([]int64, error) {
+func GetFileOffsets(src sandbox.Pinned, fileSize int64) ([]int64, error) {
 	if fileSize <= 0 {
 		// Empty file — one task covering zero bytes, matches Python's
 		// behavior: `[FileTask(0, path, 0, 0)]`.
@@ -156,9 +160,9 @@ func GetFileOffsets(path string, fileSize int64) ([]int64, error) {
 	// Python opens a fresh handle inside find_next_newline for each
 	// offset; that's wasteful. ReadAt is goroutine-safe so we could
 	// parallelise alignment, but N <= 20 makes it pointless.
-	f, err := os.Open(path)
+	f, err := src.Open()
 	if err != nil {
-		return nil, fmt.Errorf("GetFileOffsets: open %s: %w", path, err)
+		return nil, fmt.Errorf("GetFileOffsets: open %s: %w", src.Path(), err)
 	}
 	defer func() { _ = f.Close() }()
 
@@ -187,26 +191,26 @@ func GetFileOffsets(path string, fileSize int64) ([]int64, error) {
 //  2. Computing per-task byte counts (difference between adjacent
 //     offsets; last task runs to end-of-file).
 //
-// Caller must ensure `path` is a regular file — directories and special
-// files are rejected upstream in the engine.
+// The path is pinned (sandbox.Pin) first, which checks it as a named
+// path; the tasks then read only the file it led to.
 func CreateFileTasks(path string) ([]FileTask, error) {
-	fi, err := os.Stat(path)
+	src, err := sandbox.Pin(path)
 	if err != nil {
-		return nil, fmt.Errorf("CreateFileTasks: stat %s: %w", path, err)
+		return nil, fmt.Errorf("CreateFileTasks: %w", err)
 	}
-	if fi.IsDir() {
+	if src.Info().IsDir() {
 		return nil, fmt.Errorf("CreateFileTasks: %s is a directory", path)
 	}
-	return planFileTasks(path, fi.Size())
+	return planFileTasks(src, src.Info().Size())
 }
 
-// planFileTasks splits the first fileSize bytes of path into FileTasks.
+// planFileTasks splits the first fileSize bytes of src into FileTasks.
 // The size is the caller's: the engine plans from the stat it records
 // as the file's identity, so the tasks, and therefore the scan, cover
 // exactly the bytes that identity describes even if the file grows
 // while they run.
-func planFileTasks(path string, fileSize int64) ([]FileTask, error) {
-	offsets, err := GetFileOffsets(path, fileSize)
+func planFileTasks(src sandbox.Pinned, fileSize int64) ([]FileTask, error) {
+	offsets, err := GetFileOffsets(src, fileSize)
 	if err != nil {
 		return nil, err
 	}
@@ -220,10 +224,10 @@ func planFileTasks(path string, fileSize int64) ([]FileTask, error) {
 			count = offsets[i+1] - off
 		}
 		tasks[i] = FileTask{
-			TaskID:   i,
-			FilePath: path,
-			Offset:   off,
-			Count:    count,
+			TaskID: i,
+			Source: src,
+			Offset: off,
+			Count:  count,
 		}
 	}
 	return tasks, nil
