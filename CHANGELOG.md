@@ -154,6 +154,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now takes the format, the fingerprint, the text, and a seekable
   file's seek table and frames from the one handle it opened and
   checked.
+- A line index is used only for the file it was built from. It is
+  looked up by path, so after a link was retargeted and put back it
+  could describe another file than the one read and give wrong line
+  numbers in `samples` and in a trace's line numbering. It is now used
+  only when the inode it recorded is the read file's, and is treated as
+  absent otherwise.
 - One line can no longer make a trace hold gigabytes in memory.
   ripgrep reports a matched line whole, plus about 50 bytes for every
   submatch on it, and rx read each report whole: a search for `x` over a

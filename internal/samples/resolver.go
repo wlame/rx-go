@@ -98,6 +98,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		}
 		req.Source = src
 	}
+	req.IndexLoader = onlyIndexesOf(req.Source, req.IndexLoader)
 	resp := &rxtypes.SamplesResponse{
 		Path:          req.Path,
 		Offsets:       map[string]int64{},
@@ -155,6 +156,27 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// onlyIndexesOf wraps load so that an index built from another file
+// than src is reported as absent, (nil, nil).
+//
+// The loader looks the index up by path, and validates it against what
+// the path leads to at that moment; the file itself is read through
+// src. A link retargeted and put back around the look-up makes the two
+// differ, and the other file's checkpoints would give wrong line
+// numbers. A nil loader stays nil.
+func onlyIndexesOf(src paths.Pinned, load IndexLoader) IndexLoader {
+	if load == nil {
+		return nil
+	}
+	return func(path string) (*rxtypes.UnifiedFileIndex, error) {
+		idx, err := load(path)
+		if err != nil || index.DescribesPinned(idx, src) {
+			return idx, err
+		}
+		return nil, nil
+	}
 }
 
 // loadIndexOrNone returns the request's index, or nil when the loader

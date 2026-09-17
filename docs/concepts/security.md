@@ -310,6 +310,11 @@ there now means the tree changed during the check. A directory swapped
 for a link while the check runs, to outside the roots or into a hidden
 directory, fails the check instead of having its file recorded.
 
+A line index is looked up by the path, so it is used for a pinned
+file only when the inode it recorded is that file's. An index built
+from whatever else the path led to for a moment is treated as absent,
+and the answer is computed from the file itself.
+
 ### Failure modes
 
 - **Configured root doesn't exist**: `rx serve` refuses to start with

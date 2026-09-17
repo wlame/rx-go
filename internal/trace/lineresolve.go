@@ -71,7 +71,7 @@ func resolveLinesFromIndex(src sandbox.Pinned, offsets []int64) map[int64]int {
 	if len(wanted) == 0 {
 		return nil
 	}
-	idx, err := index.LoadForSource(src.Path())
+	idx, err := index.LoadForPinned(src)
 	if err != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return nil
 	}
