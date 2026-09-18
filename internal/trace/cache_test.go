@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -158,6 +159,45 @@ func TestSaveAndLoadCache_RoundTrip(t *testing.T) {
 	}
 	if loaded.Matches[0].PatternIndex != 0 {
 		t.Errorf("PatternIndex = %d, want 0", loaded.Matches[0].PatternIndex)
+	}
+}
+
+// An entry is written as compact JSON: one record per match and one pair
+// per submatch, so an indented layout would put every number of a span on
+// a line of its own and make the entry several times larger than its
+// content. The spans come back as stored.
+func TestSaveCache_WritesCompactJSONThatKeepsTheSpans(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	srcPath := filepath.Join(t.TempDir(), "src.log")
+	if err := os.WriteFile(srcPath, []byte("x hello hello\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	matches := []rxtypes.Match{{
+		Pattern:            "p1",
+		RelativeLineNumber: ptrIntT(1),
+		AbsoluteLineNumber: 1,
+		LineText:           strPtr("x hello hello"),
+		Submatches:         []rxtypes.Submatch{{Text: "hello", Start: 2, End: 7}, {Text: "hello", Start: 8, End: 13}},
+	}}
+	data := BuildCache(scannedNow(t, srcPath, matches), []string{"hello"}, nil)
+	cp := CachePath(srcPath, []string{"hello"}, nil)
+	if err := SaveCache(cp, data); err != nil {
+		t.Fatalf("SaveCache: %v", err)
+	}
+
+	body, err := os.ReadFile(cp) //nolint:gosec // path built by CachePath
+	if err != nil {
+		t.Fatalf("read entry: %v", err)
+	}
+	if strings.ContainsAny(string(body), "\n\t") || strings.Contains(string(body), "  ") {
+		t.Errorf("the entry is not compact JSON:\n%s", body)
+	}
+	loaded, err := LoadCache(cp)
+	if err != nil {
+		t.Fatalf("LoadCache: %v", err)
+	}
+	if got, want := loaded.Matches[0].Submatches, [][2]int{{2, 7}, {8, 13}}; !reflect.DeepEqual(got, want) {
+		t.Errorf("spans = %v, want %v", got, want)
 	}
 }
 

@@ -13,7 +13,7 @@ regex search.
   and the other endpoints work without it.
 - **Disk:** an index is about one checkpoint per MB of source (9.3 KB
   for a 465 MB log); a cached trace answer grows with its match count
-  (4.9 MB for 51,817 matches).
+  (4.3 MB for 51,817 matches).
   Cache location defaults to `~/.cache/rx/`; override with
   [`RX_CACHE_DIR`](configuration.md).
 - **Memory:** grows with the number of matches a trace returns, not

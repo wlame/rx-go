@@ -232,9 +232,12 @@ func SaveCache(cachePath string, data *rxtypes.TraceCacheData) error {
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
 		return fmt.Errorf("SaveCache: mkdir %s: %w", filepath.Dir(cachePath), err)
 	}
-	// Python uses json.dump with indent=2 — we match the formatting so
-	// files cross-read identically.
-	body, err := json.MarshalIndent(data, "", "  ")
+	// Compact JSON: an entry holds one record per match and one
+	// [start, end] pair per submatch, and an indented layout would put
+	// each number on a line of its own, several times the content. Any
+	// JSON reader reads either layout; rx-python writes indent=2, but the
+	// two backends treat each other's entries as absent by version.
+	body, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("SaveCache: marshal: %w", err)
 	}

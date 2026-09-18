@@ -112,16 +112,16 @@ bounds cuts them as a scan under those bounds does. An entry written
 before the spans were stored is a miss. A scan
 reads the file with one ripgrep per chunk in parallel. On a 465 MB log
 in the page cache, a rare pattern took 65 ms to scan and 15 ms from the
-cache, but `WARN` with 51,817 matches (a 4.9 MB entry) took 331 ms to
-scan and 429 ms from the cache. On a 6.3 GB log the rare pattern took
+cache, but `WARN` with 51,817 matches (a 4.3 MB entry) took 96 ms to
+scan and 183 ms from the cache (the `time` field). On a 6.3 GB log the rare pattern took
 481 ms to scan and 12 ms from the cache.
 
 Under `--max-results=N` the hit rebuilds only the first N matches and
 stops reading the file after them (and after the lines their context
 can reach); the entry is still parsed whole. With `--max-results=100`
 on the 465 MB log (the `time` field, warm page cache): `WARN` took
-30 ms from its 4.6 MB entry and 15 ms to scan; `INFO`, 1,327,224
-matching lines, took 0.69 s from its 119 MB entry and 16 ms to scan.
+39 ms from its 4.3 MB entry and 15 ms to scan; `INFO`, 1,327,224
+matching lines, took 1.0 s from its 110 MB entry and 16 ms to scan.
 The cached answer numbers every line it returns, which a capped scan of
 a plain file may leave as `-1`.
 
@@ -251,7 +251,7 @@ No hard cap. Caches grow as you index more files. Typical sizes:
   gave a 9.3 KB index with 429 checkpoints (an analysis adds its
   anomalies)
 - **Trace cache**: grows with the match count; 51,817 matches of the
-  same log took 4.9 MB
+  same log took 4.3 MB
 - **Frontend cache**: the size of the rx-viewer bundle
 
 For most developer workstations, the cache stays well under 1 GB.

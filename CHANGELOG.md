@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Trace-cache entries are written as compact JSON instead of indented
+  JSON. With the submatch spans each record now stores, an entry is
+  still about 12% smaller than before them: on a 465 MB log, `WARN`
+  (51,817 matches) takes 4.3 MB instead of 4.9 MB and `INFO`
+  (1,327,224 matches) 110 MB instead of 125 MB. Readers accept either
+  layout.
+
 - `rx samples --lines` and `GET /v1/samples?lines=` on a gzip, bzip2, xz
   or plain zstd file stop decompressing after the last wanted line,
   instead of reading the stream to its end for every request. With an
