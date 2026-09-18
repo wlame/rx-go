@@ -157,6 +157,17 @@ The output is the same whatever the worker count.
   by one worker
 - Either way, offsets and line numbers are those of the decompressed
   text
+- A damaged seekable zstd file is searched around the damage. Frames
+  decompress independently, so a frame whose bytes no longer decompress
+  (a bad sector, a partial copy) costs only the lines that touch it:
+  the lines inside it, the line running into it and the line running
+  out of it. Every other line is searched, in every batch. The file is
+  listed in `skipped_files`, a warning names the damaged frames
+  (`seekable_damaged_frames`), the matches after the first damaged
+  frame have `absolute_line_number` -1 (its line count is lost), and
+  the answer is never written to the trace cache. A gzip, bzip2, xz or
+  plain zstd stream that breaks keeps the matches found before the
+  break and is listed in `skipped_files` the same way
 
 ## Samples on compressed files
 

@@ -3,9 +3,13 @@ package seekable
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // TestDecoder_ThreeFrameRoundTrip is the regression test for the
@@ -158,4 +162,53 @@ func TestDecoder_ManyFramesConcurrent(t *testing.T) {
 		}
 	}
 	t.Logf("ran %d concurrent decode rounds across %d frames", 5, tbl.NumFrames)
+}
+
+// DecodeFrame refuses a frame whose bytes do not decompress, and one
+// that decompresses to another length than the seek table records,
+// with ErrDamagedFrame naming the frame. The second kind would shift
+// every offset after it.
+func TestDecodeFrame_RefusesDamagedBytesAndAWrongLength(t *testing.T) {
+	t.Parallel()
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatalf("create encoder: %v", err)
+	}
+	defer func() { _ = encoder.Close() }()
+	text := bytes.Repeat([]byte("LINE 1 some text\n"), 200)
+	compressed := encoder.EncodeAll(text, nil)
+	damaged := bytes.Clone(compressed)
+	for i := len(damaged) / 2; i < len(damaged)/2+5; i++ {
+		damaged[i] ^= 0xFF
+	}
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("create decoder: %v", err)
+	}
+	defer decoder.Close()
+
+	cases := map[string]struct {
+		bytes []byte
+		size  int64
+		ok    bool
+	}{
+		"intact":              {compressed, int64(len(text)), true},
+		"damaged bytes":       {damaged, int64(len(text)), false},
+		"longer than listed":  {compressed, int64(len(text)) - 1, false},
+		"shorter than listed": {compressed, int64(len(text)) + 1, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := DecodeFrame(decoder, tc.bytes, FrameInfo{Index: 7, DecompressedSize: tc.size})
+			if tc.ok {
+				if err != nil || !bytes.Equal(out, text) {
+					t.Fatalf("DecodeFrame = %d bytes, %v; want the text", len(out), err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrDamagedFrame) || !strings.Contains(err.Error(), "frame 7") {
+				t.Fatalf("DecodeFrame err = %v, want ErrDamagedFrame naming frame 7", err)
+			}
+		})
+	}
 }

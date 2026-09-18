@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
@@ -89,17 +91,31 @@ type batchStream struct {
 	// ownedFrom and ownedTo bound the owned lines in ripgrep's input,
 	// as a half-open range of byte positions.
 	ownedFrom, ownedTo int64
+	// cutAt is where the whole lines of the input end when a damaged
+	// frame stopped it: the position just after the last line break
+	// written before the damage. What ripgrep was given from there on
+	// is the start of a line whose rest lies in the damaged frame, and
+	// ripgrep would report it as a line of its own, so nothing that
+	// starts there is reported. MaxInt64 when nothing was cut.
+	cutAt int64
 }
 
 // wholeStream is the layout of an input that is all owned lines.
 func wholeStream(segments []streamSegment) batchStream {
-	return batchStream{segments: segments, ownedFrom: 0, ownedTo: math.MaxInt64}
+	return batchStream{segments: segments, ownedFrom: 0, ownedTo: math.MaxInt64, cutAt: math.MaxInt64}
 }
 
 // owns reports whether the line starting at rgOffset in ripgrep's input
 // is one the batch owns.
 func (s batchStream) owns(rgOffset int64) bool {
 	return rgOffset >= s.ownedFrom && rgOffset < s.ownedTo
+}
+
+// whole reports whether the line starting at rgOffset in ripgrep's
+// input is a whole line of the text, rather than the start of a line a
+// damaged frame cut.
+func (s batchStream) whole(rgOffset int64) bool {
+	return rgOffset < s.cutAt
 }
 
 // batchFeeder writes a batch's text into ripgrep's input and records a
@@ -119,11 +135,24 @@ type batchFeeder struct {
 	// endOwnedAtBreak, when above 0, is the count of line breaks
 	// written at which the owned lines end.
 	endOwnedAtBreak int
+	// lineEnd is the position just after the last line break written,
+	// 0 before the first: where the whole lines written so far end.
+	lineEnd int64
+	// cutAt is batchStream's, set by cut.
+	cutAt int64
 }
 
 // newBatchFeeder returns a feeder writing to w that owns no line yet.
 func newBatchFeeder(w io.Writer) *batchFeeder {
-	return &batchFeeder{w: w, ownedFrom: math.MaxInt64, ownedTo: math.MaxInt64}
+	return &batchFeeder{w: w, ownedFrom: math.MaxInt64, ownedTo: math.MaxInt64, cutAt: math.MaxInt64}
+}
+
+// cut records that the text stops being whole after the last line
+// break written: a damaged frame follows, and the bytes written after
+// that line break are only the start of a line. The writer stops
+// writing after a cut.
+func (b *batchFeeder) cut() {
+	b.cutAt = b.lineEnd
 }
 
 // startOwned records that the bytes written next begin the lines the
@@ -141,7 +170,7 @@ func (b *batchFeeder) endOwnedAfterLineBreaks(n int) {
 
 // stream returns the layout of what was written.
 func (b *batchFeeder) stream() batchStream {
-	return batchStream{segments: b.segments, ownedFrom: b.ownedFrom, ownedTo: b.ownedTo}
+	return batchStream{segments: b.segments, ownedFrom: b.ownedFrom, ownedTo: b.ownedTo, cutAt: b.cutAt}
 }
 
 // beginRun records that the bytes written next come from frame,
@@ -161,6 +190,9 @@ func (b *batchFeeder) beginRun(frame seekable.FrameInfo, fileStart int64, frameN
 func (b *batchFeeder) write(p []byte, newlines int) error {
 	if _, err := b.w.Write(p); err != nil {
 		return fmt.Errorf("%w: %w", errRipgrepStoppedReading, err)
+	}
+	if newlines > 0 {
+		b.lineEnd = b.written + int64(bytes.LastIndexByte(p, '\n')) + 1
 	}
 	b.written += int64(len(p))
 	b.newlines += newlines
@@ -205,6 +237,15 @@ func readSeekTable(src sandbox.Pinned) (*seekable.SeekTable, error) {
 // latest in the file are dropped. Batches run in parallel and the cap
 // cancels the ones still running, so the matches kept are the earliest
 // of those collected, not always the earliest in the file.
+//
+// A damaged frame (seekable.ErrDamagedFrame) does not stop the scan.
+// Every line that lies wholly in frames that decompress is searched,
+// and the lines that touch a damaged frame are not: the ones in it, the
+// one running into it and the one running out of it, which may have
+// started in it. The matches found come back beside an error wrapping
+// seekable.ErrDamagedFrame that names the damaged frames, and the
+// damage is logged as a warning. The line numbers after the first
+// damaged frame stay unknown, since its line count is lost.
 //
 // src is the file pinned when the trace checked it; every batch reads
 // it only if it is still that file.
@@ -290,38 +331,59 @@ func ProcessSeekable(
 		}
 	}()
 
+	// The damaged frames each batch met, in the order it met them. Like
+	// the slices above, each goroutine writes only its own element, and
+	// this goroutine reads them only after g.Wait.
+	batchDamage := make([][]*damagedFrameError, len(batches))
+
 	for bi := range batches {
 		bi := bi
-		frameIdxs := batches[bi]
 		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
-				// Queued batch saw cancel before starting — skip entirely.
-				return nil
-			}
-			m, c, counted, berr := scanFrameBatch(
-				gctx, src, tbl, frameIdxs,
-				patternIDs, patternOrder, rgExtraArgs,
-				contextBefore, contextAfter,
-			)
-			batchFrameLines[bi] = counted
-			if berr != nil {
-				if errors.Is(berr, context.Canceled) {
-					// Cooperative cancel — swallow and publish any
-					// partial matches we collected before the cancel.
-					batchMatches[bi] = m
-					batchContexts[bi] = c
-					select {
-					case tally <- len(m):
-					default:
-					}
-					return nil
+			// A batch is one ripgrep run unless one of its frames is
+			// damaged. That run then stops at the last whole line before
+			// the damage, and the frames after the damaged one go to a
+			// run of their own, so every line that lies wholly in intact
+			// frames is searched. Each run starts after the frame that
+			// ended the one before, so a batch makes at most one run per
+			// frame.
+			run := frameRun{frames: batches[bi]}
+			for {
+				if err := gctx.Err(); err != nil {
+					// A queued batch, or the rest of one, saw the cancel
+					// before it started: skip it.
+					break
 				}
-				return berr
+				m, c, counted, berr := scanFrameBatch(
+					gctx, src, tbl, run,
+					patternIDs, patternOrder, rgExtraArgs,
+					contextBefore, contextAfter,
+				)
+				batchFrameLines[bi] = append(batchFrameLines[bi], counted...)
+				var damage *damagedFrameError
+				if errors.As(berr, &damage) {
+					// The matches before the damage are real. Keep them
+					// and go on after the damaged frame.
+					batchMatches[bi] = append(batchMatches[bi], m...)
+					batchContexts[bi] = append(batchContexts[bi], c...)
+					batchDamage[bi] = append(batchDamage[bi], damage)
+					next, ok := run.after(damage.frame)
+					if !ok {
+						break
+					}
+					run = next
+					continue
+				}
+				if berr != nil && !errors.Is(berr, context.Canceled) {
+					return berr
+				}
+				// Done, or a cooperative cancel: keep and publish the
+				// matches collected before it.
+				batchMatches[bi] = append(batchMatches[bi], m...)
+				batchContexts[bi] = append(batchContexts[bi], c...)
+				break
 			}
-			batchMatches[bi] = m
-			batchContexts[bi] = c
 			select {
-			case tally <- len(m):
+			case tally <- len(batchMatches[bi]):
 			default:
 			}
 			return nil
@@ -338,6 +400,13 @@ func ProcessSeekable(
 	isCooperativeCancel := errors.Is(waitErr, context.Canceled) && capHit
 	if waitErr != nil && !isCooperativeCancel {
 		return nil, nil, time.Since(start), waitErr
+	}
+	// A frame can be met by two batches: by the one it belongs to, and
+	// by the batch before when that one reads on past its last frame to
+	// finish its last line.
+	damaged := damagedFramesOf(src.Path(), batchDamage)
+	if damaged != nil {
+		slog.Default().Warn("seekable_damaged_frames", "path", src.Path(), "error", damaged.Error())
 	}
 
 	for _, m := range batchMatches {
@@ -368,7 +437,42 @@ func ProcessSeekable(
 		return contexts[i].Offset < contexts[j].Offset
 	})
 
-	return matches, contexts, time.Since(start), nil
+	return matches, contexts, time.Since(start), damaged
+}
+
+// maxDamagedFramesNamed is how many damaged frames an error names one
+// by one; it counts the rest. A file damaged throughout gives an error
+// of a bounded length.
+const maxDamagedFramesNamed = 10
+
+// damagedFramesOf returns nil when no batch met a damaged frame, and
+// otherwise an error wrapping seekable.ErrDamagedFrame that names the
+// file and its damaged frames in file order, each once, with the
+// decoder's reason for the first of them.
+func damagedFramesOf(path string, batches [][]*damagedFrameError) error {
+	reasons := map[int]error{}
+	for _, batch := range batches {
+		for _, damage := range batch {
+			if _, seen := reasons[damage.frame]; !seen {
+				reasons[damage.frame] = damage.err
+			}
+		}
+	}
+	if len(reasons) == 0 {
+		return nil
+	}
+	frames := slices.Sorted(maps.Keys(reasons))
+	named := make([]string, 0, maxDamagedFramesNamed)
+	for _, frame := range frames[:min(len(frames), maxDamagedFramesNamed)] {
+		named = append(named, strconv.Itoa(frame))
+	}
+	list := strings.Join(named, ", ")
+	if more := len(frames) - len(named); more > 0 {
+		list += fmt.Sprintf(" and %d more", more)
+	}
+	// The first reason already says "seekable zstd frame is damaged:
+	// frame N", so it carries the sentinel for errors.Is.
+	return fmt.Errorf("%s: searched around damaged frames %s: %w", path, list, reasons[frames[0]])
 }
 
 // frameDecoder wraps an open *os.File and a pooled zstd decoder for
@@ -390,7 +494,9 @@ type frameDecoder struct {
 // tests can wrap it (e.g. to count how many times streaming occurred)
 // without modifying production code paths.
 //
-// Returns caller-owned decompressed bytes for one frame.
+// Returns caller-owned decompressed bytes for one frame. An error
+// wraps seekable.ErrDamagedFrame when the bytes were read and do not
+// decompress into the frame's text; a failed read is returned as it is.
 var decompressFrameForBatch = func(dec *frameDecoder, frame seekable.FrameInfo) ([]byte, error) {
 	// Reuse the scratch buffer when it's large enough, else grow.
 	// Saves one allocation per frame on the hot path.
@@ -402,12 +508,44 @@ var decompressFrameForBatch = func(dec *frameDecoder, frame seekable.FrameInfo) 
 	if _, err := dec.f.ReadAt(dec.buf, frame.CompressedOffset); err != nil {
 		return nil, fmt.Errorf("read frame at %d: %w", frame.CompressedOffset, err)
 	}
-	out, err := dec.zd.DecodeAll(dec.buf, nil)
-	if err != nil {
-		return nil, fmt.Errorf("decompress frame at %d: %w", frame.CompressedOffset, err)
-	}
-	return out, nil
+	return seekable.DecodeFrame(dec.zd, dec.buf, frame)
 }
+
+// frameRun is the run of consecutive frames one ripgrep run reads: a
+// whole batch, or the frames of a batch after a damaged one.
+type frameRun struct {
+	frames []int // indexes in the file, ascending
+	// followsDamage says the frame just before the run is damaged. The
+	// run then starts at the first line break of its frames, as every
+	// batch after the first does, and writes no lead-in, because the
+	// lines before that line break cannot be read whole.
+	followsDamage bool
+}
+
+// after returns the run of r's frames that come after frame damaged,
+// and false when none does.
+func (r frameRun) after(damaged int) (frameRun, bool) {
+	// sort.SearchInts finds the first frame numbered damaged+1 or more.
+	rest := r.frames[sort.SearchInts(r.frames, damaged+1):]
+	if len(rest) == 0 {
+		return frameRun{}, false
+	}
+	return frameRun{frames: rest, followsDamage: true}, true
+}
+
+// damagedFrameError is what scanFrameBatch returns when a frame its
+// ripgrep run needed is damaged. The matches and context lines returned
+// beside it are those of the whole lines before the damage; the frames
+// of the batch after the damaged one are left for a run of their own.
+type damagedFrameError struct {
+	frame int   // the damaged frame's index in the file
+	err   error // wraps seekable.ErrDamagedFrame
+}
+
+func (e *damagedFrameError) Error() string { return e.err.Error() }
+
+// Unwrap lets errors.Is see seekable.ErrDamagedFrame through it.
+func (e *damagedFrameError) Unwrap() error { return e.err }
 
 // numberFramesAgainstTheFile turns frame-relative line numbers into the
 // file's own, in place.
@@ -517,12 +655,18 @@ type frameLines struct {
 // per-frame decoding-table allocation: one decoder per batch is reused
 // across all frames in the batch via stateless DecodeAll calls.
 //
+// A frame that is damaged (seekable.ErrDamagedFrame) ends rg's input
+// after the last whole line before it, and the run returns the matches
+// of the lines rg got beside a *damagedFrameError naming the frame. Any
+// other failure to read or decompress the frames fails the run, however
+// rg exited.
+//
 // Parity: rx-python/src/rx/trace_compressed.py::process_seekable_zstd_frame_batch
 func scanFrameBatch(
 	ctx context.Context,
 	src sandbox.Pinned,
 	tbl *seekable.SeekTable,
-	frameIdxs []int,
+	run frameRun,
 	patternIDs map[string]string,
 	patternOrder []string,
 	rgExtraArgs []string,
@@ -548,8 +692,8 @@ func scanFrameBatch(
 	// sized up front, and the main goroutine reads it only after the
 	// writer is done (the <-writerDone barrier below), so the two never
 	// touch it at the same time.
-	locs := make([]frameLoc, len(frameIdxs))
-	for i, fi := range frameIdxs {
+	locs := make([]frameLoc, len(run.frames))
+	for i, fi := range run.frames {
 		locs[i] = frameLoc{frameIdx: fi}
 	}
 
@@ -591,23 +735,34 @@ func scanFrameBatch(
 
 	// Writer goroutine: write the batch's lines into the pipe. It must
 	// ALWAYS close pw so rg sees EOF and exits. pw.CloseWithError hands
-	// a decompression failure or a cancel to the reader side, where rg
-	// sees its input end and exits with what it already received; a
-	// later pw.Close does not overwrite that error.
+	// a read failure or a cancel to the reader side, where rg sees its
+	// input end and exits with what it already received; a later
+	// pw.Close does not overwrite that error.
 	//
 	// The feeder, like locs, belongs to this goroutine until writerDone
 	// closes; the main goroutine reads feeder.segments only after that.
+	//
+	// writeErr is the goroutine's outcome. The goroutine sets it before
+	// close(writerDone) runs (deferred calls run last-in, first-out), and
+	// the main goroutine reads it only after <-writerDone, so the channel
+	// close orders the write before the read and no lock is needed. It
+	// is read whatever rg's exit says: exec reports the pipe's error only
+	// when rg exits 0, and rg exits 1 when the text it got held no match.
+	var writeErr error
 	feeder := newBatchFeeder(pw)
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
 		defer func() { _ = pw.Close() }()
-		ferr := feedBatchLines(ctx, feeder, batchSource{f: f, tbl: tbl}, frameIdxs, locs, contextBefore, contextAfter)
+		writeErr = feedBatchLines(ctx, feeder, batchSource{f: f, tbl: tbl}, run, locs, contextBefore, contextAfter)
 		// errRipgrepStoppedReading means rg exited early (a cap fired or
 		// the scan was canceled): nothing to hand on, rg's own exit
-		// reports what happened.
-		if ferr != nil && !errors.Is(ferr, errRipgrepStoppedReading) {
-			_ = pw.CloseWithError(ferr)
+		// reports what happened. A damaged frame ends the input after the
+		// last whole line, which rg reads to its end as any other input:
+		// the plain pw.Close above.
+		var damage *damagedFrameError
+		if writeErr != nil && !errors.Is(writeErr, errRipgrepStoppedReading) && !errors.As(writeErr, &damage) {
+			_ = pw.CloseWithError(writeErr)
 		}
 	}()
 
@@ -658,20 +813,35 @@ func scanFrameBatch(
 	// layout below.
 	<-writerDone
 
+	// damage is set when the writer stopped at a damaged frame.
+	var damage *damagedFrameError
+	errors.As(writeErr, &damage)
+
 	// A canceled context trumps every other reading of rg's exit.
 	// exec.CommandContext kills rg on cancel, which arrives here as a
 	// signal exit (code -1) — expected when a cap fired or the request
 	// was abandoned, and not a reason to call the file unreadable. The
 	// chunked path classifies it the same way. rg's output may end in
-	// the middle of an event then, so a read error is expected too.
-	if runErr != nil && ctx.Err() != nil {
-		return matchesFromPartialBatch(events, feeder.stream(), locs, contextAfter)
+	// the middle of an event then, so a read error is expected too. A
+	// damaged frame met before the cancel still travels up, so the file
+	// is reported as not searched in full.
+	if ctx.Err() != nil && (runErr != nil || writeErr != nil) {
+		m, c, counted, cancelErr := matchesFromPartialBatch(events, feeder.stream(), locs, contextAfter)
+		if damage != nil {
+			cancelErr = errors.Join(cancelErr, damage)
+		}
+		return m, c, counted, cancelErr
 	}
 	if readErr != nil {
 		// The output could not be parsed past some point: the batch fails
 		// rather than report the matches before it as all. rg was killed
 		// because of it, so its exit is a consequence, not the cause.
 		return nil, nil, countedFrames(locs), fmt.Errorf("read rg output: %w", readErr)
+	}
+	if writeErr != nil && damage == nil && !errors.Is(writeErr, errRipgrepStoppedReading) {
+		// The frames could not be read: rg got part of the batch, and
+		// whatever it exited with describes that part only.
+		return nil, nil, countedFrames(locs), fmt.Errorf("feed frames to rg: %w", writeErr)
 	}
 	if runErr != nil {
 		var ex *exec.ExitError
@@ -687,6 +857,9 @@ func scanFrameBatch(
 	}
 
 	matches, contexts = remapBatchEvents(events, feeder.stream())
+	if damage != nil {
+		return matches, contexts, countedFrames(locs), damage
+	}
 	return matches, contexts, countedFrames(locs), nil
 }
 
@@ -780,7 +953,7 @@ func remapBatchEvents(events []*RgEvent, stream batchStream) ([]MatchRaw, []Cont
 		switch {
 		case ev.Match != nil:
 			seg, ok := segmentHolding(stream.segments, ev.Match.AbsoluteOffset)
-			if !ok {
+			if !ok || !stream.whole(ev.Match.AbsoluteOffset) {
 				continue
 			}
 			line := rawMatchLine(ev.Match,
@@ -797,7 +970,7 @@ func remapBatchEvents(events []*RgEvent, stream batchStream) ([]MatchRaw, []Cont
 			matches = append(matches, line.withSubmatches(ev.Match))
 		case ev.Context != nil:
 			seg, ok := segmentHolding(stream.segments, ev.Context.AbsoluteOffset)
-			if !ok {
+			if !ok || !stream.whole(ev.Context.AbsoluteOffset) {
 				continue
 			}
 			contexts = append(contexts, rawContextLine(ev.Context,
@@ -848,11 +1021,19 @@ type batchSource struct {
 // a match outside them is reported as context only. Without context
 // nothing is written but the owned lines; with it, a lead-in usually
 // costs decoding the one frame before the batch.
+//
+// A damaged frame (seekable.ErrDamagedFrame) among the batch's frames,
+// or among the frames after them that the last line runs into, cuts
+// the input after the last whole line written, and feedBatchLines
+// returns a *damagedFrameError naming it. A damaged frame among those
+// the lead-in needs costs the lead-in only: the batch writes none, and
+// the batch that owns that frame reports it. A run that follows a
+// damaged frame writes no lead-in either.
 func feedBatchLines(
 	ctx context.Context,
 	feeder *batchFeeder,
 	src batchSource,
-	frameIdxs []int,
+	run frameRun,
 	locs []frameLoc,
 	contextBefore, contextAfter int,
 ) error {
@@ -867,13 +1048,19 @@ func feedBatchLines(
 	// found and written just before it. A batch whose frames all lie
 	// inside one line owns nothing and writes nothing: its lead-in and
 	// frames would hand rg part of a line, which rg reports as a line.
+	frameIdxs := run.frames
 	var leadIn []textPiece
 	skipping := frameIdxs[0] > 0
+	withLeadIn := skipping && contextBefore > 0 && !run.followsDamage
 	if !skipping {
 		feeder.startOwned() // the first batch owns the text from byte 0
-	} else if contextBefore > 0 {
+	} else if withLeadIn {
 		var err error
-		if leadIn, err = linesBeforeFrame(ctx, dec, src.tbl, frameIdxs[0], contextBefore); err != nil {
+		leadIn, err = linesBeforeFrame(ctx, dec, src.tbl, frameIdxs[0], contextBefore)
+		switch {
+		case errors.Is(err, seekable.ErrDamagedFrame):
+			leadIn, withLeadIn = nil, false
+		case err != nil:
 			return err
 		}
 	}
@@ -883,6 +1070,10 @@ func feedBatchLines(
 		}
 		frame := src.tbl.Frames[fi]
 		data, err := decompressFrameForBatch(dec, frame)
+		if errors.Is(err, seekable.ErrDamagedFrame) {
+			feeder.cut()
+			return &damagedFrameError{frame: fi, err: err}
+		}
 		if err != nil {
 			return err
 		}
@@ -899,7 +1090,7 @@ func feedBatchLines(
 			}
 			from = lineBreak + 1
 			skippedLineBreaks = locs[i].lineCount - bytesCountByte(data[from:], '\n')
-			if contextBefore > 0 {
+			if withLeadIn {
 				// The skipped bytes end the line just before the owned
 				// ones: lead-in.
 				leadIn = append(leadIn, textPiece{frame: frame, data: data[:from]})
@@ -1020,16 +1211,80 @@ func feedThroughLineBreaks(
 		frame := src.tbl.Frames[fi]
 		// A SectionReader limits the decoder to this frame's compressed
 		// bytes and reads them with ReadAt, so it shares no file cursor.
-		if resetErr := zd.Reset(io.NewSectionReader(src.f, frame.CompressedOffset, frame.CompressedSize)); resetErr != nil {
-			return fmt.Errorf("decompress frame at %d: %w", frame.CompressedOffset, resetErr)
+		text := &frameStream{
+			zd:         zd,
+			compressed: &readErrorRecorder{r: io.NewSectionReader(src.f, frame.CompressedOffset, frame.CompressedSize)},
+			frame:      frame,
 		}
-		// No line break of this frame comes before its first byte.
-		feeder.beginRun(frame, frame.DecompressedOffset, 0)
-		if breaks, err = feedThroughLineBreak(ctx, feeder, zd, buf, breaks); err != nil {
+		err = text.reset()
+		if err == nil {
+			// No line break of this frame comes before its first byte.
+			feeder.beginRun(frame, frame.DecompressedOffset, 0)
+			breaks, err = feedThroughLineBreak(ctx, feeder, text, buf, breaks)
+		}
+		if errors.Is(err, seekable.ErrDamagedFrame) {
+			feeder.cut()
+			return &damagedFrameError{frame: fi, err: err}
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil // the lines asked for are written, or the text has ended
+}
+
+// frameStream reads one frame's text through a stream decoder and tells
+// a damaged frame from a file that could not be read: an error from the
+// decoder wraps seekable.ErrDamagedFrame, unless reading the frame's
+// compressed bytes failed, and then it is that read's error.
+type frameStream struct {
+	zd         *zstd.Decoder
+	compressed *readErrorRecorder
+	frame      seekable.FrameInfo
+}
+
+// reset points the decoder at the frame's compressed bytes.
+func (s *frameStream) reset() error {
+	return s.classify(s.zd.Reset(s.compressed))
+}
+
+// Read reads the frame's text. Go note: having this method makes a
+// *frameStream an io.Reader, which is what feedThroughLineBreak takes.
+func (s *frameStream) Read(p []byte) (int, error) {
+	n, err := s.zd.Read(p)
+	if errors.Is(err, io.EOF) {
+		return n, err
+	}
+	return n, s.classify(err)
+}
+
+// classify turns an error of the decoder into the frame's error.
+func (s *frameStream) classify(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case s.compressed.err != nil:
+		return fmt.Errorf("read frame at %d: %w", s.frame.CompressedOffset, s.compressed.err)
+	default:
+		return fmt.Errorf("%w: frame %d: %w", seekable.ErrDamagedFrame, s.frame.Index, err)
+	}
+}
+
+// readErrorRecorder passes reads through to r and keeps the first error
+// other than io.EOF that r returned. The stream decoder reads it with
+// concurrency 1, so on the caller's goroutine, and the field needs no
+// lock.
+type readErrorRecorder struct {
+	r   io.Reader
+	err error
+}
+
+func (rr *readErrorRecorder) Read(p []byte) (int, error) {
+	n, err := rr.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) && rr.err == nil {
+		rr.err = err
+	}
+	return n, err
 }
 
 // feedThroughLineBreak copies text from r into rg's input up to and

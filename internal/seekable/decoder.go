@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/klauspost/compress/zstd"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -16,6 +17,34 @@ import (
 // ErrFrameIndexOutOfRange is returned when caller asks for a frame
 // that doesn't exist in the seek table.
 var ErrFrameIndexOutOfRange = errors.New("frame index out of range")
+
+// ErrDamagedFrame reports that a frame's bytes were read but do not
+// decompress into the text the seek table says the frame holds: the
+// zstd decoder refused them, or they gave a different number of bytes.
+// Archives get damaged by partial copies, bad sectors and interrupted
+// uploads, usually in one place, and the frames around a damaged one
+// still decompress, since every frame is independent.
+//
+// A failure to read the bytes at all is not this error: it comes back
+// as the read's own error.
+var ErrDamagedFrame = errors.New("seekable zstd frame is damaged")
+
+// DecodeFrame decompresses compressed, the bytes of frame as the seek
+// table places them, with zd, a decoder used through its stateless
+// DecodeAll. The text must be exactly as long as the table says: a
+// frame that gives another length would shift every offset after it.
+// An error wraps ErrDamagedFrame and names the frame.
+func DecodeFrame(zd *zstd.Decoder, compressed []byte, frame FrameInfo) ([]byte, error) {
+	out, err := zd.DecodeAll(compressed, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: frame %d: %w", ErrDamagedFrame, frame.Index, err)
+	}
+	if int64(len(out)) != frame.DecompressedSize {
+		return nil, fmt.Errorf("%w: frame %d: decompressed to %d bytes, the seek table says %d",
+			ErrDamagedFrame, frame.Index, len(out), frame.DecompressedSize)
+	}
+	return out, nil
+}
 
 // Decoder decompresses frames from seekable zstd files.
 //
@@ -134,12 +163,7 @@ func (d *Decoder) decompressFrameFromReaderAt(r io.ReaderAt, frame FrameInfo) ([
 	}
 	zd := compression.AcquireDecoder()
 	defer compression.ReleaseDecoder(zd)
-
-	out, err := zd.DecodeAll(buf, nil)
-	if err != nil {
-		return nil, fmt.Errorf("zstd decode: %w", err)
-	}
-	return out, nil
+	return DecodeFrame(zd, buf, frame)
 }
 
 // DecompressRange returns decompressed bytes [startOffset, startOffset+length)

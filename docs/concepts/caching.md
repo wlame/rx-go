@@ -96,7 +96,9 @@ more, or of a seekable zstd file of 1 MB or more. Gzip, bzip2, xz and
 plain zstd files are never cached. A scan whose answer cuts a line
 (`RX_MAX_LINE_TEXT_BYTES`) or leaves submatches out
 (`RX_MAX_SUBMATCHES_PER_LINE`) is not written either, so a dense
-pattern on very long lines is scanned every time.
+pattern on very long lines is scanned every time. Nor is a scan of a
+seekable zstd file with a damaged frame: its answer lacks the lines the
+damage touches, and a stored copy would outlive the damage.
 
 `--no-cache` bypasses both the read and write steps.
 

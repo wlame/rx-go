@@ -98,6 +98,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` and `GET /v1/trace` no longer answer "no matches" for a
+  seekable zstd file with a damaged frame, and no longer cache that
+  answer. A frame that failed to decompress ended its batch's input to
+  ripgrep; when the frames before it held no match, ripgrep's exit 1
+  hid the error, the up to 99 frames after it in the batch were never
+  searched, and the scan was stored in the trace cache as complete, so
+  every later trace served the same wrong answer. When ripgrep had
+  found a match first, the error surfaced instead and every match of
+  the file was dropped, those of intact frames in other batches
+  included. Now the scan goes on around the damage, since frames
+  decompress independently: every line that lies wholly in intact
+  frames is searched, the lines that touch a damaged frame are not
+  (never a fragment of one, so `$` cannot match where the line was
+  cut), the file is listed in `skipped_files` with its matches kept, a
+  `seekable_damaged_frames` warning names the frames, the matches after
+  the first damaged frame have `absolute_line_number` -1, and nothing
+  is written to the trace cache. A frame that decompresses to another
+  length than its seek-table entry is damaged too. A frame whose bytes
+  cannot be read at all (an I/O error) fails the file whatever ripgrep
+  exited with.
+
 - `rx trace` and `GET /v1/trace` keep a line longer than 256 KiB whole
   when it lies across a chunk boundary of a large plain file. The
   chunker looked only 256 KiB past each boundary for a newline and

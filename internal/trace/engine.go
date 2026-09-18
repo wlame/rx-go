@@ -472,8 +472,15 @@ func (e *Engine) RunWithOptions(
 				if errors.Is(serr, ErrInvalidPattern) {
 					return nil, serr
 				}
+				// A damaged frame costs only the lines that touch it, so
+				// the matches of every other line are real: the file is
+				// named as not searched in full and its matches are kept,
+				// as for a gzip stream that ends early. Any other error
+				// means nothing read can be trusted.
 				skipped = append(skipped, b.path)
-				continue
+				if !errors.Is(serr, seekable.ErrDamagedFrame) {
+					continue
+				}
 			}
 			scan := &scannedLines{source: b.src, cacheEntry: cacheEntry}
 			// Frames carry their own line numbering, which the scan
@@ -508,9 +515,10 @@ func (e *Engine) RunWithOptions(
 				})
 			}
 			// Without a result cap ProcessSeekable either reads every
-			// frame or returns an error, so a scan that got here is
-			// complete.
-			scan.cacheable = cacheEntry != nil && !linesCut(rawMatches, rawContexts)
+			// frame or returns an error, so a scan that got here without
+			// one is complete. A scan around damaged frames is not, and
+			// is never cached: the answer would outlive the damage.
+			scan.cacheable = serr == nil && cacheEntry != nil && !linesCut(rawMatches, rawContexts)
 			outcome.scanned = scan
 		case "cached-regular", "cached-seekable":
 			cachedMatches := b.cachedMatch
