@@ -3,15 +3,19 @@ package trace
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 )
@@ -285,4 +289,162 @@ func TestTraceOfDamagedSeekableFileKeepsTheRestAndIsNotCached(t *testing.T) {
 			t.Fatalf("%s: a trace-cache entry was written for a scan around a damaged frame", run)
 		}
 	}
+}
+
+// encodeSeekableBytes returns text as rx writes it in seekable form, in
+// frames of about frameSize bytes.
+func encodeSeekableBytes(t *testing.T, text []byte, frameSize int) []byte {
+	t.Helper()
+	data, err := os.ReadFile(writeSeekableZstdFile(t, text, frameSize))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	return data
+}
+
+// A .zst whose seek table does not describe it is read as the plain
+// zstd stream it still is, so a trace answers what the text holds: as
+// one stream (file_chunks 1), not skipped. Two seekable files joined
+// with `cat` end with the second file's table alone, which used to be
+// read as the table of the whole file, and a damaged table placed the
+// frames wrongly; both answered matches the text does not hold, or
+// none.
+func TestTraceReadsAZstWhoseSeekTableDoesNotDescribeItAsPlainZstd(t *testing.T) {
+	requireRipgrep(t)
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	first, second := numberedLog(2000, 37), numberedLog(2500, 41)
+	text := append(bytes.Clone(first), second...)
+	valid := encodeSeekableBytes(t, text, 8<<10)
+	frames := int(binary.LittleEndian.Uint32(valid[len(valid)-5:]))
+	entry := len(valid) - seekable.FooterSize - frames*seekable.EntrySize
+
+	files := map[string][]byte{
+		"two seekable files joined": append(encodeSeekableBytes(t, first, 8<<10), encodeSeekableBytes(t, second, 8<<10)...),
+		"a damaged seek table": func() []byte {
+			damaged := bytes.Clone(valid)
+			damaged[entry+3*seekable.EntrySize] ^= 0x10 // a compressed size
+			return damaged
+		}(),
+	}
+	var want []textLine
+	for _, line := range linesOf(text) {
+		if strings.Contains(line.text, "NEEDLE") {
+			want = append(want, line)
+		}
+	}
+	for name, data := range files {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "joined.log.zst")
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			resp := traceOnce(t, path, []string{"NEEDLE"}, Options{})
+			if len(resp.SkippedFiles) != 0 {
+				t.Errorf("skipped_files = %v, want none", resp.SkippedFiles)
+			}
+			if chunks := resp.FileChunks["f1"]; chunks != 1 {
+				t.Errorf("file_chunks = %d, want 1 (one plain zstd stream)", chunks)
+			}
+			if len(resp.Matches) != len(want) {
+				t.Fatalf("got %d matches, want %d", len(resp.Matches), len(want))
+			}
+			for i, m := range resp.Matches {
+				if m.Offset != want[i].offset || m.AbsoluteLineNumber != want[i].number || m.LineText == nil || *m.LineText != want[i].text {
+					t.Fatalf("match %d: byte %d line %d %q, want byte %d line %d %q", i,
+						m.Offset, m.AbsoluteLineNumber, derefText(m.LineText), want[i].offset, want[i].number, want[i].text)
+				}
+			}
+		})
+	}
+}
+
+// samplesLine asks samples for line n of the file at path, as
+// `rx samples --lines=n` does without an index, and returns its text.
+func samplesLine(t *testing.T, path string, n int64) (string, error) {
+	t.Helper()
+	resp, err := samples.Resolve(samples.Request{
+		Path:   path,
+		Source: pinForTest(t, path),
+		Lines:  []samples.OffsetOrRange{{Start: n}},
+	})
+	if err != nil {
+		return "", err
+	}
+	key := strconv.FormatInt(n, 10)
+	if len(resp.Samples[key]) != 1 {
+		return "", fmt.Errorf("samples for line %d: %v", n, resp.Samples[key])
+	}
+	return resp.Samples[key][0], nil
+}
+
+// trace, samples and index agree on what of a seekable file can be
+// read. With a damaged frame, each answers what lies before it, none
+// answers as if the file were whole, and each names the damage: trace
+// lists the file in skipped_files (and keeps the rest, see above),
+// samples refuses a line past the damage, index refuses the file, both
+// with seekable.ErrDamagedFrame. Two seekable files joined with `cat`
+// are read as plain zstd by all three, and each answers the text.
+func TestTraceSamplesAndIndexAgreeOnADamagedOrJoinedSeekableFile(t *testing.T) {
+	requireRipgrep(t)
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	first, second := numberedLog(2000, 37), numberedLog(2500, 41)
+	text := append(bytes.Clone(first), second...)
+	lines := linesOf(text)
+
+	t.Run("a damaged frame", func(t *testing.T) {
+		path := writeSeekableZstdFile(t, text, 16<<10)
+		const damagedFrame = 3
+		seekablefile.DamageFrame(t, path, damagedFrame)
+		tbl, err := readSeekTable(pinForTest(t, path))
+		if err != nil {
+			t.Fatalf("readSeekTable: %v", err)
+		}
+		damage := tbl.Frames[damagedFrame]
+		var before, after textLine
+		for _, line := range lines {
+			if line.offset+int64(len(line.text)) < damage.DecompressedOffset {
+				before = line
+			}
+			if after.number == 0 && line.offset > damage.DecompressedEnd() {
+				after = line
+			}
+		}
+
+		resp := traceOnce(t, path, []string{"NEEDLE"}, Options{})
+		if !slices.Equal(resp.SkippedFiles, []string{path}) {
+			t.Errorf("trace: skipped_files = %v, want the damaged file", resp.SkippedFiles)
+		}
+		if got, err := samplesLine(t, path, int64(before.number)); err != nil || got != before.text {
+			t.Errorf("samples line %d before the damage = %q, %v; want %q", before.number, got, err, before.text)
+		}
+		if _, err := samplesLine(t, path, int64(after.number)); !errors.Is(err, seekable.ErrDamagedFrame) {
+			t.Errorf("samples line %d past the damage: err = %v, want seekable.ErrDamagedFrame", after.number, err)
+		}
+		if _, err := index.Build(path, index.BuildOptions{}); !errors.Is(err, seekable.ErrDamagedFrame) {
+			t.Errorf("index: err = %v, want seekable.ErrDamagedFrame", err)
+		}
+	})
+
+	t.Run("two seekable files joined", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "joined.log.zst")
+		joined := append(encodeSeekableBytes(t, first, 16<<10), encodeSeekableBytes(t, second, 16<<10)...)
+		if err := os.WriteFile(path, joined, 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		resp := traceOnce(t, path, []string{"NEEDLE"}, Options{})
+		if len(resp.SkippedFiles) != 0 || resp.FileChunks["f1"] != 1 {
+			t.Errorf("trace: skipped_files %v, file_chunks %d; want none and 1", resp.SkippedFiles, resp.FileChunks["f1"])
+		}
+		late := lines[len(lines)-10]
+		if got, err := samplesLine(t, path, int64(late.number)); err != nil || got != late.text {
+			t.Errorf("samples line %d = %q, %v; want %q", late.number, got, err, late.text)
+		}
+		idx, err := index.Build(path, index.BuildOptions{})
+		if err != nil {
+			t.Fatalf("index: %v", err)
+		}
+		if idx.LineCount == nil || *idx.LineCount != int64(len(lines)) || idx.Frames != nil {
+			t.Errorf("index: line_count %v, frames %v; want %d lines and no frame table", idx.LineCount, idx.Frames, len(lines))
+		}
+	})
 }

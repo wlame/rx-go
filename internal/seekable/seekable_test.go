@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // buildTestPayload produces deterministic multi-line text of about `lines`
@@ -25,22 +27,33 @@ func buildTestPayload(lines int) []byte {
 
 func TestWriteReadSeekTable_RoundTrip(t *testing.T) {
 	t.Parallel()
-	frames := []FrameInfo{
-		{Index: 0, CompressedOffset: 0, CompressedSize: 100, DecompressedOffset: 0, DecompressedSize: 400},
-		{Index: 1, CompressedOffset: 100, CompressedSize: 120, DecompressedOffset: 400, DecompressedSize: 500},
-		{Index: 2, CompressedOffset: 220, CompressedSize: 80, DecompressedOffset: 900, DecompressedSize: 300},
+	// Real zstd frames: ReadSeekTable checks each frame's header against
+	// its entry, so the bytes before the table must be the frames the
+	// table lists.
+	encoder, err := zstd.NewWriter(nil)
+	if err != nil {
+		t.Fatalf("create encoder: %v", err)
 	}
-	var buf bytes.Buffer
-	if err := WriteSeekTable(&buf, frames); err != nil {
+	defer func() { _ = encoder.Close() }()
+	var file bytes.Buffer
+	var frames []FrameInfo
+	var decompressedOffset int64
+	for i, text := range []string{"first frame\n", "the second frame is longer\n", "third\n"} {
+		compressed := encoder.EncodeAll([]byte(text), nil)
+		frames = append(frames, FrameInfo{
+			Index:              i,
+			CompressedOffset:   int64(file.Len()),
+			CompressedSize:     int64(len(compressed)),
+			DecompressedOffset: decompressedOffset,
+			DecompressedSize:   int64(len(text)),
+		})
+		file.Write(compressed)
+		decompressedOffset += int64(len(text))
+	}
+	if err := WriteSeekTable(&file, frames); err != nil {
 		t.Fatalf("WriteSeekTable: %v", err)
 	}
-	// To call ReadSeekTable we need a full file. Prepend dummy "compressed"
-	// bytes so the seek table's offsets are consistent with a plausible
-	// layout: each frame's CompressedOffset = cumulative. The tail bytes
-	// are what matters for ReadSeekTable (footer + entries + skippable header).
-	rawSize := int64(220 + 80) // sum of CompressedSize
-	payload := make([]byte, rawSize)
-	full := append(payload, buf.Bytes()...)
+	full := file.Bytes()
 
 	tbl, err := ReadSeekTable(bytes.NewReader(full), int64(len(full)))
 	if err != nil {

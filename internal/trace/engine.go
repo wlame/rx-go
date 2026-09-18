@@ -185,6 +185,9 @@ func (e *Engine) RunWithOptions(
 		info        os.FileInfo
 		cachedMatch []rxtypes.TraceCacheMatch
 		cacheInfo   *CompressedCacheInfo // only for cached-seekable
+		// table is a seekable file's seek table, read and checked
+		// against the file when the file was classified.
+		table *seekable.SeekTable
 	}
 	var buckets []fileBucket
 	fileChunkCounts := make(map[string]int)
@@ -205,8 +208,10 @@ func (e *Engine) RunWithOptions(
 			fi = nil
 		}
 
-		// Seekable-zstd first — takes priority over plain zstd.
-		if seekable.IsSeekable(fp) {
+		// Seekable-zstd first — takes priority over plain zstd. A .zst
+		// whose seek table does not describe it is read as the plain
+		// zstd stream it still is, below.
+		if tbl, ok := seekTableOf(src); ok {
 			if !opts.NoCache {
 				if info, cerr := GetCompressedCacheInfo(fp, patterns, opts.RgExtraArgs); cerr == nil {
 					buckets = append(buckets, fileBucket{
@@ -216,14 +221,9 @@ func (e *Engine) RunWithOptions(
 					continue
 				}
 			}
-			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, src: src, size: sz, info: fi})
-			// Chunk count for seekable = frame count. We fetch it via
-			// the seek table; failure falls back to 1.
-			if tbl, terr := readSeekTable(src); terr == nil {
-				fileChunkCounts[filePathToID[fp]] = tbl.NumFrames
-			} else {
-				fileChunkCounts[filePathToID[fp]] = 1
-			}
+			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, src: src, size: sz, info: fi, table: tbl})
+			// Chunk count for seekable = frame count.
+			fileChunkCounts[filePathToID[fp]] = tbl.NumFrames
 			continue
 		}
 		if compression.IsCompressed(fp) {
@@ -462,8 +462,8 @@ func (e *Engine) RunWithOptions(
 				cacheEntry.FrameIndexByOffset = map[int64]int{}
 			}
 			remaining := remainingResults(opts.MaxResults, found)
-			rawMatches, rawContexts, _, serr := ProcessSeekable(
-				ctx, b.src,
+			rawMatches, rawContexts, _, serr := processSeekable(
+				ctx, b.src, b.table,
 				patternIDs, patternOrder, opts.RgExtraArgs,
 				opts.ContextBefore, opts.ContextAfter,
 				remaining,

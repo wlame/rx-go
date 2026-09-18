@@ -72,6 +72,27 @@ decompressed byte D:
 This is O(1) in file size — seek cost is dominated by the size of one
 frame, not the whole file.
 
+### When rx trusts a seek table
+
+A file is seekable for rx when it is named `.zst` and ends with a seek
+table that describes it: the table's skippable frame runs to the end of
+the file, the frames it lists, laid end to end, end where the table
+starts, and each starts with a zstd frame header whose content size,
+when the header records one, is the table's decompressed size for it.
+Checking that reads the table and one frame header (at most 18 bytes)
+per frame, never a frame's data.
+
+A table that does not add up is not used. Two seekable files joined
+with `cat` end with the second file's table alone, and a damaged table
+places the frames wrongly; either way the file is still a valid zstd
+stream, so `rx trace`, `rx samples`, `rx index` and `rx compress` read it
+as plain zstd and answer what its text holds (`file_chunks` 1), and
+`rx trace` logs a `seek_table_mismatch` warning. A damaged frame is a
+different case: the table still describes the file, and the frame
+itself does not decompress. `rx trace` searches around it (see below),
+and `rx samples` and `rx index` stop at it with an error that names the
+frame (`seekable zstd frame is damaged: frame N`).
+
 ### How `rx compress` writes it
 
 ```bash

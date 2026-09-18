@@ -14,6 +14,24 @@ import (
 // footer magic.
 var ErrNotSeekable = errors.New("not a seekable zstd file (footer magic missing)")
 
+// ErrSeekTableMismatch reports that a file ends with a seek-table
+// footer whose table does not describe the file: its frames do not end
+// where the table starts, the table's skippable frame header is wrong,
+// or a frame does not start with a zstd frame header that agrees with
+// its entry. Two seekable files joined with `cat` end with the second
+// file's table, which describes the second file only; a damaged table
+// describes nothing reliably. Such a file is still a zstd stream, and
+// rx reads it as plain zstd.
+var ErrSeekTableMismatch = errors.New("seek table does not describe the file")
+
+// zstdFrameMagic starts every zstd frame (RFC 8878, section 3.1.1).
+const zstdFrameMagic uint32 = 0xFD2FB528
+
+// maxFrameHeaderSize is the longest header a zstd frame starts with:
+// magic (4), frame header descriptor (1), window descriptor (1),
+// dictionary ID (up to 4) and frame content size (up to 8).
+const maxFrameHeaderSize = 18
+
 // ReadSeekTable parses the seek table at the tail of a seekable zstd
 // file. The caller provides a ReaderAt and the full file size so we
 // can probe absolute offsets without a seek.
@@ -25,7 +43,9 @@ var ErrNotSeekable = errors.New("not a seekable zstd file (footer magic missing)
 //  4. Walk the entries, accumulating compressed/decompressed offsets.
 //
 // Returns ErrNotSeekable if the footer doesn't match. Returns io.ErrUnexpectedEOF
-// for truncated files.
+// for truncated files. A table that does not describe the file is
+// ErrSeekTableMismatch (see validateSeekTable): a parsed table is never
+// returned unchecked.
 func ReadSeekTable(r io.ReaderAt, fileSize int64) (*SeekTable, error) {
 	if fileSize < FooterSize {
 		return nil, io.ErrUnexpectedEOF
@@ -80,11 +100,133 @@ func ReadSeekTable(r io.ReaderAt, fileSize int64) (*SeekTable, error) {
 		cOff += cSize
 		dOff += dSize
 	}
-	return &SeekTable{
+	tbl := &SeekTable{
 		NumFrames: numFrames,
 		Flags:     flags,
 		Frames:    frames,
-	}, nil
+	}
+	// The skippable frame that carries the table starts with its 8-byte
+	// header, just before the entries.
+	if err := validateSeekTable(r, fileSize, entriesStart-SkippableHeaderSize, tbl); err != nil {
+		return nil, err
+	}
+	return tbl, nil
+}
+
+// validateSeekTable checks that tbl, parsed from a file of fileSize
+// bytes whose seek-table skippable frame starts at tableStart,
+// describes that file. It is the one check every parsed table goes
+// through, whatever footer layout it was read from:
+//
+//   - the skippable frame at tableStart carries the seek-table magic and
+//     a length that runs to the end of the file;
+//   - the frames, laid end to end from byte 0, end exactly at
+//     tableStart;
+//   - each frame starts with a zstd frame header, and a header that
+//     records the frame's content size records the entry's decompressed
+//     size.
+//
+// It reads the 8-byte skippable header and at most maxFrameHeaderSize
+// bytes per frame, one ReadAt each, and never a frame's data. The frame
+// count is bounded by the table, which fits in the file. An error wraps
+// ErrSeekTableMismatch and says what does not agree.
+func validateSeekTable(r io.ReaderAt, fileSize, tableStart int64, tbl *SeekTable) error {
+	if tableStart < 0 {
+		return fmt.Errorf("%w: the table would start before the file", ErrSeekTableMismatch)
+	}
+	var header [SkippableHeaderSize]byte
+	if _, err := r.ReadAt(header[:], tableStart); err != nil {
+		return fmt.Errorf("read seek-table frame header: %w", err)
+	}
+	if magic := binary.LittleEndian.Uint32(header[0:4]); magic != SeekableMagic {
+		return fmt.Errorf("%w: the table's frame starts with %#x, not the seek-table magic", ErrSeekTableMismatch, magic)
+	}
+	if length := int64(binary.LittleEndian.Uint32(header[4:8])); length != fileSize-tableStart-SkippableHeaderSize {
+		return fmt.Errorf("%w: the table's frame is %d bytes long, the file leaves %d",
+			ErrSeekTableMismatch, length, fileSize-tableStart-SkippableHeaderSize)
+	}
+	end := int64(0)
+	if tbl.NumFrames > 0 {
+		end = tbl.Frames[tbl.NumFrames-1].CompressedEnd()
+	}
+	if end != tableStart {
+		return fmt.Errorf("%w: its %d frames end at byte %d, the table starts at byte %d",
+			ErrSeekTableMismatch, tbl.NumFrames, end, tableStart)
+	}
+	for _, frame := range tbl.Frames {
+		if err := checkFrameHeader(r, frame); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkFrameHeader reads the header of frame and checks that it is a
+// zstd frame header and that the content size it records, when it
+// records one, is the entry's decompressed size. An entry of no bytes
+// and no text is an empty frame: zstd encoders write nothing for an
+// empty input, and there is no header to check.
+func checkFrameHeader(r io.ReaderAt, frame FrameInfo) error {
+	if frame.CompressedSize == 0 && frame.DecompressedSize == 0 {
+		return nil
+	}
+	var buf [maxFrameHeaderSize]byte
+	header := buf[:min(frame.CompressedSize, maxFrameHeaderSize)]
+	if _, err := r.ReadAt(header, frame.CompressedOffset); err != nil {
+		return fmt.Errorf("read the header of frame %d: %w", frame.Index, err)
+	}
+	contentSize, hasContentSize, ok := parseFrameHeader(header)
+	if !ok {
+		return fmt.Errorf("%w: frame %d at byte %d does not start with a zstd frame header",
+			ErrSeekTableMismatch, frame.Index, frame.CompressedOffset)
+	}
+	if hasContentSize && contentSize != uint64(frame.DecompressedSize) { // #nosec G115 -- a u32 from the table
+		return fmt.Errorf("%w: frame %d holds %d bytes of text, the table says %d",
+			ErrSeekTableMismatch, frame.Index, contentSize, frame.DecompressedSize)
+	}
+	return nil
+}
+
+// frameContentSizeBytes is the length of the Frame_Content_Size field
+// for each value of the descriptor's two top bits (RFC 8878, section
+// 3.1.1.1.1.1); flag 0 means 1 byte in a single-segment frame and none
+// otherwise.
+var frameContentSizeBytes = [4]int{0, 2, 4, 8}
+
+// dictionaryIDBytes is the length of the Dictionary_ID field for each
+// value of the descriptor's two low bits.
+var dictionaryIDBytes = [4]int{0, 1, 2, 4}
+
+// parseFrameHeader reads a zstd frame header from the start of header
+// and returns the content size it records, whether it records one, and
+// whether header starts with a whole zstd frame header at all.
+func parseFrameHeader(header []byte) (contentSize uint64, hasContentSize, ok bool) {
+	if len(header) < 5 || binary.LittleEndian.Uint32(header[0:4]) != zstdFrameMagic {
+		return 0, false, false
+	}
+	descriptor := header[4]
+	singleSegment := descriptor&0x20 != 0
+	sizeBytes := frameContentSizeBytes[descriptor>>6]
+	if sizeBytes == 0 && singleSegment {
+		sizeBytes = 1
+	}
+	at := 5 + dictionaryIDBytes[descriptor&0x03]
+	if !singleSegment {
+		at++ // the window descriptor
+	}
+	if len(header) < at+sizeBytes {
+		return 0, false, false
+	}
+	if sizeBytes == 0 {
+		return 0, false, true
+	}
+	var field [8]byte
+	copy(field[:], header[at:at+sizeBytes])
+	contentSize = binary.LittleEndian.Uint64(field[:])
+	if sizeBytes == 2 {
+		contentSize += 256 // a 2-byte field stores the size less 256
+	}
+	return contentSize, true, true
 }
 
 // WriteSeekTable writes the skippable frame (header + entries + footer)
@@ -150,15 +292,18 @@ func WriteSeekTable(w io.Writer, frames []FrameInfo) error {
 	return nil
 }
 
-// IsSeekable reports whether the file at path has the seekable-zstd
-// footer magic. Fast: O(1) file seeks regardless of file size.
+// IsSeekable reports whether the file at path is named .zst and ends
+// with a seek table that describes it (ReadSeekTable succeeds). It
+// reads the table and one frame header per frame, never frame data.
+// A file with the footer magic and a table that does not add up is not
+// seekable: it is read as plain zstd.
 //
 // Returns false on I/O errors (missing file, permission denied, too
 // short) — callers that need distinguishing info should use
 // ReadSeekTable directly and inspect the error.
 func IsSeekable(path string) bool {
 	// Extension heuristic first — cheap and catches obvious non-matches.
-	if !hasSeekableExtension(path) {
+	if !HasSeekableExtension(path) {
 		return false
 	}
 	f, err := os.Open(path)
@@ -170,32 +315,26 @@ func IsSeekable(path string) bool {
 	if err != nil {
 		return false
 	}
-	return hasSeekableFooter(f, info.Size())
+	return hasValidSeekTable(f, info.Size())
 }
 
 // IsSeekableFile is IsSeekable for a file the caller already has open,
 // size bytes long, such as one opened through a pin: name gives the
-// extension, and the footer is read from r. Nothing is looked up by
+// extension, and the table is read from r. Nothing is looked up by
 // path, so the answer is about the file that is open.
 func IsSeekableFile(name string, r io.ReaderAt, size int64) bool {
-	return hasSeekableExtension(name) && hasSeekableFooter(r, size)
+	return HasSeekableExtension(name) && hasValidSeekTable(r, size)
 }
 
-// hasSeekableExtension reports whether name ends in .zst, in any case.
-func hasSeekableExtension(name string) bool {
+// HasSeekableExtension reports whether name ends in .zst, in any case:
+// the only name a seekable file is looked for under.
+func HasSeekableExtension(name string) bool {
 	return strings.EqualFold(filepath.Ext(name), ".zst")
 }
 
-// hasSeekableFooter reports whether the last FooterSize bytes of r, a
-// file of size bytes, carry the seek-table footer magic. A read error
-// or a file too short for a footer is false.
-func hasSeekableFooter(r io.ReaderAt, size int64) bool {
-	if size < FooterSize {
-		return false
-	}
-	var footer [FooterSize]byte
-	if _, err := r.ReadAt(footer[:], size-FooterSize); err != nil {
-		return false
-	}
-	return binary.LittleEndian.Uint32(footer[0:4]) == FooterMagic
+// hasValidSeekTable reports whether r, a file of size bytes, ends with
+// a seek table that describes it. A read error is false.
+func hasValidSeekTable(r io.ReaderAt, size int64) bool {
+	_, err := ReadSeekTable(r, size)
+	return err == nil
 }

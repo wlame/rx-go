@@ -120,9 +120,9 @@ func DefaultOutputName(inputPath string) string {
 }
 
 // Check reports why inputPath cannot be compressed to outputPath, or nil
-// when it can. It reads at most the input's last bytes (the seekable
-// footer) and writes nothing, so a caller can refuse a request before
-// it starts any work.
+// when it can. It reads at most the input's seek table and one frame
+// header per frame (whether it is seekable already) and writes nothing,
+// so a caller can refuse a request before it starts any work.
 func Check(inputPath, outputPath string, reencodeSeekable bool) error {
 	if compression.IsCompoundArchive(inputPath) {
 		return ErrCompoundArchive
@@ -214,20 +214,21 @@ func openText(path string) (io.ReadCloser, compression.Format, error) {
 	if err != nil {
 		return nil, compression.FormatNone, err
 	}
-	format, err := inputFormat(path)
-	if err != nil {
-		return nil, compression.FormatNone, fmt.Errorf("detect input format: %w", err)
-	}
 	src, err := pinned.Open()
 	if err != nil {
 		return nil, compression.FormatNone, fmt.Errorf("open input: %w", err)
 	}
+	info, err := src.Stat()
+	if err != nil {
+		_ = src.Close()
+		return nil, compression.FormatNone, fmt.Errorf("stat input: %w", err)
+	}
+	format, err := inputFormat(path, src, info.Size())
+	if err != nil {
+		_ = src.Close()
+		return nil, compression.FormatNone, fmt.Errorf("detect input format: %w", err)
+	}
 	if format == compression.FormatNone {
-		info, statErr := src.Stat()
-		if statErr != nil {
-			_ = src.Close()
-			return nil, compression.FormatNone, fmt.Errorf("stat input: %w", statErr)
-		}
 		return readCloser{Reader: io.NewSectionReader(src, 0, info.Size()), Closer: src}, format, nil
 	}
 	// compression.NewReader owns src from here on: closing the reader it
@@ -240,14 +241,15 @@ func openText(path string) (io.ReadCloser, compression.Format, error) {
 	return text, format, nil
 }
 
-// inputFormat names the format of path: seekable zstd when the file
-// carries the seekable footer, otherwise what compression.DetectFromPath
-// finds from the extension or the magic bytes.
-func inputFormat(path string) (compression.Format, error) {
-	if seekable.IsSeekable(path) {
+// inputFormat names the format of the open file r, size bytes long and
+// named path: seekable zstd when it ends with a seek table that
+// describes it, otherwise what compression.DetectFromOpenFile finds
+// from the name or the magic bytes. Nothing is looked up by path.
+func inputFormat(path string, r io.ReaderAt, size int64) (compression.Format, error) {
+	if seekable.IsSeekableFile(path, r, size) {
 		return compression.FormatSeekableZstd, nil
 	}
-	return compression.DetectFromPath(path)
+	return compression.DetectFromOpenFile(path, r)
 }
 
 // readCloser joins a reader with the file it reads from.
