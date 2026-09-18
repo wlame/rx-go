@@ -413,8 +413,10 @@ Paste the output. Do not summarize it.
   and `RX_MAX_SUBMATCHES_PER_LINE` submatches and marks the rest as
   truncated. Do not add a path that buffers rg's output or decodes an
   event whole; read a user's line with `readBoundedLine`, not
-  `ReadBytes`. The chunker's newline lookahead is 256 KB; lines longer
-  than that can split a chunk mid-line.
+  `ReadBytes`. The chunker searches forward for a newline however far
+  away it is (`chunkStarts`), so a chunk never starts inside a line;
+  keep the skip that stops a long line from being read once per
+  boundary.
 - Never `Wait` on an `rg` whose stdout nobody reads: a reader that stops
   early must kill rg first, or rg blocks on the full pipe and the
   `Wait` never returns. `ProcessChunk`, `ProcessCompressed` and

@@ -98,6 +98,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` and `GET /v1/trace` keep a line longer than 256 KiB whole
+  when it lies across a chunk boundary of a large plain file. The
+  chunker looked only 256 KiB past each boundary for a newline and
+  otherwise cut the line there, so each chunk's ripgrep saw a fragment
+  as a whole line: a match came back at an offset inside its line with
+  part of its text, the same line could be reported twice, a match
+  spanning the cut was lost, `^`, `$` and `-w` matched at the cut, a
+  `--before` or `--after` window could lose or repeat a match, the trace
+  cache stored the wrong offset, and the answer changed with the number
+  of cores and `RX_MIN_CHUNK_SIZE_MB`. The boundary search now reads on
+  to the end of the line, so every chunk starts on a line and a chunked
+  scan answers as a scan in one piece. A line that covers several
+  boundaries merges their chunks; planning still reads each byte at
+  most once, so a file that is one long line is not read once per
+  boundary.
+
 - A trace answered from the trace cache gives every match the
   submatches the scan gave it. A hit used to run each pattern again
   with Go's regular expressions, which differ from ripgrep's: with `-P`
