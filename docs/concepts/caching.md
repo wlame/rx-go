@@ -130,9 +130,15 @@ answer. With them or without them, and with `--no-index`, every field
 of an answer is equal, except that a line number which is `-1` in one
 answer may be the true line number in the other. `-1` means "not
 computed", never "no such line", and a number rx fills in is always the
-line that holds the match's byte offset. (A capped search of a chunked
-plain file may keep different matches on each run whatever the cache
-holds; see [the matches a capped search returns are
+line that holds the match's byte offset. The fields that describe how
+the answer was produced are outside this rule: `request_id`, `time`,
+`cli_command` and `file_chunks`. The chunk settings
+(`RX_MIN_CHUNK_SIZE_MB`, `RX_MAX_SUBPROCESSES`) are not part of the
+cache key, so a cache hit reports the chunk count of the scan that
+wrote the entry, while a scan with other settings reports its own. (A
+capped search of a chunked plain file may keep different matches on
+each run whatever the cache holds; see [the matches a capped search
+returns are
 arbitrary](../cli/trace.md#the-matches-a-capped-search-returns-are-arbitrary).)
 
 Anomaly detection writes no files of its own. An analysis is part of
@@ -298,8 +304,10 @@ per file at deploy time amortizes the cost.
 
 Repeated calls with identical inputs (and unchanged sources) produce
 identical outputs, apart from `request_id` and `time` — the cache stores
-the matches and the chunk count of the scan that wrote it. This is
-useful for:
+the matches and the chunk count of the scan that wrote it. A hit reports
+that chunk count even when the chunk settings have changed since, so
+`file_chunks` is the one field besides those two that can differ from a
+fresh scan's (see the rule above). This is useful for:
 
 - Reproducible CI runs
 - Comparing between tool versions (run once, keep the cache, swap

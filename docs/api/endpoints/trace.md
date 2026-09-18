@@ -178,7 +178,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `scanned_files` | `string[]` | The files found by walking a directory named in `path`; empty when every path is a file. `files` lists every file searched either way |
 | `skipped_files` | `string[]` | Files skipped (binary, size limit, etc.) |
 | `max_results` | `int \| null` | The cap that was applied, or null |
-| `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it |
+| `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it, whatever the chunk settings are now. It describes how the answer was produced and is not compared when an index or the cache answers |
 | `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); each entry is the match's window, the match's own line included, as `{relative_line_number, absolute_line_number, line_text, absolute_offset, line_text_truncated}`. Without a context window an entry holds only the match's own line; see [`rx trace`](../../cli/trace.md#match-with-prepost-context) for how a window is built |
 | `before_context`, `after_context` | `int \| null` | The window used on each side, or `null` when it is `0` |
 | `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
@@ -259,8 +259,10 @@ log with no index:
 The same request can come back with such a line numbered once the file
 has a line index, or when the trace cache answers it. That is the only
 way an index or the cache changes an answer: every other field is
-equal, `-1` means "not computed", and a number rx fills in is always the
-line that holds the match's offset.
+equal, apart from those that describe how the answer was produced
+(`request_id`, `time`, `cli_command` and `file_chunks`), `-1` means
+"not computed", and a number rx fills in is always the line that holds
+the match's offset.
 
 ## Status codes
 

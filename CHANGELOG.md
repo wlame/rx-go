@@ -68,7 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--no-index` may change a trace answer: a line number that is `-1`
   without them may be the true line number with them. Every other field
   is equal, `-1` means "not computed", and a number rx fills in is the
-  line holding the match's offset. Behavior is unchanged; see
+  line holding the match's offset. The fields that describe how an
+  answer was produced are outside the rule: `request_id`, `time`,
+  `cli_command` and `file_chunks`, since a trace-cache hit reports the
+  chunk count of the scan that wrote the entry, whatever
+  `RX_MIN_CHUNK_SIZE_MB` and `RX_MAX_SUBPROCESSES` are now. Behavior is
+  unchanged; see
   `docs/concepts/caching.md`, `docs/cli/trace.md` and
   `docs/api/endpoints/trace.md`.
 
