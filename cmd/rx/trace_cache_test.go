@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -71,6 +72,10 @@ func TestTraceCacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	}
 	if chunks, _ := fresh["file_chunks"].(map[string]any)["f1"].(float64); chunks < 2 {
 		t.Fatalf("fixture scanned in %v chunks; the test needs several", chunks)
+	}
+	// The accelerator rule leaves file_chunks out, so it is checked here.
+	if !reflect.DeepEqual(cached["file_chunks"], fresh["file_chunks"]) {
+		t.Fatalf("cache hit file_chunks = %v, want %v from the scan", cached["file_chunks"], fresh["file_chunks"])
 	}
 	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }

@@ -3,6 +3,7 @@ package webapi
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"strings"
@@ -46,6 +47,10 @@ func TestTrace_CacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	}
 	if fresh.FileChunks["f1"] < 2 {
 		t.Fatalf("fixture scanned in %d chunks; the test needs several", fresh.FileChunks["f1"])
+	}
+	// The accelerator rule leaves file_chunks out, so it is checked here.
+	if !maps.Equal(cached.FileChunks, fresh.FileChunks) {
+		t.Fatalf("cache hit file_chunks = %v, want %v from the scan", cached.FileChunks, fresh.FileChunks)
 	}
 	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }

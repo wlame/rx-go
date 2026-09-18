@@ -89,10 +89,11 @@ func RequireAgree(t testing.TB, name string, got, want any, text []byte) {
 	}
 }
 
-// RequireSame fails t unless got and want are equal in every field. It
-// is the rule for two answers of a scan that ran to the end: both
-// number every line, so the -1 exception cannot apply, and a -1 in
-// either answer fails on its own.
+// RequireSame fails t unless got and want are equal in every field
+// except productionFields, which no comparison here looks at. It is the
+// rule for two answers of a scan that ran to the end: both number every
+// line, so the -1 exception cannot apply, and a -1 in either answer
+// fails on its own.
 func RequireSame(t testing.TB, name string, got, want any) {
 	t.Helper()
 	for side, answer := range map[string]any{"got": got, "want": want} {
