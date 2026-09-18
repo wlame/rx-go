@@ -14,11 +14,6 @@ type MatchingFlag struct {
 	Short string
 	// Usage is the one-line help text for the flag.
 	Usage string
-	// effect is what the flag does to the text a match covers, which is
-	// what re-running a pattern in Go has to copy. It is zero for a flag
-	// that changes only how ripgrep runs the pattern (-P picks the PCRE2
-	// engine).
-	effect matchFlags
 }
 
 // QueryParam is the flag's name as an HTTP query parameter: the long name
@@ -39,10 +34,10 @@ func (f MatchingFlag) QueryParam() string {
 // them to anyone who can shape a command line or a URL, so a surface
 // rejects a flag that is not in this table.
 var MatchingFlags = []MatchingFlag{
-	{Long: "ignore-case", Short: "i", Usage: "Match case-insensitively (ripgrep -i)", effect: matchIgnoreCase},
-	{Long: "word-regexp", Short: "w", Usage: "Match only whole words (ripgrep -w)", effect: matchWholeWord},
-	{Long: "line-regexp", Short: "x", Usage: "Match only whole lines (ripgrep -x)", effect: matchWholeLine},
-	{Long: "fixed-strings", Short: "F", Usage: "Treat every pattern as literal text (ripgrep -F)", effect: matchFixedString},
+	{Long: "ignore-case", Short: "i", Usage: "Match case-insensitively (ripgrep -i)"},
+	{Long: "word-regexp", Short: "w", Usage: "Match only whole words (ripgrep -w)"},
+	{Long: "line-regexp", Short: "x", Usage: "Match only whole lines (ripgrep -x)"},
+	{Long: "fixed-strings", Short: "F", Usage: "Treat every pattern as literal text (ripgrep -F)"},
 	{Long: "pcre2", Short: "P", Usage: "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)"},
 }
 
@@ -60,46 +55,4 @@ func RipgrepArgs(selected map[string]bool) []string {
 		}
 	}
 	return args
-}
-
-// matchFlags is the set of ripgrep options that change which text a
-// pattern matches. It is a bit set: each constant below is one bit, and
-// a request's flags are OR-ed together.
-type matchFlags uint8
-
-const (
-	matchIgnoreCase  matchFlags = 1 << iota // -i: case-insensitive
-	matchWholeWord                          // -w: match bounded by word boundaries
-	matchWholeLine                          // -x: match is the whole line
-	matchFixedString                        // -F: pattern is literal text
-)
-
-// has reports whether every bit of flag is set in f.
-func (f matchFlags) has(flag matchFlags) bool { return f&flag == flag }
-
-// ripgrepFlagMeaning maps both of ripgrep's spellings of each matching
-// flag ("-i" and "--ignore-case") to the bit it sets. The CLI and the API
-// send the short form; a trace-cache file may hold either.
-var ripgrepFlagMeaning = flagMeaningBySpelling()
-
-// flagMeaningBySpelling builds ripgrepFlagMeaning from MatchingFlags, so
-// a flag added to the table is understood here without a second edit.
-func flagMeaningBySpelling() map[string]matchFlags {
-	meaning := make(map[string]matchFlags, 2*len(MatchingFlags))
-	for _, flag := range MatchingFlags {
-		meaning["-"+flag.Short] = flag.effect
-		meaning["--"+flag.Long] = flag.effect
-	}
-	return meaning
-}
-
-// matchFlagsFrom reads the matching flags out of ripgrep arguments.
-// Arguments the table does not know contribute nothing. Callers pass one
-// flag per element ("-i", "-w"), never a bundle like "-iw".
-func matchFlagsFrom(rgArgs []string) matchFlags {
-	var flags matchFlags
-	for _, arg := range rgArgs {
-		flags |= ripgrepFlagMeaning[arg]
-	}
-	return flags
 }

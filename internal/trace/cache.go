@@ -53,7 +53,11 @@ import (
 // file holding one has matches stored at an offset inside their line.
 // Such an entry cannot be told apart from a good one and is discarded.
 // A version 6 scan also counts a UTF-8 byte-order mark in its offsets,
-// which ripgrep stripped before.
+// which ripgrep stripped before. Each version 6 record also stores the
+// submatch spans ripgrep reported for its pattern, so a hit gives the
+// scan's submatches without running any pattern again; an entry with a
+// record that has none (written by a development build before the spans
+// were stored) is treated as absent.
 //
 // rx-python writes version 3, so each backend treats the other's trace
 // caches as absent.
@@ -333,6 +337,17 @@ func loadValidCache(
 		)
 		return nil
 	}
+	// An entry without spans predates them and is an ordinary miss, like
+	// one of another version; spans no line can hold are an inconsistency.
+	if err := checkSubmatchSpans(data.Matches); err != nil {
+		if !errors.Is(err, errNoSubmatchSpans) {
+			slog.Default().Warn("trace_cache_inconsistent",
+				"path", cachePath,
+				"error", err.Error(),
+			)
+		}
+		return nil
+	}
 	// Every scan has at least one chunk. A cache without the count
 	// cannot report the scan's file_chunks, so it is not used.
 	if data.ChunkCount < 1 {
@@ -394,6 +409,44 @@ func toReaderPatternOrder(data *rxtypes.TraceCacheData, readerPatterns []string)
 		data.Matches[i].PatternIndex = readerIndex[data.Matches[i].PatternIndex]
 	}
 	data.Patterns = append([]string(nil), readerPatterns...)
+	return nil
+}
+
+// errNoSubmatchSpans reports a record that stores no submatch spans.
+var errNoSubmatchSpans = errors.New("a record stores no submatch spans")
+
+// checkSubmatchSpans checks that every record stores its submatch spans
+// (errNoSubmatchSpans otherwise) and that each list is one a scan could
+// have written: every span starts at 0 or later, ends no earlier than it
+// starts, and starts no earlier than the span before it ends. ripgrep's
+// spans come in order and never overlap, an empty one included.
+//
+// Two things rest on it. A hit cuts the list to the bounds in force by
+// keeping its first spans, which is the scan's rule only on a list in
+// ripgrep's order. And a hit copies each span's bytes from its line, so
+// spans that do not overlap copy at most the line's kept bytes per
+// record, whatever the entry holds. Whether a span fits its line is
+// known only once the line is read (submatchesFromSpans).
+//
+// The work is one pass over every stored span.
+func checkSubmatchSpans(records []rxtypes.TraceCacheMatch) error {
+	for _, m := range records {
+		if m.Submatches == nil {
+			return fmt.Errorf("%w: the record at offset %d", errNoSubmatchSpans, m.Offset)
+		}
+		previousEnd := 0
+		for _, span := range m.Submatches {
+			start, end := span[0], span[1]
+			if start < 0 || end < start {
+				return fmt.Errorf("the record at offset %d has submatch [%d, %d), which is no span", m.Offset, start, end)
+			}
+			if start < previousEnd {
+				return fmt.Errorf("the record at offset %d has submatch [%d, %d) before the one before it ends at %d",
+					m.Offset, start, end, previousEnd)
+			}
+			previousEnd = end
+		}
+	}
 	return nil
 }
 
@@ -534,6 +587,7 @@ func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCach
 			PatternIndex: patternIndex(m.Pattern),
 			Offset:       m.Offset,
 			LineNumber:   lineNum,
+			Submatches:   submatchSpans(m.Submatches),
 		}
 		if fi, ok := scan.FrameIndexByOffset[m.Offset]; ok {
 			fiCopy := fi
@@ -581,6 +635,19 @@ func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCach
 	}
 
 	return out
+}
+
+// submatchSpans is the [start, end) of each submatch, in their order, as
+// a cache record stores them; [] (never nil) when there is none, so the
+// record says "no span" rather than "no spans stored". A cached scan
+// left no span out (see submatchesLeftOut), so a list holds at most
+// RX_MAX_SUBMATCHES_PER_LINE spans.
+func submatchSpans(subs []rxtypes.Submatch) [][2]int {
+	spans := make([][2]int, 0, len(subs))
+	for _, sm := range subs {
+		spans = append(spans, [2]int{sm.Start, sm.End})
+	}
+	return spans
 }
 
 // cacheWriteWarned is set once a failed trace cache write has been

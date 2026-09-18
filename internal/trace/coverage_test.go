@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"regexp/syntax"
 	"strings"
 	"syscall"
 	"testing"
@@ -142,22 +141,5 @@ func TestStreamEvents_BlankLinesAreSkipped(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("event count = %d, want 2", count)
-	}
-}
-
-// TestHasInlineFlag detects (?i) at the front.
-func TestHasInlineFlag_DetectsInlineCase(t *testing.T) {
-	// `(?i)foo` parses as a single concat-leaf ("foo") with the
-	// FoldCase flag. The expression's Flags field carries it, which
-	// is what hasInlineFlag inspects.
-	if !hasInlineFlag("(?i)foo", syntax.FoldCase) {
-		t.Errorf("hasInlineFlag did not detect (?i) prefix")
-	}
-	if hasInlineFlag("foo", syntax.FoldCase) {
-		t.Errorf("hasInlineFlag returned true for a plain pattern")
-	}
-	// Parse errors → false (not a crash).
-	if hasInlineFlag("(foo", syntax.FoldCase) {
-		t.Errorf("hasInlineFlag on broken regex should return false")
 	}
 }

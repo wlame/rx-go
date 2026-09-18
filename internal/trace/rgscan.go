@@ -1095,9 +1095,8 @@ func (s *eventScanner) lineText() RgText {
 // (Truncated).
 //
 // A cut line always reports the list as possibly incomplete, whether or
-// not ripgrep found a submatch past the cut. A trace-cache hit rebuilds
-// submatches from the kept text alone and cannot tell, and both must
-// give the same answer.
+// not ripgrep found a submatch past the cut, and a trace-cache hit that
+// cuts the line applies the same rule (submatchesFromSpans).
 func (s *eventScanner) boundedSubmatches() ([]RgSubmatch, bool) {
 	f := &s.fields
 	dropped := f.submatchesDropped || f.lineTruncated

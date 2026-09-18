@@ -142,12 +142,6 @@ type ContextRaw struct {
 	LineTextTruncated bool // see MatchRaw.LineTextTruncated
 }
 
-// truncated reports whether the answer holds only part of this match's
-// line or of its submatches.
-func (m MatchRaw) truncated() bool {
-	return m.LineTextTruncated || m.SubmatchesTruncated
-}
-
 // rawMatchLine builds the MatchRaw for the line of a match event that
 // starts at offset in the file's text and has number lineNumber, as the
 // caller counts them. Submatches are added by withSubmatches when the

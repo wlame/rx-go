@@ -86,6 +86,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace answered from the trace cache gives every match the
+  submatches the scan gave it. A hit used to run each pattern again
+  with Go's regular expressions, which differ from ripgrep's: with `-P`
+  (look-around, backreferences) every match came back with
+  `submatches: null`, and Unicode `\b`, `\w` and `-w` around non-ASCII
+  words, `-w` on a word ending in punctuation (`-w 'Agent:'`), `\r$`
+  on a CRLF line and a pattern across bytes that are not UTF-8 came
+  back with no submatches or different ones, so the viewer showed no
+  highlight. Each trace-cache record now stores the start and end of
+  its pattern's submatches as ripgrep reported them, and a hit takes
+  them from there, cutting them under lower `RX_MAX_LINE_TEXT_BYTES` or
+  `RX_MAX_SUBMATCHES_PER_LINE` bounds as a scan would. A scan that
+  leaves any pattern's submatches out (over `RX_MAX_SUBMATCHES_PER_LINE`
+  on one line) is no longer cached, and a cached record whose spans its
+  line cannot hold fails the file (listed in `skipped_files`) instead of
+  dropping the match. The trace cache format stays at version 6; an
+  entry without the spans, written by a build between 0.3.0 and this
+  one, is treated as a miss and rewritten.
+
 - A trace answered from the trace cache labels each match with the
   pattern it matched, whatever order the patterns come in. Searches
   that list the same patterns in another order (`-e WARN -e NEEDLE`

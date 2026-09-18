@@ -35,15 +35,3 @@ func TestRipgrepArgs_ReturnsAnEmptyListWhenNothingIsSet(t *testing.T) {
 		t.Errorf("RipgrepArgs(nil) = %#v, want an empty, non-nil list", got)
 	}
 }
-
-// matchFlagsFrom has to understand both spellings ripgrep accepts, since
-// a trace-cache file records whichever one it was written with.
-func TestMatchFlagsFrom_ReadsShortAndLongSpellings(t *testing.T) {
-	for _, flag := range MatchingFlags {
-		short := matchFlagsFrom([]string{"-" + flag.Short})
-		long := matchFlagsFrom([]string{"--" + flag.Long})
-		if short != long {
-			t.Errorf("%s: -%s gives %b, --%s gives %b", flag.Long, flag.Short, short, flag.Long, long)
-		}
-	}
-}

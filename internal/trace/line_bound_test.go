@@ -179,11 +179,11 @@ func TestTraceCreditsAPatternThatMatchesOnlyPastTheCut(t *testing.T) {
 	}
 }
 
-// A trace whose answer cuts a line is not written to the trace cache: a
-// cache hit rebuilds a line's submatches from the text it keeps, so a
-// submatch that runs past the cut (`x+` here, which ripgrep reports
-// with its true end) would come back ending at the cut. The second
-// trace scans again and gives the same answer.
+// A trace whose answer cuts a line is not written to the trace cache: the
+// patterns of a cut line and their spans are decided on the whole line,
+// which a hit does not read. The second trace scans again and gives the
+// same answer, with a submatch that runs past the cut (`x+` here) keeping
+// its true end.
 func TestTraceWithACutLineIsNotCached(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
@@ -250,21 +250,5 @@ func TestCountLinesToOffsets_HoldsNoLongLine(t *testing.T) {
 	}
 	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 2<<20 {
 		t.Errorf("counting allocated %d MiB, want under 2 MiB", allocated>>20)
-	}
-}
-
-// A cache hit rebuilds at most the cap of submatches and says when it
-// left some out.
-func TestSubmatchesFromPattern_StopsAtTheCap(t *testing.T) {
-	cases := []struct {
-		maxHits    int
-		wantCount  int
-		wantCapped bool
-	}{{3, 3, true}, {5, 5, false}, {9, 5, false}}
-	for _, tc := range cases {
-		subs, capped := submatchesFromPattern("x", "xxxxx", matchFlagsFrom(nil), tc.maxHits)
-		if len(subs) != tc.wantCount || capped != tc.wantCapped {
-			t.Errorf("cap %d: %d submatches, capped %v; want %d, %v", tc.maxHits, len(subs), capped, tc.wantCount, tc.wantCapped)
-		}
 	}
 }
