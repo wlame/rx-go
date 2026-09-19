@@ -196,7 +196,7 @@ func runIndexDelete(out io.Writer, p indexParams) error {
 		cachePath := index.GetCachePath(path)
 		if _, err := os.Stat(cachePath); err != nil {
 			if os.IsNotExist(err) {
-				_, _ = fmt.Fprintf(out, "no index found for %s\n", path)
+				_, _ = fmt.Fprintf(out, "no index found for %s\n", output.Printable(path))
 				continue
 			}
 			return err
@@ -204,7 +204,7 @@ func runIndexDelete(out io.Writer, p indexParams) error {
 		if err := os.Remove(cachePath); err != nil {
 			return fmt.Errorf("remove cache: %w", err)
 		}
-		_, _ = fmt.Fprintf(out, "deleted index for %s\n", path)
+		_, _ = fmt.Fprintf(out, "deleted index for %s\n", output.Printable(path))
 	}
 	return nil
 }
@@ -226,7 +226,7 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 			enc.SetIndent("", "  ")
 			return enc.Encode(idx)
 		}
-		_, _ = fmt.Fprintf(out, "Index for: %s\n", idx.SourcePath)
+		_, _ = fmt.Fprintf(out, "Index for: %s\n", output.Printable(idx.SourcePath))
 		_, _ = fmt.Fprintf(out, "  file_type: %s\n", idx.FileType)
 		_, _ = fmt.Fprintf(out, "  size_bytes: %d\n", idx.SourceSizeBytes)
 		_, _ = fmt.Fprintf(out, "  created_at: %s\n", idx.CreatedAt)
@@ -265,11 +265,11 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 	}
 	for _, file := range files {
 		if file["index"] == nil {
-			_, _ = fmt.Fprintf(out, "%s: no index exists\n", file["path"])
+			_, _ = fmt.Fprintf(out, "%s: no index exists\n", output.Printable(fmt.Sprint(file["path"])))
 			continue
 		}
 		_, _ = fmt.Fprintf(out, "%s: %v entries, analysis=%v\n",
-			file["path"],
+			output.Printable(fmt.Sprint(file["path"])),
 			file["index"].(map[string]any)["index_entries"],
 			file["index"].(map[string]any)["analysis_performed"])
 	}
@@ -333,7 +333,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 					// A subdirectory the walk cannot list is skipped
 					// with the reason and the rest of the tree is
 					// indexed, as a trace of the tree searches it.
-					result.skip(entry.Path, accessFailureText(entry.ReadErr))
+					result.skip(entry.Path, paths.FailureReason(entry.ReadErr))
 				case entry.Refused != "":
 					result.skip(entry.Path, entry.Refused)
 				default:
@@ -349,7 +349,9 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	// error for a file the user named, a skip for one a walk found.
 	unreadable := func(target indexTarget, err error) {
 		if !target.named {
-			result.skip(target.path, accessFailureText(err))
+			// Fixed wording: the error's own text names what the path
+			// leads to, which a walked link's caller did not name.
+			result.skip(target.path, paths.FailureReason(err))
 			return
 		}
 		result.Errors = append(result.Errors, indexErrorItem{
@@ -606,7 +608,7 @@ func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
 		_, _ = fmt.Fprintln(out, "No files indexed.")
 		writeSkippedHuman(out, r.SkipReasons)
 		for _, e := range r.Errors {
-			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", e.Path, e.Error)
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", output.Printable(e.Path), output.Printable(e.Error))
 		}
 		return
 	}
@@ -620,7 +622,7 @@ func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
 	}
 	writeSkippedHuman(out, r.SkipReasons)
 	for _, e := range r.Errors {
-		_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", e.Path, e.Error)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", output.Printable(e.Path), output.Printable(e.Error))
 	}
 }
 
@@ -633,7 +635,7 @@ func writeSkippedHuman(out io.Writer, skipped []rxtypes.SkippedFile) {
 	}
 	_, _ = fmt.Fprintf(out, "Skipped %d files:\n", len(skipped))
 	for _, item := range skipped {
-		_, _ = fmt.Fprintf(out, "  %s: %s\n", item.Path, item.Reason)
+		_, _ = fmt.Fprintf(out, "  %s: %s\n", output.Printable(item.Path), output.Printable(item.Reason))
 	}
 }
 
@@ -645,7 +647,7 @@ func writeIndexEntryHuman(out io.Writer, idx *rxtypes.UnifiedFileIndex) {
 		lineInfo = fmt.Sprintf("%s lines", output.Thousands(*idx.LineCount))
 	}
 	_, _ = fmt.Fprintf(out, "  %s: %s, %s\n",
-		idx.SourcePath, lineInfo, output.HumanSize(idx.SourceSizeBytes))
+		output.Printable(idx.SourcePath), lineInfo, output.HumanSize(idx.SourceSizeBytes))
 
 	if !idx.AnalysisPerformed {
 		return

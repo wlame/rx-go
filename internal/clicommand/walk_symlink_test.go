@@ -235,7 +235,7 @@ func TestIndexCommand_RecursiveWalkStaysInsideTheSearchRoot(t *testing.T) {
 	for path, wantWord := range map[string]string{
 		tree.Out:        "outside",
 		tree.OutDir:     "outside",
-		tree.Visible:    ".private",
+		tree.Visible:    "hidden entry",
 		tree.Loop:       "loop",
 		tree.Self:       "resolve",
 		tree.Dangling:   "resolve",

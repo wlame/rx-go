@@ -513,6 +513,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A skip reason never reveals what the sandbox keeps out of reach: a
+  link the walk refuses or cannot resolve is reported with fixed wording
+  (`symlink leads into a hidden entry; …` no longer names the entry,
+  `cannot resolve symlink: no such file or directory` no longer carries
+  the target's path), and a trace's `skip_reasons` use a fixed set of
+  wordings (`permission denied`, `cannot be read`, …) instead of an
+  operating-system error's text; the error goes to the log. The same
+  wordings appear in `rx index` `skip_reasons`.
+- The human output of `rx trace`, `rx samples`, `rx index` and
+  `rx compress`, and every `Error:` line, writes out the control
+  characters of a path or a reason (`\x1b[31m`) instead of sending them
+  to the terminal, so a file named with escape sequences cannot recolor,
+  clear or retitle the terminal of whoever lists its directory. The text
+  of matched and sampled lines is printed as it is, as ripgrep prints
+  it.
+
 - A directory search no longer follows a symbolic link out of
   `--search-root` or into a hidden entry. `rx trace` on a directory
   (recursive or `--no-recursive`, CLI and `GET /v1/trace`) and

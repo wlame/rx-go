@@ -162,7 +162,7 @@ func FormatContextSection(contexts []FileContext, before, after int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nContext (%d before, %d after):\n", before, after)
 	for _, fc := range contexts {
-		fmt.Fprintf(&b, "\n%s\n", fc.Path)
+		fmt.Fprintf(&b, "\n%s\n", Printable(fc.Path))
 		width := contextNumberWidth(fc)
 		for i, block := range fc.Blocks {
 			if i > 0 {
@@ -228,7 +228,7 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 
 	fmt.Fprintf(&b, "%sRequest ID:%s %s\n", c.grey, c.reset, resp.RequestID)
 	fmt.Fprintf(&b, "%sPath:%s %s%s%s\n",
-		c.grey, c.reset, c.boldCyan, strings.Join(resp.Path, ", "), c.reset)
+		c.grey, c.reset, c.boldCyan, Printable(strings.Join(resp.Path, ", ")), c.reset)
 
 	if len(resp.Patterns) == 1 {
 		for _, pattern := range resp.Patterns {
@@ -253,7 +253,7 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 		// Each skipped path on its own line with why, the way `rx index`
 		// lists its skipped files.
 		for _, item := range resp.SkipReasons {
-			fmt.Fprintf(&b, "  %s%s: %s%s\n", c.grey, item.Path, item.Reason, c.reset)
+			fmt.Fprintf(&b, "  %s%s: %s%s\n", c.grey, Printable(item.Path), Printable(item.Reason), c.reset)
 		}
 	}
 
@@ -273,7 +273,7 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 		fmt.Fprintf(&b, "\n%sMatches (file:line:offset [pattern]):%s\n", c.grey, c.reset)
 		for _, m := range resp.Matches {
 			fmt.Fprintf(&b, "  %s%s%s%s:%s%s%s%s%s:%s%s%d%s %s[%s%s%s%s%s]%s\n",
-				c.cyan, resp.Files[m.File], c.reset,
+				c.cyan, Printable(resp.Files[m.File]), c.reset,
 				c.grey, c.reset,
 				c.yellow, formatLineNumber(matchDisplayLine(m)), c.reset,
 				c.grey, c.reset,

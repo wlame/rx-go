@@ -56,7 +56,7 @@ import (
 func FormatSamplesCLI(resp *rxtypes.SamplesResponse, colorize bool, regex string) string {
 	var b bytes.Buffer
 
-	fmt.Fprintf(&b, "File: %s\n", resp.Path)
+	fmt.Fprintf(&b, "File: %s\n", Printable(resp.Path))
 	if resp.IsCompressed && resp.CompressionFormat != nil {
 		fmt.Fprintf(&b, "Compressed: %s\n", *resp.CompressionFormat)
 	}
@@ -104,7 +104,7 @@ func writeOffsetSection(b *bytes.Buffer, resp *rxtypes.SamplesResponse, colorize
 		if !present {
 			continue
 		}
-		header := buildHeader(resp.Path, key, lineNum, key, colorize, true)
+		header := buildHeader(Printable(resp.Path), key, lineNum, key, colorize, true)
 		b.WriteString(header)
 		b.WriteByte('\n')
 		writeContextLines(b, contextLines, colorize, regex)
@@ -125,7 +125,7 @@ func writeLineSection(b *bytes.Buffer, resp *rxtypes.SamplesResponse, colorize b
 		if !present {
 			continue
 		}
-		header := buildHeader(resp.Path, key, byteOffset, key, colorize, false)
+		header := buildHeader(Printable(resp.Path), key, byteOffset, key, colorize, false)
 		b.WriteString(header)
 		b.WriteByte('\n')
 		writeContextLines(b, contextLines, colorize, regex)
