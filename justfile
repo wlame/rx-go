@@ -123,14 +123,19 @@ vuln:
 # Every go test run below goes through scripts/test-isolated-home.sh: it
 # runs the tests under a throwaway HOME and fails when one of them wrote an
 # rx cache file there instead of into its package's own RX_CACHE_DIR.
+#
+# test_timeout replaces go test's 10-minute default per package:
+# internal/trace alone takes over 5 minutes under -race on a 16-core
+# machine, and CI runners have 3 to 4 cores.
+test_timeout := "30m"
 
 # Run the unit tests (e.g. just test -run TestTrace ./internal/trace/)
 test *args:
-    ./scripts/test-isolated-home.sh go test {{args}} ./...
+    ./scripts/test-isolated-home.sh go test -timeout={{test_timeout}} {{args}} ./...
 
 # Run the tests with the race detector — mandatory before merge
 test-race:
-    ./scripts/test-isolated-home.sh go test -race -count=1 ./...
+    ./scripts/test-isolated-home.sh go test -race -count=1 -timeout={{test_timeout}} ./...
 
 # Hunt flaky tests by repeating a package (e.g. just test-repeat ./internal/trace/)
 test-repeat pkg='./...':
@@ -144,7 +149,7 @@ bench *args:
 cover:
     #!/usr/bin/env bash
     set -euo pipefail
-    ./scripts/test-isolated-home.sh go test -race -coverprofile=cover.out -covermode=atomic ./...
+    ./scripts/test-isolated-home.sh go test -race -timeout={{test_timeout}} -coverprofile=cover.out -covermode=atomic ./...
     total=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
     echo "total coverage: ${total}%  (floor: {{coverage_min}}%)"
     awk -v t="$total" -v m="{{coverage_min}}" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' \

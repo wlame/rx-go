@@ -51,13 +51,14 @@ jobs:
 
       # v2.x: the repo's .golangci.yml uses the v2 config schema, and the
       # binary must be built with a Go at least as new as go.mod's
-      # directive or it refuses to run.
+      # directive or it refuses to run. install-only: the action puts the
+      # binary on PATH and runs nothing; `just ci` runs the lint itself.
       - name: install golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.13.2
           install-mode: binary
-          args: --version
+          install-only: true
 
       - name: just ci
         run: just ci
