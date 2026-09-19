@@ -148,3 +148,24 @@ func TestIndexRecordsTimesAsNanosecondsAndTheDevice(t *testing.T) {
 		t.Errorf("source_ctime_ns = %v, source_device = %v; want both recorded", idx.SourceCtimeNs, idx.SourceDevice)
 	}
 }
+
+// An index records its file by the absolute path, as its cache file
+// name does, whatever spelling the caller used: a relative source_path
+// depends on the directory the index was built from, and a cleanup that
+// checks it from another directory deletes a valid index.
+func TestIndexRecordsTheAbsoluteSourcePath(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	dir := t.TempDir()
+	writeNumberedFile(t, filepath.Join(dir, "app.log"), 20)
+	t.Chdir(dir)
+
+	idx := buildIndexFor(t, "app.log")
+
+	want, err := filepath.Abs("app.log")
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	if idx.SourcePath != want {
+		t.Errorf("source_path = %q, want %q", idx.SourcePath, want)
+	}
+}

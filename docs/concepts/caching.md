@@ -323,15 +323,25 @@ growth.
 
 ### Manual pruning
 
-No built-in prune command at v1. To remove stale entries:
+No built-in prune command at v1. To remove the indexes and trace
+entries whose source file no longer exists:
 
 ```bash
-# Find stale indexes (source no longer exists).
-for entry in ~/.cache/rx/indexes/*.json; do
+# The cache base, resolved as rx resolves it.
+cache=${RX_CACHE_DIR:+$RX_CACHE_DIR/rx}
+cache=${cache:-${XDG_CACHE_HOME:-$HOME/.cache}/rx}
+for entry in "$cache"/indexes/*.json "$cache"/trace_cache/*/*.json; do
+    [ -e "$entry" ] || continue
     src=$(jq -r '.source_path' "$entry")
     [ -e "$src" ] || rm -v "$entry"
 done
 ```
+
+Every entry records its source as an absolute path, so the loop gives
+the same result from any directory. An index written by rx-go before
+format version 7 may record the path as it was typed, relative to the
+directory it was built from; such an index is never used again, so the
+loop removing it costs nothing.
 
 ## Tests and CI
 
