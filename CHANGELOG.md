@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rx trace --json` and `GET /v1/trace` give `skip_reasons`: one
+  `{path, reason}` for each path of `skipped_files`, in the same order,
+  the shape `rx index --json` gives its `skip_reasons`. A reason names a
+  file that is not text (`not a text file: …`), one the process may not
+  read (`permission denied`), a link the walk refuses, a file whose
+  stream ends early or whose seekable frame is damaged (`not searched in
+  full: …`, its other matches kept, the damaged frame named), and a
+  matched line no pattern could be credited with. The human output lists
+  each skipped path with its reason under `Files skipped:`. A
+  subdirectory the process may not list is now listed in
+  `skipped_files` with its reason, where a search used to pass over it
+  silently. Part of contract 1.4.
+
 - `GET /v1/trace` takes the remaining options of `rx trace` as query
   parameters: `context`, `before_context` and `after_context` (the
   `--context`, `--before` and `--after` window, resolved the same way:

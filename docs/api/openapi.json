@@ -1068,6 +1068,22 @@
         ],
         "type": "object"
       },
+      "SkippedFile": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "type": "object"
+      },
       "Submatch": {
         "additionalProperties": false,
         "properties": {
@@ -1290,6 +1306,13 @@
             },
             "type": "array"
           },
+          "skip_reasons": {
+            "description": "Why each path of skipped_files was passed over or not searched in full, one entry per path in the same order.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedFile"
+            },
+            "type": "array"
+          },
           "skipped_files": {
             "items": {
               "type": "string"
@@ -1310,6 +1333,7 @@
           "matches",
           "scanned_files",
           "skipped_files",
+          "skip_reasons",
           "max_results",
           "file_chunks",
           "context_lines",

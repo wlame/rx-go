@@ -148,7 +148,9 @@ func (e *Engine) RunWithOptions(
 	if err := validatePatterns(ctx, patternIDs, patternOrder, opts.RgExtraArgs); err != nil {
 		return nil, err
 	}
-	files, scannedDirs, skipped := expandPaths(paths, !opts.NoRecursive)
+	// skips collects every path passed over or not searched in full,
+	// with the reason the answer gives for it (skip_reasons).
+	files, scannedDirs, skips := expandPaths(paths, !opts.NoRecursive)
 	if len(files) == 0 {
 		// Nothing to search still answers with the request it was
 		// given: an empty request id and a null path made a skipped
@@ -163,7 +165,8 @@ func (e *Engine) RunWithOptions(
 			// emptyIfNilStrings coerces a nil slice to []string{} so
 			// the JSON marshaller emits `[]` instead of `null`. Python
 			// emits `[]` for empty lists.
-			SkippedFiles: emptyIfNilStrings(skipped),
+			SkippedFiles: skips.paths(),
+			SkipReasons:  skips.reasons(),
 			MaxResults:   opts.MaxResults,
 			Time:         time.Since(start).Seconds(),
 			// Empty objects rather than null, as on the main path.
@@ -218,6 +221,9 @@ func (e *Engine) RunWithOptions(
 		table *seekable.SeekTable
 		// format is a compressed file's stream format.
 		format compression.Format
+		// statErr is why the stat taken at classification failed, when
+		// info is nil.
+		statErr error
 	}
 	var buckets []fileBucket
 	fileChunkCounts := make(map[string]int)
@@ -228,10 +234,11 @@ func (e *Engine) RunWithOptions(
 		// refuses it when the path no longer leads to the checked file.
 		fi, err := src.Stat()
 		if errors.Is(err, sandbox.ErrFileChanged) {
-			skipped = append(skipped, fp)
+			skips.addErr(fp, err)
 			continue
 		}
 		var sz int64
+		statErr := err
 		if err == nil {
 			sz = fi.Size()
 		} else {
@@ -281,7 +288,7 @@ func (e *Engine) RunWithOptions(
 				continue
 			}
 		}
-		buckets = append(buckets, fileBucket{kind: "regular", path: fp, src: src, size: sz, info: fi})
+		buckets = append(buckets, fileBucket{kind: "regular", path: fp, src: src, size: sz, info: fi, statErr: statErr})
 	}
 
 	// -------------------------------------------------------------------
@@ -313,7 +320,7 @@ func (e *Engine) RunWithOptions(
 		for path, entry := range cacheable {
 			toCache[path] = entry
 		}
-		skipped = append(skipped, lost...)
+		skips.addAll(lost)
 		outcomes, pendingText = nil, 0
 		return nil
 	}
@@ -343,14 +350,14 @@ func (e *Engine) RunWithOptions(
 		switch b.kind {
 		case "regular":
 			if b.info == nil {
-				skipped = append(skipped, b.path)
+				skips.addErr(b.path, b.statErr)
 				continue
 			}
 			// Plan from the stat taken at classification and record that
 			// stat as the file's identity, before any byte is read.
 			tasks, terr := planFileTasks(b.src, b.info.Size())
 			if terr != nil {
-				skipped = append(skipped, b.path)
+				skips.addErr(b.path, terr)
 				continue
 			}
 			cacheEntry := scanToCache(opts, b.path, b.info, "")
@@ -376,7 +383,7 @@ func (e *Engine) RunWithOptions(
 				if errors.Is(perr, ErrInvalidPattern) {
 					return nil, perr
 				}
-				skipped = append(skipped, b.path)
+				skips.addErr(b.path, perr)
 				continue
 			}
 			scan := &scannedLines{source: b.src, cacheEntry: cacheEntry}
@@ -448,7 +455,7 @@ func (e *Engine) RunWithOptions(
 				// A stream that ended early still yielded real matches,
 				// so the file is named as incomplete but its matches are
 				// kept. Any other error means nothing was read.
-				skipped = append(skipped, b.path)
+				skips.addErr(b.path, cerr)
 				if !errors.Is(cerr, ErrIncompleteStream) {
 					continue
 				}
@@ -510,7 +517,7 @@ func (e *Engine) RunWithOptions(
 				// named as not searched in full and its matches are kept,
 				// as for a gzip stream that ends early. Any other error
 				// means nothing read can be trusted.
-				skipped = append(skipped, b.path)
+				skips.addErr(b.path, serr)
 				if !errors.Is(serr, seekable.ErrDamagedFrame) {
 					continue
 				}
@@ -580,7 +587,7 @@ func (e *Engine) RunWithOptions(
 				MaxMatches:    maxMatches,
 			})
 			if rerr != nil {
-				skipped = append(skipped, b.path)
+				skips.addErr(b.path, rerr)
 				continue
 			}
 			prometheus.RecordTraceCacheReconstruction(time.Since(reconstructStart))
@@ -671,7 +678,8 @@ func (e *Engine) RunWithOptions(
 		Files:        fileIDs,
 		Matches:      emptyIfNilMatches(allMatches),
 		ScannedFiles: emptyIfNilStrings(scannedFilesOutput(filePaths, scannedDirs)),
-		SkippedFiles: emptyIfNilStrings(dedupStrings(skipped)),
+		SkippedFiles: skips.paths(),
+		SkipReasons:  skips.reasons(),
 		MaxResults:   opts.MaxResults,
 		Time:         elapsed.Seconds(),
 		// Both maps are built with make, so an empty one marshals as
@@ -708,7 +716,7 @@ type searchFile struct {
 	kind filekind.Kind
 }
 
-// expandPaths splits input paths into (files, dirs-scanned, skipped).
+// expandPaths splits input paths into (files, dirs-scanned, skips).
 //
 // recursive defaults to TRUE (Python
 // parity). When recursive is false (CLI `--no-recursive`), only the
@@ -721,21 +729,23 @@ type searchFile struct {
 // target would be allowed, enters each directory once, and pins every
 // file it reports. Each file is then classified once (filekind.OfPinned)
 // through its pin: what the classification finds decides how the file
-// is read, and a file whose text is not text (a binary file, a .tar.gz,
-// UTF-16) goes into `skipped`, as do the paths and entries refused and
-// the files that cannot be opened.
-func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDirs, skipped []string) {
+// is read. skips names, each with its reason, every path refused, every
+// file that cannot be opened, every file whose text is not text (a
+// binary file, a .tar.gz, UTF-16) and every subdirectory that cannot be
+// listed; the rest of a tree is still searched.
+func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDirs []string, skips *skipList) {
+	skips = &skipList{}
 	for _, p := range paths {
 		src, err := sandbox.Pin(p)
 		if err != nil {
-			skipped = append(skipped, p)
+			skips.addErr(p, err)
 			continue
 		}
 		if !src.Info().IsDir() {
-			if file, ok := classifyForSearch(src); ok {
+			if file, reason := classifyForSearch(src); reason == "" {
 				files = append(files, file)
 			} else {
-				skipped = append(skipped, p)
+				skips.add(p, reason)
 			}
 			continue
 		}
@@ -745,39 +755,42 @@ func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDir
 		if walkErr != nil {
 			// The directory itself cannot be listed: report it rather
 			// than answer as if it were empty.
-			skipped = append(skipped, p)
+			skips.addErr(p, walkErr)
 			continue
 		}
 		for _, entry := range entries {
 			switch {
 			case entry.ReadErr != nil:
 				// A subdirectory that cannot be listed (permission
-				// denied) is passed over; the rest of the tree is
-				// still searched.
-				continue
+				// denied) is named with its reason; the rest of the tree
+				// is still searched.
+				skips.addErr(entry.Path, entry.ReadErr)
 			case entry.Refused != "":
-				skipped = append(skipped, entry.Path)
+				skips.add(entry.Path, entry.Refused)
 			default:
-				if file, ok := classifyForSearch(entry.File); ok {
+				if file, reason := classifyForSearch(entry.File); reason == "" {
 					files = append(files, file)
 				} else {
-					skipped = append(skipped, entry.Path)
+					skips.add(entry.Path, reason)
 				}
 			}
 		}
 	}
-	return files, scannedDirs, skipped
+	return files, scannedDirs, skips
 }
 
-// classifyForSearch decides what src is through its pin. ok is false
-// for a file that cannot be opened and for one whose text is not text:
-// the search skips both.
-func classifyForSearch(src sandbox.Pinned) (searchFile, bool) {
+// classifyForSearch decides what src is through its pin. reason is
+// empty for a file the search reads, and otherwise says why it is
+// skipped: the file cannot be opened, or its text is not text.
+func classifyForSearch(src sandbox.Pinned) (file searchFile, reason string) {
 	kind, err := filekind.OfPinned(src)
-	if err != nil || !kind.IsText() {
-		return searchFile{}, false
+	if err != nil {
+		return searchFile{}, skipReason(err)
 	}
-	return searchFile{src: src, kind: kind}, true
+	if !kind.IsText() {
+		return searchFile{}, kind.NotText
+	}
+	return searchFile{src: src, kind: kind}, ""
 }
 
 // patternIDsMap builds the "p1" -> "pattern" map. Single place so
@@ -920,7 +933,7 @@ func settleFiles(
 	outcomes []fileOutcome,
 	patternIDs map[string]string,
 	patternOrder []string,
-) ([]rxtypes.Match, map[string]*ScannedFile, []string, error) {
+) ([]rxtypes.Match, map[string]*ScannedFile, []rxtypes.SkippedFile, error) {
 	req := creditRequest{patternIDs: patternIDs, patternOrder: patternOrder, rgExtraArgs: opts.RgExtraArgs}
 	for _, o := range outcomes {
 		if o.scanned != nil {
@@ -934,7 +947,7 @@ func settleFiles(
 
 	var matches []rxtypes.Match
 	toCache := map[string]*ScannedFile{}
-	var lost []string
+	var lost []rxtypes.SkippedFile
 	next := 0 // index into credits, which lists the scanned files in order
 	for _, o := range outcomes {
 		fileMatches := o.matches
@@ -942,7 +955,7 @@ func settleFiles(
 			fc := credits[next]
 			next++
 			if fc.err != nil {
-				lost = append(lost, o.path)
+				lost = append(lost, rxtypes.SkippedFile{Path: o.path, Reason: skipReason(fc.err)})
 				continue
 			}
 			fileMatches = creditedMatches(o.scanned, fc.lines)
@@ -1243,22 +1256,6 @@ func emptyIfNilMatches(s []rxtypes.Match) []rxtypes.Match {
 		return []rxtypes.Match{}
 	}
 	return s
-}
-
-// dedupStrings preserves order and removes duplicates. Used on the
-// skipped-files list because some buckets may re-add the same file
-// when it fails multiple classification checks.
-func dedupStrings(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	return out
 }
 
 // scanToCache decides, before a file is scanned, whether the scan's

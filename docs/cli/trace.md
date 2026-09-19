@@ -207,8 +207,13 @@ each directory is searched once, under its own path when it is reached
 directly as well.
 See [Symlinks inside a directory search](../concepts/security.md#symlinks-inside-a-directory-search).
 
-A plain file whose first 8 KiB hold a NUL byte is binary: it is not
-searched and is listed in `skipped_files`. A NUL byte further on is one
+A file whose first 8 KiB of text hold a NUL byte is not text: it is not
+searched and is listed in `skipped_files`. The rule reads the
+decompressed text of a compressed file, so a `.tar.gz` and a compressed
+copy of a binary file are skipped like the plain file, and the format
+is told by the file's magic bytes, never its name (see
+[Compression](../concepts/compression.md#how-rx-decides-what-a-file-is)).
+A NUL byte further on is one
 more byte of its line, as in `rg --text`: the line keeps its number,
 its offset and its whole text, NUL included (`\u0000` in JSON).
 
@@ -217,8 +222,31 @@ A UTF-8 byte-order mark is three bytes of the file, as in
 it (U+FEFF, kept as its three bytes in JSON), as `rx samples` shows
 that line, and submatch positions on line 1 count its three bytes. A
 pattern anchored with `^` does not match a line that starts with the
-mark. rx does not transcode UTF-16: a plain UTF-16 file is binary and
-skipped, and a compressed copy is searched as its bytes.
+mark. rx does not transcode UTF-16: UTF-16 text writes a NUL beside
+every ASCII character, so a UTF-16 file, plain or compressed, is not
+text and is skipped (`samples` refuses it).
+
+### Skipped files and their reasons
+
+Every path the search passes over, or does not search in full, is
+listed in `skipped_files`, and `skip_reasons` (in `--json` and over
+HTTP) says why, one `{path, reason}` per path in the same order. The
+human output lists each under `Files skipped:`. The reasons:
+
+| Reason | Means |
+|---|---|
+| `not a text file: …` | the first 8 KiB of the text hold a NUL byte (`… UTF-16 text …` when the text starts with a UTF-16 byte-order mark) |
+| `permission denied` | a file, or a subdirectory of a directory being searched, the process may not read; the rest of the tree is still searched |
+| `symlink leads outside all search roots`, `cannot resolve symlink: …`, `symlink loop: …`, … | a link the walk does not follow (see above) |
+| `not searched in full: the compressed stream ends early; …` | a truncated gzip, bzip2, xz or zstd stream: the matches before its end are kept |
+| `not searched in full: the lines of a damaged frame are left out; …` | a seekable zstd file with a frame that does not decompress (the frame is named): the matches of every other line are kept |
+| `a matched line matches none of the patterns alone, …` | with several patterns, a matched line could not be credited to one of them |
+| `the path leads to another file than the one that was checked` | the file was replaced between the check and the read |
+
+A file listed with `not searched in full` can still have matches in
+the answer; every other skipped file has none. A file named on the
+command line that the process may not read fails the command instead
+of being skipped.
 
 A line that is not valid UTF-8 (a stray Latin-1 byte, a character cut
 short) is searched as its bytes. Human output prints those bytes, as

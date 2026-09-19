@@ -70,6 +70,17 @@ type Match struct {
 	SubmatchesTruncated bool       `json:"submatches_truncated" doc:"True when submatches may leave some of the line's submatches out: the line had more than RX_MAX_SUBMATCHES_PER_LINE, or line_text is cut and the list covers only the text it holds."`
 }
 
+// SkippedFile names a path a search passed over, or did not search in
+// full, and says why: for example "not a text file: a NUL byte in its
+// first 8 KiB", "permission denied", a symbolic link the walk refused,
+// or "not searched in full: …" for a compressed file whose matches up to
+// the damage are kept. It is the shape `rx index` gives its
+// skip_reasons too.
+type SkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
 // TraceResponse is the full response shape for GET /v1/trace.
 //
 // every schema-documented field must emit
@@ -91,6 +102,7 @@ type TraceResponse struct {
 	Matches       []Match                  `json:"matches" nullable:"false"`
 	ScannedFiles  []string                 `json:"scanned_files" nullable:"false"`
 	SkippedFiles  []string                 `json:"skipped_files" nullable:"false"`
+	SkipReasons   []SkippedFile            `json:"skip_reasons" nullable:"false" doc:"Why each path of skipped_files was passed over or not searched in full, one entry per path in the same order."`
 	MaxResults    *int                     `json:"max_results"`
 	FileChunks    map[string]int           `json:"file_chunks"`
 	ContextLines  map[string][]ContextLine `json:"context_lines"`
