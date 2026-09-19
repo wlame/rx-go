@@ -90,11 +90,18 @@ const (
 // errors.Is and build from scratch or answer without an index.
 var ErrIndexNotFound = errors.New("index not found in cache")
 
+// ErrIndexUnreadable is wrapped, beside ErrIndexNotFound, by the error
+// for an index file that exists but cannot be read or parsed. A caller
+// that only needs "is there a usable index" checks ErrIndexNotFound; one
+// that should replace a damaged file checks this one.
+var ErrIndexUnreadable = errors.New("index file cannot be read")
+
 // GetCachePath returns the cache path for the given source file.
 //
 // Scheme: <base>/indexes/<safe_basename>_<hash16>.json where
 //
-//	safe_basename = basename with non-[A-Za-z0-9._-] → '_'
+//	safe_basename = basename with non-[A-Za-z0-9._-] → '_', cut to
+//	                233 bytes so the whole name fits in 255
 //	hash16        = sha256(abs_path)[:16] in hex
 //
 // Uses filepath.Clean but NOT EvalSymlinks — Python hashes the abs
@@ -106,11 +113,15 @@ func GetCachePath(sourcePath string) string {
 	return filepath.Join(config.GetIndexCacheDir(), cacheFilename(abs))
 }
 
-// cacheFilename builds the "<safe>_<hash>.json" component.
+// cacheFilename builds the "<safe>_<hash>.json" component. The safe
+// base name is cut so the component is at most MaxCacheFileNameBytes
+// long: a longer name cannot be created, and every build of the file
+// would be thrown away. The hash is of the whole path, so two names
+// that differ only after the cut still get two files.
 func cacheFilename(absPath string) string {
 	sum := sha256.Sum256([]byte(absPath))
 	hash16 := hex.EncodeToString(sum[:8]) // 16 hex chars
-	safe := safeBasename(filepath.Base(absPath))
+	safe := TrimCacheNamePart(safeBasename(filepath.Base(absPath)), maxCacheNamePartBytes)
 	return fmt.Sprintf("%s_%s.json", safe, hash16)
 }
 
@@ -145,7 +156,7 @@ func safeBasename(name string) string {
 func Save(idx *rxtypes.UnifiedFileIndex) (string, error) {
 	cachePath := GetCachePath(idx.SourcePath)
 	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
-		return "", fmt.Errorf("mkdir: %w", err)
+		return "", fmt.Errorf("create the index cache directory %s: %w", filepath.Dir(cachePath), err)
 	}
 
 	// Marshal to JSON.
@@ -196,7 +207,8 @@ func Load(sourcePath string) (*rxtypes.UnifiedFileIndex, error) {
 // absent: they rebuild, or answer without an index, and never fail
 // because of it. An index only makes an answer faster.
 //
-// A missing file and one of another format version are ordinary misses.
+// A missing file (IsNoCacheEntry) and one of another format version are
+// ordinary misses.
 // A file that cannot be read (its permissions, an I/O error) or parsed
 // (cut short by a power loss or a full disk) is a miss too, but it also
 // logs one "index_unreadable" warning naming the file, the way the
@@ -205,7 +217,10 @@ func Load(sourcePath string) (*rxtypes.UnifiedFileIndex, error) {
 func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// No file can be at cachePath (none was written, or the cache
+		// directory is under a regular file): an ordinary miss, not a
+		// damaged index, so nothing is logged.
+		if IsNoCacheEntry(err) {
 			return nil, ErrIndexNotFound
 		}
 		return nil, unreadableIndex(cachePath, fmt.Errorf("read %s: %w", cachePath, err))
@@ -230,17 +245,20 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 // unreadableIndex logs the warning for an index file at cachePath that
 // exists but cannot be read or parsed, and returns cause wrapped so
 // that errors.Is(err, ErrIndexNotFound) holds: the caller treats the
-// file as absent. The returned error still carries cause's text.
+// file as absent. errors.Is(err, ErrIndexUnreadable) holds too, for a
+// caller that replaces the damaged file. The returned error still
+// carries cause's text.
 func unreadableIndex(cachePath string, cause error) error {
 	slog.Default().Warn("index_unreadable",
 		"path", cachePath,
 		"error", cause.Error(),
 	)
-	// fmt.Errorf with two %w verbs makes an error that matches both
-	// targets under errors.Is: ErrIndexNotFound for the caller's branch,
-	// and the original cause (fs.ErrPermission, a *json.SyntaxError …)
-	// for anyone who needs to tell the reasons apart.
-	return fmt.Errorf("%w: %w", ErrIndexNotFound, cause)
+	// fmt.Errorf with several %w verbs makes an error that matches each
+	// target under errors.Is: ErrIndexNotFound for the caller's branch,
+	// ErrIndexUnreadable for one that rebuilds, and the original cause
+	// (fs.ErrPermission, a *json.SyntaxError …) for anyone who needs to
+	// tell the reasons apart.
+	return fmt.Errorf("%w: %w: %w", ErrIndexNotFound, ErrIndexUnreadable, cause)
 }
 
 // IsValidForSource reports whether idx is a faithful description of

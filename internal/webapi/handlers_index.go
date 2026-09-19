@@ -242,6 +242,14 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 		}
 	}
 
+	// An index the cache cannot store is not worth building: the build
+	// reads the whole file and the save would then fail. The task
+	// fails now, naming the cause.
+	if err := index.CheckStorable(); err != nil {
+		mgr.Fail(taskID, fmt.Sprintf("cannot store the line index: %v", err))
+		return
+	}
+
 	// Fresh build. index.Build() opens/stats the file itself, so an
 	// open failure surfaces here.
 	mgr.ReportProgress(taskID, progress.Fraction)

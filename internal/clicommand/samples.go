@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -195,12 +196,20 @@ func runSamples(out io.Writer, p samplesParams) error {
 	//
 	// The CLI waits for the build however long it takes: a command has
 	// no client to hand a task to, and `rx serve` answers 202 only
-	// because an HTTP request should not hang for minutes. A failed
-	// build is silent: the index is an accelerator, the answer is the
-	// same without it, and refusing to read a file because its index
-	// could not be written would be the wrong trade.
-	if !p.noIndex && samples.NeedsIndexBuild(p.path, info.Size()) {
-		_, _, _ = samples.BuildIndex(p.path, nil)
+	// because an HTTP request should not hang for minutes.
+	//
+	// When the cache cannot store the index (a read-only cache, or
+	// RX_CACHE_DIR naming a regular file), nothing is built: a build
+	// would read the whole file for an index nobody keeps, on every
+	// call. ShouldBuildIndex logs the cause once and the lookup reads
+	// the file without an index. A build that fails anyway is logged
+	// and the lookup goes on: the index is an accelerator, the answer
+	// is the same without it, and refusing to read a file because its
+	// index could not be written would be the wrong trade.
+	if !p.noIndex && samples.ShouldBuildIndex(p.path, info.Size()) {
+		if _, _, buildErr := samples.BuildIndex(p.path, nil); buildErr != nil {
+			slog.Default().Warn("index_not_built", "path", p.path, "error", buildErr.Error())
+		}
 	}
 
 	// The loader hands the resolver the stored index for its

@@ -85,13 +85,28 @@ Unset it (`unset RX_SEARCH_ROOTS`) if you want an unsandboxed CLI run.
 
 ### Symptom
 
+`rx index` or a `POST /v1/index` task fails before it reads the file:
+
 ```text
-Error: mkdir /home/you/.cache/rx/indexes: permission denied
+Error: /var/log/app.log: cannot store the line index: write in the index cache directory /home/you/.cache/rx/indexes: open /home/you/.cache/rx/indexes/.tmp-probe-123: permission denied
 ```
+
+`rx samples`, `GET /v1/samples` and `rx trace` still answer, but log one
+warning per process and keep nothing:
+
+```text
+WARN index_not_stored dir=/home/you/.cache/rx/indexes error="cannot store the line index: ..."
+WARN trace_cache_write_failed path=/var/log/app.log error="SaveCache: mkdir ...: not a directory"
+```
+
+A lookup in a compressed file then reads the file up to the line asked
+for on every call, which is slow for a line near the end.
 
 ### Cause
 
-The cache directory isn't writable by the running user.
+The cache directory isn't writable by the running user, or
+`RX_CACHE_DIR` names a regular file rather than a directory (the
+message then ends in `not a directory`).
 
 ### Fix
 
