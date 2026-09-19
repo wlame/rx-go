@@ -236,8 +236,8 @@ func TestBuild_EmptyFile(t *testing.T) {
 	if idx.LineCount == nil || *idx.LineCount != 0 {
 		t.Errorf("LineCount: got %v, want 0", idx.LineCount)
 	}
-	if len(idx.LineIndex) != 1 {
-		t.Errorf("LineIndex: expected just the initial [1,0], got %d entries", len(idx.LineIndex))
+	if len(idx.LineIndex) != 0 {
+		t.Errorf("LineIndex: an empty file has no line to name, got %d entries", len(idx.LineIndex))
 	}
 	if idx.LineLengthAvg == nil || *idx.LineLengthAvg != 0 {
 		t.Errorf("LineLengthAvg: got %v, want 0", idx.LineLengthAvg)

@@ -136,12 +136,17 @@ func BuildAndCopyText(r io.ReaderAt, size int64, text io.Writer) (*Result, error
 			LineCount:          linesEnded,
 		})
 		// The frame's checkpoint names the line holding its first byte,
-		// which is not always where that line starts.
-		result.LineIndex = append(result.LineIndex, rxtypes.LineIndexEntry{
-			LineNumber: firstLine,
-			ByteOffset: frame.DecompressedOffset,
-			FrameIndex: &frameIndex,
-		})
+		// which is not always where that line starts. A frame of no
+		// text has no first byte: its offset is the next frame's start
+		// (which has its own checkpoint) or the end of the text, where
+		// no line is, so it gets no checkpoint.
+		if frame.DecompressedSize > 0 {
+			result.LineIndex = append(result.LineIndex, rxtypes.LineIndexEntry{
+				LineNumber: firstLine,
+				ByteOffset: frame.DecompressedOffset,
+				FrameIndex: &frameIndex,
+			})
+		}
 
 		if linesEnded > CheckpointLineInterval {
 			result.LineIndex = append(result.LineIndex,
@@ -174,6 +179,13 @@ func linesEndedInFrame(lineBreaks int64, isLastFrame, textEndsAtLineStart bool) 
 //
 // The offsets are positions in the decompressed stream, which is what
 // every other line index in rx addresses.
+//
+// INVARIANT: a checkpoint names a line that starts inside this frame.
+// When the frame ends with a newline, bytes.Split yields one more,
+// empty element that starts at the frame's end; that position is the
+// next frame's start (which has its own checkpoint) or, in the last
+// frame, the end of the text, where no line starts. It never gets a
+// checkpoint.
 func interiorCheckpoints(
 	data []byte,
 	frame seekable.FrameInfo,
@@ -185,6 +197,9 @@ func interiorCheckpoints(
 	frameIndex := frame.Index
 
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		if byteOffset >= int64(len(data)) {
+			break
+		}
 		if lineNumber > firstLine && (lineNumber-firstLine)%CheckpointLineInterval == 0 {
 			out = append(out, rxtypes.LineIndexEntry{
 				LineNumber: lineNumber,

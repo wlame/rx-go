@@ -445,6 +445,16 @@ type walkStats struct {
 //  1. First line is always at offset 0 (checkpoint [1, 0]).
 //  2. Track a running byte offset; each time it crosses the next
 //     `step_bytes` boundary, emit a checkpoint at the NEXT line start.
+//
+// INVARIANT: every checkpoint names a line the text has, at the byte
+// where that line starts. A checkpoint is therefore written only when
+// the line it names is read: the crossing in step 2 marks one as due,
+// and the next line read takes it. When the crossing line is the last
+// one, no line follows and nothing is written; an empty text has no
+// line 1 and gets no checkpoint at all. rx-python writes a checkpoint
+// one line past the end in both cases; readers treat a missing
+// checkpoint as "start at byte 0", so both kinds of index give the same
+// answers.
 //  3. For --analyze: collect lengths of non-empty lines (stripped of
 //     trailing CR/LF) and track the longest line + its position.
 //
@@ -459,8 +469,9 @@ type walkStats struct {
 // populated from the finalized line-stats snapshot).
 func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats, error) {
 	stats := &walkStats{
-		// Initial checkpoint: first line is always at offset 0.
-		LineIndex:  []rxtypes.LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
+		// Non-nil, so an index without checkpoints (an empty file)
+		// serializes as [] rather than null.
+		LineIndex:  []rxtypes.LineIndexEntry{},
 		LineEnding: "LF",
 	}
 
@@ -483,6 +494,10 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 		nextCheckpoint   = step
 		lineEndingSample = make([]byte, 0, 65536)
 		sampleComplete   bool
+		// checkpointDue is set when the next line read starts a
+		// checkpoint. It starts true: the first line, if there is one,
+		// is the checkpoint [1, 0].
+		checkpointDue = true
 	)
 
 	for {
@@ -520,6 +535,16 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 
 		currentLine++
 		lineLenBytes := int64(len(line))
+
+		// This line exists and starts at currentOffset, so a
+		// checkpoint marked due is written now, naming it.
+		if checkpointDue {
+			stats.LineIndex = append(stats.LineIndex, rxtypes.LineIndexEntry{
+				LineNumber: currentLine,
+				ByteOffset: currentOffset,
+			})
+			checkpointDue = false
+		}
 
 		// Append to line-ending sample until we've collected 64 KB.
 		//
@@ -575,18 +600,13 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 
 		currentOffset += lineLenBytes
 
-		// Checkpoint check: once we've crossed `next_checkpoint`, emit
-		// a record at the START of the next line.
-		//
-		// Note the off-by-one: currentOffset is now the offset AFTER
-		// the newline we just consumed, which IS the start of the
-		// next line. `current_line + 1` is the number we'd assign
-		// to the next iteration's line.
+		// Checkpoint check: once we've crossed `next_checkpoint`, the
+		// START of the next line gets a checkpoint. currentOffset is
+		// now the offset after the newline just consumed, which is
+		// where that line starts if there is one; the next iteration
+		// writes the checkpoint when it reads the line.
 		if currentOffset >= nextCheckpoint {
-			stats.LineIndex = append(stats.LineIndex, rxtypes.LineIndexEntry{
-				LineNumber: currentLine + 1,
-				ByteOffset: currentOffset,
-			})
+			checkpointDue = true
 			nextCheckpoint = currentOffset + step
 		}
 	}
