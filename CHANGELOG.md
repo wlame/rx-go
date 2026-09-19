@@ -129,6 +129,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A seekable zstd file of no text, which `rx compress` writes for an
+  empty log, is indexed as a file of no lines (`line_count` 0, no
+  frames, no checkpoints). `rx index` used to fail on it with "empty
+  seek table" and exit 1, so `rx index -r` failed a directory of
+  rotated logs that held one, and `rx compress` reported an
+  `index_error` for its own output.
+
 - A pattern PCRE2 cannot compile (`rx trace -P -e '('`, or `pcre2=true`
   over HTTP) is now a usage error: exit 2, or a `400`, with PCRE2's
   reason, as for a pattern the default engine cannot compile. It used to
