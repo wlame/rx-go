@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx compress` and `POST /v1/compress` write the seek-table footer in
+  the layout of the zstd seekable format specification: frame count,
+  descriptor (0, no checksums), magic `0x8F92EAB1`, so the last four
+  bytes of the file are `b1 ea 92 8f`. Tools that follow the
+  specification can now seek in rx's files. rx still reads files in
+  the old layout (magic, frame count, flags) as seekable, with their
+  stored indexes; rx-python reads only the old layout, so it reads new
+  files as plain zstd. A seekable file from another tool that follows
+  the specification is now refused by `rx compress` as already
+  seekable unless `--force` (`"force": true` over HTTP) is given, as
+  rx's own files are.
+
 - Trace-cache entries are written as compact JSON instead of indented
   JSON. With the submatch spans each record now stores, an entry is
   still about 12% smaller than before them: on a 465 MB log, `WARN`

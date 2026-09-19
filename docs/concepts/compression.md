@@ -116,7 +116,10 @@ rx compress /var/log/audit-2026-03.log --frame-size=4M
 
 - Reads the source in 4 MiB chunks (decompressed size)
 - Encodes each chunk as an independent zstd frame
-- Appends the seek table as a skippable frame
+- Appends the seek table as a skippable frame, its footer in the
+  layout of the zstd seekable format specification (frame count,
+  descriptor, magic; no checksums), so tools that follow the
+  specification can seek in it too
 
 The resulting `.zst` file is:
 

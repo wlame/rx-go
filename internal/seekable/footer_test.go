@@ -2,11 +2,14 @@ package seekable_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
@@ -158,5 +161,105 @@ func TestReadSeekTable_RefusesAFooterWhoseTableDoesNotDescribeTheFile(t *testing
 				t.Error("IsSeekableFile = true for a table that does not describe the file")
 			}
 		})
+	}
+}
+
+// specSeekTable is a seek table as the zstd seekable format
+// specification describes it, read by parseSpecSeekTable.
+type specSeekTable struct {
+	frameSizes [][2]uint32 // compressed, decompressed
+	tableStart int
+}
+
+// parseSpecSeekTable reads the seek table at the end of file the way a
+// reader written from the specification alone does, sharing no code with
+// the seekable package: the last 9 bytes are Number_Of_Frames (u32),
+// Seek_Table_Descriptor (u8) and Seekable_Magic_Number 0x8F92EAB1 (u32);
+// before them, one entry per frame (8 bytes, or 12 with Checksum_Flag,
+// bit 7); before those, a skippable frame header (magic 0x184D2A5E, then
+// the length of the rest of the file).
+func parseSpecSeekTable(file []byte) (specSeekTable, error) {
+	const footerLen, headerLen = 9, 8
+	if len(file) < footerLen+headerLen {
+		return specSeekTable{}, errors.New("shorter than a seek table")
+	}
+	footer := file[len(file)-footerLen:]
+	if magic := binary.LittleEndian.Uint32(footer[5:9]); magic != 0x8F92EAB1 {
+		return specSeekTable{}, fmt.Errorf("Seekable_Magic_Number is %#x", magic)
+	}
+	descriptor := footer[4]
+	if descriptor&0x7C != 0 {
+		return specSeekTable{}, fmt.Errorf("reserved descriptor bits set: %#x", descriptor)
+	}
+	entryLen := 8
+	if descriptor&0x80 != 0 {
+		entryLen = 12
+	}
+	frames := int(binary.LittleEndian.Uint32(footer[0:4]))
+	tableStart := len(file) - footerLen - frames*entryLen - headerLen
+	if tableStart < 0 {
+		return specSeekTable{}, fmt.Errorf("%d entries do not fit", frames)
+	}
+	if magic := binary.LittleEndian.Uint32(file[tableStart:]); magic != 0x184D2A5E {
+		return specSeekTable{}, fmt.Errorf("skippable frame magic is %#x", magic)
+	}
+	if length := int(binary.LittleEndian.Uint32(file[tableStart+4:])); length != len(file)-tableStart-headerLen {
+		return specSeekTable{}, fmt.Errorf("skippable frame length %d, %d bytes follow", length, len(file)-tableStart-headerLen)
+	}
+	table := specSeekTable{tableStart: tableStart}
+	for i := range frames {
+		entry := file[tableStart+headerLen+i*entryLen:]
+		table.frameSizes = append(table.frameSizes,
+			[2]uint32{binary.LittleEndian.Uint32(entry[0:4]), binary.LittleEndian.Uint32(entry[4:8])})
+	}
+	return table, nil
+}
+
+// rx's encoder, which `rx compress` and `POST /v1/compress` write
+// through, ends its seek table with the specification's footer: frame
+// count, a zero descriptor, then the magic. A reader written from the
+// specification finds the frames there, and each decompresses on its
+// own to its part of the text.
+func TestEncoder_WritesTheFooterLayoutOfTheSpecification(t *testing.T) {
+	t.Parallel()
+	text, _ := footerTestText()
+	var out bytes.Buffer
+	enc := seekable.NewEncoder(seekable.EncoderConfig{FrameSize: 16 << 10, Workers: 1})
+	if _, err := enc.EncodeStream(context.Background(), bytes.NewReader(text), &out); err != nil {
+		t.Fatalf("EncodeStream: %v", err)
+	}
+	file := out.Bytes()
+
+	table, err := parseSpecSeekTable(file)
+	if err != nil {
+		t.Fatalf("spec reader: %v; last 9 bytes % x", err, file[len(file)-9:])
+	}
+	if len(table.frameSizes) < 4 {
+		t.Fatalf("spec reader found %d frames, want at least 4", len(table.frameSizes))
+	}
+	if descriptor := file[len(file)-5]; descriptor != 0 {
+		t.Errorf("descriptor = %#x, want 0 (no checksums)", descriptor)
+	}
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("zstd decoder: %v", err)
+	}
+	defer decoder.Close()
+	var at int
+	var got []byte
+	for i, sizes := range table.frameSizes {
+		frame := file[at : at+int(sizes[0])]
+		piece, err := decoder.DecodeAll(frame, nil)
+		if err != nil || len(piece) != int(sizes[1]) {
+			t.Fatalf("frame %d: %d bytes, %v; the table says %d", i, len(piece), err, sizes[1])
+		}
+		got = append(got, piece...)
+		at += int(sizes[0])
+	}
+	if at != table.tableStart {
+		t.Errorf("the frames end at byte %d, the table starts at %d", at, table.tableStart)
+	}
+	if !bytes.Equal(got, text) {
+		t.Errorf("the frames hold %d bytes, want the %d of the text", len(got), len(text))
 	}
 }

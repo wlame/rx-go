@@ -298,7 +298,10 @@ func parseFrameHeader(header []byte) (contentSize uint64, hasContentSize, ok boo
 }
 
 // WriteSeekTable writes the skippable frame (header + entries + footer)
-// to w in the exact byte order a Python reader expects.
+// to w, with the footer in the zstd seekable format specification's
+// layout, so other tools that follow the specification can seek in the
+// file. rx-python reads only the legacy rx layout and takes such a file
+// for plain zstd.
 //
 // Fails if any frame is larger than MaxUint32 in either dimension —
 // the on-disk format uses u32 for these fields and we refuse silent
@@ -327,12 +330,14 @@ func WriteSeekTable(w io.Writer, frames []FrameInfo) error {
 		entries = append(entries, dSize...)
 	}
 
-	// Footer: magic (4) + num_frames (4) + flags (1). flags=0 → no checksums.
+	// Footer, in the zstd seekable format specification's layout:
+	// num_frames (4), descriptor (1), magic (4). A zero descriptor says
+	// the entries carry no checksums.
 	footer := make([]byte, FooterSize)
-	binary.LittleEndian.PutUint32(footer[0:4], FooterMagic)
 	// #nosec G115 -- len(frames) bound-checked above.
-	binary.LittleEndian.PutUint32(footer[4:8], uint32(len(frames)))
-	footer[8] = 0
+	binary.LittleEndian.PutUint32(footer[0:4], uint32(len(frames)))
+	footer[4] = 0
+	binary.LittleEndian.PutUint32(footer[5:9], FooterMagic)
 
 	// Skippable frame wraps entries+footer. Its header is
 	// (magic:u32) + (frame_size:u32), where frame_size = entries+footer length.

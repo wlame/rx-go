@@ -315,7 +315,7 @@ func TestTraceReadsAZstWhoseSeekTableDoesNotDescribeItAsPlainZstd(t *testing.T) 
 	first, second := numberedLog(2000, 37), numberedLog(2500, 41)
 	text := append(bytes.Clone(first), second...)
 	valid := encodeSeekableBytes(t, text, 8<<10)
-	frames := int(binary.LittleEndian.Uint32(valid[len(valid)-5:]))
+	frames := int(binary.LittleEndian.Uint32(valid[len(valid)-seekable.FooterSize:])) // the frame count opens the footer
 	entry := len(valid) - seekable.FooterSize - frames*seekable.EntrySize
 
 	files := map[string][]byte{
