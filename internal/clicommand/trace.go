@@ -300,12 +300,16 @@ func runTrace(out io.Writer, p traceParams) error {
 		if info.IsDir() {
 			continue
 		}
-		handle, openErr := os.Open(f)
+		// Opened through a pin, as every read of a searched file is. A
+		// file the process may not read fails as it does in every
+		// command: "permission denied: <path>", exit code 4.
+		src, pinErr := paths.Pin(f)
+		if pinErr != nil {
+			return openFailure(f, pinErr)
+		}
+		handle, openErr := src.Open()
 		if openErr != nil {
-			if os.IsPermission(openErr) {
-				return exitWithError(os.Stderr, ExitAccessDenied, "permission denied: %s", f)
-			}
-			return exitWithError(os.Stderr, ExitGenericError, "%s: %s", f, openErr.Error())
+			return openFailure(f, openErr)
 		}
 		_ = handle.Close()
 	}

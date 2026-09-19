@@ -274,7 +274,7 @@ the match's offset.
 |---:|---|
 | `200 OK` | Search completed (zero or more matches) |
 | `400 Bad Request` | `max_results` missing when `hook_on_match` is set; invalid hook URL; bad regex |
-| `403 Forbidden` | Path outside `--search-root` |
+| `403 Forbidden` | Path outside `--search-root`; a file the request names that the server may not read (`Permission denied: <path>`, as the CLI exits 4). A file a directory search meets and may not read is listed in `skipped_files` instead |
 | `404 Not Found` | A requested path doesn't exist |
 | `422 Unprocessable Entity` | Missing required `path` or `regexp` param; a parameter of the wrong type; a context count above 100 or below its minimum |
 | `500 Internal Server Error` | Engine failure; logged with stack |

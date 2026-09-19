@@ -209,14 +209,15 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		// lines, so it is refused rather than answered with its bytes.
 		source, err := paths.Pin(validated)
 		if err != nil {
-			return nil, ErrForbidden(err.Error())
+			return nil, ErrFileAccess(validated, err)
 		}
 		kind, err := samples.Classify(samples.Request{Source: source})
 		if errors.Is(err, filekind.ErrNotText) {
 			return nil, ErrBadRequest(fmt.Sprintf("%s: %s", err.Error(), validated))
 		}
 		if err != nil {
-			return nil, ErrInternal(err.Error())
+			// A file the server may not read is a 403 on every route.
+			return nil, ErrFileAccess(validated, err)
 		}
 
 		noIndex := config.GetBoolEnv("RX_NO_INDEX", false)

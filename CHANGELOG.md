@@ -47,6 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A file the user names and the process may not read fails every command
+  alike: `permission denied: <path>` and exit code 4 from `rx trace`,
+  `rx samples` and `rx index` (which used to exit 1 and 0, `rx index`
+  skipping it as "not a text file"), and `403 Permission denied: <path>`
+  from `GET /v1/trace`, `GET /v1/samples` and `POST /v1/index` (which
+  used to answer 200 with the file skipped, 500, and 400). A file or a
+  subdirectory a directory walk meets and may not read is skipped with
+  the reason `permission denied` by `rx trace` and `rx index -r` alike,
+  and the rest of the tree is searched or indexed: `rx index -r` used to
+  fail the whole directory over one unreadable subdirectory. The closing
+  line of a run whose failures all exited 4 now reads "one or more
+  files were outside the search roots or could not be read".
+
 - Every command and every HTTP route decides what a file is by one rule,
   from the file's own bytes read through its pin: the magic bytes name
   the format and the extension is never consulted (a text file named
