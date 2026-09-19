@@ -58,7 +58,9 @@ func NewCompressCommand(out io.Writer) *cobra.Command {
 		Short: "Compress file(s) to seekable zstd format",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCompress(out, compressParams{
+			// cmd.Context() is the context main gave ExecuteContext: it
+			// ends on SIGINT or SIGTERM, which stops the encoding.
+			return runCompress(cmd.Context(), out, compressParams{
 				paths:      args,
 				output:     output,
 				outputDir:  outputDir,
@@ -112,7 +114,7 @@ type compressResult struct {
 // fast on flag errors, otherwise streams each input file through the
 // encoder. With --json, every per-file outcome is collected into the
 // `files` array (Python-parity wrapper for S4).
-func runCompress(out io.Writer, p compressParams) error {
+func runCompress(ctx context.Context, out io.Writer, p compressParams) error {
 	// --output and --output-dir are mutually exclusive (Python parity —
 	// rx-python/src/rx/cli/compress.py raises a click UsageError).
 	if p.output != "" && p.outputDir != "" {
@@ -124,6 +126,15 @@ func runCompress(out io.Writer, p compressParams) error {
 	if p.output != "" && len(p.paths) > 1 {
 		return exitWithError(os.Stderr, ExitUsageError,
 			"--output can only be used with a single input file")
+	}
+
+	// Two inputs that write one output (app.log and app.log.gz both
+	// default to app.log.zst, or one input named twice) are refused
+	// before anything is written, --output-dir included: with --force
+	// the second would replace the first one's output without a word,
+	// and without it the second would fail after the first succeeded.
+	if err := refuseSharedOutputs(p); err != nil {
+		return err
 	}
 
 	// Auto-create --output-dir (Python's os.makedirs(exist_ok=True)).
@@ -166,7 +177,12 @@ func runCompress(out io.Writer, p compressParams) error {
 	var failureCodes []int
 
 	for _, inputPath := range p.paths {
-		entry, failureCode := compressOneFile(inputPath, p, frameBytes, workers)
+		// An interrupt (ctx ended) stops the run before the next file;
+		// main then exits 5 whatever this function returns.
+		if ctx.Err() != nil {
+			break
+		}
+		entry, failureCode := compressOneFile(ctx, inputPath, p, frameBytes, workers)
 		result.Files = append(result.Files, entry)
 		if ok, _ := entry["success"].(bool); !ok {
 			failureCodes = append(failureCodes, failureCode)
@@ -198,7 +214,7 @@ func runCompress(out io.Writer, p compressParams) error {
 // on its own (4 for a path the sandbox refuses, 3 for a missing input),
 // which the caller combines across paths; it is ExitSuccess when the
 // entry succeeded.
-func compressOneFile(inputPath string, p compressParams, frameBytes int64, workers int) (map[string]any, int) {
+func compressOneFile(ctx context.Context, inputPath string, p compressParams, frameBytes int64, workers int) (map[string]any, int) {
 	entry := map[string]any{
 		"input":             inputPath,
 		"action":            "compress",
@@ -225,22 +241,7 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 		return entry, ExitGenericError
 	}
 
-	// Resolve output path. Precedence (Python parity):
-	//   --output        → exact path given
-	//   --output-dir    → {dir}/{default name}
-	//   neither         → {sourceDir}/{default name}
-	//
-	// The default name is the input's base name with a compression
-	// suffix replaced by .zst (app.log.gz → app.log.zst), the rule
-	// POST /v1/compress uses too (compressfile.DefaultOutputName).
-	outputPath := p.output
-	if outputPath == "" {
-		dir := p.outputDir
-		if dir == "" {
-			dir = filepath.Dir(inputPath)
-		}
-		outputPath = filepath.Join(dir, compressfile.DefaultOutputName(inputPath))
-	}
+	outputPath := outputPathFor(inputPath, p)
 	// SECURITY: the output path is a write target, so it goes through the
 	// same sandbox as the input. The validated form is what gets created.
 	validatedOutput, err := sandboxCheck(outputPath)
@@ -271,7 +272,7 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	// Decompress and encode through the path POST /v1/compress uses: a
 	// gzip, bzip2, xz or zstd input is written as its text, so the
 	// output traces like the decompressed file.
-	result, err := compressfile.Compress(context.Background(), compressfile.Options{
+	result, err := compressfile.Compress(ctx, compressfile.Options{
 		InputPath:        inputPath,
 		OutputPath:       outputPath,
 		FrameSize:        int(frameBytes),
@@ -316,6 +317,54 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 	}
 
 	return entry, ExitSuccess
+}
+
+// outputPathFor is the output path inputPath is compressed to, before
+// the sandbox check. Precedence (Python parity):
+//
+//	--output        → exact path given
+//	--output-dir    → {dir}/{default name}
+//	neither         → {sourceDir}/{default name}
+//
+// The default name is the input's base name with a compression suffix
+// replaced by .zst (app.log.gz → app.log.zst), the rule POST
+// /v1/compress uses too (compressfile.DefaultOutputName).
+func outputPathFor(inputPath string, p compressParams) string {
+	if p.output != "" {
+		return p.output
+	}
+	dir := p.outputDir
+	if dir == "" {
+		dir = filepath.Dir(inputPath)
+	}
+	return filepath.Join(dir, compressfile.DefaultOutputName(inputPath))
+}
+
+// refuseSharedOutputs returns a usage error, already printed, when two
+// of p.paths would be compressed to one output path, and nil when each
+// has its own. Outputs are compared in their absolute form, so
+// "app.log" and "./app.log.gz" are seen to share "app.log.zst"; two
+// spellings that differ in a symbolic link are not, and for those the
+// output name's own rule applies (without --force the second fails,
+// with it the last one stays). The work is one map entry per input.
+func refuseSharedOutputs(p compressParams) error {
+	// writers maps each output, in absolute form, to the first input
+	// that writes it.
+	writers := make(map[string]string, len(p.paths))
+	for _, inputPath := range p.paths {
+		output := outputPathFor(inputPath, p)
+		key := output
+		if abs, err := filepath.Abs(output); err == nil {
+			key = abs
+		}
+		if first, taken := writers[key]; taken {
+			return exitWithError(os.Stderr, ExitUsageError,
+				"%s and %s would both be compressed to %s; compress them in separate commands and name another output with --output",
+				first, inputPath, output)
+		}
+		writers[key] = inputPath
+	}
+	return nil
 }
 
 // compressRefusalHints names, for a compressfile refusal, the flag that

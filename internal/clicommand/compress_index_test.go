@@ -2,6 +2,7 @@ package clicommand
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,7 +38,7 @@ func runCompressJSON(t *testing.T, p compressParams) map[string]any {
 	t.Helper()
 	var buf bytes.Buffer
 	p.jsonOutput = true
-	if err := runCompress(&buf, p); err != nil {
+	if err := runCompress(context.Background(), &buf, p); err != nil {
 		t.Fatalf("runCompress: %v (%s)", err, buf.String())
 	}
 	var decoded compressResult
