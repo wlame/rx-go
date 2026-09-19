@@ -147,10 +147,13 @@ func capitalizeFirst(msg string) string {
 
 // exitCodeForPathError is the exit code a failure to stat or open a path
 // the user named produces when that failure is the only one: 3 for a
-// path that does not exist, 4 for one the process may not read, and 1
-// for anything else.
+// path that does not exist, 4 for one the process may not read, 2 for
+// one that is not a regular file (a named pipe, a socket, a device),
+// which no command takes, and 1 for anything else.
 func exitCodeForPathError(err error) int {
 	switch {
+	case errors.Is(err, paths.ErrNotRegularFile):
+		return ExitUsageError
 	case errors.Is(err, fs.ErrNotExist):
 		return ExitFileNotFound
 	case errors.Is(err, fs.ErrPermission):
@@ -161,12 +164,16 @@ func exitCodeForPathError(err error) int {
 }
 
 // accessFailureText is how a command words a failure to open or read a
-// file: "permission denied" for a file the process may not read, the
-// words every command prints for it, and the error's own text
+// file: "permission denied" for a file the process may not read and
+// "not a regular file" for a named pipe, a socket or a device, the
+// words every command prints for them, and the error's own text
 // otherwise.
 func accessFailureText(err error) string {
-	if errors.Is(err, fs.ErrPermission) {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
 		return paths.ReasonPermissionDenied
+	case errors.Is(err, paths.ErrNotRegularFile):
+		return paths.ReasonNotRegularFile
 	}
 	return err.Error()
 }

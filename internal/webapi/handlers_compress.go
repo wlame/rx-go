@@ -217,6 +217,7 @@ var compressRefusalHints = []struct {
 // is a failure to reach the input.
 var compressCheckRefusals = []error{
 	compressfile.ErrNotText,
+	paths.ErrNotRegularFile,
 	compressfile.ErrAlreadySeekable,
 	compressfile.ErrOutputIsInput,
 }

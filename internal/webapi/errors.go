@@ -117,13 +117,17 @@ func ErrForbidden(detail string) huma.StatusError {
 // ErrFileAccess is the answer to a file the request names and the
 // server cannot open: 403 "Permission denied: <path>" for one the
 // process may not read, the words and the meaning of the CLI's exit
-// code 4 on every route, 404 for one that no longer exists, and 403
+// code 4 on every route, 400 "Not a regular file: <path>" for a named
+// pipe, a socket or a device (the CLI's exit code 2), 404 for one that
+// no longer exists, and 403
 // with the error's text for anything else (the path leads to another
 // file than the one checked, a stat that fails).
 func ErrFileAccess(path string, err error) huma.StatusError {
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		return ErrForbidden("Permission denied: " + path)
+	case errors.Is(err, paths.ErrNotRegularFile):
+		return ErrBadRequest("Not a regular file: " + path)
 	case errors.Is(err, fs.ErrNotExist):
 		return ErrNotFound("File not found: " + path)
 	default:

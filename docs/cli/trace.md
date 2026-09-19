@@ -238,6 +238,7 @@ human output lists each under `Files skipped:`. The reasons:
 | `not a text file: …` | the first 8 KiB of the text hold a NUL byte (`… UTF-16 text …` when the text starts with a UTF-16 byte-order mark) |
 | `permission denied` | a file, or a subdirectory of a directory being searched, the process may not read; the rest of the tree is still searched |
 | `symlink leads outside all search roots`, `symlink leads into a hidden entry; …`, `cannot resolve symlink: …`, `symlink loop: …`, … | a link the walk does not follow (see above) |
+| `not a regular file` | a named pipe, a socket or a device, which rx never opens |
 | `cannot be read`, `no such file or directory` | any other failure to reach the file; the server's log has the error |
 | `not searched in full: the compressed stream ends early; …` | a truncated gzip, bzip2, xz or zstd stream: the matches before its end are kept |
 | `not searched in full: the lines of damaged frames are left out; … (frames 2, 7)` | a seekable zstd file with frames that do not decompress: the matches of every other line are kept |

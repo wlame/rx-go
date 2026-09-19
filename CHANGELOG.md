@@ -513,6 +513,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A named pipe, a socket or a device is never opened. A request or a
+  command that named a named pipe waited for a writer for ever (the
+  readability check of `GET /v1/trace`, `GET /v1/samples`,
+  `POST /v1/index`, `rx compress`, and the text check of a directory
+  walk all opened it); now a named one is refused at once with
+  `not a regular file` (exit code 2, HTTP `400 Not a regular file:
+  <path>`), and a walk skips one with that reason. Files are opened with
+  `O_NONBLOCK`, so a file swapped for a named pipe after its check is
+  refused as changed instead of waited on.
+
 - A skip reason never reveals what the sandbox keeps out of reach: a
   link the walk refuses or cannot resolve is reported with fixed wording
   (`symlink leads into a hidden entry; …` no longer names the entry,

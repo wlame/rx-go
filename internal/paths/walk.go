@@ -184,6 +184,12 @@ func listEntry(r *os.Root, dir Pinned, name string) ListedEntry {
 		return entry
 	}
 	if info.Mode()&fs.ModeSymlink == 0 {
+		if !isRegularOrDir(info) {
+			// A named pipe, a socket or a device: never opened, so a
+			// pipe cannot hold the walk's reader waiting for a writer.
+			entry.Refused = ReasonNotRegularFile
+			return entry
+		}
 		entry.Target = Pinned{path: entry.Path, canonical: filepath.Join(dir.canonical, name), info: info}
 		return entry
 	}
@@ -205,6 +211,11 @@ func listEntry(r *os.Root, dir Pinned, name string) ListedEntry {
 		if info, statErr := os.Stat(canonical); statErr == nil {
 			entry.refusedDir = info.IsDir()
 		}
+		return entry
+	}
+	if !isRegularOrDir(target.info) {
+		// A link to a named pipe, a socket or a device.
+		entry.Refused = ReasonNotRegularFile
 		return entry
 	}
 	entry.Target = target
