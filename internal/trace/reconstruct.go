@@ -333,20 +333,19 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 	if !req.UseIndex {
 		return src, nil
 	}
-	// Start one checkpoint earlier than the one holding the first
-	// match, so the lines before it are available as leading context.
+	// Start at a checkpoint far enough before the first match that its
+	// leading context is inside the pass. On a log of long lines that
+	// can be several checkpoints back, since one checkpoint gap holds
+	// fewer lines than the context asks for.
 	idx, idxErr := index.LoadForPinned(req.Source)
-	if idxErr != nil || idx == nil || len(idx.LineIndex) == 0 {
+	if idxErr != nil || idx == nil {
 		return src, nil
 	}
-	pick := index.CheckpointIndexForOffset(idx, firstOffset)
-	if pick > 0 {
-		pick--
-	}
-	if pick < 0 {
+	entry := index.CheckpointForContext(idx, firstOffset, req.ContextBefore)
+	if entry.LineNumber == 0 {
+		// No checkpoint leaves room for the context: read from byte 0.
 		return src, nil
 	}
-	entry := idx.LineIndex[pick]
 	if _, sErr := f.Seek(entry.ByteOffset, io.SeekStart); sErr != nil {
 		return src, nil //nolint:nilerr // a failed seek only costs a longer scan
 	}
