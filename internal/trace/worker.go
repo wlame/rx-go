@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -565,9 +566,9 @@ type chunkOutcome struct {
 //  1. The caller's context ended (a max_results cap, or the request
 //     ended): the context's error, whatever rg's exit says, because rg
 //     was killed on purpose. ProcessAllChunks swallows context.Canceled.
-//  2. rg failed on its own (exit 2 and up): a pattern it cannot compile
-//     dooms the whole request and gets its own error; any other is
-//     "rg exit N".
+//  2. rg failed on its own (exit 2 and up): ripgrepExitError tells a
+//     pattern rg refused, which dooms the whole request, from any other
+//     failure, which is "rg exit N".
 //  3. A goroutine failed (rg's output could not be parsed, or the input
 //     could not be read): its error. stopOnFailure killed rg because
 //     of it, so rg's "killed" exit is a consequence, not the cause.
@@ -582,10 +583,7 @@ func classifyChunkOutcome(ctx context.Context, out chunkOutcome) error {
 	isExitStatus := errors.As(out.waitErr, &exitErr)
 	// ExitCode is -1 when a signal ended rg; that is not rg's own failure.
 	if isExitStatus && exitErr.ExitCode() > 1 {
-		if isRegexParseError(out.stderr) {
-			return invalidPatternError(out.stderr, out.patternIDs, out.order)
-		}
-		return fmt.Errorf("rg exit %d: %s", exitErr.ExitCode(), out.stderr)
+		return ripgrepExitError(exitErr.ExitCode(), out.stderr, out.patternIDs, out.order)
 	}
 	if out.groupErr != nil && !errors.Is(out.groupErr, context.Canceled) {
 		return out.groupErr
@@ -837,26 +835,92 @@ func newRgArgs() []string {
 	return []string{"--no-config", "--json", "--no-heading", "--color=never", "--text", "--encoding=none"}
 }
 
-// ErrInvalidPattern reports a pattern ripgrep refused to compile. It is
+// ErrInvalidPattern reports a pattern ripgrep refused to compile, or a
+// matching flag this ripgrep does not support (-P without PCRE2). It is
 // fatal for the whole request: no file can be searched with a pattern
-// that does not parse, so callers must surface it (CLI exit 2, HTTP 400)
-// rather than record the file as skipped.
+// that does not compile, so callers must surface it (CLI exit 2, HTTP
+// 400) rather than record the file as skipped.
 var ErrInvalidPattern = errors.New("invalid regex pattern")
 
-// isRegexParseError recognizes ripgrep's own wording for a pattern it
-// could not compile. rg exits 2 for this and prints, on stderr:
-//
-//	regex parse error:
-//	    (?:a()
-//	    ^
-//	error: unclosed group
-//
-// Matching on the text is the only option: rg uses exit status 2 for
-// every fatal error, not just this one.
-func isRegexParseError(stderr string) bool {
+// patternFailure is one kind of ripgrep failure that is the fault of
+// the request's patterns or matching flags, not of the input, known by
+// the words rg prints for it. rg exits 2 for every fatal error, so its
+// stderr is the only thing that tells a pattern it cannot compile from
+// an input it cannot read.
+type patternFailure struct {
+	// marker is lower-case text that rg's stderr holds for this kind.
+	marker string
+	// describe builds the error rx reports, from rg's stderr and the
+	// patterns as the caller typed them. Every describe returns an
+	// error that errors.Is matches against ErrInvalidPattern.
+	describe func(stderr string, patternIDs map[string]string, patternOrder []string) error
+}
+
+// patternFailures lists every wording of a pattern error that ripgrep
+// 13 and 14 print. A new wording is a new row.
+var patternFailures = []patternFailure{
+	// The default engine (Rust's regex crate):
+	//
+	//	rg: regex parse error:
+	//	    (?:a()
+	//	    ^
+	//	error: unclosed group
+	{marker: "regex parse error", describe: invalidPatternError},
+	{marker: "error parsing regex", describe: invalidPatternError},
+	// rg: PCRE2: error compiling pattern at offset 5: missing closing parenthesis
+	{marker: "pcre2: error compiling pattern", describe: invalidPatternError},
+	// rg: the literal "\n" is not allowed in a regex
+	{marker: "is not allowed in a regex", describe: invalidPatternError},
+	// rg: compiled regex exceeds size limit of 104857600
+	{marker: "compiled regex exceeds size limit", describe: invalidPatternError},
+	// -P against a ripgrep built without PCRE2:
+	//
+	//	rg: PCRE2 is not available in this build of ripgrep
+	{marker: "pcre2 is not available in this build of ripgrep", describe: missingPCRE2Error},
+}
+
+// patternFailureOf returns the row of patternFailures that rg's stderr
+// matches, or nil when stderr names no pattern error.
+func patternFailureOf(stderr string) *patternFailure {
 	lowered := strings.ToLower(stderr)
-	return strings.Contains(lowered, "regex parse error") ||
-		strings.Contains(lowered, "error parsing regex")
+	for i := range patternFailures {
+		if strings.Contains(lowered, patternFailures[i].marker) {
+			return &patternFailures[i]
+		}
+	}
+	return nil
+}
+
+// ripgrepExitError is the error for an rg run that failed on its own
+// (exit status 2 or more), on every path that runs rg over a file's
+// text. A pattern rg refused becomes the pattern's error, which ends the
+// whole trace (CLI exit 2, HTTP 400); any other failure is
+// "rg exit N: <stderr>", which costs only the file being read.
+func ripgrepExitError(code int, stderr string, patternIDs map[string]string, patternOrder []string) error {
+	if failure := patternFailureOf(stderr); failure != nil {
+		return failure.describe(stderr, patternIDs, patternOrder)
+	}
+	return fmt.Errorf("rg exit %d: %s", code, stderr)
+}
+
+// patternError is an error about the request's patterns whose message
+// is not "invalid regex pattern ...". Unwrap makes errors.Is match it
+// against ErrInvalidPattern, which is all the CLI and HTTP layers check.
+type patternError struct {
+	message string
+}
+
+func (e *patternError) Error() string { return e.message }
+
+func (e *patternError) Unwrap() error { return ErrInvalidPattern }
+
+// missingPCRE2Error reports -P against a ripgrep built without PCRE2.
+// The pattern is not at fault, so the message names the missing feature
+// and the two ways round it rather than the pattern.
+func missingPCRE2Error(stderr string, _ map[string]string, _ []string) error {
+	return &patternError{message: regexFailureReason(stderr) +
+		"; search without -P (pcre2), or use a ripgrep built with PCRE2" +
+		" (rg --pcre2-version says whether yours is)"}
 }
 
 // invalidPatternError reports a pattern ripgrep refused, in terms of
@@ -885,8 +949,9 @@ func invalidPatternError(stderr string, patternIDs map[string]string, patternOrd
 
 // regexFailureReason pulls the explanation out of ripgrep's parse
 // error, which ends with a line of the form "error: unclosed group".
-// Anything unrecognized falls back to the whole message on one line, so
-// no detail is lost when rg changes its wording.
+// Any other message (PCRE2's are one line) falls back to its first
+// paragraph on one line, so no detail is lost when rg changes its
+// wording.
 func regexFailureReason(stderr string) string {
 	reason := ""
 	for _, line := range strings.Split(stderr, "\n") {
@@ -895,12 +960,20 @@ func regexFailureReason(stderr string) string {
 			reason = after
 		}
 	}
-	if reason != "" {
-		return reason
+	if reason == "" {
+		// The first paragraph only: rg follows some messages with
+		// advice about flags rx does not take (--multiline).
+		firstParagraph, _, _ := strings.Cut(stderr, "\n\n")
+		reason = strings.TrimPrefix(strings.Join(strings.Fields(firstParagraph), " "), "rg: ")
 	}
-	compact := strings.Join(strings.Fields(stderr), " ")
-	return strings.TrimPrefix(compact, "rg: ")
+	// PCRE2's offset counts into the group rg wraps every pattern in,
+	// so it points at a place the caller never wrote.
+	return pcre2OffsetPhrase.ReplaceAllString(reason, "")
 }
+
+// pcre2OffsetPhrase is the position PCRE2 puts in its compile errors:
+// "error compiling pattern at offset 5: ...".
+var pcre2OffsetPhrase = regexp.MustCompile(` at offset \d+`)
 
 // newlineBytes is the separator the chunk counter looks for. Declared
 // once so the per-buffer count in ProcessChunk allocates nothing.

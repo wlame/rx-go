@@ -323,10 +323,7 @@ func checkBatchAgainstPattern(
 	pid string,
 	record func(ref lineRef, hit patternHit),
 ) error {
-	args := newRgArgs()
-	args = append(args, "-e", req.patternIDs[pid])
-	args = append(args, filterIncompatibleRgArgs(req.rgExtraArgs)...)
-	args = append(args, "-") // read from stdin
+	args := rgPatternArgs(req.patternIDs, []string{pid}, req.rgExtraArgs)
 
 	// starts[k] is where the batch's k-th line starts in ripgrep's
 	// input. A match event names its line by that position, which is

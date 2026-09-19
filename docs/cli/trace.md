@@ -176,6 +176,13 @@ rx -P "timeout(?=\s+after)" /var/log/app.log    # PCRE2 look-ahead
 
 Each answer is the one `rg` gives for the same flags. `-P` needs a
 ripgrep built with PCRE2 (`rg --pcre2-version` says whether yours is).
+
+rx checks the patterns with `rg` and the same flags before it reads any
+file. A pattern that does not compile is a usage error (exit 2), with
+the engine's reason: `unclosed group` from the default engine,
+`PCRE2: error compiling pattern: missing closing parenthesis` under `-P`.
+`-P` with a ripgrep built without PCRE2 is a usage error too, and the
+message says so. Both fail even when no file is found to search.
 Over HTTP the same flags are query parameters of
 [`GET /v1/trace`](../api/endpoints/trace.md#matching-flags), such as
 `ignore_case=true`.

@@ -371,6 +371,7 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("trace an empty directory", "/v1/trace", q("path", at("emptydir"), "regexp", "a"), http.StatusOK)
 	get("trace an empty file", "/v1/trace", q("path", at("empty.log"), "regexp", "a"), http.StatusOK)
 	get("trace an invalid regex", "/v1/trace", q("path", at("app.log"), "regexp", "a("), http.StatusBadRequest)
+	get("trace an invalid PCRE2 pattern", "/v1/trace", q("path", at("app.log"), "regexp", "(", "pcre2", "true"), http.StatusBadRequest)
 	get("trace a missing file", "/v1/trace", q("path", at("nope.log"), "regexp", "a"), http.StatusNotFound)
 	get("trace outside the root", "/v1/trace", q("path", "/etc/hosts", "regexp", "a"), http.StatusForbidden)
 	get("trace without a pattern", "/v1/trace", q("path", at("app.log")), http.StatusUnprocessableEntity)
