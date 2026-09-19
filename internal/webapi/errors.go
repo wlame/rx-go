@@ -131,7 +131,8 @@ var runningOperationNames = map[string]string{
 // whatever its operation, so the running task can be of another kind
 // than the refused request (an index request refused by a running
 // compress); the sentence and task_id both describe the running task.
-// requestedPath is the path as the caller wrote it.
+// requestedPath is the path that collided: the one the caller wrote, or
+// the output path a running compress task holds.
 func runningTaskConflict(requestedPath string, running *tasks.Task) huma.StatusError {
 	name, known := runningOperationNames[running.Operation]
 	if !known {

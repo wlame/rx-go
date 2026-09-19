@@ -128,7 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leads nowhere, and `--force` replaces the link itself. The output's
   directory is reached from the search root without passing a link, so
   a directory swapped for one after the path check gets nothing
-  written.
+  written. A `POST /v1/compress` task now holds its output path as well
+  as its input until it ends: a second compression into the same
+  output, and a `POST /v1/index` of that output, get `409` naming the
+  output and the running task, where both used to be accepted.
 
 - A seekable zstd file written by another tool to the zstd seekable
   format specification (facebook/zstd, `contrib/seekable_format`) is

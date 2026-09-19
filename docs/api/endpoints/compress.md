@@ -101,7 +101,7 @@ for measured sizes and times.
 | `400 Bad Request` | Output file exists and `force=false`; the input is a compound archive, or seekable zstd and `force=false`; `output_path` is the input file; bad `frame_size`; body is not valid JSON |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
-| `409 Conflict` | A task for the same input path is already running — a compress or an index task |
+| `409 Conflict` | A task that holds the input path or the output path is already running: a compress or an index task of the input, or a compress task writing the same output |
 | `422 Unprocessable Entity` | Body fails the schema: `input_path` missing, a field of the wrong type, an unknown field, or `compression_level` outside 1-22 |
 
 ## Path sandbox
@@ -265,6 +265,24 @@ body; the sentence names the same task. One task holds a path whatever
 its operation, so a running index build also refuses a compress of
 the file; the sentence then starts with `Indexing already in progress`
 and `task_id` is the index task's.
+
+A compress task also holds its output path until it ends, so two
+compressions into one output cannot run at once. `app.log` and
+`app.log.gz` both default to `app.log.zst`; while one of them is being
+compressed, a request for the other is refused, and the sentence names
+the output:
+
+```json
+{
+  "detail":  "Compression already in progress for /var/log/app.log.zst (task: 0b6c1d9e-1f4a-4c2e-9d55-7a3e8f20c4b1)",
+  "task_id": "0b6c1d9e-1f4a-4c2e-9d55-7a3e8f20c4b1"
+}
+```
+
+An index request for the output gets the same `409` while the task
+runs. Two spellings of one output that differ in a symbolic link are
+two paths here; the task's final rename or link still keeps their
+files from mixing (see how the task writes its output, above).
 
 ## Performance notes
 

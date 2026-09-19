@@ -194,7 +194,8 @@ globally with `RX_LARGE_FILE_MB`.
 Status: `409`. Poll the running task, `GET /v1/tasks/{task_id}` with the
 `task_id` of the body — duplicate POSTs don't start multiple builds.
 One task holds a path whatever its operation, so a running compress of
-the file also refuses an index build; the sentence then starts with
+the file also refuses an index build, and so does a running compress
+that writes the file as its output; the sentence then starts with
 `Compression already in progress` and `task_id` is the compress task's.
 
 ### Example — build and poll

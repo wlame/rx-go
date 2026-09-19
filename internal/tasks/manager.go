@@ -7,9 +7,11 @@
 // Features from the Python port (rx-python/src/rx/task_manager.py):
 //
 //   - In-memory task store keyed by task_id (UUID v4).
-//   - Path locking: only one task per (path, operation) pair can be
-//     running at a time; duplicate submissions return the SAME task
-//     ID (idempotent POST).
+//   - Path locking: while a task runs, it holds its path, and no other
+//     task can start for that path, whatever its operation; a duplicate
+//     submission returns the SAME task ID (idempotent POST). A task can
+//     hold more than one path (CreateHolding): a compression holds its
+//     input and its output.
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
 //   - A cap on the table (DefaultMaxTasks): past it, creating a task
@@ -110,6 +112,11 @@ type Task struct {
 	// progress, when set, says how far the task's work has got; see
 	// ReportProgress. Shared by the clones too.
 	progress ProgressFunc
+
+	// held lists every path the task holds in the manager's path locks,
+	// Path first, each once. Set at creation and never changed, so the
+	// clones may share it.
+	held []string
 }
 
 // ProgressFunc reports how far a task's work has got, as a fraction
@@ -255,29 +262,87 @@ func (m *Manager) Stop() {
 // Callers (the HTTP handler) inspect isNew to decide whether to 202
 // or 409.
 func (m *Manager) Create(path, operation string) (*Task, bool) {
+	task, _, isNew := m.CreateHolding(operation, path)
+	return task, isNew
+}
+
+// CreateHolding registers a new task for operation that holds every
+// path in held; the first one becomes the task's Path. When a running
+// task already holds any of them, nothing is created and nothing is
+// held: it returns that task, the path it holds, and false. Otherwise
+// it returns the new task (StatusQueued), "" and true.
+//
+// The check of every path and the taking of every lock happen under
+// one acquisition of the manager's lock, so of two callers racing for
+// a shared path exactly one gets it, and a caller never ends up holding
+// some of its paths but not the others.
+//
+// A path given twice is held once. held must name at least one path.
+func (m *Manager) CreateHolding(operation string, held ...string) (*Task, string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if existingID, ok := m.pathLocks[path]; ok {
-		if existing, ok2 := m.tasks[existingID]; ok2 && !existing.IsTerminal() {
-			return existing, false
+	held = uniquePaths(held)
+	for _, path := range held {
+		if running := m.runningHolderLocked(path); running != nil {
+			return running, path, false
 		}
-		// Stale lock — fallthrough to create new.
-		delete(m.pathLocks, path)
 	}
 
 	task := &Task{
 		TaskID:    uuid.NewString(),
-		Path:      path,
+		Path:      held[0],
 		Operation: operation,
 		Status:    StatusQueued,
 		StartedAt: time.Now().UTC(),
 		done:      make(chan struct{}),
+		held:      held,
 	}
 	m.tasks[task.TaskID] = task
-	m.pathLocks[path] = task.TaskID
+	for _, path := range held {
+		m.pathLocks[path] = task.TaskID
+	}
 	m.dropOldestFinishedLocked(len(m.tasks) - m.maxTasks)
-	return task, true
+	return task, "", true
+}
+
+// runningHolderLocked returns the unfinished task that holds path, or
+// nil. A lock left by a task that has ended (or been dropped) is stale
+// and is removed. The caller holds m.mu.
+func (m *Manager) runningHolderLocked(path string) *Task {
+	holderID, ok := m.pathLocks[path]
+	if !ok {
+		return nil
+	}
+	if holder, known := m.tasks[holderID]; known && !holder.IsTerminal() {
+		return holder
+	}
+	delete(m.pathLocks, path)
+	return nil
+}
+
+// releasePathsLocked drops every path lock task still holds. A path
+// that another task has taken since is left to that task. The caller
+// holds m.mu.
+func (m *Manager) releasePathsLocked(task *Task) {
+	for _, path := range task.held {
+		if holder, ok := m.pathLocks[path]; ok && holder == task.TaskID {
+			delete(m.pathLocks, path)
+		}
+	}
+}
+
+// uniquePaths returns paths without repeats, in their first order.
+func uniquePaths(paths []string) []string {
+	unique := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		if !seen[path] {
+			seen[path] = true
+			unique = append(unique, path)
+		}
+	}
+	return unique
 }
 
 // dropOldestFinishedLocked removes up to n finished tasks, oldest
@@ -336,10 +401,7 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 	if task.IsTerminal() {
 		now := time.Now().UTC()
 		task.CompletedAt = &now
-		// Release path lock iff WE still hold it.
-		if held, ok := m.pathLocks[task.Path]; ok && held == taskID {
-			delete(m.pathLocks, task.Path)
-		}
+		m.releasePathsLocked(task)
 	}
 	return true
 }
@@ -463,10 +525,8 @@ func (m *Manager) sweep(now time.Time) int {
 		}
 		if now.Sub(*task.CompletedAt) > m.ttl {
 			delete(m.tasks, id)
-			// Best-effort: drop a stale lock if it still points at us.
-			if held, ok := m.pathLocks[task.Path]; ok && held == id {
-				delete(m.pathLocks, task.Path)
-			}
+			// Drop any lock that still points at the task.
+			m.releasePathsLocked(task)
 			removed++
 		}
 	}

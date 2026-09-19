@@ -113,9 +113,19 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		return nil, ErrBadRequest(err.Error())
 	}
 
-	task, isNew := s.cfg.TaskManager.Create(validated, "compress")
+	// The task holds its output as well as its input. app.log and
+	// app.log.gz both default to app.log.zst, so a lock on the input
+	// alone let two tasks write one output at once. While this task
+	// runs, a compression of anything into the same output, and an
+	// index build of it, is refused with 409; the answer names the path
+	// that is held, so the caller sees which one collided.
+	task, heldPath, isNew := s.cfg.TaskManager.CreateHolding("compress", validated, output)
 	if !isNew {
-		return nil, runningTaskConflict(req.InputPath, task)
+		conflictPath := req.InputPath
+		if heldPath == output {
+			conflictPath = output
+		}
+		return nil, runningTaskConflict(conflictPath, task)
 	}
 
 	// Snapshot task state before spawning the goroutine to avoid
