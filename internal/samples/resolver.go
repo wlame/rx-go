@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -61,6 +62,9 @@ type Request struct {
 	Lines         []OffsetOrRange
 	BeforeContext int
 	AfterContext  int
+	// Kind is what Source is (filekind.Of), when the caller decided it
+	// already (Classify). Nil means Resolve decides it from Source.
+	Kind *filekind.Kind
 	// IndexLoader is invoked once per Resolve call if Lines mode and
 	// large-file shortcuts are needed. Set to NoIndex for the linear
 	// scan fallback.
@@ -117,6 +121,10 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		req.Source = src
 	}
 	req.IndexLoader = onlyIndexesOf(req.Source, req.IndexLoader)
+	kind, err := Classify(req)
+	if err != nil {
+		return nil, err
+	}
 	resp := &rxtypes.SamplesResponse{
 		Path:          req.Path,
 		Offsets:       map[string]int64{},
@@ -125,10 +133,9 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		AfterContext:  req.AfterContext,
 		Samples:       map[string][]string{},
 	}
-	format, _ := compression.DetectFromPath(req.Path)
-	if format != compression.FormatNone {
+	if kind.IsCompressed() {
 		resp.IsCompressed = true
-		name := string(format)
+		name := kind.CompressionName()
 		resp.CompressionFormat = &name
 	}
 
@@ -138,13 +145,13 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	// reached. Doing this here rather than in a caller is what keeps
 	// `rx samples` and GET /v1/samples answering the same way.
 	if req.Mode() == OffsetsMode {
-		if err := resolveOffsets(req, resp, textSourceFor(req)); err != nil {
+		if err := resolveOffsets(req, resp, textSourceFor(req, kind)); err != nil {
 			return nil, err
 		}
 		return resp, nil
 	}
 
-	if !resp.IsCompressed {
+	if !kind.IsCompressed() {
 		if err := resolveLines(req, resp); err != nil {
 			return nil, err
 		}
@@ -157,7 +164,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	// an index is for. Its index's checkpoints sit at frame starts,
 	// which are not always line starts, so the stream does not start
 	// from one.
-	if isSeekable(req.Source) {
+	if kind.IsSeekable() {
 		err := resolveSeekableLines(req, resp)
 		if err == nil {
 			return resp, nil
@@ -170,10 +177,27 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		}
 		return resp, nil
 	}
-	if err := resolveCompressedLines(req, format, loadIndexOrNone(req), resp); err != nil {
+	if err := resolveCompressedLines(req, kind.Format, loadIndexOrNone(req), resp); err != nil {
 		return nil, err
 	}
 	return resp, nil
+}
+
+// Classify decides what req.Source is (filekind.OfPinned), or returns
+// req.Kind when the caller decided it already. A file that cannot be
+// opened returns the open's error (fs.ErrPermission for one the process
+// may not read). A file that is not text returns an error wrapping
+// filekind.ErrNotText that says why: samples has no lines to give from
+// a binary file, and reading its bytes as lines would answer garbage.
+func Classify(req Request) (filekind.Kind, error) {
+	if req.Kind != nil {
+		return *req.Kind, req.Kind.Err()
+	}
+	kind, err := filekind.OfPinned(req.Source)
+	if err != nil {
+		return kind, err
+	}
+	return kind, kind.Err()
 }
 
 // onlyIndexesOf wraps load so that an index built from another file

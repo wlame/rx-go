@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -50,21 +51,21 @@ type textCursor struct {
 	close  func() error // releases the file and any decoder
 }
 
-// textSourceFor picks how the offsets pass reads req.Path.
+// textSourceFor picks how the offsets pass reads req.Path, a file of
+// the given kind.
 //
 // An index the loader cannot provide is treated as absent: an index
 // only makes the answer faster, so a missing or unreadable one costs
 // time, never correctness.
-func textSourceFor(req Request) textSource {
+func textSourceFor(req Request, kind filekind.Kind) textSource {
 	var idx *rxtypes.UnifiedFileIndex
 	if req.IndexLoader != nil {
 		idx, _ = req.IndexLoader(req.Path)
 	}
-	format, _ := compression.DetectFromPath(req.Path)
-	if format == compression.FormatNone {
+	if !kind.IsCompressed() {
 		return plainText{src: req.Source, idx: idx}
 	}
-	if isSeekable(req.Source) {
+	if kind.IsSeekable() {
 		if text, err := seekableTextFor(req.Source, idx); err == nil {
 			return text
 		}
@@ -73,7 +74,7 @@ func textSourceFor(req Request) textSource {
 		// not start from one: it reads from the first byte instead.
 		return streamedText{src: req.Source, format: compression.FormatSeekableZstd}
 	}
-	return streamedText{src: req.Source, format: format, idx: idx}
+	return streamedText{src: req.Source, format: kind.Format, idx: idx}
 }
 
 // ============================================================================

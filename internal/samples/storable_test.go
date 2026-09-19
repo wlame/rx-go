@@ -79,7 +79,7 @@ func TestShouldBuildIndex_NotWhenTheIndexCannotBeStored(t *testing.T) {
 			log := captureSamplesLog(t)
 
 			for range 2 {
-				if ShouldBuildIndex(path, size) {
+				if ShouldBuildIndex(path, kindOf(t, path), size) {
 					t.Fatal("ShouldBuildIndex = true for an index that cannot be stored")
 				}
 			}
@@ -101,7 +101,7 @@ func TestShouldBuildIndex_NotWhenTheIndexCannotBeStored(t *testing.T) {
 func TestShouldBuildIndex_WhenTheIndexCanBeStored(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	path, size := gzipLogFixture(t)
-	if !ShouldBuildIndex(path, size) {
+	if !ShouldBuildIndex(path, kindOf(t, path), size) {
 		t.Fatal("ShouldBuildIndex = false for a gzip file without an index and a writable cache")
 	}
 }
@@ -118,7 +118,7 @@ func TestNeedsIndexBuild_DamagedIndexOfASmallFile(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	size := int64(len(text))
-	if NeedsIndexBuild(path, size) {
+	if NeedsIndexBuild(path, kindOf(t, path), size) {
 		t.Fatal("a small file without an index needs one built")
 	}
 
@@ -130,7 +130,7 @@ func TestNeedsIndexBuild_DamagedIndexOfASmallFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if NeedsIndexBuild(path, size) {
+	if NeedsIndexBuild(path, kindOf(t, path), size) {
 		t.Fatal("a small file with a valid index needs one built")
 	}
 
@@ -138,7 +138,7 @@ func TestNeedsIndexBuild_DamagedIndexOfASmallFile(t *testing.T) {
 		t.Fatalf("damage the index: %v", err)
 	}
 	captureSamplesLog(t)
-	if !NeedsIndexBuild(path, size) {
+	if !NeedsIndexBuild(path, kindOf(t, path), size) {
 		t.Fatal("a damaged index of a small file is not rebuilt")
 	}
 }

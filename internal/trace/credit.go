@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -486,12 +487,12 @@ func feedLinesFromSource(w io.Writer, req creditRequest, refs []lineRef) error {
 	if err != nil {
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)
 	}
-	format, err := compression.DetectFromOpenFile(source.Path(), f)
+	kind, err := filekind.FormatOfFile(f)
 	if err != nil {
 		_ = f.Close()
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)
 	}
-	if format == compression.FormatNone {
+	if !kind.IsCompressed() {
 		defer func() { _ = f.Close() }()
 		for _, ref := range refs {
 			line := req.line(ref)
@@ -504,7 +505,7 @@ func feedLinesFromSource(w io.Writer, req creditRequest, refs []lineRef) error {
 	}
 
 	// NewReader takes f over: closing the decompressor closes f too.
-	text, err := compression.NewReader(f, format)
+	text, err := compression.NewReader(f, kind.Format)
 	if err != nil {
 		_ = f.Close()
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)

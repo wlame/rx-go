@@ -38,6 +38,7 @@ import (
 	"strings"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
@@ -46,9 +47,10 @@ import (
 // exit code or an HTTP status, and add the hint that fits their surface
 // (a CLI flag or a request field).
 var (
-	// ErrCompoundArchive refuses a .tar.gz and its kin: decompressing
-	// one yields a tar stream, not lines of text.
-	ErrCompoundArchive = errors.New("compound archives (tar.gz, etc.) are not supported")
+	// ErrNotText refuses an input whose text is not text (filekind): a
+	// binary file, a .tar.gz (its text is a tar stream), UTF-16. The
+	// error Check returns wraps it and says why.
+	ErrNotText = filekind.ErrNotText
 	// ErrAlreadySeekable refuses a seekable zstd input the caller did
 	// not ask to re-encode: rx already reads it as it is.
 	ErrAlreadySeekable = errors.New("already a seekable zstd file")
@@ -140,31 +142,34 @@ func DefaultOutputName(inputPath string) string {
 // before it starts any work. An input that cannot be pinned or opened
 // returns that error.
 func Check(inputPath, outputPath string, reencodeSeekable bool) error {
-	if compression.IsCompoundArchive(inputPath) {
-		return ErrCompoundArchive
-	}
 	src, err := openPinned(inputPath)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = src.Close() }()
-	return checkOpened(inputPath, src, outputPath, reencodeSeekable)
+	_, err = checkOpened(inputPath, src, outputPath, reencodeSeekable)
+	return err
 }
 
 // checkOpened applies the rules of Check that look at the input to src,
-// the input already opened through its pin.
-func checkOpened(inputPath string, src *os.File, outputPath string, reencodeSeekable bool) error {
+// the input already opened through its pin, and returns what the input
+// is (filekind.Of, read through src) for the encoding to read its text.
+func checkOpened(inputPath string, src *os.File, outputPath string, reencodeSeekable bool) (filekind.Kind, error) {
 	info, err := src.Stat()
 	if err != nil {
-		return fmt.Errorf("stat input: %w", err)
+		return filekind.Kind{}, fmt.Errorf("stat input: %w", err)
 	}
-	if seekable.IsSeekableFile(inputPath, src, info.Size()) && !reencodeSeekable {
-		return ErrAlreadySeekable
+	kind := filekind.Of(src, info.Size())
+	if err := kind.Err(); err != nil {
+		return kind, err
+	}
+	if kind.IsSeekable() && !reencodeSeekable {
+		return kind, ErrAlreadySeekable
 	}
 	if isSameFile(inputPath, info, outputPath) {
-		return ErrOutputIsInput
+		return kind, ErrOutputIsInput
 	}
-	return nil
+	return kind, nil
 }
 
 // Compress writes the seekable zstd form of opts.InputPath's text to
@@ -189,18 +194,16 @@ func checkOpened(inputPath string, src *os.File, outputPath string, reencodeSeek
 //
 // ctx cancels the encoding between frame batches.
 func Compress(ctx context.Context, opts Options) (Result, error) {
-	if compression.IsCompoundArchive(opts.InputPath) {
-		return Result{}, ErrCompoundArchive
-	}
 	src, err := openPinned(opts.InputPath)
 	if err != nil {
 		return Result{}, err
 	}
-	if refusal := checkOpened(opts.InputPath, src, opts.OutputPath, opts.ReencodeSeekable); refusal != nil {
+	kind, refusal := checkOpened(opts.InputPath, src, opts.OutputPath, opts.ReencodeSeekable)
+	if refusal != nil {
 		_ = src.Close()
 		return Result{}, refusal
 	}
-	text, format, err := openText(opts.InputPath, src)
+	text, format, err := openText(src, kind)
 	if err != nil {
 		return Result{}, err
 	}
@@ -396,26 +399,22 @@ func openPinned(path string) (*os.File, error) {
 	return src, nil
 }
 
-// openText turns src, the input opened through its pin and named path,
-// into a stream of its text and reports the format it was read as. A
-// plain file is read up to the size it had when it was opened, so a log
-// that grows during the encoding is encoded as it was at the start, the
-// way a trace plans its chunks.
+// openText turns src, the input opened through its pin, into a stream
+// of its text and reports the format it was read as: kind's, which
+// checkOpened decided from src. A plain file is read up to the size it
+// had when it was opened, so a log that grows during the encoding is
+// encoded as it was at the start, the way a trace plans its chunks.
 //
 // openText owns src: closing the reader it returns closes src, and on
 // an error src is already closed.
-func openText(path string, src *os.File) (io.ReadCloser, compression.Format, error) {
+func openText(src *os.File, kind filekind.Kind) (io.ReadCloser, compression.Format, error) {
 	info, err := src.Stat()
 	if err != nil {
 		_ = src.Close()
 		return nil, compression.FormatNone, fmt.Errorf("stat input: %w", err)
 	}
-	format, err := inputFormat(path, src, info.Size())
-	if err != nil {
-		_ = src.Close()
-		return nil, compression.FormatNone, fmt.Errorf("detect input format: %w", err)
-	}
-	if format == compression.FormatNone {
+	format := kind.Format
+	if !kind.IsCompressed() {
 		return readCloser{Reader: io.NewSectionReader(src, 0, info.Size()), Closer: src}, format, nil
 	}
 	// compression.NewReader owns src from here on: closing the reader it
@@ -426,17 +425,6 @@ func openText(path string, src *os.File) (io.ReadCloser, compression.Format, err
 		return nil, compression.FormatNone, fmt.Errorf("open %s input: %w", format, err)
 	}
 	return text, format, nil
-}
-
-// inputFormat names the format of the open file r, size bytes long and
-// named path: seekable zstd when it ends with a seek table that
-// describes it, otherwise what compression.DetectFromOpenFile finds
-// from the name or the magic bytes. Nothing is looked up by path.
-func inputFormat(path string, r io.ReaderAt, size int64) (compression.Format, error) {
-	if seekable.IsSeekableFile(path, r, size) {
-		return compression.FormatSeekableZstd, nil
-	}
-	return compression.DetectFromOpenFile(path, r)
 }
 
 // readCloser joins a reader with the file it reads from.

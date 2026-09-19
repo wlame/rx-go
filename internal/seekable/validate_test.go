@@ -90,9 +90,6 @@ func TestReadSeekTable_RefusesATableThatDoesNotDescribeTheFile(t *testing.T) {
 			if !errors.Is(err, ErrSeekTableMismatch) {
 				t.Fatalf("ReadSeekTable err = %v, want ErrSeekTableMismatch", err)
 			}
-			if IsSeekableFile("app.log.zst", r, r.Size()) {
-				t.Error("IsSeekableFile = true for a table that does not describe the file")
-			}
 		})
 	}
 }

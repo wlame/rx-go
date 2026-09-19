@@ -316,7 +316,12 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 	// A compressed source is read through its decompressor from the
 	// start: cached offsets address the decompressed stream, and there
 	// is no cheap way into the middle of it.
-	if format, _ := compression.DetectFromPath(req.Source.Path()); format != compression.FormatNone {
+	format, kErr := streamFormat(f)
+	if kErr != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("reconstruct: read %s: %w", req.Source.Path(), kErr)
+	}
+	if format != compression.FormatNone {
 		dec, dErr := compression.NewReader(f, format)
 		if dErr != nil {
 			_ = f.Close()
@@ -351,6 +356,21 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 	}
 	src.startOffset, src.startLine = entry.ByteOffset, int(entry.LineNumber)
 	return src, nil
+}
+
+// streamFormat names the stream format of f's bytes by their signature,
+// the rule filekind applies (compression.DetectFromReader), and leaves
+// f at its first byte. A seekable zstd file is read here as the zstd
+// stream it also is, so the seek table is not consulted.
+func streamFormat(f io.ReadSeeker) (compression.Format, error) {
+	format, err := compression.DetectFromReader(f)
+	if err != nil {
+		return compression.FormatNone, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return compression.FormatNone, err
+	}
+	return format, nil
 }
 
 // ============================================================================

@@ -89,7 +89,8 @@ the position, with a range sorting by its left-hand value
 | `internal/trace/` | Search engine: `chunker.go`, `worker.go` (rg subprocess), `seekable.go`, `compressed.go`, `cache.go` |
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
 | `internal/index/` | Line-offset index builder, stats (Welford + reservoir), on-disk store |
-| `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; format detection; pooled decoders |
+| `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; magic-byte format signatures; pooled decoders |
+| `internal/filekind/` | The one classifier every command and route uses: format by magic bytes, seekable by seek table, text or not (with the reason) |
 | `internal/seekableindex/` | Frame → line-range index for a seekable `.zst`; the format rx-python defined |
 | `internal/analyzer/` | Detector registry (Freeze barrier) and 9 detectors under `detectors/` |
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
@@ -453,8 +454,11 @@ Paste the output. Do not summarize it.
 - rg's `absolute_offset` is relative to rg's stdin; add `chunk.Offset`.
 - Every rg search takes its base arguments from `newRgArgs`
   (`worker.go`), and they include `--text` and `--encoding=none`.
-  `isTextFile` is the one place that decides text against binary;
-  without `--text`, rg on stdin turns each later NUL byte into a line
+  `filekind.Of` is the one place that decides what a file is — its
+  format from the magic bytes (never the name), seekable from the seek
+  table, text against binary from a NUL byte in the first 8 KiB of its
+  text (decompressed for a compressed file) — and every command and
+  route asks it, through the pin; without `--text`, rg on stdin turns each later NUL byte into a line
   break, which numbers the lines after it too high and splits the NUL
   line. Without `--encoding=none`, rg strips a UTF-8 byte-order mark at
   the start of each input (a chunk, a stream, a batch of frames) and

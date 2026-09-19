@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 )
 
@@ -15,22 +18,23 @@ func TestIndexWanted_ByKindAndSize(t *testing.T) {
 	t.Setenv("RX_LARGE_FILE_MB", "1")
 	const megabyte = 1024 * 1024
 	cases := []struct {
-		name string
-		path string
-		size int64
-		want bool
+		name   string
+		format compression.Format
+		size   int64
+		want   bool
 	}{
-		{"plain below the large-file size", "/logs/app.log", megabyte - 1, false},
-		{"plain at the large-file size", "/logs/app.log", megabyte, true},
-		{"small gzip", "/logs/app.log.gz", 10, true},
-		{"small bzip2", "/logs/app.log.bz2", 10, true},
-		{"small xz", "/logs/app.log.xz", 10, true},
-		{"small zstd", "/logs/app.log.zst", 10, true},
+		{"plain below the large-file size", compression.FormatNone, megabyte - 1, false},
+		{"plain at the large-file size", compression.FormatNone, megabyte, true},
+		{"small gzip", compression.FormatGzip, 10, true},
+		{"small bzip2", compression.FormatBz2, 10, true},
+		{"small xz", compression.FormatXz, 10, true},
+		{"small zstd", compression.FormatZstd, 10, true},
+		{"small seekable zstd", compression.FormatSeekableZstd, 10, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IndexWanted(tc.path, tc.size); got != tc.want {
-				t.Fatalf("IndexWanted(%s, %d) = %v, want %v", tc.path, tc.size, got, tc.want)
+			if got := IndexWanted(filekind.Kind{Format: tc.format}, tc.size); got != tc.want {
+				t.Fatalf("IndexWanted(%s, %d) = %v, want %v", tc.format, tc.size, got, tc.want)
 			}
 		})
 	}
@@ -48,7 +52,7 @@ func TestNeedsIndexBuild_UntilTheIndexIsStored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if !NeedsIndexBuild(path, info.Size()) {
+	if !NeedsIndexBuild(path, kindOf(t, path), info.Size()) {
 		t.Fatal("a gzip file without an index does not need one built")
 	}
 
@@ -63,7 +67,21 @@ func TestNeedsIndexBuild_UntilTheIndexIsStored(t *testing.T) {
 	if fraction, known := progress.Fraction(); !known || fraction != 1 {
 		t.Errorf("progress after the build = %v (known %v), want 1", fraction, known)
 	}
-	if NeedsIndexBuild(path, info.Size()) {
+	if NeedsIndexBuild(path, kindOf(t, path), info.Size()) {
 		t.Fatal("the index just stored still needs building")
 	}
+}
+
+// kindOf decides what the file at path is, as a lookup does.
+func kindOf(t *testing.T, path string) filekind.Kind {
+	t.Helper()
+	src, err := paths.Pin(path)
+	if err != nil {
+		t.Fatalf("pin %s: %v", path, err)
+	}
+	kind, err := filekind.OfPinned(src)
+	if err != nil {
+		t.Fatalf("classify %s: %v", path, err)
+	}
+	return kind
 }

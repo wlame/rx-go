@@ -96,8 +96,8 @@ func (before metricSnapshot) moved(after metricSnapshot, family string) bool {
 // metricsFixture is a sandbox with the files the operations below need:
 // a plain log above the 1 MB large-file threshold the test sets, so it
 // is chunked, cached and indexed; a small log; a directory holding a
-// binary file, which a trace of the directory skips; and a .gz file that
-// is not gzip.
+// binary file, which a trace of the directory skips; and a .gz file
+// whose data is damaged.
 type metricsFixture struct {
 	root, bigLog, smallLog, mixedDir, brokenGz string
 }
@@ -122,8 +122,9 @@ func newMetricsFixture(t *testing.T) metricsFixture {
 	}
 	writeFixture(t, f.bigLog, big.Bytes())
 	writeFixture(t, f.smallLog, []byte("LINE 1 ERROR one\nLINE 2 INFO two\n"))
-	// Named as gzip but not gzip: its scan fails in the worker.
-	writeFixture(t, f.brokenGz, []byte("LINE 1 ERROR one\n"))
+	// A gzip header over data that is not deflate: its scan fails in
+	// the worker.
+	writeFixture(t, f.brokenGz, append([]byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3}, "LINE 1 ERROR one\n"...))
 	if err := os.Mkdir(f.mixedDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

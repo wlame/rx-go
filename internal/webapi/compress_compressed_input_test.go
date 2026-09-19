@@ -13,7 +13,8 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/paths"
-	"github.com/wlame/rx-go/internal/seekable"
+	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -52,7 +53,7 @@ func compressInputServer(t *testing.T) (url, root string, text []byte) {
 // seekableText decompresses a seekable zstd file whole.
 func seekableText(t *testing.T, path string) []byte {
 	t.Helper()
-	if !seekable.IsSeekable(path) {
+	if !seekablefile.IsSeekable(t, path) {
 		t.Fatalf("%s is not a seekable zstd file", path)
 	}
 	f, err := os.Open(path)
@@ -112,7 +113,7 @@ func TestCompressPost_RefusesWhatItCannotCompress(t *testing.T) {
 		InputPath: plain, OutputPath: &seekableInput, FrameSize: "16K", CompressionLevel: 3, BuildIndex: &noIndex,
 	})
 	archive := filepath.Join(root, "logs.tar.gz")
-	if err := os.WriteFile(archive, []byte("\x1f\x8b not really"), 0o600); err != nil {
+	if err := os.WriteFile(archive, compressedcopy.Encode(t, compressedcopy.Gzip, append([]byte("app.log"), make([]byte, 505)...)), 0o600); err != nil {
 		t.Fatalf("write archive: %v", err)
 	}
 	again := filepath.Join(root, "again.zst")
@@ -125,9 +126,9 @@ func TestCompressPost_RefusesWhatItCannotCompress(t *testing.T) {
 		{"seekable zstd input",
 			rxtypes.CompressRequest{InputPath: seekableInput, OutputPath: &again, FrameSize: "4M", CompressionLevel: 3},
 			"already a seekable zstd file (set \"force\": true to re-encode it)"},
-		{"compound archive",
+		{"archive whose text is not text",
 			rxtypes.CompressRequest{InputPath: archive, FrameSize: "4M", CompressionLevel: 3},
-			"compound archives (tar.gz, etc.) are not supported"},
+			"not a text file: a NUL byte in the first 8 KiB of its decompressed text"},
 		{"output is the input",
 			rxtypes.CompressRequest{InputPath: plain, OutputPath: &plain, FrameSize: "4M", CompressionLevel: 3, Force: true},
 			`the output path is the input file (set "output_path" to another file)`},

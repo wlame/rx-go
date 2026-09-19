@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
@@ -206,7 +207,22 @@ func runSamples(out io.Writer, p samplesParams) error {
 	// and the lookup goes on: the index is an accelerator, the answer
 	// is the same without it, and refusing to read a file because its
 	// index could not be written would be the wrong trade.
-	if !p.noIndex && samples.ShouldBuildIndex(p.path, info.Size()) {
+	// What the file is, decided once through its pin before any index
+	// is built for it. A file whose text is not text has no lines to
+	// give: it is refused, like a directory, with the reason.
+	source, err := paths.Pin(p.path)
+	if err != nil {
+		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
+	}
+	kind, err := samples.Classify(samples.Request{Source: source})
+	if errors.Is(err, filekind.ErrNotText) {
+		return exitWithError(os.Stderr, ExitUsageError, "%s: %s", err.Error(), p.path)
+	}
+	if err != nil {
+		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
+	}
+
+	if !p.noIndex && samples.ShouldBuildIndex(p.path, kind, info.Size()) {
 		if _, _, buildErr := samples.BuildIndex(p.path, nil); buildErr != nil {
 			slog.Default().Warn("index_not_built", "path", p.path, "error", buildErr.Error())
 		}
@@ -225,6 +241,8 @@ func runSamples(out io.Writer, p samplesParams) error {
 
 	req := samples.Request{
 		Path:          p.path,
+		Source:        source,
+		Kind:          &kind,
 		Offsets:       parsedOffsets,
 		Lines:         parsedLines,
 		BeforeContext: before,

@@ -1,20 +1,18 @@
-// Package compression handles file-type detection for gzip/xz/bz2/zstd
-// and their seekable-zstd variant. No decompression is performed here —
-// higher-level callers pair Detect() with a stream reader from
-// internal/seekable (for seekable zstd) or the klauspost/compress
-// readers (for everything else).
+// Package compression names the compression formats rx reads (gzip, xz,
+// bzip2, zstd and its seekable variant), recognizes a format by its
+// signature bytes (DetectFromReader) and opens a stream decoder for each
+// (NewReader).
 //
-// Why separate detection from decompression: the trace engine decides
-// on a whole different code path based on the detected format (e.g.
-// seekable-zstd uses per-frame parallelism; plain gzip uses a single
-// streaming reader). The detector runs once per file; the decompressors
-// run many times per request.
+// What a file is, as every command sees it, is decided by package
+// filekind, which uses DetectFromReader for the format and adds the
+// seek-table check and the text check.
 package compression
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -52,7 +50,7 @@ var magicTable = []magicEntry{
 }
 
 // extensionMap translates a file suffix (lowercase, including leading
-// dot) to a Format. Mirrors Python's EXTENSION_MAP.
+// dot) to a Format, for naming files only (FormatFromExtension).
 var extensionMap = map[string]Format{
 	".gz":    FormatGzip,
 	".gzip":  FormatGzip,
@@ -63,100 +61,26 @@ var extensionMap = map[string]Format{
 	".bzip2": FormatBz2,
 }
 
-// compoundSuffixes enumerates "compound archive" suffixes. These are
-// tarballs inside a compression frame; the Go port refuses to treat
-// them as simple compressed text because decompression yields a tar
-// binary, not searchable text. Caller should skip these entirely.
-var compoundSuffixes = []string{
-	".tar.gz",
-	".tgz",
-	".tar.zst",
-	".tzst",
-	".tar.xz",
-	".txz",
-	".tar.bz2",
-	".tbz2",
-	".tbz",
-}
-
-// ErrUnknownFormat is returned by helpers that require a known format.
-var ErrUnknownFormat = errors.New("unknown compression format")
-
-// IsCompoundArchive reports whether path ends in a compound-archive
-// suffix like .tar.gz. Case-insensitive.
-func IsCompoundArchive(path string) bool {
-	name := strings.ToLower(filepath.Base(path))
-	for _, suf := range compoundSuffixes {
-		if strings.HasSuffix(name, suf) {
-			return true
-		}
-	}
-	return false
-}
-
-// DetectFromPath returns the compression format for a file.
-// Algorithm (matches Python):
-//  1. If it's a compound archive, return FormatNone (caller should skip).
-//  2. Match by extension; if a known extension matches, return that.
-//  3. Fall back to reading the first 6 bytes and matching the magic table.
-//
-// Any I/O error during the magic-byte probe yields FormatNone with
-// a wrapped error — the caller can decide whether to treat it as
-// "skip this file" or propagate.
-func DetectFromPath(path string) (Format, error) {
-	if format, decided := formatFromName(path); decided {
-		return format, nil
-	}
-
-	// Extension didn't help — try magic bytes.
-	f, err := os.Open(path)
-	if err != nil {
-		return FormatNone, err
-	}
-	defer func() {
-		// Close error on a read-only file handle has no correctness impact.
-		_ = f.Close()
-	}()
-
-	return DetectFromReader(f)
-}
-
-// DetectFromOpenFile is DetectFromPath for a file the caller already
-// has open, such as one opened through a pin: name decides first, as
-// in DetectFromPath, and otherwise the magic bytes are read from the
-// start of r. Nothing is looked up by path, so the answer is about the
-// file that is open, whatever its path leads to by now.
-//
-// Go note: io.NewSectionReader reads r by position (ReadAt), so the
-// read offset of an *os.File passed as r stays where it was.
-func DetectFromOpenFile(name string, r io.ReaderAt) (Format, error) {
-	if format, decided := formatFromName(name); decided {
-		return format, nil
-	}
-	return DetectFromReader(io.NewSectionReader(r, 0, magicProbeBytes))
-}
-
 // magicProbeBytes is how many bytes from the start of a file the magic
 // table needs: its longest entry.
 const magicProbeBytes = 6
 
-// formatFromName decides a file's format from its name alone where the
-// name settles it: a compound archive is FormatNone (callers skip it),
-// and a known extension names its format. decided is false when only
-// the file's first bytes can tell.
-func formatFromName(name string) (format Format, decided bool) {
-	if IsCompoundArchive(name) {
-		return FormatNone, true
-	}
-	if f := FormatFromExtension(name); f != FormatNone {
-		return f, true
-	}
-	return FormatNone, false
-}
+// zstdSkippableMagic and zstdSkippableMask recognize a zstd skippable
+// frame: its magic number is any of 0x184D2A50 to 0x184D2A5F (the low
+// four bits are free), stored little-endian. A zstd stream may start
+// with one: pzstd puts one before each frame, and a seekable file of no
+// text is nothing but the skippable frame holding its seek table.
+const (
+	zstdSkippableMagic uint32 = 0x184D2A50
+	zstdSkippableMask  uint32 = 0xFFFFFFF0
+)
 
-// DetectFromReader probes the first 6 bytes of r and returns the
-// matching format, or FormatNone if nothing matches. On read errors
-// returns FormatNone + err.
+// DetectFromReader reads the first bytes of r and returns the format
+// their signature names, or FormatNone when none matches. Only the bytes
+// decide: a file's name says nothing about what it holds, so a text file
+// named .gz is FormatNone and a gzip file named .log is FormatGzip. A
+// zstd stream that starts with a skippable frame is FormatZstd. A read
+// error returns FormatNone with the error.
 func DetectFromReader(r io.Reader) (Format, error) {
 	buf := make([]byte, magicProbeBytes)
 	n, err := io.ReadFull(r, buf)
@@ -166,47 +90,25 @@ func DetectFromReader(r io.Reader) (Format, error) {
 	}
 	buf = buf[:n]
 	for _, entry := range magicTable {
-		if len(buf) >= len(entry.bytes) && bytesEqual(buf[:len(entry.bytes)], entry.bytes) {
+		if bytes.HasPrefix(buf, entry.bytes) {
 			return entry.format, nil
 		}
 	}
-	return FormatNone, nil
-}
-
-// IsCompressed returns true if path's detected format is anything
-// other than FormatNone. Convenience wrapper.
-func IsCompressed(path string) bool {
-	f, err := DetectFromPath(path)
-	if err != nil {
-		return false
+	if len(buf) >= 4 && binary.LittleEndian.Uint32(buf)&zstdSkippableMask == zstdSkippableMagic {
+		return FormatZstd, nil
 	}
-	return f != FormatNone
+	return FormatNone, nil
 }
 
 // FormatFromExtension names the format path's last extension stands
 // for (".gz", ".gzip", ".bz2", ".bzip2", ".xz", ".zst", ".zstd", in any
 // case), or FormatNone when it stands for none. It reads no bytes, so
-// it says nothing about what the file holds: DetectFromPath uses it as a
-// fast path, and rx compress uses it to name its output.
+// it says nothing about what the file holds, and detection never uses
+// it: rx compress uses it to name its output.
 func FormatFromExtension(path string) Format {
 	ext := strings.ToLower(filepath.Ext(path))
 	if f, ok := extensionMap[ext]; ok {
 		return f
 	}
 	return FormatNone
-}
-
-// bytesEqual is a tiny wrapper to avoid an import of bytes.Equal in a
-// file that otherwise doesn't need it. The compiler lowers this to the
-// same code as bytes.Equal.
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

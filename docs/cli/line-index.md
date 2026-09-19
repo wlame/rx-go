@@ -88,7 +88,7 @@ Skipped files follow the indexed ones, each with its reason:
 No files indexed.
 Skipped 2 files:
   /var/log/tiny.log: file size 17 bytes is below threshold 52428800 bytes
-  /var/log/logs.tar.gz: not a text file
+  /var/log/logs.tar.gz: not a text file: a NUL byte in the first 8 KiB of its decompressed text
 ```
 
 rx-python prints the same layout, except that it gives only the count of
@@ -214,7 +214,7 @@ The response envelope:
   "skipped": [ "/var/log/tiny.log", "/var/log/logs.tar.gz" ],
   "skip_reasons": [
     { "path": "/var/log/tiny.log", "reason": "file size 17 bytes is below threshold 52428800 bytes" },
-    { "path": "/var/log/logs.tar.gz", "reason": "not a text file" }
+    { "path": "/var/log/logs.tar.gz", "reason": "not a text file: a NUL byte in the first 8 KiB of its decompressed text" }
   ],
   "errors":  [ { "path": "/var/log/broken", "error": "permission denied" } ],
   "total_time": 12.34
@@ -338,9 +338,11 @@ Measured with the files in the page cache:
     because the format offers nowhere else to begin. `--analyze` works
     on every compressed format and analyses the text inside. A
     compressed tar archive (`.tar.gz`, `.tgz` and the like) is not
-    text: `rx index` lists it under `skipped` with the reason
+    text, by the rule every command applies (see
+    [Compression](../concepts/compression.md#how-rx-decides-what-a-file-is)):
+    `rx index` lists it under `skipped` with a reason that starts with
     `not a text file`, and `POST /v1/index` answers `400` with
-    "… is not a text file".
+    "not a text file: …: <path>". No index is built for it.
 
 ## See also
 

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
@@ -75,7 +75,7 @@ func resolveLinesFromIndex(src sandbox.Pinned, offsets []int64) map[int64]int {
 	if err != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return nil
 	}
-	if compression.IsCompressed(src.Path()) {
+	if isCompressedSource(src) {
 		return numberCompressedText(src, wanted, func(string) (*rxtypes.UnifiedFileIndex, error) {
 			return idx, nil
 		})
@@ -98,10 +98,19 @@ func resolveLinesByCounting(src sandbox.Pinned, offsets []int64) map[int64]int {
 	if len(wanted) == 0 {
 		return nil
 	}
-	if compression.IsCompressed(src.Path()) {
+	if isCompressedSource(src) {
 		return numberCompressedText(src, wanted, samples.NoIndex)
 	}
 	return countLinesToOffsets(src, rxtypes.LineIndexEntry{LineNumber: 1, ByteOffset: 0}, wanted)
+}
+
+// isCompressedSource reports whether src's text is read through a
+// decompressor, as filekind decides from its bytes. A file that cannot
+// be opened is reported as plain, and the count that follows meets the
+// same error and numbers nothing.
+func isCompressedSource(src sandbox.Pinned) bool {
+	kind, err := filekind.FormatOfPinned(src)
+	return err == nil && kind.IsCompressed()
 }
 
 // uniqueSortedOffsets drops negative and repeated offsets and sorts the

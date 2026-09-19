@@ -49,7 +49,7 @@ func TestIndex_JSONSaysAnArchiveIsNotText(t *testing.T) {
 	result := runIndexJSON(t, indexParams{paths: []string{archive}, threshold: &zero})
 
 	reasons, _ := result["skip_reasons"].([]any)
-	assertSkipReasons(t, reasons, map[string]string{archive: "not a text file"})
+	assertSkipReasons(t, reasons, map[string]string{archive: archiveReason})
 }
 
 func TestIndex_HumanOutputNamesEachSkippedFileWithItsReason(t *testing.T) {
@@ -62,7 +62,7 @@ func TestIndex_HumanOutputNamesEachSkippedFileWithItsReason(t *testing.T) {
 		t.Fatalf("runIndex: %v", err)
 	}
 
-	want := "No files indexed.\nSkipped 1 files:\n  " + archive + ": not a text file\n"
+	want := "No files indexed.\nSkipped 1 files:\n  " + archive + ": " + archiveReason + "\n"
 	if out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out.String(), want)
 	}
@@ -87,3 +87,7 @@ func assertSkipReasons(t *testing.T, reasons []any, want map[string]string) {
 		}
 	}
 }
+
+// archiveReason is why archiveFixture is not indexed: its decompressed
+// text holds NUL bytes, as a tar stream's does.
+const archiveReason = "not a text file: a NUL byte in the first 8 KiB of its decompressed text"

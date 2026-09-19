@@ -5,9 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 // ErrNotSeekable is returned when a probed file lacks the seekable-zstd
@@ -363,51 +360,4 @@ func WriteSeekTable(w io.Writer, frames []FrameInfo) error {
 		return fmt.Errorf("write footer: %w", err)
 	}
 	return nil
-}
-
-// IsSeekable reports whether the file at path is named .zst and ends
-// with a seek table that describes it (ReadSeekTable succeeds). It
-// reads the table and one frame header per frame, never frame data.
-// A file with the footer magic and a table that does not add up is not
-// seekable: it is read as plain zstd.
-//
-// Returns false on I/O errors (missing file, permission denied, too
-// short) — callers that need distinguishing info should use
-// ReadSeekTable directly and inspect the error.
-func IsSeekable(path string) bool {
-	// Extension heuristic first — cheap and catches obvious non-matches.
-	if !HasSeekableExtension(path) {
-		return false
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return hasValidSeekTable(f, info.Size())
-}
-
-// IsSeekableFile is IsSeekable for a file the caller already has open,
-// size bytes long, such as one opened through a pin: name gives the
-// extension, and the table is read from r. Nothing is looked up by
-// path, so the answer is about the file that is open.
-func IsSeekableFile(name string, r io.ReaderAt, size int64) bool {
-	return HasSeekableExtension(name) && hasValidSeekTable(r, size)
-}
-
-// HasSeekableExtension reports whether name ends in .zst, in any case:
-// the only name a seekable file is looked for under.
-func HasSeekableExtension(name string) bool {
-	return strings.EqualFold(filepath.Ext(name), ".zst")
-}
-
-// hasValidSeekTable reports whether r, a file of size bytes, ends with
-// a seek table that describes it. A read error is false.
-func hasValidSeekTable(r io.ReaderAt, size int64) bool {
-	_, err := ReadSeekTable(r, size)
-	return err == nil
 }

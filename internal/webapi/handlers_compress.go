@@ -216,7 +216,7 @@ var compressRefusalHints = []struct {
 // a request's content, each answered with 400. Any other error from it
 // is a failure to reach the input.
 var compressCheckRefusals = []error{
-	compressfile.ErrCompoundArchive,
+	compressfile.ErrNotText,
 	compressfile.ErrAlreadySeekable,
 	compressfile.ErrOutputIsInput,
 }

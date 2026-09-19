@@ -12,6 +12,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
@@ -148,10 +149,23 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 			info.Size(), thresholdBytes,
 		))
 	}
-	// A binary file has no lines to index, and rx-python refuses one
-	// here too.
-	if !index.IsTextFile(validated) {
-		return nil, ErrBadRequest(fmt.Sprintf("%s is not a text file", req.Path))
+	// A file whose text is not text (filekind) has no lines to index,
+	// and rx-python refuses a binary one here too. The file is read
+	// through its pin; one that cannot be opened is refused like one
+	// that cannot be stated.
+	src, err := paths.Pin(validated)
+	if err != nil {
+		return nil, ErrForbidden(err.Error())
+	}
+	if src.Info().IsDir() {
+		return nil, ErrBadRequest(fmt.Sprintf("Path is a directory, not a file: %s", req.Path))
+	}
+	kind, err := filekind.OfPinned(src)
+	if err != nil {
+		return nil, ErrForbidden(err.Error())
+	}
+	if !kind.IsText() {
+		return nil, ErrBadRequest(fmt.Sprintf("%s: %s", kind.NotText, req.Path))
 	}
 
 	task, isNew := s.cfg.TaskManager.Create(validated, "index")

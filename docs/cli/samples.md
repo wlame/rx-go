@@ -113,7 +113,13 @@ position in the same request is still answered — one bad number in
 would otherwise have nothing to return.
 
 Exit 2 is reserved for a malformed argument: `--lines=abc`, or a reversed
-range like `--lines=50-10`.
+range like `--lines=50-10`, and for a path that has no lines to give: a
+directory, or a file whose text is not text (a NUL byte in the first
+8 KiB of its text, decompressed for a compressed file: a `.tar.gz`, a
+binary file, UTF-16). That file is refused with the reason, as in
+`Error: Not a text file: a NUL byte in the first 8 KiB of its decompressed text: logs.tar.gz`,
+and no index is built for it. See
+[Compression](../concepts/compression.md#how-rx-decides-what-a-file-is).
 
 `-1` is the same "asked but unknown" convention a capped search uses for
 a match it could not number. rx-python answers identically, on plain,

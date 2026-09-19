@@ -34,6 +34,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every command and every HTTP route decides what a file is by one rule,
+  from the file's own bytes read through its pin: the magic bytes name
+  the format and the extension is never consulted (a text file named
+  `.gz` is searched, sampled and indexed as text; a gzip file named
+  `.log` is decompressed); a zstd file is seekable when its seek table
+  describes it, whatever its name (`.zstd` included); a zstd stream that
+  starts with a skippable frame (pzstd's output) is zstd; and a file is
+  not text when the first 8 KiB of its text, decompressed for a
+  compressed file, hold a NUL byte. Each refusal gives the reason, which
+  starts with "not a text file". Consequences: `rx samples` and
+  `GET /v1/samples` refuse a file that is not text (exit 2, `400`)
+  instead of answering a `.tar.gz` or a UTF-16 file as lines of raw
+  bytes, and build no index for it; a compressed copy with a NUL byte in
+  its first 8 KiB of text is skipped like the plain file, where it used
+  to be searched; `rx compress` and `POST /v1/compress` refuse any input
+  that is not text, with the reason, where they used to refuse only
+  names such as `.tar.gz` (`compound archives (tar.gz, etc.) are not
+  supported`); `rx index` and `POST /v1/index` give the reason in
+  `skip_reasons` and the `400` detail (`not a text file: …: <path>`);
+  `GET /v1/tree` reports `is_text` by the same rule (it read 512 bytes
+  of the raw file, and called every compressed file text) and
+  `compression_format` from the bytes. A line that starts with the
+  bytes `FF FE` is not taken for UTF-16 unless a NUL byte follows.
+
 - Every integer environment variable follows one rule and has a range:
   unset keeps the default; a value that is not a whole number, or is
   below the minimum, keeps the default; a value above the maximum is

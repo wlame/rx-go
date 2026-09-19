@@ -20,26 +20,6 @@ import (
 // the answer is the same either way, only slower.
 var errNoFrameIndex = errors.New("samples: no frame index for this file")
 
-// isSeekable reports whether src, read through its pin, is a seekable
-// zstd file: named .zst and ending with a seek table that describes it.
-// A .zst whose table does not add up is read as plain zstd, which gives
-// its whole text.
-func isSeekable(src paths.Pinned) bool {
-	if !seekable.HasSeekableExtension(src.Path()) {
-		return false
-	}
-	file, err := src.Open()
-	if err != nil {
-		return false
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	return seekable.IsSeekableFile(src.Path(), file, info.Size())
-}
-
 // decodeSeekableFrame decompresses one frame of a seekable file, read
 // through its pin. It is a variable so a test can count the frames a
 // request decodes.

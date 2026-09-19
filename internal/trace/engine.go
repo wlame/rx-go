@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	sandbox "github.com/wlame/rx-go/internal/paths" // aliased: local vars named `paths`
 	"github.com/wlame/rx-go/internal/prometheus"
@@ -180,12 +182,16 @@ func (e *Engine) RunWithOptions(
 	fileIDs := make(map[string]string, len(files))
 	filePathToID := make(map[string]string, len(files))
 	sources := make(map[string]sandbox.Pinned, len(files))
-	for i, src := range files {
+	// What each file is (filekind), decided once by expandPaths from
+	// the file's own bytes.
+	kinds := make(map[string]filekind.Kind, len(files))
+	for i, file := range files {
 		id := "f" + strconv.Itoa(i+1)
-		filePaths[i] = src.Path()
-		fileIDs[id] = src.Path()
-		filePathToID[src.Path()] = id
-		sources[id] = src
+		filePaths[i] = file.src.Path()
+		fileIDs[id] = file.src.Path()
+		filePathToID[file.src.Path()] = id
+		sources[id] = file.src
+		kinds[id] = file.kind
 	}
 
 	// -------------------------------------------------------------------
@@ -210,6 +216,8 @@ func (e *Engine) RunWithOptions(
 		// table is a seekable file's seek table, read and checked
 		// against the file when the file was classified.
 		table *seekable.SeekTable
+		// format is a compressed file's stream format.
+		format compression.Format
 	}
 	var buckets []fileBucket
 	fileChunkCounts := make(map[string]int)
@@ -230,10 +238,16 @@ func (e *Engine) RunWithOptions(
 			fi = nil
 		}
 
-		// Seekable-zstd first — takes priority over plain zstd. A .zst
-		// whose seek table does not describe it is read as the plain
-		// zstd stream it still is, below.
-		if tbl, ok := seekTableOf(src); ok {
+		kind := kinds[filePathToID[fp]]
+		if kind.TableMismatch != nil {
+			slog.Default().Warn("seek_table_mismatch", "path", fp, "error", kind.TableMismatch.Error(),
+				"read_as", "plain zstd")
+		}
+		// Seekable zstd: a zstd file whose seek table describes it. One
+		// whose table does not is read as the plain zstd stream it still
+		// is, below.
+		if kind.IsSeekable() {
+			tbl := kind.Table
 			if opts.usesTraceCache(fp) {
 				if info, cerr := GetCompressedCacheInfo(fp, patterns, opts.RgExtraArgs); cerr == nil {
 					buckets = append(buckets, fileBucket{
@@ -248,8 +262,10 @@ func (e *Engine) RunWithOptions(
 			fileChunkCounts[filePathToID[fp]] = tbl.NumFrames
 			continue
 		}
-		if compression.IsCompressed(fp) {
-			buckets = append(buckets, fileBucket{kind: "compressed", path: fp, src: src, size: sz, info: fi})
+		if kind.IsCompressed() {
+			buckets = append(buckets, fileBucket{
+				kind: "compressed", path: fp, src: src, size: sz, info: fi, format: kind.Format,
+			})
 			fileChunkCounts[filePathToID[fp]] = 1
 			continue
 		}
@@ -419,13 +435,8 @@ func (e *Engine) RunWithOptions(
 			outcome.scanned = scan
 		case "compressed":
 			remaining := remainingResults(opts.MaxResults, found)
-			format, _ := compression.DetectFromPath(b.path)
-			if format == compression.FormatNone {
-				skipped = append(skipped, b.path)
-				continue
-			}
 			rawMatches, rawContexts, _, cerr := ProcessCompressed(
-				ctx, b.src, format,
+				ctx, b.src, b.format,
 				patternIDs, patternOrder, opts.RgExtraArgs,
 				opts.ContextBefore, opts.ContextAfter,
 				remaining,
@@ -691,6 +702,12 @@ type contextWithFile struct {
 	ctx    rxtypes.ContextLine
 }
 
+// searchFile is a file a trace reads: its pin and what it is.
+type searchFile struct {
+	src  sandbox.Pinned
+	kind filekind.Kind
+}
+
 // expandPaths splits input paths into (files, dirs-scanned, skipped).
 //
 // recursive defaults to TRUE (Python
@@ -702,10 +719,12 @@ type contextWithFile struct {
 // so the scan later reads that file or nothing. A directory is walked
 // by sandbox.WalkPinned, which follows a symlink only when naming its
 // target would be allowed, enters each directory once, and pins every
-// file it reports. A path or entry it refuses goes into `skipped`, as do
-// binary and unreadable files. Compressed archives (gzip/xz/bz2/zst) are
-// treated as text because ripgrep can read them via decompressors.
-func expandPaths(paths []string, recursive bool) (files []sandbox.Pinned, scannedDirs, skipped []string) {
+// file it reports. Each file is then classified once (filekind.OfPinned)
+// through its pin: what the classification finds decides how the file
+// is read, and a file whose text is not text (a binary file, a .tar.gz,
+// UTF-16) goes into `skipped`, as do the paths and entries refused and
+// the files that cannot be opened.
+func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDirs, skipped []string) {
 	for _, p := range paths {
 		src, err := sandbox.Pin(p)
 		if err != nil {
@@ -713,11 +732,11 @@ func expandPaths(paths []string, recursive bool) (files []sandbox.Pinned, scanne
 			continue
 		}
 		if !src.Info().IsDir() {
-			if !isTextFile(src) {
+			if file, ok := classifyForSearch(src); ok {
+				files = append(files, file)
+			} else {
 				skipped = append(skipped, p)
-				continue
 			}
-			files = append(files, src)
 			continue
 		}
 
@@ -736,37 +755,29 @@ func expandPaths(paths []string, recursive bool) (files []sandbox.Pinned, scanne
 				// denied) is passed over; the rest of the tree is
 				// still searched.
 				continue
-			case entry.Refused != "", !isTextFile(entry.File):
+			case entry.Refused != "":
 				skipped = append(skipped, entry.Path)
 			default:
-				files = append(files, entry.File)
+				if file, ok := classifyForSearch(entry.File); ok {
+					files = append(files, file)
+				} else {
+					skipped = append(skipped, entry.Path)
+				}
 			}
 		}
 	}
 	return files, scannedDirs, skipped
 }
 
-// isTextFile returns true when the first 8 KB of the file contains no
-// null bytes. Mirrors Python's is_text_file in file_utils.py — we
-// special-case compressed files as "text" since ripgrep (via decompressor)
-// will read them.
-func isTextFile(src sandbox.Pinned) bool {
-	if compression.IsCompressed(src.Path()) {
-		return true
+// classifyForSearch decides what src is through its pin. ok is false
+// for a file that cannot be opened and for one whose text is not text:
+// the search skips both.
+func classifyForSearch(src sandbox.Pinned) (searchFile, bool) {
+	kind, err := filekind.OfPinned(src)
+	if err != nil || !kind.IsText() {
+		return searchFile{}, false
 	}
-	f, err := src.Open()
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-	sample := make([]byte, 8192)
-	n, _ := f.Read(sample)
-	for i := 0; i < n; i++ {
-		if sample[i] == 0 {
-			return false
-		}
-	}
-	return true
+	return searchFile{src: src, kind: kind}, true
 }
 
 // patternIDsMap builds the "p1" -> "pattern" map. Single place so

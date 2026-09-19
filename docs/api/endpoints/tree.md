@@ -125,8 +125,8 @@ GET /v1/tree?path=<dir>            # list dir contents
 | `size_human` | string | Files only |
 | `children_count` | int | Directories only — non-recursive entry count |
 | `is_compressed` | bool | Files only |
-| `compression_format` | string | Files only — `"gzip"`, `"bzip2"`, `"xz"`, `"zstd"`, `"seekable_zstd"` |
-| `is_text` | bool | Files only — based on NUL-byte probe of first 512 bytes |
+| `compression_format` | string | Compressed files only — `"gzip"`, `"bz2"`, `"xz"`, `"zstd"` (a seekable zstd file is `"zstd"`), decided by the magic bytes |
+| `is_text` | bool | Files only — false when the first 8 KiB of the file's text (decompressed for a compressed file) hold a NUL byte, the rule every command refuses a file by |
 | `is_indexed` | bool | Files only — whether a line index exists in cache |
 | `line_count` | int64 | Files with an index that has a line count |
 

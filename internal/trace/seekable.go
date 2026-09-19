@@ -203,24 +203,6 @@ func (b *batchFeeder) write(p []byte, newlines int) error {
 	return nil
 }
 
-// seekTableOf returns the seek table of src when src is a seekable-zstd
-// file: named .zst, ending with a seek table that describes it. A .zst
-// that ends with the footer of a table that does not describe it (two
-// seekable files joined with `cat`, or a damaged table) is not, and a
-// warning says why; rx reads it as plain zstd, which gives its whole
-// text. The file is read through its pin.
-func seekTableOf(src sandbox.Pinned) (*seekable.SeekTable, bool) {
-	if !seekable.HasSeekableExtension(src.Path()) {
-		return nil, false
-	}
-	tbl, err := readSeekTable(src)
-	if errors.Is(err, seekable.ErrSeekTableMismatch) {
-		slog.Default().Warn("seek_table_mismatch", "path", src.Path(), "error", err.Error(),
-			"read_as", "plain zstd")
-	}
-	return tbl, err == nil
-}
-
 // readSeekTable is a small wrapper around seekable.ReadSeekTable that
 // handles the file-open + size-lookup for callers that hold a pinned
 // file. The seekable package's API takes an io.ReaderAt for
