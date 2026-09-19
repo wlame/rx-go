@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -250,10 +251,11 @@ func TestEngine_Run_CacheHitRoundTrip(t *testing.T) {
 	requireRipgrep(t)
 	cacheDir := t.TempDir()
 	t.Setenv("RX_CACHE_DIR", cacheDir)
-	// Lower the large-file threshold so our small fixture qualifies.
-	t.Setenv("RX_LARGE_FILE_MB", "0")
+	// The smallest large-file size, 1 MB, and a fixture padded past it
+	// with lines that do not match, so the scan is cached.
+	t.Setenv("RX_LARGE_FILE_MB", "1")
 
-	content := []byte("alpha error\nbeta\ngamma error\n")
+	content := append([]byte("alpha error\nbeta\ngamma error\n"), largeFilePadding()...)
 	p := mustWriteFile(t, content)
 
 	first, err := New().RunWithOptions(
@@ -284,6 +286,13 @@ func TestEngine_Run_CacheHitRoundTrip(t *testing.T) {
 	if second.FileChunks["f1"] != first.FileChunks["f1"] {
 		t.Errorf("cache-hit file_chunks[f1] = %d, want %d", second.FileChunks["f1"], first.FileChunks["f1"])
 	}
+}
+
+// largeFilePadding is 1 MiB of lines that match none of the patterns
+// the tests search for. Appended to a fixture, it makes the file large
+// under RX_LARGE_FILE_MB=1, so a completed scan of it is cached.
+func largeFilePadding() []byte {
+	return bytes.Repeat([]byte("padding\n"), (1<<20)/len("padding\n"))
 }
 
 // TestEngine_Run_ContextLines collects surrounding lines.

@@ -730,31 +730,23 @@ func ProcessAllChunks(
 	return results, nil
 }
 
-// workerLimit returns the effective concurrency cap.
+// workerLimit returns how many ripgrep processes a search runs at once.
 //
 // Precedence:
 //  1. RX_WORKERS env var (new Go addition; no Python equivalent).
-//  2. RX_MAX_SUBPROCESSES env var (Python parity).
-//  3. runtime.NumCPU().
+//  2. The smaller of runtime.NumCPU() and RX_MAX_SUBPROCESSES (Python
+//     parity).
 //
-// The hard lower bound is 1. The upper bound is config.MaxSubprocesses()
-// to keep subprocess pressure sane even on beefy machines.
+// The result is from 1 to 256 either way: config bounds RX_WORKERS and
+// RX_MAX_SUBPROCESSES to that range (a larger value is used as 256),
+// and runtime.NumCPU() is at least 1. The upper bound keeps the
+// processes, pipes and memory one search takes bounded whatever the
+// environment asks for.
 func workerLimit() int {
-	if v := config.GetIntEnv("RX_WORKERS", 0); v > 0 {
+	if v := config.Workers(); v > 0 {
 		return v
 	}
-	ms := config.MaxSubprocesses()
-	if ms < 1 {
-		ms = 1
-	}
-	nc := runtime.NumCPU()
-	if nc < 1 {
-		nc = 1
-	}
-	if nc < ms {
-		return nc
-	}
-	return ms
+	return min(runtime.NumCPU(), config.MaxSubprocesses())
 }
 
 // filterIncompatibleRgArgs strips the rg flags that would corrupt the

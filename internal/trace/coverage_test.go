@@ -99,6 +99,35 @@ func TestWorkerLimit_Precedence(t *testing.T) {
 	}
 }
 
+// RX_WORKERS has an upper bound, so the environment cannot start an
+// unbounded number of ripgrep processes; 0 or below means "not set".
+func TestWorkerLimit_RX_WORKERSIsCapped(t *testing.T) {
+	cases := []struct {
+		value string
+		want  int
+	}{
+		{"256", 256},
+		{"100000", 256},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("RX_WORKERS", tc.value)
+			if got := workerLimit(); got != tc.want {
+				t.Errorf("RX_WORKERS=%s gives %d workers, want %d", tc.value, got, tc.want)
+			}
+		})
+	}
+	for _, unset := range []string{"0", "-4", "many"} {
+		t.Run(unset, func(t *testing.T) {
+			t.Setenv("RX_WORKERS", unset)
+			t.Setenv("RX_MAX_SUBPROCESSES", "2")
+			if got := workerLimit(); got < 1 || got > 2 {
+				t.Errorf("RX_WORKERS=%s gives %d workers, want the computed 1 or 2", unset, got)
+			}
+		})
+	}
+}
+
 // TestParseEvent_BytesField exercises the base64 fallback path —
 // ripgrep emits {"bytes": "..."} when the path contains non-UTF-8.
 func TestParseEvent_BytesField(t *testing.T) {

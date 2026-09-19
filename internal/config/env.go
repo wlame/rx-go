@@ -6,27 +6,8 @@ package config
 
 import (
 	"os"
-	"strconv"
 	"strings"
 )
-
-// GetIntEnv returns the integer value of the named environment variable.
-// If the variable is unset or not parseable, def is returned.
-//
-// Mirrors rx-python/src/rx/utils.py::get_int_env — except Python's
-// version always returns 0 on failure regardless of caller intent;
-// we make the default explicit.
-func GetIntEnv(name string, def int) int {
-	v := os.Getenv(name)
-	if v == "" {
-		return def
-	}
-	parsed, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return parsed
-}
 
 // GetStringEnv returns the value of the named environment variable, or
 // def if unset. An empty string is treated as "set" and returned as-is.

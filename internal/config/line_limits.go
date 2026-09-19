@@ -24,25 +24,14 @@ const (
 	DefaultMaxSubmatchesPerLine = 10_000
 )
 
-// MaxLineTextBytes returns RX_MAX_LINE_TEXT_BYTES, or
-// DefaultMaxLineTextBytes when it is unset, not a whole number, or
-// below 1.
+// MaxLineTextBytes returns RX_MAX_LINE_TEXT_BYTES, from 1 byte to
+// 256 MiB, or DefaultMaxLineTextBytes.
 func MaxLineTextBytes() int {
-	return positiveIntEnv("RX_MAX_LINE_TEXT_BYTES", DefaultMaxLineTextBytes)
+	return MaxLineTextBytesSetting.Value()
 }
 
-// MaxSubmatchesPerLine returns RX_MAX_SUBMATCHES_PER_LINE, or
-// DefaultMaxSubmatchesPerLine when it is unset, not a whole number, or
-// below 1.
+// MaxSubmatchesPerLine returns RX_MAX_SUBMATCHES_PER_LINE, from 1 to
+// 1,000,000, or DefaultMaxSubmatchesPerLine.
 func MaxSubmatchesPerLine() int {
-	return positiveIntEnv("RX_MAX_SUBMATCHES_PER_LINE", DefaultMaxSubmatchesPerLine)
-}
-
-// positiveIntEnv is GetIntEnv for a setting that only makes sense above
-// zero: a value of 0 or below falls back to def like an unparsable one.
-func positiveIntEnv(name string, def int) int {
-	if v := GetIntEnv(name, def); v >= 1 {
-		return v
-	}
-	return def
+	return MaxSubmatchesPerLineSetting.Value()
 }

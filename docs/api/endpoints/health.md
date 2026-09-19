@@ -106,6 +106,11 @@ because rx reads it: nothing does. `RX_SEARCH_ROOTS` is there because
 - `MAX_SUBPROCESSES`: most chunks per file, and the worker pool size
   when `RX_WORKERS` is unset; default 20
 - `MIN_CHUNK_SIZE_MB`: smallest chunk the chunker carves; default 20
+
+Both are the values rx uses: a variable outside its range shows the
+default or the maximum (see
+[integer settings](../../configuration.md#integer-settings)), while
+`environment` shows the variable as it is set.
 - `CACHE_DIR`: resolved cache base directory
 
 rx-python also reports `DEBUG_MODE`, `LINE_SIZE_ASSUMPTION_KB`,

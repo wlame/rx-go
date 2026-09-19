@@ -231,9 +231,9 @@ func TestParity_Fixture3_BoundaryMatches(t *testing.T) {
 func TestParity_CacheHitMatchesFirstScan(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
-	t.Setenv("RX_LARGE_FILE_MB", "0") // cache even tiny files
+	t.Setenv("RX_LARGE_FILE_MB", "1") // the padding makes the file large, so it is cached
 
-	content := []byte("alpha error\nbeta\ngamma error boundary\ndelta\nepsilon error\n")
+	content := append([]byte("alpha error\nbeta\ngamma error boundary\ndelta\nepsilon error\n"), largeFilePadding()...)
 	p := mustWriteFile(t, content)
 
 	first, err := New().RunWithOptions(

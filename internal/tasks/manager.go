@@ -60,11 +60,10 @@ const DefaultMaxTasks = 256
 // Python uses 5 minutes; we match.
 const DefaultSweepInterval = 5 * time.Minute
 
-// ttlFromEnv returns the effective TTL given RX_TASK_TTL_MINUTES or
-// the default.
+// ttlFromEnv returns the effective TTL: RX_TASK_TTL_MINUTES, from one
+// minute to one week, or 60 minutes.
 func ttlFromEnv() time.Duration {
-	v := config.GetIntEnv("RX_TASK_TTL_MINUTES", 60)
-	return time.Duration(v) * time.Minute
+	return config.TaskTTL()
 }
 
 // ============================================================================

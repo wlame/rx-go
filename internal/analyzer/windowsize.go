@@ -22,21 +22,11 @@ package analyzer
 // Anything larger would be silently truncated inside NewWindow anyway;
 // clamping here gives callers a consistent, observable result.
 
-import (
-	"os"
-	"strconv"
-)
+import "github.com/wlame/rx-go/internal/config"
 
 // defaultWindowLines is the compiled-in fallback when no CLI flag,
-// request param, or env var supplies a value. Chosen large enough to
-// cover multi-line tracebacks and small JSON blobs, small enough that
-// per-worker memory (size * slot overhead) is negligible.
-const defaultWindowLines = 128
-
-// envWindowLinesVar is the name of the environment variable read by
-// envWindowLines. Exported as a constant so tests and docs can refer
-// to a single source of truth for the name.
-const envWindowLinesVar = "RX_ANALYZE_WINDOW_LINES"
+// request param, or env var supplies a value.
+const defaultWindowLines = config.DefaultAnalyzeWindowLines
 
 // ResolveWindowLines returns the effective window size for the
 // coordinator, applying the documented precedence and clamping.
@@ -57,38 +47,11 @@ func ResolveWindowLines(cliFlag, urlParam int) int {
 	if cliFlag > 0 {
 		return clampWindowLines(cliFlag)
 	}
-	// Then the env var. Invalid values (non-integer, zero, negative)
-	// are silently ignored and we fall through to the default —
-	// startup-time config errors shouldn't kill the process.
-	if v, ok := envWindowLines(); ok {
-		return clampWindowLines(v)
-	}
-	return defaultWindowLines
-}
-
-// envWindowLines reads RX_ANALYZE_WINDOW_LINES and returns its parsed
-// integer value. The second return is false when the variable is
-// unset, empty, or cannot be parsed as a positive integer — callers
-// should fall back to the next precedence layer.
-//
-// Separated from ResolveWindowLines so the env-parsing branch can be
-// unit-tested in isolation.
-func envWindowLines() (int, bool) {
-	raw, ok := os.LookupEnv(envWindowLinesVar)
-	if !ok || raw == "" {
-		return 0, false
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, false
-	}
-	// Only accept positive values from the env. Zero and negatives are
-	// treated as "not set" so a misconfigured env doesn't silently
-	// clamp to 1 and hide the problem from the user.
-	if n <= 0 {
-		return 0, false
-	}
-	return n, true
+	// Then the env var, which config reads by the rule every integer
+	// setting follows: a value that is not a whole number or is below 1
+	// gives the default, one above maxWindowLines gives maxWindowLines,
+	// each with one warning per process.
+	return config.AnalyzeWindowLines()
 }
 
 // clampWindowLines squeezes v into the legal range [1, maxWindowLines].

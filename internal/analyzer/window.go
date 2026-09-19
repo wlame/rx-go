@@ -1,5 +1,7 @@
 package analyzer
 
+import "github.com/wlame/rx-go/internal/config"
+
 // Window is a fixed-capacity ring buffer of recently observed lines,
 // passed by pointer to every LineDetector's OnLine callback.
 //
@@ -32,8 +34,9 @@ package analyzer
 // maxWindowLines caps the Window's per-instance backing array so the
 // struct size is bounded regardless of user configuration. The config
 // resolver (ResolveWindowLines) clamps the user-visible window size to
-// this value.
-const maxWindowLines = 2048
+// this value. The value lives in config, where RX_ANALYZE_WINDOW_LINES
+// is bounded by it too.
+const maxWindowLines = config.MaxAnalyzeWindowLines
 
 // maxSlotBufCap caps the retained capacity of a slot's byte buffer. When
 // a push receives a line longer than this cap, we drop the slot's old

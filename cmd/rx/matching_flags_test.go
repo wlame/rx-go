@@ -235,12 +235,17 @@ func TestTraceMatchingFlag_SameAnswerForEveryStorage(t *testing.T) {
 }
 
 func TestTraceMatchingFlag_CacheIsKeyedByTheFlags(t *testing.T) {
-	path := writeFlagFixture(t)
+	// The fixture padded past 1 MiB with lines that match nothing
+	// counts as large under RX_LARGE_FILE_MB=1, so every completed scan
+	// is cached; the cache directory is shared by the three runs below.
+	path := filepath.Join(t.TempDir(), "case.log")
+	padding := strings.Repeat("padding\n", (1<<20)/len("padding\n"))
+	if err := os.WriteFile(path, []byte(flagFixture+padding), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
 	dir := filepath.Dir(path)
 	cacheDir := t.TempDir()
-	// Every file counts as large, so every completed scan is cached; the
-	// cache directory is shared by the three runs below.
-	env := []string{"RX_LARGE_FILE_MB=0", "RX_CACHE_DIR=" + cacheDir}
+	env := []string{"RX_LARGE_FILE_MB=1", "RX_CACHE_DIR=" + cacheDir}
 
 	caseSensitive := traceJSON(t, dir, env, "trace", "error", path)
 	firstIgnoreCase := traceJSON(t, dir, env, "trace", "-i", "error", path)

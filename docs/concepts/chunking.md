@@ -150,7 +150,7 @@ scan is not 5× slower than a 1-pattern scan.
 
 | Variable | Effect |
 |---|---|
-| `RX_WORKERS` | Goroutine pool size, when positive. Default: the smaller of `NumCPU` and `RX_MAX_SUBPROCESSES`. |
+| `RX_WORKERS` | Goroutine pool size, from 1 to 256 (a larger value is used as 256). Default: the smaller of `NumCPU` and `RX_MAX_SUBPROCESSES`. |
 | `RX_MIN_CHUNK_SIZE_MB` | Smallest chunk. Default: `20`. A file below twice this size is one chunk. |
 | `RX_MAX_SUBPROCESSES` | Most chunks per file, and the pool size when `RX_WORKERS` is unset. Default: `20`. |
 

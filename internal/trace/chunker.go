@@ -165,15 +165,10 @@ func GetFileOffsets(src sandbox.Pinned, fileSize int64) ([]int64, error) {
 		return []int64{0}, nil
 	}
 
+	// config bounds both settings: the chunk size is from 1 MB to
+	// 1 TiB and the chunk count from 1 to 256, so neither is 0 here.
 	minChunkSize := int64(config.MinChunkSizeMB()) * 1024 * 1024
-	if minChunkSize <= 0 {
-		// Defend against RX_MIN_CHUNK_SIZE_MB=0: fall back to default.
-		minChunkSize = int64(config.DefaultMinChunkSizeMB) * 1024 * 1024
-	}
 	maxSubs := int64(config.MaxSubprocesses())
-	if maxSubs < 1 {
-		maxSubs = 1
-	}
 
 	maxChunksBySize := fileSize / minChunkSize
 	numChunks := maxChunksBySize
