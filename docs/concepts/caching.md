@@ -258,6 +258,9 @@ Per-invocation flags:
   `--force` (index) or `--no-cache` (trace) there.
 - **Fractional-second mtimes** are compared at the precision the
   filesystem reports, down to the nanosecond.
+- **Piped input** (`… | rx trace -e PATTERN -`) is copied to a
+  temporary file that is deleted when the command ends. No trace-cache
+  entry is written for it; a file named beside `-` is cached as usual.
 
 ## Atomic writes
 
