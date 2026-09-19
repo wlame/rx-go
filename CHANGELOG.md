@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `rx serve` installs viewer 0.5.0: the range of viewer releases it
+  accepts is now `0.2.0 <= v < 0.6.0`. Release 0.4.0 refused 0.5.0 and
+  came up without the viewer unless one was already cached or
+  `RX_FRONTEND_VERSION` pinned an older one.
+
 ## [0.4.0] - 2026-10-05
 
 ### Added
