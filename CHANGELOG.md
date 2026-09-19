@@ -129,6 +129,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A relative `RX_CACHE_DIR` or `XDG_CACHE_HOME` is now made absolute
+  against the directory `rx` starts in. It used to stay relative, so
+  the cache was looked up under whatever directory a command ran from,
+  two CLI calls from two directories used two caches, and `/health`
+  reported `CACHE_DIR` as the relative path.
+
 - A line index records its source file by the absolute path
   (`source_path`), whatever path the caller gave. It used to record the
   path as typed, so `rx index a.log` stored `a.log`: `rx index --info`
