@@ -83,11 +83,21 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 	// ask to re-encode, and an output that is the input, before the
 	// "already exists" rule and before a task is created: the caller
 	// gets the reason as a 400 rather than as a failed task.
+	//
+	// Check opens the input through its pin; failing to do that (the
+	// path changed after the validation above) is a path error, not a
+	// refusal of the request's content.
 	if refusal := compressfile.Check(validated, output, req.Force); refusal != nil {
+		if !isCompressRefusal(refusal) {
+			return nil, ClassifyPathError(refusal)
+		}
 		return nil, ErrBadRequest(fmt.Sprintf("%s: %s", req.InputPath, compressRefusal(refusal)))
 	}
+	// Lstat: a symbolic link holds the name even when it leads nowhere.
+	// The task applies the same rule again when it puts the output in
+	// place, so a file created in between is not overwritten either.
 	if !req.Force {
-		if _, statErr := os.Stat(output); statErr == nil {
+		if _, statErr := os.Lstat(output); statErr == nil {
 			return nil, ErrBadRequest(fmt.Sprintf("Output file already exists: %s", output))
 		}
 	}
@@ -127,6 +137,7 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		CompressionLevel: level,
 		BuildIndex:       req.BuildIndex == nil || *req.BuildIndex,
 		ReencodeSeekable: req.Force,
+		Overwrite:        req.Force,
 		CLICommand:       compressCLICommand(validated, output, req),
 	}
 	go runDetached(mgr, taskID, "compress", logger, func() {
@@ -154,6 +165,9 @@ type compressJob struct {
 	// ReencodeSeekable lets a seekable zstd input through; the request's
 	// force sets it.
 	ReencodeSeekable bool
+	// Overwrite replaces a file that holds the output name; the
+	// request's force sets it.
+	Overwrite bool
 	// CLICommand is the rx command that does what the request asked.
 	CLICommand string
 }
@@ -185,10 +199,30 @@ var compressRefusalHints = []struct {
 }{
 	{compressfile.ErrAlreadySeekable, ` (set "force": true to re-encode it)`},
 	{compressfile.ErrOutputIsInput, ` (set "output_path" to another file)`},
+	{compressfile.ErrOutputExists, ` (set "force": true to overwrite)`},
 }
 
-// compressRefusal words a compressfile.Check error for the HTTP API,
-// with the hint compressRefusalHints holds for it.
+// compressCheckRefusals are the errors compressfile.Check returns about
+// a request's content, each answered with 400. Any other error from it
+// is a failure to reach the input.
+var compressCheckRefusals = []error{
+	compressfile.ErrCompoundArchive,
+	compressfile.ErrAlreadySeekable,
+	compressfile.ErrOutputIsInput,
+}
+
+// isCompressRefusal reports whether err is one of compressCheckRefusals.
+func isCompressRefusal(err error) bool {
+	for _, refusal := range compressCheckRefusals {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
+// compressRefusal words a compressfile error for the HTTP API, with the
+// hint compressRefusalHints holds for it.
 func compressRefusal(err error) string {
 	for _, h := range compressRefusalHints {
 		if errors.Is(err, h.err) {
@@ -208,13 +242,9 @@ func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 	mgr.MarkRunning(taskID)
 	start := time.Now()
 
-	// Remove any pre-existing output so we don't mix data with a stale
-	// file. The earlier Force check already gated this, and the request
-	// was refused if the output is the input file.
-	if _, statErr := os.Stat(job.OutputPath); statErr == nil {
-		_ = os.Remove(job.OutputPath)
-	}
-
+	// Compress writes a temporary file and puts it under the output name
+	// only when it is whole, so an existing output is replaced at the
+	// end (force) or left alone (the task fails), never removed first.
 	written, err := compressfile.Compress(context.Background(), compressfile.Options{
 		InputPath:  job.InputPath,
 		OutputPath: job.OutputPath,
@@ -224,9 +254,10 @@ func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 		// follow-up can surface parallelism through an env knob.
 		Workers:          1,
 		ReencodeSeekable: job.ReencodeSeekable,
+		Overwrite:        job.Overwrite,
 	})
 	if err != nil {
-		mgr.Fail(taskID, err.Error())
+		mgr.Fail(taskID, compressRefusal(err))
 		return
 	}
 

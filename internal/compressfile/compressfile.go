@@ -13,19 +13,26 @@
 // compound archive such as .tar.gz, whose text is a tar stream rather
 // than lines; a file that is already seekable zstd, unless the caller
 // asks to re-encode it (for another frame size, say); and an output path
-// that names the input file itself, which would be truncated before it
-// is read.
+// that names the input file itself.
 //
-// Path validation against the search roots and the "output already
-// exists" rule stay with the callers: each reports them in its own
-// words and with its own status.
+// The output is written to a temporary file in its directory and put
+// under its name only once it is complete and synced to disk (see
+// Compress). The name therefore holds either what it held before or a
+// whole output, never a part of one, and two compressions to one name
+// cannot mix their bytes.
+//
+// Path validation against the search roots and the early "output
+// already exists" refusal stay with the callers: each reports them in
+// its own words and with its own status.
 package compressfile
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,9 +53,11 @@ var (
 	// not ask to re-encode: rx already reads it as it is.
 	ErrAlreadySeekable = errors.New("already a seekable zstd file")
 	// ErrOutputIsInput refuses an output path that resolves to the input
-	// file. Creating the output would truncate the input before it is
-	// read.
+	// file: the input would be replaced by its own compressed form.
 	ErrOutputIsInput = errors.New("the output path is the input file")
+	// ErrOutputExists refuses to replace an output file the caller did
+	// not ask to overwrite.
+	ErrOutputExists = errors.New("output file already exists")
 )
 
 // Options describes one compression.
@@ -67,6 +76,11 @@ type Options struct {
 	// level. `rx compress --force` and a request with "force": true set
 	// it.
 	ReencodeSeekable bool
+	// Overwrite replaces a file that already holds the output name.
+	// Without it, Compress returns ErrOutputExists when anything holds
+	// that name by the time the finished output is put there, a
+	// symbolic link included, even one that leads nowhere.
+	Overwrite bool
 }
 
 // Result describes the file Compress wrote.
@@ -120,66 +134,231 @@ func DefaultOutputName(inputPath string) string {
 }
 
 // Check reports why inputPath cannot be compressed to outputPath, or nil
-// when it can. It reads at most the input's seek table and one frame
-// header per frame (whether it is seekable already) and writes nothing,
-// so a caller can refuse a request before it starts any work.
+// when it can. It opens the input through its pin (paths.Pin), reads at
+// most its seek table and one frame header per frame (whether it is
+// seekable already) and writes nothing, so a caller can refuse a request
+// before it starts any work. An input that cannot be pinned or opened
+// returns that error.
 func Check(inputPath, outputPath string, reencodeSeekable bool) error {
 	if compression.IsCompoundArchive(inputPath) {
 		return ErrCompoundArchive
 	}
-	if seekable.IsSeekable(inputPath) && !reencodeSeekable {
+	src, err := openPinned(inputPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = src.Close() }()
+	return checkOpened(inputPath, src, outputPath, reencodeSeekable)
+}
+
+// checkOpened applies the rules of Check that look at the input to src,
+// the input already opened through its pin.
+func checkOpened(inputPath string, src *os.File, outputPath string, reencodeSeekable bool) error {
+	info, err := src.Stat()
+	if err != nil {
+		return fmt.Errorf("stat input: %w", err)
+	}
+	if seekable.IsSeekableFile(inputPath, src, info.Size()) && !reencodeSeekable {
 		return ErrAlreadySeekable
 	}
-	if isSameFile(inputPath, outputPath) {
+	if isSameFile(inputPath, info, outputPath) {
 		return ErrOutputIsInput
 	}
 	return nil
 }
 
 // Compress writes the seekable zstd form of opts.InputPath's text to
-// opts.OutputPath, creating or truncating it, and fsyncs it.
+// opts.OutputPath.
 //
-// It runs Check first and returns its error unchanged. Any later error
-// is wrapped with the step that failed; a decompression error (a
-// truncated or corrupt input) keeps its cause, so errors.Is finds it.
-// On a failure after the output was created, the partial output is
-// removed: it has no seek table and is not a usable file.
+// It applies Check's rules first and returns their error unchanged. The
+// output is encoded into a new temporary file in the output's directory
+// (createTemp), synced to disk, and only then put under its name
+// (publishOutput): with opts.Overwrite it replaces whatever held the
+// name, a symbolic link included, which is replaced rather than written
+// through; without it the name must still be free at that moment, or
+// the result is an error wrapping ErrOutputExists. So the name holds
+// either what it held before or a whole output, and of two compressions
+// to one name each writes its own file: they never mix.
+//
+// Any later error is wrapped with the step that failed; a decompression
+// error (a truncated or corrupt input) keeps its cause, so errors.Is
+// finds it. On every failure the temporary file is removed and the
+// output name is left as it was. A process killed outright (SIGKILL)
+// leaves its temporary file, a hidden name starting with ".rx-compress-",
+// and nothing under the output name.
 //
 // ctx cancels the encoding between frame batches.
 func Compress(ctx context.Context, opts Options) (Result, error) {
-	if err := Check(opts.InputPath, opts.OutputPath, opts.ReencodeSeekable); err != nil {
+	if compression.IsCompoundArchive(opts.InputPath) {
+		return Result{}, ErrCompoundArchive
+	}
+	src, err := openPinned(opts.InputPath)
+	if err != nil {
 		return Result{}, err
 	}
-	text, format, err := openText(opts.InputPath)
+	if refusal := checkOpened(opts.InputPath, src, opts.OutputPath, opts.ReencodeSeekable); refusal != nil {
+		_ = src.Close()
+		return Result{}, refusal
+	}
+	text, format, err := openText(opts.InputPath, src)
 	if err != nil {
 		return Result{}, err
 	}
 	// Closing the text reader also closes the input file it reads from.
 	defer func() { _ = text.Close() }()
 
-	dst, err := os.Create(opts.OutputPath)
+	// SECURITY: every later step on the output (create the temporary
+	// file, link or rename it, remove it) goes through dir, the output's
+	// directory opened from the search root without passing a link. A
+	// directory swapped for a link after the caller's check is refused
+	// here, and nothing can redirect the writes once dir is open.
+	dir, err := paths.OpenDir(filepath.Dir(opts.OutputPath))
 	if err != nil {
-		return Result{}, fmt.Errorf("create output: %w", err)
+		return Result{}, fmt.Errorf("open output directory: %w", err)
 	}
-	tbl, err := encodeInto(ctx, text, dst, opts)
-	// Close before the size is read and before a failed output is
-	// removed; a Close error after a good fsync loses no data.
-	_ = dst.Close()
-	if err != nil {
-		_ = os.Remove(opts.OutputPath)
-		return Result{}, err
-	}
+	defer func() { _ = dir.Close() }()
 
-	info, err := os.Stat(opts.OutputPath)
+	tbl, size, err := writeOutput(ctx, dir, filepath.Base(opts.OutputPath), text, opts)
+	if errors.Is(err, ErrOutputExists) {
+		return Result{}, fmt.Errorf("%w: %s", ErrOutputExists, opts.OutputPath)
+	}
 	if err != nil {
-		return Result{}, fmt.Errorf("stat output: %w", err)
+		return Result{}, err
 	}
 	return Result{
 		InputFormat:      format,
-		CompressedSize:   info.Size(),
+		CompressedSize:   size,
 		DecompressedSize: decompressedSize(tbl),
 		FrameCount:       len(tbl.Frames),
 	}, nil
+}
+
+// Temporary output files are named tempPrefix, a random part and
+// tempSuffix. The leading dot makes them hidden, so a directory search
+// skips them by default while they are written.
+const (
+	tempPrefix = ".rx-compress-"
+	tempSuffix = ".tmp"
+	// tempAttempts bounds the random names tried before giving up. A
+	// random part is 26 base32 characters (crypto/rand.Text), so a
+	// second attempt is already unlikely ever to be needed.
+	tempAttempts = 8
+)
+
+// writeOutput encodes text into a new temporary file in dir, syncs it,
+// and puts it under name. It returns the seek table and the size of the
+// file it wrote, taken from the open file (fstat), so the size describes
+// this file even when another writer replaces name right after.
+func writeOutput(ctx context.Context, dir *os.Root, name string, text io.Reader, opts Options) (*seekable.SeekTable, int64, error) {
+	tmp, tmpName, err := createTemp(dir)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create output: %w", err)
+	}
+	// The deferred call runs on every way out of this function. After a
+	// rename the temporary name no longer exists and Remove finds
+	// nothing; after a link it is a second name of the finished output.
+	// In every other case it is an unfinished file. Its error is
+	// dropped: on a failure the error reported is the one that stopped
+	// the compression, and on success the output is whole wherever the
+	// leftover name is.
+	defer func() { _ = dir.Remove(tmpName) }()
+
+	tbl, err := encodeInto(ctx, text, tmp, opts)
+	if err != nil {
+		_ = tmp.Close()
+		return nil, 0, err
+	}
+	info, statErr := tmp.Stat()
+	closeErr := tmp.Close()
+	if statErr != nil {
+		return nil, 0, fmt.Errorf("stat output: %w", statErr)
+	}
+	if closeErr != nil {
+		return nil, 0, fmt.Errorf("close output: %w", closeErr)
+	}
+	if err := publishOutput(dir, tmpName, name, opts.Overwrite); err != nil {
+		return nil, 0, err
+	}
+	return tbl, info.Size(), nil
+}
+
+// createTemp creates a new, empty temporary file in dir and returns it
+// open for writing, with its name. O_EXCL makes the create fail rather
+// than open anything that already holds the name, a symbolic link
+// included. The mode is what os.Create gives (0666 less the umask), the
+// mode the output had when it was created in place.
+func createTemp(dir *os.Root) (*os.File, string, error) {
+	for range tempAttempts {
+		name := tempPrefix + rand.Text() + tempSuffix
+		f, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		return f, name, nil
+	}
+	return nil, "", fmt.Errorf("no free temporary name after %d attempts", tempAttempts)
+}
+
+// publishOutput puts the finished temporary file tmpName under name,
+// both in dir.
+//
+// With overwrite it renames: rename replaces the directory entry name
+// in one step, whatever it is, and never follows a symbolic link there.
+// Without overwrite it makes name a hard link to the file, which fails
+// with "file exists" when anything holds name, so of two writers racing
+// for a free name exactly one wins. The caller removes tmpName.
+func publishOutput(dir *os.Root, tmpName, name string, overwrite bool) error {
+	if overwrite {
+		if err := dir.Rename(tmpName, name); err != nil {
+			return fmt.Errorf("rename output into place: %w", err)
+		}
+		return nil
+	}
+	err := linkOutput(dir, tmpName, name)
+	if errors.Is(err, fs.ErrExist) {
+		return ErrOutputExists
+	}
+	if err != nil {
+		// Some file systems have no hard links (FAT, exFAT, some network
+		// shares). Claim the name another way.
+		return claimAndRename(dir, tmpName, name)
+	}
+	return nil
+}
+
+// linkOutput puts the finished output under its name when the caller
+// did not ask to overwrite. Tests replace it to act as a file system
+// without hard links.
+var linkOutput = func(dir *os.Root, oldname, newname string) error {
+	return dir.Link(oldname, newname)
+}
+
+// claimAndRename is publishOutput without hard links: it creates name
+// empty with O_EXCL, which fails when anything holds it, and then
+// renames the finished file over that claim. Between the two steps,
+// microseconds apart, name is an empty file; a process killed exactly
+// then leaves it.
+func claimAndRename(dir *os.Root, tmpName, name string) error {
+	claim, err := dir.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if errors.Is(err, fs.ErrExist) {
+		return ErrOutputExists
+	}
+	if err != nil {
+		return fmt.Errorf("create output: %w", err)
+	}
+	claimed, statErr := claim.Stat()
+	_ = claim.Close()
+	if err := dir.Rename(tmpName, name); err != nil {
+		// Remove the empty claim, but only while name is still it.
+		if current, lstatErr := dir.Lstat(name); statErr == nil && lstatErr == nil && os.SameFile(claimed, current) {
+			_ = dir.Remove(name)
+		}
+		return fmt.Errorf("rename output into place: %w", err)
+	}
+	return nil
 }
 
 // encodeInto streams text through the seekable encoder into dst and
@@ -200,24 +379,32 @@ func encodeInto(ctx context.Context, text io.Reader, dst *os.File, opts Options)
 	return tbl, nil
 }
 
-// openText opens path as a stream of its text and reports the format it
-// was read as. A plain file is read up to the size it had when it was
-// opened, so a log that grows during the encoding is encoded as it was
-// at the start, the way a trace plans its chunks.
-//
-// The path is pinned first (paths.Pin), which checks it against the
-// search roots and the hidden rule again: an HTTP compression runs as a
-// background task, well after its request's check, and a link
-// retargeted in between must not be copied into the root.
-func openText(path string) (io.ReadCloser, compression.Format, error) {
+// openPinned opens path for reading through its pin (paths.Pin), which
+// checks it against the search roots and the hidden rule again: an HTTP
+// compression runs as a background task, well after its request's
+// check, and a link retargeted in between must not be copied into the
+// root. The caller closes the file.
+func openPinned(path string) (*os.File, error) {
 	pinned, err := paths.Pin(path)
 	if err != nil {
-		return nil, compression.FormatNone, err
+		return nil, err
 	}
 	src, err := pinned.Open()
 	if err != nil {
-		return nil, compression.FormatNone, fmt.Errorf("open input: %w", err)
+		return nil, fmt.Errorf("open input: %w", err)
 	}
+	return src, nil
+}
+
+// openText turns src, the input opened through its pin and named path,
+// into a stream of its text and reports the format it was read as. A
+// plain file is read up to the size it had when it was opened, so a log
+// that grows during the encoding is encoded as it was at the start, the
+// way a trace plans its chunks.
+//
+// openText owns src: closing the reader it returns closes src, and on
+// an error src is already closed.
+func openText(path string, src *os.File) (io.ReadCloser, compression.Format, error) {
 	info, err := src.Stat()
 	if err != nil {
 		_ = src.Close()
@@ -259,21 +446,18 @@ type readCloser struct {
 }
 
 // isSameFile reports whether output names the input file: the same path
-// after cleaning, or, when both exist, the same file reached another way
-// (a symbolic or hard link).
-func isSameFile(input, output string) bool {
-	if filepath.Clean(input) == filepath.Clean(output) {
+// after cleaning, or, when the output exists, the same file reached
+// another way (a symbolic or hard link). input is the stat of the input
+// as it was opened, so the input is not looked up by path again.
+func isSameFile(inputPath string, input os.FileInfo, output string) bool {
+	if filepath.Clean(inputPath) == filepath.Clean(output) {
 		return true
-	}
-	inInfo, err := os.Stat(input)
-	if err != nil {
-		return false
 	}
 	outInfo, err := os.Stat(output)
 	if err != nil {
 		return false
 	}
-	return os.SameFile(inInfo, outInfo)
+	return os.SameFile(input, outInfo)
 }
 
 // decompressedSize is the length of the text the frames of tbl hold.

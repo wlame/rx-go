@@ -225,29 +225,97 @@ func relativeToRoot(root, canonical string) (string, bool) {
 // inside the directory (into a hidden one, say), which is what the
 // per-step check adds.
 func statInsideRoot(root, rel string) (os.FileInfo, error) {
-	dir, err := os.OpenRoot(root)
-	if err != nil {
-		return nil, err
-	}
-	// dir moves down the tree in the loop; the deferred function closes
-	// whichever directory is open when statInsideRoot returns.
-	defer func() { _ = dir.Close() }()
 	if rel == "." {
+		dir, err := os.OpenRoot(root)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = dir.Close() }()
 		return dir.Stat(".")
 	}
 	names := strings.Split(rel, string(filepath.Separator))
 	last := len(names) - 1
-	for _, name := range names[:last] {
-		child, err := openRealSubdir(dir, name)
-		if err != nil {
-			return nil, err
-		}
-		_ = dir.Close()
-		dir = child
+	dir, err := openDirInsideRoot(root, names[:last])
+	if err != nil {
+		return nil, err
 	}
+	defer func() { _ = dir.Close() }()
 	// Lstat: a final component that became a link is described as a
 	// link, and the caller refuses it.
 	return dir.Lstat(names[last])
+}
+
+// openDirInsideRoot opens the directory reached from root through the
+// directory names given, one at a time, refusing to pass through a
+// symbolic link (openRealSubdir). No names opens root itself. The
+// caller closes the directory returned.
+func openDirInsideRoot(root string, names []string) (*os.Root, error) {
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		child, err := openRealSubdir(dir, name)
+		// Each step needs only the directory it opens; the one it
+		// came from is closed whether the step worked or not.
+		_ = dir.Close()
+		if err != nil {
+			return nil, err
+		}
+		dir = child
+	}
+	return dir, nil
+}
+
+// OpenDir opens the directory dir for writing into it, after checking
+// it the way ValidatePathWithinRoots does: inside a search root, with no
+// hidden component unless hidden entries are on. Without a sandbox (no
+// search roots, the CLI without --search-root) it only opens dir.
+//
+// Inside a sandbox the directory is reached from its search root one
+// component at a time, refusing any symbolic link on the way, exactly
+// as Pin reaches a file. A directory swapped for a link after the
+// caller's own check (to /etc, or into a hidden directory) is refused
+// with an error wrapping ErrFileChanged rather than opened.
+//
+// Go note: the *os.Root returned resolves every name given to its
+// methods (OpenFile, Rename, Link, Remove) relative to the directory
+// it holds open and refuses a name that would lead out of it, so what
+// the caller writes through it lands in this directory whatever the
+// path dir leads to later. The caller closes it.
+func OpenDir(dir string) (*os.Root, error) {
+	roots := GetSearchRoots()
+	if len(roots) == 0 {
+		return os.OpenRoot(dir)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: %w", dir, err)
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkCanonical(dir, canonical, roots); err != nil {
+		return nil, err
+	}
+	for _, root := range roots {
+		rel, ok := relativeToRoot(root, canonical)
+		if !ok {
+			continue
+		}
+		var names []string
+		if rel != "." {
+			names = strings.Split(rel, string(filepath.Separator))
+		}
+		opened, err := openDirInsideRoot(root, names)
+		if errors.Is(err, ErrFileChanged) {
+			return nil, fmt.Errorf("%w: %s", ErrFileChanged, dir)
+		}
+		return opened, err
+	}
+	// checkCanonical accepted canonical, so one of the roots holds it.
+	return nil, &ErrPathOutsideRoots{Path: dir, Roots: roots}
 }
 
 // openRealSubdir opens the directory name inside parent, and only when

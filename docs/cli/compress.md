@@ -48,16 +48,32 @@ file's bytes. An output that already exists is refused without
 name, so it is refused unless `--output` names another file; use
 `--output` for any other name.
 
+The output is written to a hidden temporary file
+(`.rx-compress-*.tmp`) in the output's directory, synced to disk, and
+only then put under its name, so the name holds either what it held
+before or a whole output. Without `--force` the name must still be
+free at that moment: a file that appeared there during the run is left
+alone and the run fails with `output file already exists`. With
+`--force` the output replaces whatever holds the name; a symbolic link
+there is replaced itself, never written through. Without `--force` a
+link counts as an existing output, even one that leads nowhere. Two
+runs that write one output each write their own file: without
+`--force` one of them fails, with it the last one to finish stays.
+`compressed_size` is the size of the file the run wrote.
+
 Three inputs are refused, and nothing is written for them:
 
 | Input | Message |
 |---|---|
 | A compound archive (`.tar.gz`, `.tgz`, `.tar.zst`, `.tar.xz`, `.tar.bz2`, ...) | `compound archives (tar.gz, etc.) are not supported`: its text is a tar stream, not lines |
 | A file that is already seekable zstd | `already a seekable zstd file (use --force to re-encode it)`: rx reads it as it is. With `--force` its text is encoded again with this run's `--frame-size` and `--level` |
-| An output path that is the input file, by any name (the default name of a plain `app.log.zst` included) | `the output path is the input file (use --output to name another file)`: creating the output would destroy the input before it is read. `--force` does not lift it |
+| An output path that is the input file, by any name (the default name of a plain `app.log.zst` included) | `the output path is the input file (use --output to name another file)`: the input would be replaced by its own compressed form. `--force` does not lift it |
 
 A truncated or corrupt compressed input fails that file with the
-decoder's error, and the partial output is removed.
+decoder's error. The temporary file is removed, and the output name is
+left as it was: nothing is created there, and with `--force` the file
+it would have replaced stays. A run killed outright (`kill -9`) leaves
+its hidden temporary file and nothing under the output name.
 
 ## Flags
 

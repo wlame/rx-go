@@ -110,6 +110,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx compress` and `POST /v1/compress` write the output to a hidden
+  temporary file (`.rx-compress-*.tmp`) in the output's directory, sync
+  it, and only then put it under the output name. Two compressions to
+  one output used to write into the same file at once and both report
+  success over a mix of their bytes, which no tool could read; now each
+  writes its own file. Without `--force` (`"force": true`) the name
+  must still be free when the output is put there, so of two such runs
+  exactly one succeeds and the other fails with "output file already
+  exists"; with it, each replaces the name whole and the last one
+  stays. `compressed_size` is the size of the file the run wrote, not
+  of whatever holds the name afterwards. A failed or
+  cancelled compression leaves nothing under the output name, and a
+  forced one leaves the file it would have replaced as it was (the HTTP
+  task used to delete it first). A symbolic link at the output name is
+  never written through: it counts as an existing output, even when it
+  leads nowhere, and `--force` replaces the link itself. The output's
+  directory is reached from the search root without passing a link, so
+  a directory swapped for one after the path check gets nothing
+  written.
+
 - A seekable zstd file written by another tool to the zstd seekable
   format specification (facebook/zstd, `contrib/seekable_format`) is
   now seekable for rx. Its seek-table footer is frame count,
