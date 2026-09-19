@@ -9,7 +9,7 @@
 //   - Save + Load using pkg/rxtypes.UnifiedFileIndex as the wire type.
 //   - IsValidForSource: the index is invalidated when the source's
 //     size or mtime differs from the recorded values, or its inode,
-//     ctime or content fingerprint no longer match.
+//     device, ctime or content fingerprint no longer match.
 package index
 
 import (
@@ -50,12 +50,20 @@ import (
 // holding one, which numbered every later frame and checkpoint one line
 // too high for each such frame.
 //
+// Version 7: the index records the mtime and the ctime as nanoseconds
+// since the Unix epoch (source_mtime_ns, source_ctime_ns) and the
+// device beside the inode (source_device), and validation compares
+// those. Version 6 compared the local-time text of the two times, so
+// an index built under one TZ was stale under another, and an mtime
+// moved by an hour inside the hour a daylight-saving change repeats
+// went unseen.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 6
+const Version = 7
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp
@@ -279,22 +287,25 @@ func recordedIdentity(idx *rxtypes.UnifiedFileIndex) SourceIdentity {
 	return SourceIdentity{
 		SizeBytes:   idx.SourceSizeBytes,
 		ModifiedAt:  idx.SourceModifiedAt,
+		ModifiedNs:  idx.SourceMtimeNs,
 		Inode:       idx.SourceInode,
+		Device:      idx.SourceDevice,
 		ChangedAt:   idx.SourceChangedAt,
+		ChangedNs:   idx.SourceCtimeNs,
 		Fingerprint: idx.SourceFingerprint,
 	}
 }
 
-// SourceIdentityFields returns the inode and ctime to stamp into a new
-// index for info, in the same string layout as SourceModifiedAt. Both
-// are nil when the platform does not report them.
-func SourceIdentityFields(info os.FileInfo) (*uint64, *string) {
-	inode, changed, ok := sourceIdentity(info)
-	if !ok {
-		return nil, nil
-	}
-	stamp := formatMtime(changed)
-	return &inode, &stamp
+// stampInto writes id into the identity fields of idx.
+func (id SourceIdentity) stampInto(idx *rxtypes.UnifiedFileIndex) {
+	idx.SourceModifiedAt = id.ModifiedAt
+	idx.SourceMtimeNs = id.ModifiedNs
+	idx.SourceSizeBytes = id.SizeBytes
+	idx.SourceInode = id.Inode
+	idx.SourceDevice = id.Device
+	idx.SourceChangedAt = id.ChangedAt
+	idx.SourceCtimeNs = id.ChangedNs
+	idx.SourceFingerprint = id.Fingerprint
 }
 
 // FormatMtime exposes the mtime-to-string conversion so the trace
@@ -308,15 +319,11 @@ func FormatMtime(t time.Time) string { return formatMtime(t) }
 // datetime, and its isoformat() drops tzinfo — so the stored string
 // reflects wall-clock at the host, not UTC.
 //
-// # TIMEZONE-DEPENDENCE CAVEAT
-//
-// Because we use t.Local(), the same mtime produces DIFFERENT output
-// strings on hosts with different TZ settings. A Docker container
-// defaulting to UTC and a host in Europe/Berlin both faithfully match
-// Python's behavior — this is a Python quirk we replicate, not a Go
-// bug. However, a cache built in one TZ and re-read in another will
-// be treated as stale and rebuilt. Document this for operators;
-// see docs/MIGRATION.md.
+// The text depends on the time zone: one mtime reads differently under
+// another TZ, and two mtimes an hour apart read the same in the hour a
+// daylight-saving change repeats. That is why no identity check
+// compares it. Caches compare the nanosecond fields of SourceIdentity,
+// and keep this text for a person reading the cache file.
 //
 // FRACTIONAL-SECOND PARITY:
 //

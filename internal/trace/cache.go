@@ -57,7 +57,12 @@ import (
 // submatch spans ripgrep reported for its pattern, so a hit gives the
 // scan's submatches without running any pattern again; an entry with a
 // record that has none (written by a development build before the spans
-// were stored) is treated as absent.
+// were stored) is treated as absent. A version 6 entry also records the
+// mtime and ctime as nanoseconds since the Unix epoch and the device
+// beside the inode, and those are what is compared, so an entry stays
+// valid when the local time zone changes. An entry a development build
+// wrote before these fields existed reads as mtime 0, never matches a
+// file, and is rescanned.
 //
 // rx-python writes version 3, so each backend treats the other's trace
 // caches as absent.
@@ -301,10 +306,10 @@ func writeFileAtomically(path string, body []byte) error {
 // and the patterns hash match, the entry lists the same patterns as
 // the caller (in any order) with every record naming one of them, the
 // cache records the scan's chunk count, and the source file is still
-// the file
-// the cache was built from: the same size, mtime, inode, ctime and
-// fingerprint, compared by index.SourceIdentity.MatchesFile exactly as
-// the line index compares them.
+// the file the cache was built from: the same size, mtime, inode,
+// device, ctime and fingerprint, compared by
+// index.SourceIdentity.MatchesFile exactly as the line index compares
+// them.
 func IsCacheValid(
 	cachePath string,
 	sourcePath string,
@@ -484,8 +489,11 @@ func recordedSource(data *rxtypes.TraceCacheData) index.SourceIdentity {
 	return index.SourceIdentity{
 		SizeBytes:   data.SourceSizeBytes,
 		ModifiedAt:  data.SourceModifiedAt,
+		ModifiedNs:  data.SourceMtimeNs,
 		Inode:       data.SourceInode,
+		Device:      data.SourceDevice,
 		ChangedAt:   data.SourceChangedAt,
+		ChangedNs:   data.SourceCtimeNs,
 		Fingerprint: data.SourceFingerprint,
 	}
 }
@@ -630,6 +638,9 @@ func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCach
 		SourceInode:       scan.Source.Inode,
 		SourceChangedAt:   scan.Source.ChangedAt,
 		SourceFingerprint: scan.Source.Fingerprint,
+		SourceMtimeNs:     scan.Source.ModifiedNs,
+		SourceCtimeNs:     scan.Source.ChangedNs,
+		SourceDevice:      scan.Source.Device,
 		Patterns:          append([]string(nil), patterns...),
 		PatternsHash:      ComputePatternsHash(patterns, rgFlags),
 		RgFlags:           relevantFlags,

@@ -232,8 +232,11 @@ Data flow for `rx trace "pattern" big.log`:
    An index is used only when it still describes the file it was built
    from. That means the format version matches exactly — an index from
    another version is treated as absent, not read with today's rules —
-   and every identity field it carries still matches: size, mtime, inode,
-   ctime, and a digest of the size plus the first and last 64 KiB. The
+   and every identity field it carries still matches: size, mtime,
+   inode, device, ctime, and a digest of the size plus the first and
+   last 64 KiB. Times are compared as nanoseconds since the Unix epoch
+   (`source_mtime_ns`, `source_ctime_ns`), never as the local-time text
+   `source_modified_at` / `source_changed_at`, which changes with `TZ`. The
    one case this does not catch is an edit confined to the middle of a
    large file that also preserves the byte count and the mtime, on a
    filesystem whose ctime does not move. Catching that needs a
@@ -431,7 +434,9 @@ Paste the output. Do not summarize it.
 - `filepath.Join("/a", "/etc/passwd")` returns `/a/etc/passwd`; check tar
   symlink targets with `filepath.IsAbs` directly.
 - Python's `isoformat()` drops `.000000` when microseconds are zero and writes
-  local time; `formatMtime` in `internal/index/store.go` matches that.
+  local time; `formatMtime` in `internal/index/store.go` matches that. The
+  text is for reading only: an identity check that compared it would
+  call every entry stale after a `TZ` change.
 - Python's `json.dumps(sort_keys=True)` emits `", "` and `": "`; the patterns
   hash in `internal/trace/cache.go` is built byte by byte to match.
 - Go map iteration is random: sort keys before any output that must be stable.

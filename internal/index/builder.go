@@ -269,22 +269,18 @@ func buildText(
 	// Build the final index.
 	permissions, owner := FileOwnership(info)
 	idx := &rxtypes.UnifiedFileIndex{
-		Version:           Version,
-		SourcePath:        sourcePath,
-		SourceModifiedAt:  identity.ModifiedAt,
-		SourceSizeBytes:   identity.SizeBytes,
-		SourceInode:       identity.Inode,
-		SourceChangedAt:   identity.ChangedAt,
-		SourceFingerprint: identity.Fingerprint,
-		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
-		BuildTimeSeconds:  time.Since(started).Seconds(),
-		FileType:          rxtypes.FileTypeText,
-		IsText:            true,
-		Permissions:       permissions,
-		Owner:             owner,
-		LineIndex:         stats.LineIndex,
-		IndexStepBytes:    ptrInt64(step),
+		Version:          Version,
+		SourcePath:       sourcePath,
+		CreatedAt:        time.Now().UTC().Format(time.RFC3339Nano),
+		BuildTimeSeconds: time.Since(started).Seconds(),
+		FileType:         rxtypes.FileTypeText,
+		IsText:           true,
+		Permissions:      permissions,
+		Owner:            owner,
+		LineIndex:        stats.LineIndex,
+		IndexStepBytes:   ptrInt64(step),
 	}
+	identity.stampInto(idx)
 
 	// Python always populates the line counts and the line-length
 	// aggregates, whether or not --analyze is set; only the anomaly
@@ -760,11 +756,6 @@ func buildSeekable(
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
 		SourcePath:        sourcePath,
-		SourceModifiedAt:  identity.ModifiedAt,
-		SourceSizeBytes:   identity.SizeBytes,
-		SourceInode:       identity.Inode,
-		SourceChangedAt:   identity.ChangedAt,
-		SourceFingerprint: identity.Fingerprint,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds:  time.Since(started).Seconds(),
 		FileType:          rxtypes.FileTypeSeekableZstd,
@@ -782,6 +773,7 @@ func buildSeekable(
 		Frames:                &frameList,
 		LineCount:             ptrInt64(frames.LineCount),
 	}
+	identity.stampInto(idx)
 	if info.Size() > 0 && frames.DecompressedSizeBytes > 0 {
 		ratio := float64(frames.DecompressedSizeBytes) / float64(info.Size())
 		idx.CompressionRatio = &ratio

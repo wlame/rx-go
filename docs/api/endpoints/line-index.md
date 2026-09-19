@@ -90,8 +90,9 @@ projection:
 - `index_entries` and `anomaly_count` are counted here; the CLI prints
   the `line_index` and `anomalies` arrays they count.
 - Other members appear only in the CLI output: `version`, the identity
-  members the cache checks (`source_modified_at`, `source_inode`,
-  `source_changed_at`, `source_fingerprint`), `is_text`, `permissions`,
+  members the cache checks (`source_mtime_ns`, `source_inode`,
+  `source_device`, `source_ctime_ns`, `source_fingerprint`) and their
+  readable copies (`source_modified_at`, `source_changed_at`), `is_text`, `permissions`,
   `owner`, `index_step_bytes`, the seekable-zstd `frame_count`,
   `frame_size_target` and `frames`, and the `prefix_*` members.
 

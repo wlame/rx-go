@@ -224,3 +224,32 @@ func TestSeekableScanIsCached(t *testing.T) {
 		t.Fatal("the cache does not validate against the file it was written for")
 	}
 }
+
+// A trace-cache entry written under one local time zone is a hit under
+// another: a serve started with TZ=UTC and a CLI in the user's zone
+// share one cache. See index.useLocalZone for why the test sets
+// time.Local instead of TZ.
+func TestCacheEntryStaysValidWhenTheLocalTimeZoneChanges(t *testing.T) {
+	useLocalZone(t, "UTC")
+	path, cachePath, _ := cacheFixture(t, []string{"NEEDLE"})
+
+	for _, zone := range []string{"Asia/Tokyo", "America/New_York"} {
+		useLocalZone(t, zone)
+		if !IsCacheValid(cachePath, path, []string{"NEEDLE"}, nil) {
+			t.Errorf("TZ=%s: the entry written under TZ=UTC is not valid", zone)
+		}
+	}
+}
+
+// useLocalZone makes name the process's local time zone until the test
+// ends, by assigning time.Local: Go reads TZ only once per process.
+func useLocalZone(t *testing.T, name string) {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Skipf("time zone %s is not available: %v", name, err)
+	}
+	saved := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = saved })
+}

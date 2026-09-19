@@ -173,11 +173,17 @@ still the file the entry was built from. Each entry records, and each
 load compares:
 
 - the file size (`source_size_bytes`)
-- the mtime (`source_modified_at`)
-- the inode (`source_inode`)
-- the inode-change time, ctime (`source_changed_at`)
+- the mtime, in nanoseconds since the Unix epoch (`source_mtime_ns`)
+- the inode (`source_inode`) and the device that holds it
+  (`source_device`)
+- the inode-change time, ctime, in nanoseconds since the Unix epoch
+  (`source_ctime_ns`)
 - a fingerprint: a digest of the size plus the first and last 64 KiB
   (`source_fingerprint`)
+
+Each entry also records the mtime and the ctime as local wall-clock
+text (`source_modified_at`, `source_changed_at`) for a person reading
+the file. That text is never compared.
 
 Any difference → the entry is **stale**, and the caller rebuilds the
 index or scans the file again. The index and the trace cache use the
@@ -192,10 +198,23 @@ all. Either way the next trace scans again and finds the new lines.
 **There is no TTL.** A cache entry from a year ago is still valid if
 the source file hasn't been touched.
 
-The mtime and the ctime are compared as text at microsecond precision,
-exactly; there is no tolerance. Both sides come from the same
-filesystem, so a filesystem with whole-second times compares
-whole-second times.
+The mtime and the ctime are compared as nanosecond counts, exactly;
+there is no tolerance. Both sides come from the same filesystem, so a
+filesystem with whole-second times compares whole-second times.
+
+**The time zone does not matter.** A nanosecond count names one instant
+whatever `TZ` is, so an `rx serve` started with `TZ=UTC` (as containers
+and systemd units often are) and a CLI in the user's zone share one
+cache and reuse each other's entries. A daylight-saving change does not
+make an entry stale either, and an mtime moved by an hour inside the
+hour the change repeats is still seen as a change. Indexes written by
+rx-go before version 7 compared the local-time text, and are rebuilt
+once.
+
+**The device number can change** when a filesystem is mounted again
+(network filesystems, removable media, some container overlays). An
+entry recorded under the old number is then stale and is rebuilt; the
+answer is never different.
 
 ### Manual invalidation
 
@@ -232,8 +251,8 @@ Per-invocation flags:
   one case left is an edit confined to the middle of a file that keeps
   its size and mtime, on a filesystem whose ctime does not move; use
   `--force` (index) or `--no-cache` (trace) there.
-- **Fractional-second mtimes** are recorded at microsecond precision,
-  in the layout rx-python writes, and compared exactly.
+- **Fractional-second mtimes** are compared at the precision the
+  filesystem reports, down to the nanosecond.
 
 ## Atomic writes
 

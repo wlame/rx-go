@@ -65,6 +65,16 @@ type UnifiedFileIndex struct {
 	SourceInode     *uint64 `json:"source_inode"`
 	SourceChangedAt *string `json:"source_changed_at"`
 
+	// The times validation compares, as nanoseconds since the Unix
+	// epoch, and the device that holds the inode. SourceModifiedAt and
+	// SourceChangedAt are the same times as local wall-clock text, kept
+	// for a person reading the file: the text changes with the time
+	// zone, so it is never compared. SourceCtimeNs and SourceDevice are
+	// null when the filesystem does not report them, like SourceInode.
+	SourceMtimeNs int64   `json:"source_mtime_ns"`
+	SourceCtimeNs *int64  `json:"source_ctime_ns"`
+	SourceDevice  *uint64 `json:"source_device"`
+
 	// SourceFingerprint is a digest of the file size plus the first and
 	// last 64 KiB. It is what catches a rewrite on a filesystem whose
 	// ctime does not move, which is the common case inside containers

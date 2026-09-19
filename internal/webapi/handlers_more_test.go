@@ -45,6 +45,7 @@ func TestIndex_GetAfterManualCache(t *testing.T) {
 		Version:                 index.Version,
 		SourcePath:              srcPath,
 		SourceModifiedAt:        index.FormatMtime(info.ModTime()),
+		SourceMtimeNs:           info.ModTime().UnixNano(),
 		SourceSizeBytes:         info.Size(),
 		CreatedAt:               time.Now().UTC().Format(time.RFC3339Nano),
 		FileType:                rxtypes.FileTypeText,
