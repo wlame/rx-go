@@ -23,8 +23,27 @@ import (
 type IndexLoader func(path string) (*rxtypes.UnifiedFileIndex, error)
 
 // NoIndex is an IndexLoader that always reports "no cache". Useful in
-// tests and when callers explicitly want to skip index-aware seeks.
+// tests and when callers explicitly want to skip index-aware seeks:
+// `rx samples --no-index` and RX_NO_INDEX use it, so the lookup reads
+// no index file at all.
 func NoIndex(string) (*rxtypes.UnifiedFileIndex, error) { return nil, nil }
+
+// StoredIndex is the IndexLoader `rx samples` and GET /v1/samples use:
+// the line index stored for path when it still describes the file
+// (index.LoadForSource), and none otherwise.
+//
+// It never returns an error. A missing, stale, unreadable or truncated
+// index is an absent one (index.LoadFromPath logs the unreadable and
+// truncated kinds), and the lookup reads the file without it: an index
+// only makes the answer faster, so failing the lookup over one would
+// trade the answer for the accelerator.
+func StoredIndex(path string) (*rxtypes.UnifiedFileIndex, error) {
+	idx, err := index.LoadForSource(path)
+	if err != nil {
+		return nil, nil //nolint:nilerr // an index that cannot be loaded is absent
+	}
+	return idx, nil
+}
 
 // Request is the input to Resolve. Exactly one of Offsets or Lines
 // must be non-empty. Context / BeforeContext / AfterContext are

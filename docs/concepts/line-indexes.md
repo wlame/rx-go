@@ -179,7 +179,9 @@ An index is valid as long as its format version is the current one
    `source_fingerprint`
 
 Any mismatch → the index is treated as absent and rebuilt by the next
-call that wants one.
+call that wants one. So is an index file that cannot be read or parsed
+(a truncated write, a permission error), which is also logged at Warn
+level as `index_unreadable`.
 
 There is **no TTL**. A cache entry written last year is still valid if
 the source file hasn't been touched. See [caching](caching.md) for the

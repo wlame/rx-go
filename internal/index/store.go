@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,9 +84,10 @@ const (
 	mtimeLayoutMicros = "2006-01-02T15:04:05.000000"
 )
 
-// ErrIndexNotFound is returned by Load when the cache file doesn't
-// exist. Distinct from other errors so callers can decide whether to
-// build from scratch.
+// ErrIndexNotFound is returned (or wrapped) by Load when there is no
+// usable index: the cache file does not exist, is of another format
+// version, or cannot be read or parsed. Callers branch on it with
+// errors.Is and build from scratch or answer without an index.
 var ErrIndexNotFound = errors.New("index not found in cache")
 
 // GetCachePath returns the cache path for the given source file.
@@ -178,9 +180,9 @@ func Save(idx *rxtypes.UnifiedFileIndex) (string, error) {
 	return cachePath, nil
 }
 
-// Load reads and parses the cache file for sourcePath. Returns
-// ErrIndexNotFound if the cache file doesn't exist (the caller typically
-// reacts by building a fresh index).
+// Load reads and parses the cache file for sourcePath. Returns an error
+// wrapping ErrIndexNotFound when there is no usable index (see
+// LoadFromPath); the caller typically reacts by building a fresh index.
 func Load(sourcePath string) (*rxtypes.UnifiedFileIndex, error) {
 	cachePath := GetCachePath(sourcePath)
 	return LoadFromPath(cachePath)
@@ -188,17 +190,29 @@ func Load(sourcePath string) (*rxtypes.UnifiedFileIndex, error) {
 
 // LoadFromPath reads the file at cachePath. Useful for tests that want
 // to hand-place a cache file at a known location.
+//
+// Every way of not getting a usable index ends in an error that wraps
+// ErrIndexNotFound, so callers need one errors.Is check to treat it as
+// absent: they rebuild, or answer without an index, and never fail
+// because of it. An index only makes an answer faster.
+//
+// A missing file and one of another format version are ordinary misses.
+// A file that cannot be read (its permissions, an I/O error) or parsed
+// (cut short by a power loss or a full disk) is a miss too, but it also
+// logs one "index_unreadable" warning naming the file, the way the
+// trace cache logs "trace_cache_unreadable": the cost is a rebuild or a
+// slower answer, and the operator should know why.
 func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrIndexNotFound
 		}
-		return nil, fmt.Errorf("read %s: %w", cachePath, err)
+		return nil, unreadableIndex(cachePath, fmt.Errorf("read %s: %w", cachePath, err))
 	}
 	var idx rxtypes.UnifiedFileIndex
 	if err := json.Unmarshal(data, &idx); err != nil {
-		return nil, fmt.Errorf("unmarshal %s: %w", cachePath, err)
+		return nil, unreadableIndex(cachePath, fmt.Errorf("unmarshal %s: %w", cachePath, err))
 	}
 	// An index whose schema we do not know is not a usable index, so
 	// report it the same way as a missing one. Wrapping ErrIndexNotFound
@@ -211,6 +225,22 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 			ErrIndexNotFound, cachePath, idx.Version, Version)
 	}
 	return &idx, nil
+}
+
+// unreadableIndex logs the warning for an index file at cachePath that
+// exists but cannot be read or parsed, and returns cause wrapped so
+// that errors.Is(err, ErrIndexNotFound) holds: the caller treats the
+// file as absent. The returned error still carries cause's text.
+func unreadableIndex(cachePath string, cause error) error {
+	slog.Default().Warn("index_unreadable",
+		"path", cachePath,
+		"error", cause.Error(),
+	)
+	// fmt.Errorf with two %w verbs makes an error that matches both
+	// targets under errors.Is: ErrIndexNotFound for the caller's branch,
+	// and the original cause (fs.ErrPermission, a *json.SyntaxError …)
+	// for anyone who needs to tell the reasons apart.
+	return fmt.Errorf("%w: %w", ErrIndexNotFound, cause)
 }
 
 // IsValidForSource reports whether idx is a faithful description of
@@ -289,8 +319,9 @@ func formatMtime(t time.Time) string {
 }
 
 // LoadForSource is the one-shot "read cache if valid, else report stale"
-// helper most callers want. Returns (nil, ErrIndexNotFound) if the
-// cache file is absent. Returns (idx, nil) iff the cache is present
+// helper most callers want. Returns (nil, err) with err wrapping
+// ErrIndexNotFound if the cache file is absent, of another version,
+// unreadable or truncated. Returns (idx, nil) iff the cache is present
 // and valid. Returns (nil, nil) if the cache is present but stale —
 // the caller should rebuild.
 //

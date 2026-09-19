@@ -231,3 +231,70 @@ func TestTrace_NoIndexCappedTraceNumbersEveryMatchWithoutAnIndex(t *testing.T) {
 		t.Errorf("--no-index wrote to the cache directory: %s", raw)
 	}
 }
+
+// truncateStoredIndex builds and stores a valid index for path, then
+// cuts the stored file short, as a power loss during a write would.
+func truncateStoredIndex(t *testing.T, path string) {
+	t.Helper()
+	idx, err := index.Build(path, index.BuildOptions{StepBytes: 4096})
+	if err != nil {
+		t.Fatalf("build index: %v", err)
+	}
+	cachePath, err := index.Save(idx)
+	if err != nil {
+		t.Fatalf("save index: %v", err)
+	}
+	if err := os.Truncate(cachePath, 300); err != nil {
+		t.Fatalf("truncate index: %v", err)
+	}
+}
+
+// A damaged index is no index: a line the scan left unknown stays
+// unknown rather than failing, and the operator hears about the file.
+func TestLineResolver_DamagedIndexLeavesTheLineUnknown(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	path, _ := writeChunkedFixture(t, "resolve.log", 256<<10)
+	offsets := fixtureLineOffsets(t, path)
+	truncateStoredIndex(t, path)
+	log := captureDefaultLog(t)
+
+	matches := unnumberedMatches(offsets, []int{900})
+	resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil,
+		lineResolverFor(Options{}))
+
+	if got := matches[0].AbsoluteLineNumber; got != -1 {
+		t.Errorf("absolute_line_number = %d, want -1 with a damaged index", got)
+	}
+	if !strings.Contains(log.String(), "index_unreadable") {
+		t.Errorf("no warning about the damaged index; log:\n%s", log.String())
+	}
+}
+
+// A capped trace of a file whose index is damaged answers as one
+// without an index: every match is numbered rightly or left at -1, and
+// the search does not fail.
+func TestTrace_CappedTraceWithADamagedIndexAnswersWithoutIt(t *testing.T) {
+	requireRipgrep(t)
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	t.Setenv("RX_MIN_CHUNK_SIZE_MB", "1")
+	t.Setenv("RX_MAX_SUBPROCESSES", "4")
+	path, _ := writeChunkedFixture(t, "capped.log", 8<<20)
+	truncateStoredIndex(t, path)
+
+	limit := 40
+	resp, err := New().RunWithOptions(
+		context.Background(), []string{path}, []string{"NEEDLE"},
+		Options{MaxResults: &limit, NoCache: true},
+	)
+	if err != nil {
+		t.Fatalf("RunWithOptions: %v", err)
+	}
+	if len(resp.Matches) == 0 {
+		t.Fatal("no matches")
+	}
+	for _, m := range resp.Matches {
+		if want := lineNumberFromText(t, *m.LineText); m.AbsoluteLineNumber != -1 && m.AbsoluteLineNumber != want {
+			t.Errorf("offset %d: absolute_line_number = %d, want %d or -1", m.Offset, m.AbsoluteLineNumber, want)
+		}
+	}
+}

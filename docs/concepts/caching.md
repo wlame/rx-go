@@ -251,6 +251,14 @@ is treated as absent, so the cost is a rebuild. A trace entry that
 fails to parse is also logged at Warn level as `trace_cache_unreadable`
 with its path, and the next complete scan of that file replaces it.
 
+A line index that cannot be read (its permissions, an I/O error) or
+parsed (cut short) is treated as absent too, and logged at Warn level
+as `index_unreadable` with its path. A lookup never fails because of
+it: `rx samples` and `GET /v1/samples` read the file without the index,
+and rebuild it over the damaged one when the file is worth an index;
+`GET /v1/index` answers `404` for it as for a missing one; a trace
+leaves a match it cannot number cheaply at `-1`.
+
 ## Cache size
 
 No hard cap. Caches grow as you index more files. Typical sizes:
