@@ -150,16 +150,42 @@ func TestExitCode_InvalidRegexWithJSONPrintsNothingOnStdout(t *testing.T) {
 	}
 }
 
-// TestExitCode_UnknownFlagIsTwo uses `samples`, not `trace`: trace sets
-// FParseErrWhitelist.UnknownFlags so that -i, -w and friends pass
-// through to ripgrep, which is deliberate click parity.
-func TestExitCode_UnknownFlagIsTwo(t *testing.T) {
+// A flag cobra rejects never reaches a command's RunE, so nothing inside
+// the command can print it; the process has to, or the user gets exit 2
+// and a blank screen.
+func TestExitCode_UnknownFlagIsTwoAndNamed(t *testing.T) {
 	_, path := writeLog(t)
+	argLists := [][]string{
+		{"samples", path, "--lines=1", "--definitely-not-a-flag"},
+		{"index", path, "--definitely-not-a-flag"},
+		{"compress", path, "--definitely-not-a-flag"},
+		{"serve", "--definitely-not-a-flag"},
+	}
+	for _, args := range argLists {
+		t.Run(args[0], func(t *testing.T) {
+			code, _, stderr := runRx(t, args...)
 
-	code, _, stderr := runRx(t, "samples", path, "--lines=1", "--definitely-not-a-flag")
+			if code != 2 {
+				t.Errorf("exit code: got %d, want 2 (stderr: %s)", code, stderr)
+			}
+			if !strings.Contains(stderr, "--definitely-not-a-flag") {
+				t.Errorf("stderr does not name the flag: %q", stderr)
+			}
+		})
+	}
+}
+
+func TestExitCode_MissingSearchRootIsTwoAndExplained(t *testing.T) {
+	_, path := writeLog(t)
+	missing := filepath.Join(t.TempDir(), "no-such-root")
+
+	code, _, stderr := runRx(t, "samples", path, "--lines=1", "--search-root="+missing)
 
 	if code != 2 {
 		t.Errorf("exit code: got %d, want 2 (stderr: %s)", code, stderr)
+	}
+	if !strings.HasPrefix(stderr, "Error: ") || !strings.Contains(stderr, "no-such-root") {
+		t.Errorf("stderr should be an Error: line naming the root, got %q", stderr)
 	}
 }
 
