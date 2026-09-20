@@ -56,6 +56,18 @@ func newHumaConfig(appVersion string) huma.Config {
 	// Frame response bodies the way FastAPI does: no trailing newline.
 	cfg.Formats = jsonFormatsWithoutTrailingNewline(cfg.Formats)
 
+	// ...and with no `$schema` field either. huma.DefaultConfig installs
+	// a schema-link transformer that adds one to every body; rx-python
+	// emits no such key, it is declared nowhere in pkg/rxtypes, and a
+	// strict decoder rejects the whole document over it. Dropping the
+	// transformer here means it never reaches the OpenAPI schemas or the
+	// wire.
+	//
+	// CreateHooks run when the huma.API is built, so clearing the slice
+	// now is what stops the hook from appending the transformer to
+	// cfg.Transformers and cfg.OnAddOperation.
+	cfg.CreateHooks = nil
+
 	// Tag descriptions mirror the Python tags so the rendered UI has
 	// the same group headings users are accustomed to.
 	cfg.Tags = []*huma.Tag{
