@@ -52,6 +52,11 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `--no-index` | `bool` | `false` | Don't consult the unified line index |
 | `-r`, `--recursive` | `bool` | `true` | Recurse into subdirectories (default; present for compatibility) |
 | `--no-recursive` | `bool` | `false` | Stop at top-level directory entries |
+| `-i`, `--ignore-case` | `bool` | `false` | Match case-insensitively (ripgrep `-i`) |
+| `-w`, `--word-regexp` | `bool` | `false` | Match only whole words (ripgrep `-w`) |
+| `-x`, `--line-regexp` | `bool` | `false` | Match only whole lines (ripgrep `-x`) |
+| `-F`, `--fixed-strings` | `bool` | `false` | Treat every pattern as literal text (ripgrep `-F`) |
+| `-P`, `--pcre2` | `bool` | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
 
 ### Colour
 
@@ -81,10 +86,13 @@ rather than help it.
   output names that file. The file is removed when the search ends.
   A `-` whose input is empty searches nothing and reports no matches,
   rather than falling back to the current directory.
-- Unknown flags like `-i`, `-w`, `--case-sensitive` parse without
-  error (cobra treats them as unknown) so scripts that pass ripgrep
-  flags don't fail. Flags `rx` itself recognizes are documented in
-  the table above.
+- ripgrep's matching flags `-i`, `-w`, `-x`, `-F` and `-P` are `rx`
+  flags, accepted anywhere on the line, and reach ripgrep on every path:
+  plain files, compressed streams, seekable frames and the trace cache.
+  Any other flag is a usage error (exit 2). The set is closed on purpose:
+  ripgrep also has flags that run a program (`--pre`), change the output
+  `rx` parses (`--count`, `--files`) or let a match span lines
+  (`--multiline`), which chunked scanning cannot honour.
 
 ### Context flags precedence
 
@@ -145,6 +153,18 @@ Scans the file once, reporting matches for any of the three patterns.
 Each match's `pattern` field identifies which pattern ID it matched
 (e.g. `p1`, `p2`, `p3`). More efficient than three separate invocations
 because the file is scanned once.
+
+### ripgrep's matching flags
+
+```bash
+rx -i "connection reset" /var/log/app.log      # any case
+rx -w -e error -e warn /var/log/app.log        # whole words only
+rx -F "user[42].name" /var/log/app.log         # brackets and dot are literal
+rx -P "timeout(?=\s+after)" /var/log/app.log    # PCRE2 look-ahead
+```
+
+Each answer is the one `rg` gives for the same flags. `-P` needs a
+ripgrep built with PCRE2 (`rg --pcre2-version` says whether yours is).
 
 ### Directory scan with depth control
 
@@ -271,6 +291,11 @@ before each match, which is more expensive on the first access.
 - **Warm cache hits** return in sub-second time regardless of file size.
 
 ## Tips and gotchas
+
+!!! note "Your ripgrep config file does not apply"
+    `rx` runs ripgrep with `--no-config`, so a `RIPGREP_CONFIG_PATH`
+    that sets `--smart-case` or `--fixed-strings` for your own `rg`
+    cannot change an `rx` answer. Pass the matching flag to `rx` instead.
 
 !!! tip "Use `--max-results` with hooks"
     When `--hook-on-match` is set, `rx` requires `--max-results` to be

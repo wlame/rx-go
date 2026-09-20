@@ -62,6 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx trace` refuses a flag it does not know, with exit 2 and the
+  flag's name, instead of skipping it. Skipping is what let `-i` and
+  `-w` give wrong answers, and the forwarding it imitated would also
+  pass ripgrep flags that run a program (`--pre`) or change the output
+  rx parses (`--count`). A script that passed another ripgrep flag now
+  fails loudly; the five matching flags under Fixed are the supported set.
+
 - `GET /v1/tree` renders `modified_at` as RFC 3339 in UTC with exactly
   six fractional digits — `2026-09-06T00:53:24.438322Z`. It used to be
   `time.RFC3339Nano`, which reports nanoseconds and trims trailing
@@ -209,6 +216,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directory.
 
 ### Fixed
+
+- `rx trace -i`, `-w`, `-x`, `-F` and `-P` gave wrong answers with exit
+  0. The flags never reached ripgrep, and the argument after one was
+  taken as its value: `rx trace error -i app.log` searched the current
+  directory, and `rx trace -w error app.log` searched for the pattern
+  `app.log`. They are now `rx trace` flags (`--ignore-case`,
+  `--word-regexp`, `--line-regexp`, `--fixed-strings`, `--pcre2`),
+  accepted anywhere on the line and passed to ripgrep on the plain,
+  gzip and seekable-zstd paths and into the trace-cache key, so each
+  answer is the one `rg` gives for the same flags.
 
 - A line ripgrep matched could be dropped afterwards. rg does not say
   which `-e` pattern matched, so rx re-runs each pattern in Go to find
