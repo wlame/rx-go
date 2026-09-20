@@ -75,7 +75,8 @@ type Format struct {
 	// takes a timestamp from anywhere else in a line, so a date inside a
 	// message ("expires 2099-01-01") or a continuation line does not
 	// count. When Anchored is false the first timestamp that ends within
-	// the line's first WindowBytes bytes counts.
+	// the line's first WindowBytes bytes counts, so text written before
+	// the log's own time field can set the value (see Parser.Own).
 	Anchored bool `json:"anchored"`
 	// DayFirst is set for FamilySlash only: true when the first number of
 	// the date is the day (`06/10/2026` is 6 October), false when it is

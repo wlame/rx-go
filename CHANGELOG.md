@@ -17,7 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`backward_steps`, `max_backward_ms`), and for each checkpoint the
   latest timestamp before it (`max_before`). The format is decided from
   the first mebibyte of the text; `time_index` is `null` when none is
-  recognized. Plain, compressed and seekable zstd files are covered, by
+  recognized. A few crafted lines cannot steer the choice: lines that
+  start with a timestamp outrank a timestamp further into each line only
+  when they are at least 1% of the lines, and a slash date is read day
+  first only when at least three lines read only that way and outnumber
+  those that read only month first. Plain, compressed and seekable zstd
+  files are covered, by
   the same pass that builds the line index, with or without `--analyze`.
   Values are milliseconds in the file's frame: UTC instants for a file
   whose timestamps carry zones, the wall-clock time as written for one

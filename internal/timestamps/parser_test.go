@@ -257,6 +257,8 @@ func TestOwn_AnchoredAndWindowed(t *testing.T) {
 		{"anchored ignores a tab-led continuation", isoAnchored, "\t2026-10-06 12:34:56 x", Stamp{}, false},
 		{"windowed skips a match inside a word", isoWindowed, "x2026-10-06 12:34:56 y", Stamp{}, false},
 		{"windowed skips an invalid date for a later one", isoWindowed, "a 2026-13-06 12:34:56 b 2026-10-06 12:34:56", ts, true},
+		{"windowed takes the first match, even in a message", isoWindowed,
+			`{"msg":"x 2099-01-01 00:00:00","ts":"2026-10-06T12:34:56Z"}`, wall(utcMs(2099, 1, 1, 0, 0, 0, 0)), true},
 		{"windowed slash does not start inside a year", Format{Family: FamilySlash, DayFirst: boolPtr(true)}, "2026/10/06 12:34:56 x", Stamp{}, false},
 	}, mtime2025)
 }

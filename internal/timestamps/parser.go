@@ -88,6 +88,13 @@ func (p *Parser) String() string {
 // first timestamp that starts after a byte that is not a letter or digit
 // (for epoch values: after a `[`) counts.
 //
+// In a windowed format the first match wins by design: the matcher does
+// not know which field of the line is the log's own time. Text written
+// before that field can therefore set the value, as in
+// `{"msg":"x 2099-01-01 00:00:00","ts":"2026-10-06T12:34:56Z"}`, which
+// reads as 2099. An anchored format does not have this weakness, which is
+// one reason detection prefers it.
+//
 // Own allocates nothing: every value it builds is a fixed-size struct
 // returned by value, which Go keeps on the stack. It runs on every line
 // of an index build, so a heap allocation here would cost one garbage

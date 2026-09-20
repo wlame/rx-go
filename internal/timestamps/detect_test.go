@@ -28,7 +28,40 @@ func concat(parts ...[]string) []string {
 	return out
 }
 
-func TestDetect(t *testing.T) {
+// isoWindowedZoned is the format of JSON lines whose times end in `Z`.
+var isoWindowedZoned = Format{Family: FamilyISO, HasZone: true}
+
+// detectCase is one sample and the format Detect must choose for it.
+type detectCase struct {
+	name   string
+	sample []byte
+	want   Format
+	ok     bool
+}
+
+// slashLines returns n slash-dated lines whose first two numbers are
+// first and second+i, so a caller can make lines that read in one order
+// only (a number above 12 on one side) or in both.
+func slashLines(n, first, second int, text string) []string {
+	return repeat(n, func(i int) string {
+		return fmt.Sprintf("%02d/%02d/2026 12:00:%02d %s", first, second+i, i%60, text)
+	})
+}
+
+// jsonWithSyslog is n JSON lines that carry an ISO time after a key, then
+// three lines that start with a syslog time.
+func jsonWithSyslog(n int) []string {
+	return concat(
+		repeat(n, func(i int) string {
+			return fmt.Sprintf(`{"level":"info","ts":"2026-10-06T12:34:56.%03dZ","msg":"request %d"}`, i%1000, i)
+		}),
+		repeat(3, func(i int) string { return fmt.Sprintf("Oct  6 12:34:5%d injected", i) }),
+	)
+}
+
+// detectCases are the samples TestDetect checks; FuzzDetect starts from
+// them too.
+func detectCases() []detectCase {
 	// A postgres log: 4 timestamped lines among 81, the rest are
 	// tab-led query-plan lines, one of which quotes a date.
 	postgres := concat(
@@ -61,7 +94,30 @@ func TestDetect(t *testing.T) {
 		repeat(3, func(i int) string { return fmt.Sprintf("169660000%d x", i) }),
 	)
 	slashMonthFirstLines := repeat(5, func(i int) string { return fmt.Sprintf("10/0%d/2026 12:34:56 PM x", i+1) })
-	slashDayFirstLines := append(append([]string{}, slashMonthFirstLines...), "13/10/2026 12:34:56 x")
+	oneDayFirstLine := append(append([]string{}, slashMonthFirstLines...), "13/10/2026 12:34:56 x")
+	// 200 lines that read either way, and one written to read day first
+	// only: one line must not turn every other date around.
+	injectedDayFirst := concat(
+		repeat(200, func(int) string { return "10/06/2026 12:00:00 GET /index" }),
+		[]string{"13/01/2026 12:00:00 injected"},
+	)
+	twoDayFirstOnly := concat(slashLines(5, 1, 2, "x"), slashLines(2, 13, 1, "x"))
+	threeDayFirstOnly := concat(slashLines(5, 1, 2, "x"), slashLines(3, 13, 1, "x"))
+	dayFirstReadsMore := concat(slashLines(3, 1, 13, "x"), slashLines(4, 13, 1, "x"))
+	orderTie := concat(slashLines(4, 1, 13, "x"), slashLines(4, 13, 1, "x"))
+	monthFirstReadsMore := concat(slashLines(4, 1, 13, "x"), slashLines(3, 13, 1, "x"))
+	// A few column-0 lines among JSON lines that each carry a time further
+	// in: below 1% of the lines, the column-0 lines do not decide the file.
+	jsonPlusSyslog := jsonWithSyslog(3000)
+	syslogAtOnePercent := jsonWithSyslog(297)
+	syslogBelowOnePercent := jsonWithSyslog(298)
+	// With no windowed reading to prefer, three column-0 lines still make
+	// a log, whatever their share.
+	fewSyslogAmongText := concat(
+		repeat(3, func(i int) string { return fmt.Sprintf("Oct  6 12:34:5%d host x", i) }),
+		repeat(400, func(i int) string { return fmt.Sprintf("plain text line %d", i) }),
+	)
+	pureSyslog := repeat(50, func(i int) string { return fmt.Sprintf("Dec 10 07:49:%02d.123 host app[42]: x", i) })
 	// Three syslog lines at column 0 beat ten lines with a CLF time
 	// further in.
 	anchoredBeatsWindowed := concat(
@@ -88,20 +144,26 @@ func TestDetect(t *testing.T) {
 	)
 	crlf := repeat(5, func(i int) string { return fmt.Sprintf("Dec 10 07:49:5%d.123 x\r", i) })
 
-	cases := []struct {
-		name   string
-		sample []byte
-		want   Format
-		ok     bool
-	}{
+	return []detectCase{
 		{"postgres: few anchored lines among tab-led ones", sample(postgres...), isoAnchored, true},
 		{"middleware: anchored iso beats windowed epoch", sample(middleware...), isoAnchored, true},
 		{"JSON lines with one date: none", sample(jsonLines...), Format{}, false},
 		{"access log: clf windowed", sample(accessLog...), clfWindowed, true},
 		{"tie goes to table order", sample(isoAndEpochTie...), isoAnchored, true},
 		{"slash month first", sample(slashMonthFirstLines...), slashMonthFirst, true},
-		{"slash day first after a 13", sample(slashDayFirstLines...), slashDayFirst, true},
+		{"slash: one day-first line keeps month first", sample(oneDayFirstLine...), slashMonthFirst, true},
+		{"slash: one injected line among 200 keeps month first", sample(injectedDayFirst...), slashMonthFirst, true},
+		{"slash: two day-first-only lines keep month first", sample(twoDayFirstOnly...), slashMonthFirst, true},
+		{"slash: three day-first-only lines and no month-first-only line", sample(threeDayFirstOnly...), slashDayFirst, true},
+		{"slash: day first reads more lines", sample(dayFirstReadsMore...), slashDayFirst, true},
+		{"slash: a tie reads month first", sample(orderTie...), slashMonthFirst, true},
+		{"slash: month first reads more lines", sample(monthFirstReadsMore...), slashMonthFirst, true},
 		{"anchored beats windowed", sample(anchoredBeatsWindowed...), syslogAnchored, true},
+		{"three column-0 lines among 3,000 JSON lines: windowed iso", sample(jsonPlusSyslog...), isoWindowedZoned, true},
+		{"column-0 lines at 1% beat windowed", sample(syslogAtOnePercent...), syslogAnchored, true},
+		{"column-0 lines below 1% lose to windowed", sample(syslogBelowOnePercent...), isoWindowedZoned, true},
+		{"column-0 lines below 1% with no windowed reading", sample(fewSyslogAmongText...), syslogAnchored, true},
+		{"pure syslog", sample(pureSyslog...), syslogAnchored, true},
 		{"windowed at half qualifies", sample(windowedHalf...), isoWindowed, true},
 		{"windowed below half: none", sample(windowedBelowHalf...), Format{}, false},
 		{"blank lines do not count", sample(windowedWithBlanks...), isoWindowed, true},
@@ -112,7 +174,10 @@ func TestDetect(t *testing.T) {
 		{"no final newline", []byte("Dec 10 07:49:50 a\nDec 10 07:49:51 b\nDec 10 07:49:52 c"), syslogAnchored, true},
 		{"empty", nil, Format{}, false},
 	}
-	for _, tc := range cases {
+}
+
+func TestDetect(t *testing.T) {
+	for _, tc := range detectCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := Detect(tc.sample)
 			if ok != tc.ok || !sameFormat(got, tc.want) {
