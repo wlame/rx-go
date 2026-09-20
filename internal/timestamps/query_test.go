@@ -96,6 +96,22 @@ func TestParseQuery_CopiedFromTheFile(t *testing.T) {
 	}
 }
 
+// A query that carries a zone names an instant, even when it is copied
+// from a line of a zone-less file whose value is that line's wall clock:
+// the zone the file was written in decides where the instant falls in
+// it (Resolve), not the line it was copied from.
+func TestParseQuery_ZonedValueIsAnInstantInAZonelessFile(t *testing.T) {
+	p := mustParser(t, isoAnchored, mtime2025)
+	q, err := ParseQuery("[2025-12-10T07:00:07.953-0700]", p)
+	if err != nil {
+		t.Fatalf("ParseQuery: %v", err)
+	}
+	want := Endpoint{Kind: EndpointInstant, Ms: utcMs(2025, 12, 10, 14, 0, 7, 953)}
+	if q.Start != want {
+		t.Errorf("Start = %+v; want %+v", q.Start, want)
+	}
+}
+
 func TestParseQuery_Ranges(t *testing.T) {
 	a := wallAt(utcMs(2026, 10, 6, 12, 0, 0, 0))
 	b := wallAt(utcMs(2026, 10, 6, 13, 0, 0, 0))

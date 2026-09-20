@@ -66,8 +66,8 @@ var roundTripLayouts = []struct {
 	zoned     bool
 	precision time.Duration
 }{
-	{isoAnchored, "", "2006-01-02T15:04:05.000Z07:00", " msg", true, time.Millisecond},
-	{isoAnchored, "", "2006-01-02 15:04:05 -0700", " msg", true, time.Second},
+	{isoZoned, "", "2006-01-02T15:04:05.000Z07:00", " msg", true, time.Millisecond},
+	{isoZoned, "", "2006-01-02 15:04:05 -0700", " msg", true, time.Second},
 	{isoAnchored, "", "2006-01-02 15:04:05.000", " CEST msg", false, time.Millisecond},
 	// Go layouts write fractions only after "." or ",", so ":000" is literal.
 	{isoAnchored, "", "2006-1-2 15:4:5:000", " (x.cc:1)", false, time.Second},
@@ -81,7 +81,8 @@ var roundTripLayouts = []struct {
 }
 
 // FuzzOwnRoundTrip: a timestamp formatted from an instant parses back to
-// that instant (zoned layouts) or to its wall-clock reading (the rest).
+// that instant (zoned layouts in a zoned file) or to its wall-clock
+// reading (the rest, and a zoned layout in a zone-less file).
 func FuzzOwnRoundTrip(f *testing.F) {
 	f.Add(int64(1765353000123), int16(0))
 	f.Add(int64(1709208000000), int16(120))  // 2024-02-29
@@ -114,6 +115,11 @@ func FuzzOwnRoundTrip(f *testing.F) {
 			if !ok || got != want {
 				t.Fatalf("%s %q: got %+v,%t; want %+v", rt.format.Family, line, got, ok, want)
 			}
+		}
+		zonedLine := instant.Format("2006-01-02T15:04:05.000Z07:00") + " msg"
+		wantWall := Stamp{Ms: wallMs(instant), Zoned: true, OffsetMinutes: offset}
+		if got, ok := mustParser(t, isoAnchored, mtime2025).Own([]byte(zonedLine)); !ok || got != wantWall {
+			t.Fatalf("zone-less file %q: got %+v,%t; want %+v", zonedLine, got, ok, wantWall)
 		}
 		epochMs := fuzzEpochMs(ms)
 		p := mustParser(t, epochAnchored, mtime2025)
