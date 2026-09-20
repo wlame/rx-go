@@ -12,7 +12,8 @@ package webapi
 //     changed meaning, a changed status code. Clients that do not know the
 //     major must refuse to run.
 //
-// rx-python declares the same value (`src/rx/contract.py`) and the two must
-// be changed together, in the same task, with a changelog entry in both.
-// `rx-viewer` reads it from /health.
-const ContractVersion = "1.1"
+// rx-python declares its own value (`src/rx/contract.py`). While rx-python
+// is paused, a bump here is a row in ../tickets/PARITY-DEBT.md rather than
+// a change there. `rx-viewer` reads it from /health and refuses a major it
+// does not know.
+const ContractVersion = "1.2"

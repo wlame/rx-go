@@ -118,8 +118,14 @@ See [concepts/security](concepts/security.md) and
 
 ## HTTP server
 
-All HTTP server settings are flags on `rx serve`, not env vars.
-See [`rx serve`](cli/serve.md).
+The listening address and the search roots are flags on `rx serve`; see
+[`rx serve`](cli/serve.md). One setting is an environment variable
+because it is a secret, and secrets stay out of flags and process
+listings:
+
+| Variable | Default | Description |
+|---|---|---|
+| `RX_API_TOKEN` | unset | When set, every `/v1` request must send `Authorization: Bearer <token>`; others get `401`. `/health`, `/metrics` and the docs stay open, and `/health` reports the value as `<redacted>`. See [security](concepts/security.md#opt-in-api-token). |
 
 ## Newline rendering
 
@@ -156,7 +162,7 @@ Per-subcommand flags are documented on each CLI page:
 With a running `rx serve`:
 
 ```bash
-# Every RX_* env var visible to the server.
+# Every RX_* env var visible to the server; secrets show as <redacted>.
 curl -s http://127.0.0.1:7777/health | jq '.environment'
 
 # Current effective constants.

@@ -51,6 +51,10 @@ type Config struct {
 	// Logger used by middleware. Defaults to slog.Default().
 	Logger *slog.Logger
 
+	// APIToken, when non-empty, is required as a bearer token on every
+	// /v1 request (see auth.go). Empty leaves the API open.
+	APIToken string
+
 	// ShutdownTimeout is how long Shutdown waits for in-flight requests
 	// to drain before forcibly killing the server. Defaults to 10s.
 	ShutdownTimeout time.Duration
@@ -86,12 +90,15 @@ func NewServer(cfg Config) *Server {
 	//   logger    → reads requestID from ctx; logs method/path/status
 	//   recover   → converts panics to 500 + structured log
 	//   metrics   → rx_http_responses_total
+	//   token     → 401 for a /v1 request without the API token, after
+	//               the layers above so a refusal is logged and counted
 	// ------------------------------------------------------------------
 	router.Use(securityHeadersMiddleware)
 	router.Use(requestIDMiddleware)
 	router.Use(loggingMiddleware(cfg.Logger))
 	router.Use(recoverMiddleware(cfg.Logger))
 	router.Use(metricsMiddleware)
+	router.Use(apiTokenMiddleware(cfg.APIToken))
 
 	// Build the huma API with the custom OpenAPI config (title, servers,
 	// info, error envelope override).
@@ -115,6 +122,7 @@ func NewServer(cfg Config) *Server {
 	registerTaskHandlers(s, api)
 	registerTreeHandlers(s, api)
 	registerDetectorsHandlers(s, api)
+	declareOptionalBearerToken(api)
 
 	// Non-huma routes: /metrics (Prometheus expfmt is raw, not JSON;
 	// doesn't fit huma's typed handler model), favicon, SPA.
