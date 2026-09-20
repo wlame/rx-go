@@ -189,7 +189,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	// Build the rg argv. We filter out args that would change the
 	// output shape (--byte-offset, --only-matching) — Python does
 	// the same in trace_worker.py.
-	rgArgs := []string{"--json", "--no-heading", "--color=never"}
+	rgArgs := newRgArgs()
 	if contextBefore > 0 {
 		rgArgs = append(rgArgs, "-B", strconv.Itoa(contextBefore))
 	}
@@ -637,6 +637,18 @@ func isBrokenPipe(err error) bool {
 	return strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "file already closed") ||
 		strings.Contains(msg, "EPIPE")
+}
+
+// newRgArgs returns the arguments every rx search starts ripgrep with,
+// as a fresh slice the caller appends to.
+//
+// --no-config keeps RIPGREP_CONFIG_PATH out of the answer. A user's
+// ripgreprc can hold --fixed-strings, --smart-case or --max-columns,
+// each of which changes what rg reports, and an rx answer must not
+// depend on who runs it. --json is the event stream the parser reads;
+// --no-heading and --color=never keep it free of decoration.
+func newRgArgs() []string {
+	return []string{"--no-config", "--json", "--no-heading", "--color=never"}
 }
 
 // ErrInvalidPattern reports a pattern ripgrep refused to compile. It is
