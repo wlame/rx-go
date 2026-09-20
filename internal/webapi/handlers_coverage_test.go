@@ -182,72 +182,10 @@ func TestTrace_HookOnMatchRequiresMaxResults(t *testing.T) {
 // CLI command builder
 // ============================================================================
 
-// TestBuildCLICommand — trace subcommand with regexp flags.
-func TestBuildCLICommand(t *testing.T) {
-	cases := []struct {
-		name   string
-		sub    string
-		params map[string]any
-		want   string
-	}{
-		{
-			name: "trace with single pattern and path",
-			sub:  "trace",
-			params: map[string]any{
-				"regexp": []string{"ERROR"},
-				"path":   []string{"/var/log/a.log"},
-			},
-			want: "rx trace --regexp ERROR /var/log/a.log",
-		},
-		{
-			name: "trace with multiple patterns and max-results",
-			sub:  "trace",
-			params: map[string]any{
-				"regexp":      []string{"ERROR", "WARN"},
-				"path":        []string{"/var/log/a.log"},
-				"max_results": intPtr(100),
-			},
-			want: "rx trace --regexp ERROR --regexp WARN --max-results 100 /var/log/a.log",
-		},
-		{
-			name: "index_get",
-			sub:  "index_get",
-			params: map[string]any{
-				"path": "/var/log/a.log",
-			},
-			want: "rx index /var/log/a.log",
-		},
-		{
-			name: "index_post with analyze",
-			sub:  "index_post",
-			params: map[string]any{
-				"path":    "/var/log/a.log",
-				"analyze": true,
-				"force":   false,
-			},
-			want: "rx index --analyze /var/log/a.log",
-		},
-		{
-			name: "compress with output path",
-			sub:  "compress",
-			params: map[string]any{
-				"input_path":        "/var/log/a.log",
-				"output_path":       "/var/log/a.log.zst",
-				"frame_size":        "4M",
-				"compression_level": intPtr(3),
-			},
-			want: "rx compress --output /var/log/a.log.zst --frame-size 4M --level 3 /var/log/a.log",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := BuildCLICommand(tc.sub, tc.params)
-			if got != tc.want {
-				t.Errorf("got:  %s\nwant: %s", got, tc.want)
-			}
-		})
-	}
-}
+// The rendering itself is pinned by the shared fixture in
+// cli_command_parity_test.go, which rx-python reads a copy of. What is
+// left here is the quoting, which the fixture covers by example but
+// which is worth asserting on its own.
 
 func intPtr(n int) *int { return &n }
 
