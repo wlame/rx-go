@@ -16,7 +16,7 @@ zstd decoding, an HTTP API and a static SPA.
 Target artifact: one statically linked binary (`CGO_ENABLED=0`, about 13 MB).
 Runtime dependency: `ripgrep` 13+ on `PATH`.
 
-This repo is the **flagship backend** of a product with three active repos:
+This repo is the **flagship backend** of a product with two active repos and a paused one:
 
 | Repo | Role |
 |---|---|
@@ -31,9 +31,10 @@ This repo is the **flagship backend** of a product with three active repos:
 1. **Behaviour changes land here alone**, plus in `rx-viewer` when they reach
    the UI. `rx-python` stays as it is.
 2. **Record every divergence.** A change that makes this backend differ from
-   rx-python in a CLI flag, default or exit code, a `--json` shape, an HTTP
-   route, body or status, an `RX_*` variable, a cache file or a webhook
-   payload gets a row in `../tickets/PARITY-DEBT.md`, in the same task. That
+   rx-python in a CLI flag, default or exit code; a `--json` shape; an HTTP
+   route, body, status or the contract version; an `RX_*` variable; a cache
+   file or its format version; a webhook payload; or the viewer version
+   window gets a row in `../tickets/PARITY-DEBT.md`, in the same task. That
    file is rx-python's work list for when it resumes.
 3. **The wire contract lives here.** `pkg/rxtypes/` plus the golden OpenAPI
    document `internal/webapi/testdata/openapi.golden.json` are the source of
@@ -113,7 +114,7 @@ just serve --port=8080 --search-root=/var/log    # 8080 matches the viewer dev p
 
 just test                                        # full suite
 just test -run TestTrace ./internal/trace/       # arguments pass straight through
-just test-race                                   # race detector (about 30 s)
+just test-race                                   # race detector (about 200 s on a Mac, mostly internal/trace)
 just test-repeat ./internal/trace/               # 10x, to hunt a flaky test
 just bench                                       # benchmarks (not a CI gate)
 just cover                                       # tests + the coverage floor
