@@ -635,6 +635,13 @@ happens at all.
   at most `RX_MAX_LINE_TEXT_BYTES` of a line and
   `RX_MAX_SUBMATCHES_PER_LINE` submatches; see
   [long lines](../api/endpoints/trace.md#long-lines)
+- Exhausting the server's memory with a directory listing that holds a
+  small zstd file declaring a frame of gigabytes (a 28 KB file can
+  declare 256 MiB in its seek table, and a single-segment frame up to
+  64 GiB) — blocked by deciding what a file is through a decoder that
+  holds one window of at most 16 MiB and refuses a frame that declares
+  more; see
+  [Compression](compression.md#how-rx-decides-what-a-file-is)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range

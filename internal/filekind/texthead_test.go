@@ -82,6 +82,7 @@ func TestReadTextHead_ReadsNoMoreThanTheHead(t *testing.T) {
 	if len(text) < 4*limit {
 		t.Fatalf("fixture is %d bytes; want at least %d", len(text), 4*limit)
 	}
+	seekableEvery256KiB := seekablefile.Encode(t, seekablefile.SplitEvery(text, 256<<10))
 	cases := []struct {
 		name   string
 		body   []byte
@@ -92,6 +93,9 @@ func TestReadTextHead_ReadsNoMoreThanTheHead(t *testing.T) {
 		// much text plus the decoder's read-ahead; the whole file is
 		// several times more.
 		{"gzip", gzipOf(t, text), int64(len(gzipOf(t, text)) / 2)},
+		// A seekable file is read frame by frame: the frames that hold
+		// the head (5 of 18 here), not the frames after it.
+		{"seekable", seekableEvery256KiB, int64(len(seekableEvery256KiB) / 2)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

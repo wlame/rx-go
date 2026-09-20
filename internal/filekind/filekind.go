@@ -40,6 +40,22 @@ import (
 // text: the first 8 KiB, the amount rx-python's is_text_file reads.
 const TextProbeBytes = 8192
 
+// probeWindowLimit is the largest zstd window the text probe decodes
+// with: 16 MiB, twice the 8 MiB window rx's encoder and zstd's levels up
+// to 19 write. A frame that declares more is not decoded by the probe
+// (see Of), so classifying a file costs at most about this much memory
+// whatever size the file declares, and a directory listing that
+// classifies every file stays bounded.
+const probeWindowLimit = 16 << 20
+
+// HeadWindowLimit is the largest zstd window ReadTextHead decodes with:
+// 128 MiB, the window `zstd --long` and `zstd --ultra -22` write and the
+// most the reference zstd tool decodes without an explicit
+// `--long=N` or `--memory=` (and so the most rx-python's decoder
+// accepts). A frame that declares more is refused with an error
+// wrapping compression.ErrWindowTooLarge.
+const HeadWindowLimit = 128 << 20
+
 // NotTextPrefix starts every reason Kind.NotText gives. A caller that
 // only needs to know the file was refused as binary can match on it.
 const NotTextPrefix = "not a text file"
@@ -126,13 +142,22 @@ func (k Kind) CompressionName() string {
 // size); and TextProbeBytes of the file's text. A compressed file's
 // decoder may read more of the file than the text it yields to produce
 // those bytes: a bzip2 block (at most 900 kB of text), one zstd block
-// (at most 128 KiB), the whole frames of a seekable file that hold the
-// probe, or whatever gzip or xz need to fill it.
+// (at most 128 KiB), or whatever gzip or xz need to fill it.
+//
+// A zstd file, seekable or not, is probed through a decoder that holds
+// one frame's window, at most probeWindowLimit, never a whole frame.
+// The window is what the frame header declares, so a file of a few
+// kilobytes can declare gigabytes; the probe does not decode a frame
+// that declares more than the limit, and classifies the file by the
+// text read before that frame, which for a first frame is none: the
+// file is taken for text. Such a frame is legitimate (`zstd --long`
+// writes a 128 MiB window), and the command that reads the file decodes
+// it with the window it needs.
 //
 // A file whose text cannot be read past the signature (a damaged
 // stream, a seekable file whose first frame is damaged) is not refused
-// here: the probe keeps what it read, and the command that reads the
-// file reports the damage, the way it does for damage further in.
+// here either: the probe keeps what it read, and the command that reads
+// the file reports the damage, the way it does for damage further in.
 //
 // Go note: io.ReaderAt reads by position and keeps no cursor, so the
 // read position of an *os.File passed as r is left where it was.
@@ -205,9 +230,10 @@ func FormatOfPinned(src paths.Pinned) (Kind, error) {
 
 // probeText returns the first TextProbeBytes of the file's text, or as
 // much of it as can be read: a damaged stream keeps what was read
-// before the damage, and the command that reads the file reports it.
+// before the damage, and a zstd frame whose window is above
+// probeWindowLimit what was read before that frame.
 func probeText(r io.ReaderAt, size int64, kind Kind) []byte {
-	head, _ := ReadTextHead(r, size, kind, TextProbeBytes)
+	head, _ := readTextHead(r, size, kind, TextProbeBytes, probeWindowLimit)
 	return head
 }
 
@@ -220,33 +246,30 @@ func probeText(r io.ReaderAt, size int64, kind Kind) []byte {
 // error, or a compressed stream that is damaged or cut short — returns
 // the bytes read before it together with the error, so a caller that
 // must describe the whole head never mistakes a broken stream for a
-// short text.
+// short text. A zstd frame whose window is above HeadWindowLimit is
+// such a failure, with an error wrapping compression.ErrWindowTooLarge.
 //
 // It reads at most limit bytes of a plain file. A compressed file's
 // decoder may read further into the file than the text it yields, to
-// fill its own buffers (see Of for how far).
+// fill its own buffers (see Of for how far). A zstd file's frames are
+// decoded as streams, never whole: memory holds one window, at most
+// HeadWindowLimit, plus the head.
 //
 // Go note: r is read by position (io.ReaderAt), so the read position
 // of an *os.File passed as r is left where it was.
 func ReadTextHead(r io.ReaderAt, size int64, kind Kind, limit int) ([]byte, error) {
-	var text io.Reader = io.NewSectionReader(r, 0, size)
-	switch {
-	case kind.IsSeekable() && kind.Table != nil:
-		// A seekable file is read frame by frame where its seek table
-		// places each frame, so damage comes back as
-		// seekable.ErrDamagedFrame naming the frame, as every other
-		// reader of a seekable file reports it.
-		frames := seekable.NewTextReader(r, kind.Table)
-		defer func() { _ = frames.Close() }()
-		text = frames
-	case kind.IsCompressed():
-		dec, err := compression.NewReader(io.NopCloser(text), kind.Format)
-		if err != nil {
-			return nil, fmt.Errorf("decompress: %w", err)
-		}
-		defer func() { _ = dec.Close() }()
-		text = dec
-	case size < int64(limit):
+	return readTextHead(r, size, kind, limit, HeadWindowLimit)
+}
+
+// readTextHead is ReadTextHead with the largest zstd window it decodes
+// with, windowLimit.
+func readTextHead(r io.ReaderAt, size int64, kind Kind, limit int, windowLimit uint64) ([]byte, error) {
+	text, err := openText(r, size, kind, windowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = text.Close() }()
+	if !kind.IsCompressed() && size < int64(limit) {
 		// A plain file holds no more text than its size, so the buffer
 		// need not be larger.
 		limit = int(max(size, 0))
@@ -254,6 +277,42 @@ func ReadTextHead(r io.ReaderAt, size int64, kind Kind, limit int) ([]byte, erro
 	buf := make([]byte, limit)
 	n, err := readUpTo(text, buf)
 	return buf[:n], err
+}
+
+// openText returns a reader of the text of the open file r, size bytes
+// long, whose Kind is kind, from its first byte. A zstd file is read
+// through a decoder that refuses a frame whose window is above
+// windowLimit.
+func openText(r io.ReaderAt, size int64, kind Kind, windowLimit uint64) (io.ReadCloser, error) {
+	file := io.NewSectionReader(r, 0, size)
+	switch {
+	case kind.IsSeekable() && kind.Table != nil:
+		// A seekable file is read frame by frame where its seek table
+		// places each frame, so damage comes back as
+		// seekable.ErrDamagedFrame naming the frame, as every other
+		// reader of a seekable file reports it.
+		return seekable.NewHeadReader(r, kind.Table, windowLimit)
+	case kind.Format == compression.FormatZstd || kind.IsSeekable():
+		// A stream decoder skips the skippable frame that holds a seek
+		// table, so a seekable file without its table reads the same.
+		dec, err := compression.NewHeadDecoder(windowLimit)
+		if err != nil {
+			return nil, err
+		}
+		if err := dec.Reset(file); err != nil {
+			_ = dec.Close()
+			return nil, fmt.Errorf("decompress: %w", err)
+		}
+		return dec, nil
+	case kind.IsCompressed():
+		dec, err := compression.NewReader(io.NopCloser(file), kind.Format)
+		if err != nil {
+			return nil, fmt.Errorf("decompress: %w", err)
+		}
+		return dec, nil
+	default:
+		return io.NopCloser(file), nil
+	}
 }
 
 // readUpTo fills buf from r and returns how many bytes it read. It

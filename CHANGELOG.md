@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   9999, read with or without its zone, counts as none. Plain, compressed
   and seekable zstd files are covered, by
   the same pass that builds the line index, with or without `--analyze`.
+  The first mebibyte of a zstd file is decompressed a stream at a time
+  with at most a 128 MiB window, the most `zstd -d` accepts without
+  `--long=N`; a file whose frames need more cannot be indexed, and the
+  build names the frame.
   Values are milliseconds in the file's frame: UTC instants for a file
   whose timestamps carry zones, the wall-clock time as written for one
   whose timestamps do not (a line with a zone in such a file keeps the
@@ -55,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Deciding what a zstd file is no longer costs the memory its frame
+  header asks for. The 8 KiB text probe decompresses a stream at a time
+  and holds one window of at most 16 MiB: a 28 KB file whose one frame
+  declares 256 MiB used to cost 256 MiB in every command and in each
+  `GET /v1/tree` that listed it, and a single-segment frame could declare
+  up to 64 GiB. A zstd file whose first frame declares a window above
+  16 MiB (`zstd --long` writes 128 MiB) is now taken for text without
+  being probed; the command that reads it decompresses it as before.
 - `rx serve` installs viewer 0.5.0: the range of viewer releases it
   accepts is now `0.2.0 <= v < 0.6.0`. Release 0.4.0 refused 0.5.0 and
   came up without the viewer unless one was already cached or

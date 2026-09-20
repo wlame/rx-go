@@ -58,12 +58,38 @@ func SplitEvery(text []byte, size int) [][]byte {
 // It fails the test on any error, so a caller can use the file at once.
 func Write(t testing.TB, path string, frames [][]byte) {
 	t.Helper()
-	body, table := compressFrames(t, frames)
+	writeFile(t, path, Encode(t, frames))
+}
+
+// Encode returns the bytes Write writes: each element of frames
+// compressed as one zstd frame, then the seek table rx's own
+// seekable.WriteSeekTable writes for them.
+func Encode(t testing.TB, frames [][]byte) []byte {
+	t.Helper()
+	return encodeWithRxTable(t, frames)
+}
+
+// EncodeSingleSegment is Encode with every frame written as a single
+// segment: the frame's header declares its content size and no window
+// size, and a decoder takes the content size as the window it needs.
+// An encoder writes a frame this way when the frame fits in its
+// window; a file that declares a large frame this way asks a decoder
+// for that much memory before the first byte of text.
+func EncodeSingleSegment(t testing.TB, frames [][]byte) []byte {
+	t.Helper()
+	return encodeWithRxTable(t, frames, zstd.WithSingleSegment(true))
+}
+
+// encodeWithRxTable compresses each element of frames with an encoder
+// made with opts, and appends the seek table rx writes.
+func encodeWithRxTable(t testing.TB, frames [][]byte, opts ...zstd.EOption) []byte {
+	t.Helper()
+	body, table := compressFrames(t, frames, opts...)
 	out := bytes.NewBuffer(body)
 	if err := seekable.WriteSeekTable(out, table); err != nil {
 		t.Fatalf("write seek table: %v", err)
 	}
-	writeFile(t, path, out.Bytes())
+	return out.Bytes()
 }
 
 // WriteWithFooter is Write with the seek table built byte by byte in
@@ -83,13 +109,14 @@ func EncodeWithFooter(t testing.TB, frames [][]byte, footer Footer) []byte {
 	return append(body, SeekTable(table, footer)...)
 }
 
-// compressFrames compresses each element of frames as one zstd frame
+// compressFrames compresses each element of frames as one zstd frame,
+// with an encoder made with opts on top of a single-goroutine default,
 // and returns the frames laid end to end, with the table entry of each.
-func compressFrames(t testing.TB, frames [][]byte) ([]byte, []seekable.FrameInfo) {
+func compressFrames(t testing.TB, frames [][]byte, opts ...zstd.EOption) ([]byte, []seekable.FrameInfo) {
 	t.Helper()
 	// A nil writer is enough: EncodeAll compresses a whole buffer at a
 	// time and never writes through the encoder's own io.Writer.
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	encoder, err := zstd.NewWriter(nil, append([]zstd.EOption{zstd.WithEncoderConcurrency(1)}, opts...)...)
 	if err != nil {
 		t.Fatalf("create zstd encoder: %v", err)
 	}
