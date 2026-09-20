@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index whose time section cannot be trusted (a `max_before` that does
   not match the checkpoints or decreases, or an unknown format) is
   treated as damaged: absent, with an `index_unreadable` warning.
+- An index build reads each line where its read buffer holds it instead
+  of copying it, which pays for reading the timestamps on lines of a few
+  hundred bytes: a 465 MB log (1.4 million lines) builds in 120 ms with
+  the time section, against 133 ms for format 7 without it, and peaks at
+  16 MB instead of 21 MB. A log of short lines pays for it: a 6.3 GB log
+  of 42.5 million 150-byte lines takes 2.7 s instead of 2.3 s.
 
 ### Fixed
 

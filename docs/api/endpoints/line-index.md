@@ -277,7 +277,7 @@ See [tasks](tasks.md) for the task polling contract.
 ## Performance notes
 
 - `GET /v1/index` reads only the stored index (9.3 KB for a 465 MB log)
-- `POST /v1/index` without `analyze`: one pass over the file; 142 ms
+- `POST /v1/index` without `analyze`: one pass over the file; 120 ms
   for a 465 MB log in the page cache
 - `POST /v1/index` with `analyze`: every line goes through every
   detector; 18.2 s for the same log
