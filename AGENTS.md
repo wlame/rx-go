@@ -1,9 +1,9 @@
 # AGENTS.md — rx-go
 
 Instructions for AI coding agents working in this repository. If a sibling
-checkout exists at `../AGENTS.md`, read it first: it holds the parity rules that
-bind this repo to `rx-python` and `rx-viewer`. The same rules are repeated below
-so this file stands alone.
+checkout exists at `../AGENTS.md`, read it first: it holds the rules that bind
+this repo to `rx-viewer` and `rx-python`. The ones that bind this repo are
+repeated below so this file stands alone.
 
 ## What this is
 
@@ -20,48 +20,44 @@ This repo is the **flagship backend** of a product with three active repos:
 
 | Repo | Role |
 |---|---|
-| `rx-go` (this repo) | Reference for the HTTP wire contract |
-| `rx-python` | Second backend. Must be a drop-in replacement for this one. Reference for the cache format. Published on PyPI as `rx-tool`. |
+| `rx-go` (this repo) | The focus. Reference for the HTTP wire contract and the cache format |
 | `rx-viewer` | Shared Svelte SPA, fetched from GitHub Releases at first `serve` start and served from `~/.cache/rx/frontend/` |
+| `rx-python` | The original backend, on PyPI as `rx-tool`. **Paused** since 2026-10-02; it stays as it is while this repo moves on. |
 
 `rx-rust` also exists beside them. It is frozen. Do not read it for guidance.
 
-## Parity rules (binding)
+## Go-first policy (binding while rx-python is paused)
 
-1. **Every behaviour change here is also made in `rx-python` in the same task**:
-   CLI flags and defaults, exit codes, `--json` shapes, HTTP routes and bodies,
-   `RX_*` variables, cache formats, webhook payloads. Tests go in both repos.
-   If you cannot do the Python half, say so in your final report and add a
-   `Parity gap:` line under `## [Unreleased]` in `rx-python/CHANGELOG.md`.
-2. **The wire contract lives here.** `pkg/rxtypes/` plus the golden OpenAPI
+1. **Behaviour changes land here alone**, plus in `rx-viewer` when they reach
+   the UI. `rx-python` stays as it is.
+2. **Record every divergence.** A change that makes this backend differ from
+   rx-python in a CLI flag, default or exit code, a `--json` shape, an HTTP
+   route, body or status, an `RX_*` variable, a cache file or a webhook
+   payload gets a row in `../tickets/PARITY-DEBT.md`, in the same task. That
+   file is rx-python's work list for when it resumes.
+3. **The wire contract lives here.** `pkg/rxtypes/` plus the golden OpenAPI
    document `internal/webapi/testdata/openapi.golden.json` are the source of
    truth, published to `docs/api/openapi.json` (kept in step by
    `just spec-sync`; `just ci` fails when they differ).
 
    Adding a field: update `pkg/rxtypes`, run
    `go test ./internal/webapi/ -update-golden`, `just spec-sync`, then
-   `rx-python/src/rx/models.py` and `cd ../rx-viewer && just gen-types`.
-   `rx-python`'s `tests/test_contract.py` compares the two specs route by
-   route and fails on a field only one backend has.
+   `cd ../rx-viewer && just gen-types`.
 
    Renaming, removing or changing a field's meaning is breaking: bump
-   `ContractVersion` in `internal/webapi/contract.go` **and**
-   `rx-python/src/rx/contract.py`, note it in all three changelogs, release
-   backends before the viewer.
-3. **Do not break the cache format.** Python-built index and trace-cache files
-   must stay readable here and the other way round. Field names, the mtime
-   string format and the JSON key spacing used for the patterns hash are part
-   of the contract (see Gotchas).
-4. **Prove it.** Before reporting a CLI or HTTP change as done, run the same
-   command or request against both backends and diff the JSON. Run
-   `go test ./internal/testparity/...` when `../rx-python` has a `.venv`.
-5. **Do not add new default differences.** Both backends serve
-   `127.0.0.1:7777` and expose the same metric families. Two gaps remain: the
-   detector sets differ, and `/v1/complexity` exists only in rx-python.
-6. **rx-go is polished first, but rx-python is not optional.** Sequence effort
-   here when you have to choose — this is the backend most people run. That is
-   an ordering of work, not of support: a feature that lands here and not there
-   is unfinished, and rule 2 applies without exception.
+   `ContractVersion` in `internal/webapi/contract.go` and the supported major
+   in `rx-viewer/src/lib/utils/contractVersion.ts`, note it in both
+   changelogs, and release this backend before the viewer.
+4. **The cache format lives here too.** Index and trace-cache files written
+   by rx-python share `~/.cache/rx/` with this backend's, so the format keeps
+   the Python quirks it was born with: field names, the mtime string format
+   and the JSON key spacing used for the patterns hash (see Gotchas). A
+   change to a field bumps `index.Version` and gets a ledger row; rx-python
+   then treats the new files as absent and rebuilds its own.
+5. **Show the change.** Before reporting a CLI or HTTP change as done, paste
+   the `--json` output or the response body before and after it. `just
+   parity` and `internal/testparity/` diff against `../rx-python`; use them to
+   see what a change diverges, not as a gate.
 
 ## JSON object key order is not part of the contract
 
@@ -93,7 +89,7 @@ the position, with a range sorting by its left-hand value
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
 | `internal/index/` | Line-offset index builder, stats (Welford + reservoir), on-disk store |
 | `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; format detection; pooled decoders |
-| `internal/seekableindex/` | Frame → line-range index for a seekable `.zst`; the format rx-python defines |
+| `internal/seekableindex/` | Frame → line-range index for a seekable `.zst`; the format rx-python defined |
 | `internal/analyzer/` | Detector registry (Freeze barrier) and 9 detectors under `detectors/` |
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
@@ -216,10 +212,10 @@ Data flow for `rx trace "pattern" big.log`:
    filesystem whose ctime does not move. Catching that needs a
    whole-file hash, which costs more than rebuilding the index.
 
-   Bump the two version constants together whenever the on-disk shape or
-   the meaning of a field changes — `index.Version` in rx-go and
-   `UNIFIED_INDEX_VERSION` in rx-python. The two backends share one cache
-   directory.
+   Bump `index.Version` whenever the on-disk shape or the meaning of a
+   field changes. rx-python shares the cache directory and treats an index
+   of another version as absent, so the bump also gets a
+   `../tickets/PARITY-DEBT.md` row.
 3. **Bounded reads.** No code path reads more bytes than the request needs,
    except `rx index` (new index), `rx trace` without `--max-results`, and
    `rx compress`. Every new file-reading path gets a budget test that uses
@@ -243,8 +239,8 @@ Data flow for `rx trace "pattern" big.log`:
 9. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
    through `internal/webapi/run_detached.go::runDetached`.
 10. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
-   2 usage error, 3 file not found, 4 access denied, 5 interrupted. They must
-   match rx-python.
+   2 usage error, 3 file not found, 4 access denied, 5 interrupted. Scripts
+   branch on them, so a change is breaking.
 
 ## Coding standards
 
@@ -315,8 +311,7 @@ Paste the output. Do not summarize it.
   way ripgrep skips them. The rule lives in the path validator, not only
   in the directory walkers: hiding an entry from a listing does nothing
   about a caller who knows the path. Components of a `--search-root`
-  itself are exempt. Both backends must agree exactly — the error message
-  is part of the contract.
+  itself are exempt. The error message is part of the contract.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
@@ -357,8 +352,8 @@ in this file; file a ticket.
 
 ## What NOT to do
 
-- Do not change behaviour here without the same change in `rx-python`.
-- Do not change a `pkg/rxtypes` field without the golden spec, `models.py` and `types.ts`.
+- Do not open a difference from `rx-python` without a `../tickets/PARITY-DEBT.md` row.
+- Do not change a `pkg/rxtypes` field without the golden spec and the viewer's generated types.
 - Do not spawn raw `go func()` in `webapi`.
 - Do not add `omitempty` to schema-documented fields.
 - Do not use `r.URL.Path` as a metric label.
