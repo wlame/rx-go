@@ -2,7 +2,9 @@ package timestamps
 
 // The epoch family accepts instants from 2000-01-01T00:00:00Z up to, not
 // including, 2100-01-01T00:00:00Z. Outside that span a 10- or 13-digit
-// number is far more likely an ID or a counter than a time.
+// number is far more likely an ID or a counter than a time. Written
+// without leading zeros, epoch seconds and milliseconds reach 10 and 13
+// digits only on 2001-09-09, so in practice the span starts there.
 const (
 	epochMinMs = int64(946684800000)  // 2000-01-01T00:00:00Z
 	epochMaxMs = int64(4102444800000) // 2100-01-01T00:00:00Z, excluded

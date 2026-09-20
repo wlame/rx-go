@@ -150,6 +150,19 @@ func (p *Parser) at(w []byte, i int) (Stamp, bool) {
 	return p.finish(r)
 }
 
+// whole reads s as one timestamp of the file's family that fills all of
+// s. Queries use it to accept a value copied from a log line.
+func (p *Parser) whole(s []byte) (Stamp, bool) {
+	if len(s) == 0 || len(s) > maxEnd || !p.fam.startsWith[s[0]] {
+		return Stamp{}, false
+	}
+	r, end, ok := p.fam.match(s, 0)
+	if !ok || end != len(s) {
+		return Stamp{}, false
+	}
+	return p.finish(r)
+}
+
 // finish checks that the fields name a real moment and converts them to
 // a Stamp, applying the per-file facts: the day/month order of a slash
 // date and the year of a year-less family.
