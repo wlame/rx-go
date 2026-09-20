@@ -56,6 +56,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `Error:` line capitalizes its first letter. Go error strings are
+  lower case by convention and the wrapped error keeps that form — it is
+  what `errors.Is` callers and the HTTP layer see — but what a person
+  reads after "Error: " is a sentence, and rx-python capitalizes it. The
+  two backends printed the same message in two different cases for the
+  same mistake; every `rx trace` error path is now byte-identical
+  between them.
+
 - `rx samples` and `GET /v1/samples` build a line index when the file is
   large or compressed and none is cached, so the next lookup in the same
   file is fast. rx-python has always done this and rx-go did not, so the
