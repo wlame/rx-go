@@ -62,6 +62,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Response bodies no longer end with a newline. Go's
+  `json.Encoder.Encode` terminates every value with one and huma's
+  default JSON format uses an Encoder, so no rx-go response was ever
+  byte-identical to rx-python's, on any route. No parser could tell the
+  difference — but that is exactly the problem: every cross-backend check
+  had to decode both sides before it could compare, which cannot see a
+  key order change or a number rendered as `1.0` against `1`. The 403
+  sandbox envelope is now the first route whose raw bytes match on both
+  backends.
+
+  `Content-Length` shrinks by one byte per response. Both backends have
+  a test that pins the framing.
+
 - The `Error:` line capitalizes its first letter. Go error strings are
   lower case by convention and the wrapped error keeps that form — it is
   what `errors.Is` callers and the HTTP layer see — but what a person

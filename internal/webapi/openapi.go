@@ -1,7 +1,11 @@
 package webapi
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
@@ -49,6 +53,9 @@ func newHumaConfig(appVersion string) huma.Config {
 	// Use Swagger UI so /docs looks like FastAPI's /docs.
 	cfg.DocsRenderer = huma.DocsRendererSwaggerUI
 
+	// Frame response bodies the way FastAPI does: no trailing newline.
+	cfg.Formats = jsonFormatsWithoutTrailingNewline(cfg.Formats)
+
 	// Tag descriptions mirror the Python tags so the rendered UI has
 	// the same group headings users are accustomed to.
 	cfg.Tags = []*huma.Tag{
@@ -89,4 +96,57 @@ func registerRedocRoute(r chi.Router) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(redocHTML))
 	})
+}
+
+// jsonFormatsWithoutTrailingNewline copies `formats`, replacing every
+// JSON entry with one that does not terminate the body with a newline.
+//
+// Go's json.Encoder.Encode appends "\n" to each value it writes, and
+// huma's DefaultJSONFormat uses an Encoder, so every rx-go body carried
+// a byte that rx-python's FastAPI body did not. Nothing parsing the
+// response can tell the difference, but a cross-backend check comparing
+// raw bytes always could, so the two backends now agree byte for byte.
+//
+// The map is copied rather than mutated: huma.DefaultConfig assigns the
+// package-level huma.DefaultFormats map by reference, so writing to
+// cfg.Formats would change the default for every API in the process,
+// including ones built by tests that expect huma's own framing.
+//
+// Only entries whose Marshal is JSON-shaped are replaced. The key set
+// is huma's ("application/json" and "json" today, plus "application/cbor"
+// when the CBOR package is imported), and a binary format must keep its
+// own marshaller.
+func jsonFormatsWithoutTrailingNewline(formats map[string]huma.Format) map[string]huma.Format {
+	out := make(map[string]huma.Format, len(formats))
+	for mediaType, format := range formats {
+		if strings.Contains(mediaType, "json") {
+			out[mediaType] = jsonFormatNoNewline
+			continue
+		}
+		out[mediaType] = format
+	}
+	return out
+}
+
+// jsonFormatNoNewline is huma.DefaultJSONFormat with the terminating
+// newline removed.
+//
+// Encode is still what does the marshaling — SetEscapeHTML(false) has
+// to match FastAPI, which passes ensure_ascii=False and does not escape
+// <, > or & — so the buffer holds exactly huma's bytes and the newline
+// is trimmed off the end. json.Encoder.Encode writes the whole value in
+// a single Write, so this buffers nothing the encoder was not already
+// holding.
+var jsonFormatNoNewline = huma.Format{
+	Marshal: func(w io.Writer, v any) error {
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(v); err != nil {
+			return err
+		}
+		_, err := w.Write(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
+		return err
+	},
+	Unmarshal: json.Unmarshal,
 }
