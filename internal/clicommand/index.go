@@ -43,6 +43,17 @@ import (
 // Go may ADD Go-specific keys (see MIGRATION.md — e.g. go_extras for
 // additional telemetry) but must not break the above keys.
 func NewIndexCommand(out io.Writer) *cobra.Command {
+	return newIndexCommand(out, runIndex)
+}
+
+// newIndexCommand is NewIndexCommand with the action injected.
+//
+// The flag table is the part tests need and the part that must not be
+// copied: a test that redeclares the flags stops testing the command the
+// moment one of them changes shape, which is how `--threshold` came to
+// be an int in one place and a *int in the other. Passing `run` lets a
+// test capture the params the real flags produced.
+func newIndexCommand(out io.Writer, run func(io.Writer, indexParams) error) *cobra.Command {
 	var (
 		force              bool
 		showInfo           bool
@@ -58,7 +69,15 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 		Short: "Build or inspect file indexes",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runIndex(out, indexParams{
+			// "Unset" and "zero" are different answers: an explicit
+			// --threshold=0 means "no threshold", and leaving the flag
+			// off means "use RX_LARGE_FILE_MB". A plain int cannot hold
+			// both, so the pointer is nil unless the user typed the flag.
+			var thresholdOverride *int
+			if cmd.Flags().Changed("threshold") {
+				thresholdOverride = &threshold
+			}
+			return run(out, indexParams{
 				paths:              args,
 				force:              force,
 				showInfo:           showInfo,
@@ -66,7 +85,7 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 				jsonOutput:         jsonOutput,
 				recursive:          recursive,
 				analyze:            analyze,
-				threshold:          threshold,
+				threshold:          thresholdOverride,
 				analyzeWindowLines: analyzeWindowLines,
 			})
 		},
@@ -77,7 +96,9 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively process directories")
 	cmd.Flags().BoolVarP(&analyze, "analyze", "a", false, "Run full analysis with anomaly detection")
-	cmd.Flags().IntVar(&threshold, "threshold", 0, "Minimum file size in MB to index (0 = env default). Ignored with --analyze.")
+	cmd.Flags().IntVar(&threshold, "threshold", 0,
+		"Minimum file size in MB to index; 0 indexes every file. "+
+			"Leave unset to use RX_LARGE_FILE_MB. Ignored with --analyze.")
 	// --analyze-window-lines: sliding-window size (in lines) handed to the
 	// analyzer coordinator. 0 means "not set" — we fall through to the
 	// RX_ANALYZE_WINDOW_LINES env var and then the compiled-in default
@@ -88,14 +109,16 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 }
 
 type indexParams struct {
-	paths              []string
-	force              bool
-	showInfo           bool
-	delete             bool
-	jsonOutput         bool
-	recursive          bool
-	analyze            bool
-	threshold          int
+	paths      []string
+	force      bool
+	showInfo   bool
+	delete     bool
+	jsonOutput bool
+	recursive  bool
+	analyze    bool
+	// threshold is nil when --threshold was not given. A zero VALUE is
+	// an explicit "index everything"; see the flag's RunE.
+	threshold          *int
 	analyzeWindowLines int
 }
 
@@ -274,9 +297,14 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 
 	// Threshold resolution (MB → bytes). --analyze bypasses the threshold
 	// in Python; Go matches by not gating when p.analyze is true.
+	//
+	// A supplied threshold wins whatever its value, zero included:
+	// POST /v1/index has always honored an explicit 0 and so has
+	// rx-python's CLI, and a number that means itself on two surfaces
+	// out of three cannot mean the default on the third.
 	threshold := int64(config.LargeFileMB())
-	if p.threshold > 0 {
-		threshold = int64(p.threshold)
+	if p.threshold != nil {
+		threshold = int64(*p.threshold)
 	}
 	thresholdBytes := threshold * 1024 * 1024
 
