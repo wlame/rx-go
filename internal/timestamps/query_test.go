@@ -264,6 +264,41 @@ func TestResolve_Range(t *testing.T) {
 	}
 }
 
+// TestResolve_YearRange: a query whose moment in the file's frame lies
+// outside the years 1 to 9999 is refused as a usage error.
+func TestResolve_YearRange(t *testing.T) {
+	minus5 := time.FixedZone("-05:00", -5*3600)
+	zonedFile := ResolveContext{HasZone: true}
+	cases := []struct {
+		name  string
+		value string
+		ctx   ResolveContext
+		ok    bool
+	}{
+		{"first day of year 1", "0001-01-01", ResolveContext{}, true},
+		{"last millisecond of year 9999", "9999-12-31T23:59:59.999", ResolveContext{}, true},
+		{"year 0", "0000-06-01", ResolveContext{}, false},
+		{"a zone pushes the instant into year 10000", "9999-12-31T23:59:59.999-23:59", zonedFile, false},
+		{"a zone pushes the instant into year 0", "0001-01-01T00:00+23:59", zonedFile, false},
+		{"the query zone pushes it into year 10000", "9999-12-31T23:00", ResolveContext{HasZone: true, QueryZone: minus5}, false},
+		{"a range with one end out of range", "2025-12-10..9999-12-31T23:59:59.999-23:59", zonedFile, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := ParseQuery(tc.value, nil)
+			if err == nil {
+				_, err = Resolve(q, tc.ctx)
+			}
+			if tc.ok && err != nil {
+				t.Fatalf("%q: %v", tc.value, err)
+			}
+			if !tc.ok && !errors.Is(err, ErrInvalidQuery) {
+				t.Fatalf("%q: error = %v; want ErrInvalidQuery", tc.value, err)
+			}
+		})
+	}
+}
+
 // TestResolve_TimeOfDayDate: the date of a time-only query is the one
 // date the file covers where the query is read.
 func TestResolve_TimeOfDayDate(t *testing.T) {

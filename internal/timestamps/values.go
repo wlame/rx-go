@@ -12,6 +12,22 @@ const (
 	msPerDay    = 24 * msPerHour
 )
 
+// The range of every value the package returns: from
+// 0001-01-01T00:00:00.000Z to 9999-12-31T23:59:59.999Z, in milliseconds
+// since the Unix epoch. A timestamp outside it counts as none, and a
+// query outside it is refused. RFC 3339 writes a year in four digits,
+// and Go's time.Time refuses to encode a year above 9999 as JSON, so a
+// value outside this range could break any answer that renders it.
+const (
+	minValueMs = -62135596800000
+	maxValueMs = 253402300799999
+)
+
+// inValueRange reports whether ms lies in the range above.
+func inValueRange(ms int64) bool {
+	return ms >= minValueMs && ms <= maxValueMs
+}
+
 // maxYearsBack bounds the search for the year of a year-less timestamp.
 // Eight years covers the longest gap between two February 29ths (1896 to
 // 1904, 2096 to 2104).

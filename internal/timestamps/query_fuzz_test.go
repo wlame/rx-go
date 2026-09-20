@@ -1,6 +1,7 @@
 package timestamps
 
 import (
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -32,8 +33,19 @@ func FuzzParseQuery(f *testing.F) {
 			if err != nil {
 				continue
 			}
-			if _, err := Resolve(q, ctx); err != nil {
-				t.Fatalf("ParseQuery(%q) succeeded, Resolve failed: %v", value, err)
+			// The zones can carry a valid value past year 9999 or before
+			// year 1, so Resolve may refuse it, but only as a usage error.
+			r, err := Resolve(q, ctx)
+			if err != nil {
+				if !errors.Is(err, ErrInvalidQuery) {
+					t.Fatalf("Resolve(%q): %v; want an error that wraps ErrInvalidQuery", value, err)
+				}
+				continue
+			}
+			for _, b := range []Bound{r.Start, r.End} {
+				if !b.Open && !inValueRange(b.Ms) {
+					t.Fatalf("Resolve(%q) = %+v: a bound outside the years 1 to 9999", value, r)
+				}
 			}
 		}
 	})

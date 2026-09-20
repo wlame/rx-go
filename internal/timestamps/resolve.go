@@ -65,6 +65,9 @@ type Resolved struct {
 //     same; otherwise the query is refused with both dates, since the
 //     time would name a moment on each.
 //
+// A bound that lands outside the years 1 to 9999 in the file's frame is
+// refused, as a line there would have no timestamp.
+//
 // Errors wrap [ErrInvalidQuery].
 func Resolve(q Query, c ResolveContext) (Resolved, error) {
 	out := Resolved{Range: q.Range}
@@ -74,6 +77,11 @@ func Resolve(q Query, c ResolveContext) (Resolved, error) {
 	}
 	if out.End, err = c.resolveEndpoint(q, q.End); err != nil {
 		return out, err
+	}
+	for _, b := range [...]Bound{out.Start, out.End} {
+		if !b.Open && !inValueRange(b.Ms) {
+			return out, fmt.Errorf("%w %q: names a moment outside the years 1 to 9999", ErrInvalidQuery, q.Value)
+		}
 	}
 	return out, nil
 }
