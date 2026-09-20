@@ -1,0 +1,103 @@
+{
+  "comment": [
+    "The cli_command string each endpoint renders, for both backends.",
+    "rx-go reads this from testdata/cli-commands.json and rx-python from",
+    "tests/data/cli-commands.json; the two files are copies and must be",
+    "edited together.",
+    "",
+    "The rendering rule: `rx <subcommand> <positionals...> <--long=value...>`.",
+    "Long flags take `=`, which is the project's own CLI convention, and a",
+    "value that needs shell quoting is quoted after the `=`.",
+    "",
+    "The `complexity` endpoint is absent because rx-go has no `rx check`",
+    "subcommand to render (ticket 28)."
+  ],
+  "cases": [
+    {
+      "name": "trace with one pattern and one path",
+      "endpoint": "trace",
+      "params": { "regexp": ["error"], "path": ["/var/log/app.log"] },
+      "expected": "rx trace /var/log/app.log --regexp=error"
+    },
+    {
+      "name": "trace with several patterns, several paths and a cap",
+      "endpoint": "trace",
+      "params": {
+        "regexp": ["error", "warn"],
+        "path": ["/var/log/app.log", "/var/log/other.log"],
+        "max_results": 100
+      },
+      "expected": "rx trace /var/log/app.log /var/log/other.log --regexp=error --regexp=warn --max-results=100"
+    },
+    {
+      "name": "trace quotes a pattern and a path that need it",
+      "endpoint": "trace",
+      "params": { "regexp": ["a b"], "path": ["/var/log/my app.log"] },
+      "expected": "rx trace '/var/log/my app.log' --regexp='a b'"
+    },
+    {
+      "name": "samples by line",
+      "endpoint": "samples",
+      "params": { "path": "/var/log/app.log", "lines": "100" },
+      "expected": "rx samples /var/log/app.log --lines=100"
+    },
+    {
+      "name": "samples keeps a comma list in one flag",
+      "endpoint": "samples",
+      "params": { "path": "/var/log/app.log", "lines": "100,200", "context": 5 },
+      "expected": "rx samples /var/log/app.log --lines=100,200 --context=5"
+    },
+    {
+      "name": "samples by offset with asymmetric context",
+      "endpoint": "samples",
+      "params": {
+        "path": "/var/log/app.log",
+        "offsets": "4096",
+        "before_context": 2,
+        "after_context": 7
+      },
+      "expected": "rx samples /var/log/app.log --offsets=4096 --before-context=2 --after-context=7"
+    },
+    {
+      "name": "samples renders a zero context rather than dropping it",
+      "endpoint": "samples",
+      "params": { "path": "/var/log/app.log", "lines": "1", "context": 0 },
+      "expected": "rx samples /var/log/app.log --lines=1 --context=0"
+    },
+    {
+      "name": "index read",
+      "endpoint": "index_get",
+      "params": { "path": "/var/log/app.log" },
+      "expected": "rx index /var/log/app.log --info --json"
+    },
+    {
+      "name": "index build with flags",
+      "endpoint": "index_post",
+      "params": { "path": "/var/log/app.log", "force": true, "analyze": true },
+      "expected": "rx index /var/log/app.log --force --analyze"
+    },
+    {
+      "name": "index build with no flags",
+      "endpoint": "index_post",
+      "params": { "path": "/var/log/app.log" },
+      "expected": "rx index /var/log/app.log"
+    },
+    {
+      "name": "compress with every option",
+      "endpoint": "compress",
+      "params": {
+        "input_path": "/var/log/app.log",
+        "output_path": "/tmp/app.log.zst",
+        "frame_size": "1M",
+        "compression_level": 5
+      },
+      "expected": "rx compress /var/log/app.log --output=/tmp/app.log.zst --frame-size=1M --level=5"
+    },
+    {
+      "name": "compress with defaults",
+      "endpoint": "compress",
+      "params": { "input_path": "/var/log/app.log" },
+      "expected": "rx compress /var/log/app.log"
+    }
+  ]
+}

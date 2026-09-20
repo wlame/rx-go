@@ -78,7 +78,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
   "context_lines":   {},
   "before_context":  null,
   "after_context":   null,
-  "cli_command":     "rx trace --path=/var/log/app-2026-03.log --regexp=timeout"
+  "cli_command":     "rx trace /var/log/app-2026-03.log --regexp=timeout"
 }
 ```
 

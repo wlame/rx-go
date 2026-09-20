@@ -12,9 +12,14 @@ import (
 // into a terminal: it uses output.Quote (Python-shlex-compatible) to
 // quote arguments that contain shell metacharacters.
 //
-// Matches rx-python/src/rx/cli_command_builder.py. The returned string
-// is rendered under the "cli_command" field of every API response so
-// users can reproduce the API call from the terminal.
+// The rendering is `rx <subcommand> <positionals...> <--long=value...>`.
+// Long flags take `=`, which is the project's own CLI convention, and a
+// value that needs shell quoting is quoted after the `=`.
+//
+// rx-python renders the same string from the same request. The cases are
+// in testdata/cli-commands.json, which rx-python holds a copy of at
+// tests/data/cli-commands.json — the two files are edited together, so a
+// change made on one side and not the other fails there.
 //
 // subcommand is one of: "trace", "samples", "index_get", "index_post",
 // "compress".
@@ -24,40 +29,43 @@ func BuildCLICommand(subcommand string, params map[string]any) string {
 	switch subcommand {
 	case "trace":
 		parts = append(parts, "trace")
+		parts = appendStringSlicePositional(parts, params["path"])
 		parts = appendStringSliceFlag(parts, "--regexp", params["regexp"])
 		parts = appendIntPtrFlag(parts, "--max-results", params["max_results"])
-		parts = appendStringSlicePositional(parts, params["path"])
 	case "samples":
 		parts = append(parts, "samples")
+		parts = appendStringPositional(parts, params["path"])
 		parts = appendStringFlag(parts, "--offsets", params["offsets"])
 		parts = appendStringFlag(parts, "--lines", params["lines"])
 		parts = appendIntPtrFlag(parts, "--context", params["context"])
 		parts = appendIntPtrFlag(parts, "--before-context", params["before_context"])
 		parts = appendIntPtrFlag(parts, "--after-context", params["after_context"])
-		parts = appendStringPositional(parts, params["path"])
 	case "index_get":
 		parts = append(parts, "index")
 		parts = appendStringPositional(parts, params["path"])
+		// A GET reads the index and answers in JSON; the CLI equivalent
+		// has to say so or it builds one instead of reading it.
+		parts = append(parts, "--info", "--json")
 	case "index_post":
 		parts = append(parts, "index")
+		parts = appendStringPositional(parts, params["path"])
 		if v, ok := params["force"].(bool); ok && v {
 			parts = append(parts, "--force")
 		}
 		if v, ok := params["analyze"].(bool); ok && v {
 			parts = append(parts, "--analyze")
 		}
-		parts = appendStringPositional(parts, params["path"])
 	case "compress":
 		parts = append(parts, "compress")
+		parts = appendStringPositional(parts, params["input_path"])
 		parts = appendStringFlag(parts, "--output", params["output_path"])
 		parts = appendStringFlag(parts, "--frame-size", params["frame_size"])
 		parts = appendIntPtrFlag(parts, "--level", params["compression_level"])
-		parts = appendStringPositional(parts, params["input_path"])
 	}
 	return strings.Join(parts, " ")
 }
 
-// appendStringSliceFlag appends "--name X --name Y ..." for every
+// appendStringSliceFlag appends "--name=X --name=Y ..." for every
 // element of a []string value. No-op when the value is nil or empty.
 func appendStringSliceFlag(parts []string, name string, v any) []string {
 	s, ok := v.([]string)
@@ -65,7 +73,7 @@ func appendStringSliceFlag(parts []string, name string, v any) []string {
 		return parts
 	}
 	for _, item := range s {
-		parts = append(parts, name, output.Quote(item))
+		parts = append(parts, name+"="+output.Quote(item))
 	}
 	return parts
 }
@@ -91,7 +99,7 @@ func appendStringPositional(parts []string, v any) []string {
 	return append(parts, output.Quote(s))
 }
 
-// appendStringFlag appends "--name value" when v is a non-empty string
+// appendStringFlag appends "--name=value" when v is a non-empty string
 // or *string pointing to a non-empty value.
 func appendStringFlag(parts []string, name string, v any) []string {
 	s := ""
@@ -106,20 +114,25 @@ func appendStringFlag(parts []string, name string, v any) []string {
 	if s == "" {
 		return parts
 	}
-	return append(parts, name, output.Quote(s))
+	return append(parts, name+"="+output.Quote(s))
 }
 
-// appendIntPtrFlag appends "--name N" when v is a non-nil *int, a
-// non-zero int, or a wrapped any holding same.
+// appendIntPtrFlag appends "--name=N" when v is a non-nil *int or a
+// non-zero int.
+//
+// A *int distinguishes "not supplied" from zero, so an explicit
+// --context=0 is rendered rather than dropped: it is a request for no
+// context lines, which is different from not asking. A bare int has no
+// way to say that, so zero there still means "not supplied".
 func appendIntPtrFlag(parts []string, name string, v any) []string {
 	switch x := v.(type) {
 	case *int:
 		if x != nil {
-			return append(parts, name, fmt.Sprintf("%d", *x))
+			return append(parts, fmt.Sprintf("%s=%d", name, *x))
 		}
 	case int:
 		if x != 0 {
-			return append(parts, name, fmt.Sprintf("%d", x))
+			return append(parts, fmt.Sprintf("%s=%d", name, x))
 		}
 	}
 	return parts

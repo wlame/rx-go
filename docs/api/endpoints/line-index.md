@@ -51,7 +51,7 @@ GET /v1/index?path=<file>
   "anomaly_count":   0,
   "anomaly_summary": {},
   "anomalies":       null,
-  "cli_command":     "rx index --info /var/log/audit-2026-03.log"
+  "cli_command":     "rx index /var/log/audit-2026-03.log --info --json"
 }
 ```
 
