@@ -58,6 +58,7 @@ the `2K+1`-line window around N.
 | `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
 | `-r`, `--regex` | `string` | — | Highlight matches of this regex in context lines (requires color) |
+| `--no-index` | `bool` | `RX_NO_INDEX` or `false` | Do not build or use a line index |
 
 `-b` also answers to `--byte-offset` and `-l` to `--line-offset`, the
 spellings rx-python has always used, so a script written against either
@@ -67,6 +68,14 @@ backend runs against both.
 `RX_NO_COLOR` in the environment turns it off. `--color=always` wins over
 both, so a redirect still gets the sequences. An unrecognised value is a
 usage error (exit 2) rather than a silent fall back to `auto`.
+
+### The index it may build
+
+A lookup in a large or compressed file builds a line index if none is
+cached, so the next lookup in the same file is fast. The build runs
+without analysis. `--no-index` turns it off and the lookup streams
+instead — slower, same answer. rx-python behaves identically, and so does
+`GET /v1/samples`.
 
 ### A position the file does not have
 
