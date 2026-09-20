@@ -10,6 +10,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
@@ -157,6 +158,20 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			return nil, ErrBadRequest(fmt.Sprintf("Path is a directory, not a file: %s", validated))
 		}
 
+		// A second lookup in a multi-gigabyte file is the case an index
+		// exists for, so one is built when the file is worth it and none
+		// is cached — the same rule `rx samples` follows, so the two
+		// surfaces leave the same state on disk. RX_NO_INDEX opts out;
+		// there is no query parameter for it, because the decision
+		// belongs to whoever runs the server rather than to a caller.
+		//
+		// Analysis is deliberately not run: nothing on this path reads
+		// its output, and a full anomaly pass to answer one line is work
+		// nobody asked for.
+		if !config.GetBoolEnv("RX_NO_INDEX", false) {
+			buildIndexForSamples(validated, stat.Size())
+		}
+
 		// One resolver for both file kinds and both entry points: it
 		// reads a plain file by offset or by line, and streams a
 		// compressed one through its decompressor.
@@ -200,4 +215,31 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 
 		return &samplesOutput{Body: *resp}, nil
 	})
+}
+
+// buildIndexForSamples builds and stores a line index for path when one
+// would help and none is cached.
+//
+// A failure is deliberately silent: the index is an accelerator, the
+// answer is the same without it, and refusing to serve a request because
+// its index could not be written would be the wrong trade. The caller
+// asked for lines, not for an index.
+//
+// `rx samples` does the same thing in internal/clicommand.
+func buildIndexForSamples(path string, size int64) {
+	if existing, err := index.LoadForSource(path); err == nil && existing != nil {
+		return
+	}
+	// A compressed file always benefits: without an index every lookup
+	// decompresses from the start. A plain file only pays for itself
+	// once it is big enough that a scan is worth avoiding, which is the
+	// same threshold `rx index` uses.
+	if !compression.IsCompressed(path) && size < int64(config.LargeFileMB())*1024*1024 {
+		return
+	}
+	idx, err := index.Build(path, index.BuildOptions{})
+	if err != nil {
+		return
+	}
+	_, _ = index.Save(idx)
 }

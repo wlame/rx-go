@@ -56,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples` and `GET /v1/samples` build a line index when the file is
+  large or compressed and none is cached, so the next lookup in the same
+  file is fast. rx-python has always done this and rx-go did not, so the
+  same command left different state on disk and the first call cost very
+  different amounts of time. The build runs without analysis: nothing on
+  this path reads its output. `--no-index` on `rx samples`, and
+  `RX_NO_INDEX=1` on either surface, turn it off — the lookup then
+  streams, which is slower and gives the same answer.
+
 - Comments no longer cite the review process that produced the code. 174
   references to stages, rounds, reviewers, findings and numbered
   decisions are gone from 63 files, along with two test files named after
