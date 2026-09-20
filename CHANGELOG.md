@@ -210,6 +210,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A line ripgrep matched could be dropped afterwards. rg does not say
+  which `-e` pattern matched, so rx re-runs each pattern in Go to find
+  out, and a line no pattern reproduced was discarded: every match of
+  `-F 'foo('`, of a PCRE2 look-around under `-P`, or of a pattern in
+  Rust-only regex syntax. The re-run now honours `-i`, `-w`, `-x` and
+  `-F`, and a line Go cannot attribute is credited to the patterns it
+  could not check, never dropped.
+
 - An error raised before a command runs — an unknown flag, a flag with
   no value — and a `--search-root` that does not exist exited with the
   right code and printed nothing. Commands print their own error line,
