@@ -78,6 +78,10 @@ func stdinIsPipe() bool {
 type ExitError struct {
 	Code int
 	Err  error
+	// Reported is true when the error line is already on stderr, so
+	// cmd/rx must not print it a second time. exitWithError sets it;
+	// NewExitError leaves it false, and cmd/rx prints the error.
+	Reported bool
 }
 
 // Error implements the error interface.
@@ -97,8 +101,23 @@ func NewExitError(code int, err error) *ExitError {
 // Discarding it would leave the process exiting 1.
 func exitWithError(w io.Writer, code int, format string, args ...any) *ExitError {
 	msg := fmt.Sprintf(format, args...)
+	PrintError(w, msg)
+	exitErr := NewExitError(code, errors.New(msg))
+	exitErr.Reported = true
+	return exitErr
+}
+
+// PrintError writes the one error line every rx failure prints:
+// "Error: " followed by the message with its first letter capitalized.
+func PrintError(w io.Writer, msg string) {
 	_, _ = fmt.Fprintf(w, "Error: %s\n", capitalizeFirst(msg))
-	return NewExitError(code, errors.New(msg))
+}
+
+// IsReported reports whether err, or an error it wraps, is an ExitError
+// whose line is already on stderr.
+func IsReported(err error) bool {
+	var exitErr *ExitError
+	return errors.As(err, &exitErr) && exitErr.Reported
 }
 
 // capitalizeFirst upper-cases the first letter of a message for display.

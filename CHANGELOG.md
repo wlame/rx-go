@@ -210,6 +210,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An error raised before a command runs — an unknown flag, a flag with
+  no value — and a `--search-root` that does not exist exited with the
+  right code and printed nothing. Commands print their own error line,
+  so the root command silences cobra's, and nothing printed the errors
+  that never reached a command. Every failure now ends with one `Error:`
+  line on stderr: `Error: Unknown flag: --frobnicate`.
+
 - `rx samples --offsets=B` past the end of the file reported the file's
   last line, which is a number counted from the wrong place. It now
   reports `-1` with a null sample, the same way a line number past the
