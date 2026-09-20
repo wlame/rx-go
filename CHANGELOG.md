@@ -218,6 +218,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-F`, and a line Go cannot attribute is credited to the patterns it
   could not check, never dropped.
 
+- A ripgrep config file changed rx's answers. ripgrep reads
+  `RIPGREP_CONFIG_PATH`, so a personal `--fixed-strings` or
+  `--smart-case` silently applied to every rx search. rx now runs
+  ripgrep with `--no-config`.
+
 - An error raised before a command runs — an unknown flag, a flag with
   no value — and a `--search-root` that does not exist exited with the
   right code and printed nothing. Commands print their own error line,
