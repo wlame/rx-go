@@ -26,16 +26,23 @@ import (
 //     then for each pattern check if ANY of that pattern's findall
 //     results intersect the submatch set. Patterns that do are kept.
 //
-// Flag handling: the Python version only cares about the `-i` case-
-// insensitive flag (any other rg flag doesn't change which pattern
-// matched a line). rx-go does the same.
+// Flag handling: the pattern is re-run the way ripgrep ran it, so -i, -w,
+// -x and -F from rgExtraArgs shape the Go regexp (see compileLikeRipgrep).
+//
+// INVARIANT: a line ripgrep reported is never dropped here. Go's regexp
+// cannot always reproduce what rg matched — a PCRE2 look-around under
+// -P, or Rust-only regex syntax, does not compile in Go — so when no
+// pattern reproduces the line, the line is credited to the patterns Go
+// could not check, and failing that to every pattern. A match labeled
+// with too many patterns is a smaller error than a match that vanishes.
 //
 // patternOrder carries the canonical pattern-ID order ("p1", "p2", ...).
 // We iterate in this order so the returned slice is deterministic
 // (Go map iteration is randomized).
 //
-// Returns an empty slice (never nil) if no patterns match — callers
-// may treat this as a stale-cache hit and drop the match.
+// With submatches the result is never empty. Without them (the line is
+// being checked rather than reported by rg) it is empty when no pattern
+// matches, and callers may treat that as a stale-cache hit.
 func IdentifyMatchingPatterns(
 	lineText string,
 	submatches []rxtypes.Submatch,
@@ -43,10 +50,10 @@ func IdentifyMatchingPatterns(
 	patternOrder []string,
 	rgExtraArgs []string,
 ) []string {
-	ignoreCase := hasFlag(rgExtraArgs, "-i", "--ignore-case")
+	flags := matchFlagsFrom(rgExtraArgs)
 
 	if len(submatches) == 0 {
-		return identifyByFullLineMatch(lineText, patternIDs, patternOrder, ignoreCase)
+		return identifyByFullLineMatch(lineText, patternIDs, patternOrder, flags)
 	}
 
 	// Build the set of matched text strings for intersection tests.
@@ -55,72 +62,160 @@ func IdentifyMatchingPatterns(
 		matchedTexts[sm.Text] = struct{}{}
 	}
 
-	matchingIDs := make([]string, 0, len(patternOrder))
+	reproduced := make([]string, 0, len(patternOrder))
+	var unverifiable []string
 	for _, pid := range patternOrder {
 		patStr, ok := patternIDs[pid]
 		if !ok {
 			continue
 		}
-		re, err := compileRegex(patStr, ignoreCase)
+		re, err := compileLikeRipgrep(patStr, flags)
 		if err != nil {
-			// Invalid regex — skip silently (Python does the same).
+			// rg accepted this pattern (it reported the line), Go cannot
+			// parse it, so whether it matched is unknown, not "no".
+			unverifiable = append(unverifiable, pid)
 			continue
 		}
 		// findall against the line; any overlap with matchedTexts wins.
 		for _, loc := range re.FindAllStringIndex(lineText, -1) {
 			if _, inSet := matchedTexts[lineText[loc[0]:loc[1]]]; inSet {
-				matchingIDs = append(matchingIDs, pid)
+				reproduced = append(reproduced, pid)
 				break
 			}
 		}
 	}
-	return matchingIDs
+
+	switch {
+	case len(reproduced) > 0:
+		return reproduced
+	case len(unverifiable) > 0:
+		return unverifiable
+	default:
+		return knownPatternIDs(patternIDs, patternOrder)
+	}
 }
 
 // identifyByFullLineMatch is the submatch-less fallback path.
 // Each pattern is tested against the whole line; every pattern that
-// finds at least one match is returned.
+// finds at least one match is returned. When none does, the patterns Go
+// cannot compile are returned, since they cannot be ruled out; the
+// result is empty only when every pattern compiled and none matched.
 func identifyByFullLineMatch(
 	lineText string,
 	patternIDs map[string]string,
 	patternOrder []string,
-	ignoreCase bool,
+	flags matchFlags,
 ) []string {
-	out := make([]string, 0, len(patternOrder))
+	matched := make([]string, 0, len(patternOrder))
+	var unverifiable []string
 	for _, pid := range patternOrder {
 		patStr, ok := patternIDs[pid]
 		if !ok {
 			continue
 		}
-		re, err := compileRegex(patStr, ignoreCase)
+		re, err := compileLikeRipgrep(patStr, flags)
 		if err != nil {
+			unverifiable = append(unverifiable, pid)
 			continue
 		}
 		if re.MatchString(lineText) {
+			matched = append(matched, pid)
+		}
+	}
+	if len(matched) == 0 && len(unverifiable) > 0 {
+		return unverifiable
+	}
+	return matched
+}
+
+// knownPatternIDs returns the IDs in patternOrder that patternIDs knows,
+// in that order.
+func knownPatternIDs(patternIDs map[string]string, patternOrder []string) []string {
+	out := make([]string, 0, len(patternOrder))
+	for _, pid := range patternOrder {
+		if _, ok := patternIDs[pid]; ok {
 			out = append(out, pid)
 		}
 	}
 	return out
 }
 
-// compileRegex compiles a Python-style regex string into Go's RE2.
+// matchFlags is the set of ripgrep options that change which text a
+// pattern matches. It is a bit set: each constant below is one bit, and
+// a request's flags are OR-ed together.
+type matchFlags uint8
+
+const (
+	matchIgnoreCase  matchFlags = 1 << iota // -i: case-insensitive
+	matchWholeWord                          // -w: match bounded by word boundaries
+	matchWholeLine                          // -x: match is the whole line
+	matchFixedString                        // -F: pattern is literal text
+)
+
+// has reports whether every bit of flag is set in f.
+func (f matchFlags) has(flag matchFlags) bool { return f&flag == flag }
+
+// ripgrepFlagMeaning maps each ripgrep spelling to the bit it sets.
 //
-// Caveats (parity gotchas):
-//   - Python's `re` accepts `(?i)` inline flags; so does Go's regexp.
-//   - We prefix with `(?i)` when ignoreCase is true AND the pattern
-//     doesn't already contain an inline flag directive. Appending via
-//     re.Copy would be cleaner but Go's regexp lacks case-insensitive
-//     runtime toggle — we must bake the flag at compile time.
-//   - Python's `re` supports look-behind/look-ahead; Go RE2 does NOT.
-//     We catch the compile error and return it; the caller skips.
-//   - ripgrep itself uses Rust's regex crate, also RE2-style (no look-
-//     behind). So any pattern that works in ripgrep (which rg already
-//     validated upstream of us) will work here too.
-func compileRegex(pattern string, ignoreCase bool) (*regexp.Regexp, error) {
-	// Fast-parse the pattern to detect inline flags. If (?i) / (?s) /
-	// etc. is already present at the head, don't prepend; otherwise
-	// ignoreCase is applied with a (?i:...) non-capturing wrap.
-	if ignoreCase && !hasInlineFlag(pattern, syntax.FoldCase) {
+// A flag missing from this table changes how ripgrep runs a pattern but
+// not the text a match covers — -P picks the PCRE2 engine, for one — so
+// re-running the pattern in Go needs nothing from it. Callers pass one
+// flag per element ("-i", "-w"), never a bundle like "-iw".
+var ripgrepFlagMeaning = map[string]matchFlags{
+	"-i":              matchIgnoreCase,
+	"--ignore-case":   matchIgnoreCase,
+	"-w":              matchWholeWord,
+	"--word-regexp":   matchWholeWord,
+	"-x":              matchWholeLine,
+	"--line-regexp":   matchWholeLine,
+	"-F":              matchFixedString,
+	"--fixed-strings": matchFixedString,
+}
+
+// matchFlagsFrom reads the matching flags out of ripgrep arguments.
+// Arguments the table does not know contribute nothing.
+func matchFlagsFrom(rgArgs []string) matchFlags {
+	var flags matchFlags
+	for _, arg := range rgArgs {
+		flags |= ripgrepFlagMeaning[arg]
+	}
+	return flags
+}
+
+// compileLikeRipgrep compiles pattern into a Go regexp that matches what
+// ripgrep matches under flags.
+//
+//   - -F quotes the pattern, so `foo(` and `a.b` are literal text.
+//   - -x anchors it to the whole line. ripgrep lets -x override -w, and
+//     so does this.
+//   - -w wraps it in `\b`, which agrees with ripgrep for any match that
+//     starts and ends on a word character. ripgrep's own rule also
+//     accepts a match whose edge is not a word character; such a match
+//     fails here and is caught by the caller's never-drop fallback.
+//   - -i adds `(?i)` unless the pattern already sets case folding
+//     itself. Under -F an inline flag is literal text, so -i always
+//     applies.
+//
+// Go's regexp is RE2 syntax and ripgrep's default engine is Rust's
+// `regex` crate, which agree on almost everything; a PCRE2 pattern under
+// -P often fails to compile here, and the caller treats that as "cannot
+// tell", never as "did not match".
+func compileLikeRipgrep(pattern string, flags matchFlags) (*regexp.Regexp, error) {
+	// Decided on the pattern as the caller wrote it, before quoting or
+	// wrapping hides its inline flags.
+	foldCase := flags.has(matchIgnoreCase) &&
+		(flags.has(matchFixedString) || !hasInlineFlag(pattern, syntax.FoldCase))
+
+	if flags.has(matchFixedString) {
+		pattern = regexp.QuoteMeta(pattern)
+	}
+	switch {
+	case flags.has(matchWholeLine):
+		pattern = `^(?:` + pattern + `)$`
+	case flags.has(matchWholeWord):
+		pattern = `\b(?:` + pattern + `)\b`
+	}
+	if foldCase {
 		pattern = "(?i)" + pattern
 	}
 	return regexp.Compile(pattern)
@@ -135,17 +230,4 @@ func hasInlineFlag(pattern string, flag syntax.Flags) bool {
 		return false
 	}
 	return parsed.Flags&flag != 0
-}
-
-// hasFlag checks whether any of the given alias strings appears in the
-// ripgrep extra-args slice.
-func hasFlag(args []string, aliases ...string) bool {
-	for _, a := range args {
-		for _, alias := range aliases {
-			if a == alias {
-				return true
-			}
-		}
-	}
-	return false
 }
