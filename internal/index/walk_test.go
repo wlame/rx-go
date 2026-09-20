@@ -73,3 +73,17 @@ func TestWalkLines_LongLinesAreJoinedAndNumbered(t *testing.T) {
 			section.TimestampedLines, section.First.Line, section.Last.Line, section.Last.Offset, starts[7])
 	}
 }
+
+// The line-ending style is decided from whole lines, so a first line
+// longer than the 64 KiB sample still counts with its terminator: a log
+// whose first line is 10 MiB long and ends in CRLF is a CRLF log.
+func TestWalkLines_ALongFirstLineCountsItsLineEnding(t *testing.T) {
+	text := append(bytes.Repeat([]byte("x"), 10<<20), "\r\nnext line\r\n"...)
+	stats, err := walkLines(bytes.NewReader(text), 1<<20, nil, nil)
+	if err != nil {
+		t.Fatalf("walkLines: %v", err)
+	}
+	if stats.LineEnding != "CRLF" {
+		t.Errorf("LineEnding = %q, want CRLF", stats.LineEnding)
+	}
+}
