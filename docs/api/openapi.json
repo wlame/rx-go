@@ -855,6 +855,13 @@
         ],
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "description": "Required on /v1 only when the server sets RX_API_TOKEN.",
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -929,6 +936,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "403": {
             "content": {
               "application/json": {
@@ -940,6 +957,12 @@
             "description": "Path outside every configured --search-root"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "Compress file to seekable zstd format (background task)",
         "tags": [
           "Operations"
@@ -961,6 +984,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "default": {
             "content": {
               "application/json": {
@@ -972,6 +1005,12 @@
             "description": "Error"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "List all available anomaly detectors",
         "tags": [
           "Analysis"
@@ -1010,6 +1049,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "403": {
             "content": {
               "application/json": {
@@ -1021,6 +1070,12 @@
             "description": "Path outside every configured --search-root"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "Get cached index data for a file",
         "tags": [
           "Indexing"
@@ -1050,6 +1105,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "403": {
             "content": {
               "application/json": {
@@ -1061,6 +1126,12 @@
             "description": "Path outside every configured --search-root"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "Build line index for file (background task)",
         "tags": [
           "Operations"
@@ -1166,6 +1237,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "403": {
             "content": {
               "application/json": {
@@ -1177,6 +1258,12 @@
             "description": "Path outside every configured --search-root"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "Get context lines around byte offsets or line numbers",
         "tags": [
           "Context"
@@ -1213,6 +1300,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "default": {
             "content": {
               "application/json": {
@@ -1224,6 +1321,12 @@
             "description": "Error"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "Get status of a background task",
         "tags": [
           "Operations"
@@ -1349,6 +1452,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "403": {
             "content": {
               "application/json": {
@@ -1360,6 +1473,12 @@
             "description": "Path outside every configured --search-root"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "Search file for regex patterns (supports multiple patterns)",
         "tags": [
           "Search"
@@ -1396,6 +1515,16 @@
             },
             "description": "OK"
           },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
           "403": {
             "content": {
               "application/json": {
@@ -1407,6 +1536,12 @@
             "description": "Path outside every configured --search-root"
           }
         },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
         "summary": "List directory contents",
         "tags": [
           "FileTree"
