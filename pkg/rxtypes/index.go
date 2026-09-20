@@ -143,6 +143,66 @@ type UnifiedFileIndex struct {
 	PrefixRegex    *string  `json:"prefix_regex"`
 	PrefixCoverage *float64 `json:"prefix_coverage"`
 	PrefixLength   *int     `json:"prefix_length"`
+
+	// TimeIndex is what every build records about the timestamps at
+	// the start of the file's lines, or null when no timestamp format
+	// was recognized in the first mebibyte of the text. rx-go only:
+	// rx-python's model has no such field.
+	TimeIndex *TimeIndex `json:"time_index"`
+}
+
+// TimeIndex is the time section of a line index: the timestamp format
+// of the file, the range and the order of its timestamps, and, for each
+// line-index checkpoint, the latest timestamp written before it.
+//
+// Every value is in milliseconds since the Unix epoch, in the file's
+// frame: the UTC instant for a timestamp that carries a zone, and the
+// wall-clock reading as if it were UTC for one that does not. The index
+// never applies a time zone, so the values do not depend on the
+// environment of the process that built it.
+//
+// A line's "own" timestamp is the one written on that line; a line
+// without one (a traceback, a continuation line) has none and counts
+// in nothing below.
+type TimeIndex struct {
+	// Format, Anchored, DayFirst and HasZone are the detected format,
+	// with the JSON names internal/timestamps.Format uses.
+	Format   string `json:"format"`
+	Anchored bool   `json:"anchored"`
+	DayFirst *bool  `json:"day_first"`
+	HasZone  bool   `json:"has_zone"`
+	// YearFromMtime is true for a format that writes no year: each
+	// timestamp's year comes from the file's mtime (source_mtime_ns).
+	YearFromMtime bool `json:"year_from_mtime"`
+	// TimestampedLines is the number of lines with an own timestamp.
+	TimestampedLines int64 `json:"timestamped_lines"`
+	// First and Last are the first and the last line with an own
+	// timestamp, in file order; null when no line has one.
+	First *TimePoint `json:"first"`
+	Last  *TimePoint `json:"last"`
+	// FirstZoneOffsetMinutes is the zone offset, east of UTC, written
+	// with the first timestamp of a file whose timestamps carry zones
+	// (0 for `Z`, `UTC` and a line that carries no zone); null when
+	// the file's timestamps carry none.
+	FirstZoneOffsetMinutes *int `json:"first_zone_offset_minutes"`
+	// BackwardSteps counts the lines whose own timestamp is more than
+	// one second earlier than the latest timestamp before them.
+	// MaxBackwardMs is the largest such step, 0 when there is none.
+	BackwardSteps int64 `json:"backward_steps"`
+	MaxBackwardMs int64 `json:"max_backward_ms"`
+	// MaxBefore is aligned one-to-one with line_index: entry i is the
+	// latest own timestamp of every line numbered below checkpoint i's
+	// line, or null when none of those lines has one. It never
+	// decreases.
+	MaxBefore []*int64 `json:"max_before"`
+}
+
+// TimePoint is one timestamped line: its timestamp, its 1-based line
+// number and the byte offset where it starts in the file's text.
+type TimePoint struct {
+	Ms     int64 `json:"ms"`
+	Line   int64 `json:"line"`
+	Offset int64 `json:"offset"`
 }
 
 // AnomalyRangeResult is a single anomaly entry inside UnifiedFileIndex.

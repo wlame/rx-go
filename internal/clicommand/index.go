@@ -235,6 +235,7 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 			_, _ = fmt.Fprintf(out, "  line_count: %d\n", *idx.LineCount)
 		}
 		_, _ = fmt.Fprintf(out, "  index_entries: %d\n", len(idx.LineIndex))
+		writeTimeIndexHuman(out, idx.TimeIndex)
 		return nil
 	}
 
@@ -526,6 +527,9 @@ func indexEntryJSON(idx *rxtypes.UnifiedFileIndex, cachePath string) map[string]
 	// (emits empty list when absent).
 	entry["line_index"] = idx.LineIndex
 	entry["index_entries"] = len(idx.LineIndex)
+	// The time section, max_before included, or null for a file with
+	// no timestamp format. rx-go only.
+	entry["time_index"] = idx.TimeIndex
 
 	if idx.LineCount != nil {
 		entry["line_count"] = *idx.LineCount

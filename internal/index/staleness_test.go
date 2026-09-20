@@ -63,7 +63,7 @@ func TestLoadRefusesAnIndexWrittenByAnotherVersion(t *testing.T) {
 	writeNumberedFile(t, src, 200)
 	idx := buildIndexFor(t, src)
 
-	for _, version := range []int{0, 1, 2, 3, 4, 5, 6, 8, 999} {
+	for _, version := range []int{0, 1, 2, 3, 4, 5, 6, 7, 9, 999} {
 		idx.Version = version
 		raw, err := json.Marshal(idx)
 		if err != nil {

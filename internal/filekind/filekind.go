@@ -27,6 +27,7 @@ package filekind
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 
@@ -125,7 +126,8 @@ func (k Kind) CompressionName() string {
 // size); and TextProbeBytes of the file's text. A compressed file's
 // decoder may read more of the file than the text it yields to produce
 // those bytes: a bzip2 block (at most 900 kB of text), one zstd block
-// (at most 128 KiB), or whatever gzip or xz need to fill the probe.
+// (at most 128 KiB), the whole frames of a seekable file that hold the
+// probe, or whatever gzip or xz need to fill it.
 //
 // A file whose text cannot be read past the signature (a damaged
 // stream, a seekable file whose first frame is damaged) is not refused
@@ -202,25 +204,78 @@ func FormatOfPinned(src paths.Pinned) (Kind, error) {
 }
 
 // probeText returns the first TextProbeBytes of the file's text, or as
-// much of it as can be read: the file's bytes for a plain file, its
-// decompressed stream for any other.
+// much of it as can be read: a damaged stream keeps what was read
+// before the damage, and the command that reads the file reports it.
 func probeText(r io.ReaderAt, size int64, kind Kind) []byte {
+	head, _ := ReadTextHead(r, size, kind, TextProbeBytes)
+	return head
+}
+
+// ReadTextHead returns the first limit bytes of the text of the open
+// file r, size bytes long, whose Kind is kind: the file's bytes for a
+// plain file, its decompressed stream for any other. A text shorter
+// than limit comes back whole, with a nil error.
+//
+// A read that fails before limit bytes or the end of the text — an I/O
+// error, or a compressed stream that is damaged or cut short — returns
+// the bytes read before it together with the error, so a caller that
+// must describe the whole head never mistakes a broken stream for a
+// short text.
+//
+// It reads at most limit bytes of a plain file. A compressed file's
+// decoder may read further into the file than the text it yields, to
+// fill its own buffers (see Of for how far).
+//
+// Go note: r is read by position (io.ReaderAt), so the read position
+// of an *os.File passed as r is left where it was.
+func ReadTextHead(r io.ReaderAt, size int64, kind Kind, limit int) ([]byte, error) {
 	var text io.Reader = io.NewSectionReader(r, 0, size)
-	if kind.IsCompressed() {
-		// A seekable file is one zstd stream to a stream decoder, which
-		// skips the frame holding the seek table.
+	switch {
+	case kind.IsSeekable() && kind.Table != nil:
+		// A seekable file is read frame by frame where its seek table
+		// places each frame, so damage comes back as
+		// seekable.ErrDamagedFrame naming the frame, as every other
+		// reader of a seekable file reports it.
+		frames := seekable.NewTextReader(r, kind.Table)
+		defer func() { _ = frames.Close() }()
+		text = frames
+	case kind.IsCompressed():
 		dec, err := compression.NewReader(io.NopCloser(text), kind.Format)
 		if err != nil {
-			return nil
+			return nil, fmt.Errorf("decompress: %w", err)
 		}
 		defer func() { _ = dec.Close() }()
 		text = dec
+	case size < int64(limit):
+		// A plain file holds no more text than its size, so the buffer
+		// need not be larger.
+		limit = int(max(size, 0))
 	}
-	buf := make([]byte, TextProbeBytes)
-	// ReadFull stops at TextProbeBytes, at the end of the text, or at
-	// the first error; n counts what it read either way.
-	n, _ := io.ReadFull(text, buf)
-	return buf[:n]
+	buf := make([]byte, limit)
+	n, err := readUpTo(text, buf)
+	return buf[:n], err
+}
+
+// readUpTo fills buf from r and returns how many bytes it read. It
+// stops at a full buffer or at the end of r, with a nil error, and at
+// the first other error, which it returns.
+//
+// io.ReadFull cannot serve here: it reports the end of a short text as
+// io.ErrUnexpectedEOF, the same error a decoder gives for a stream that
+// was cut short, so the two could not be told apart.
+func readUpTo(r io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		m, err := r.Read(buf[n:])
+		n += m
+		if errors.Is(err, io.EOF) {
+			return n, nil
+		}
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // notTextReason is the reason the probed text is not text, or "" when
