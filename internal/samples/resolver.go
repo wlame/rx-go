@@ -75,6 +75,13 @@ type Request struct {
 	// scan fallback.
 	IndexLoader IndexLoader
 
+	// MaxLines is the most lines the answer may hold, counted over all
+	// its samples as the lines are read: past it Resolve stops and
+	// returns ErrTooManyLines. 0 is no limit, which the CLI uses; the
+	// HTTP API sets RX_SAMPLES_MAX_LINES, so one request cannot make the
+	// server hold an answer of any size.
+	MaxLines int
+
 	// ctx is the context Resolve was called with. Every pass over the
 	// file reads through it (withContext), so a canceled request stops
 	// reading at the next buffer it fills. It is a field rather than a
@@ -193,7 +200,7 @@ func Resolve(ctx context.Context, req Request) (*rxtypes.SamplesResponse, error)
 		Samples:       map[string][]string{},
 		Timestamps:    map[string]int64{},
 	}
-	answer := newCollected(resp)
+	answer := newCollected(resp, req.MaxLines)
 	if kind.IsCompressed() {
 		resp.IsCompressed = true
 		name := kind.CompressionName()
@@ -396,6 +403,9 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 			resp.Offsets[w.key] = lineNum
 			if w.end < 0 {
 				for _, l := range before.lines() {
+					if err := resp.budget.take(); err != nil {
+						return err
+					}
 					w.collect = append(w.collect, l.text)
 					w.starts = append(w.starts, l.start)
 				}
@@ -409,6 +419,9 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 		// window is written at or before the place it is read from.
 		kept := active[:0]
 		for _, w := range active {
+			if err := resp.budget.take(); err != nil {
+				return err
+			}
 			w.collect = append(w.collect, text)
 			w.starts = append(w.starts, pos)
 			switch {

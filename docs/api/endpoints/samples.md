@@ -258,7 +258,7 @@ client-side and iterate accordingly.
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
-| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text |
+| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) allows |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |
@@ -354,6 +354,17 @@ Status: `400`. Check the [address syntax](#address-syntax).
 ```
 
 Status: `400`. Supply exactly one.
+
+### Answer over the line limit
+
+```json
+{ "detail": "too many lines for one samples answer: the answer reached 100001 lines, more than the 100000 allowed; RX_SAMPLES_MAX_LINES sets the limit: ask for fewer positions, shorter ranges or less context" }
+```
+
+Status: `400`. The lines of all the samples are counted as they are
+read (a line in two samples counts twice), and the request stops
+reading when the count passes `RX_SAMPLES_MAX_LINES`. `rx samples` has
+no limit.
 
 ### File is a directory
 

@@ -488,7 +488,7 @@ func readLinesWithTarget(
 	if targetLine > 0 {
 		w.from, w.to = min(startLine, targetLine), max(endLine, targetLine)
 	}
-	err := readWantedLines(context.Background(), plainLines{src: src, idx: idx}, []*wantedLines{w})
+	err := readWantedLines(context.Background(), plainLines{src: src, idx: idx}, []*wantedLines{w}, &lineBudget{})
 	return w.lines, w.starts, w.targetOffset, err
 }
 

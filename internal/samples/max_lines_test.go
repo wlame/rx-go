@@ -1,0 +1,89 @@
+package samples
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/wlame/rx-go/internal/timestamps"
+)
+
+// An answer of more lines than Request.MaxLines is refused with
+// ErrTooManyLines naming the count reached, in every mode; one of
+// exactly MaxLines is answered. A line that two keys share counts
+// once per key, as the answer holds it.
+func TestResolve_MaxLinesRefusesALargerAnswer(t *testing.T) {
+	const maxLines = 1000
+	path, lines, size := largeTimedLog(t, 3000)
+	end := func(n int64) *int64 { return &n }
+	shared := make([]string, 0, 501)
+	for i := range 501 {
+		// 501 spellings of lines 1-2: a start at or before line 1's
+		// time, an end before line 3's.
+		shared = append(shared, iso(lines[0].ms-int64(i/100))+".."+iso(lines[1].ms+int64(i%100)))
+	}
+	cases := []struct {
+		name    string
+		req     Request
+		refused bool
+	}{
+		{"a range of exactly the limit", Request{Lines: []OffsetOrRange{{Start: 1, End: end(maxLines)}}}, false},
+		{"a range one line longer", Request{Lines: []OffsetOrRange{{Start: 1, End: end(maxLines + 1)}}}, true},
+		{"overlapping ranges", Request{Lines: []OffsetOrRange{{Start: 1, End: end(600)}, {Start: 2, End: end(600)}}}, true},
+		{"singles with context", Request{Lines: singlesFrom(1, 200), BeforeContext: 3, AfterContext: 3}, true},
+		{"a byte range over the file", Request{Offsets: []OffsetOrRange{{Start: 0, End: end(size - 1)}}}, true},
+		{"an open time range", Request{Timestamps: []string{iso(lines[0].ms) + ".."}}, true},
+		{"time queries that share a range", Request{Timestamps: shared}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.req
+			req.Path, req.IndexLoader, req.MaxLines = path, NoIndex, maxLines
+			resp, err := Resolve(t.Context(), req)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				if got := len(resp.Samples["1-1000"]); got != maxLines {
+					t.Fatalf("%d lines", got)
+				}
+				return
+			}
+			if !errors.Is(err, ErrTooManyLines) || !strings.Contains(err.Error(), "1001") {
+				t.Fatalf("err %v; want ErrTooManyLines at 1001 lines", err)
+			}
+		})
+	}
+}
+
+// singlesFrom returns n single positions from line first on.
+func singlesFrom(first, n int64) []OffsetOrRange {
+	out := make([]OffsetOrRange, 0, n)
+	for line := first; line < first+n; line++ {
+		out = append(out, OffsetOrRange{Start: line})
+	}
+	return out
+}
+
+// The lines are counted before they are held, so a request that asks
+// for far more than the limit stops reading once it passes it: a
+// hundred time ranges open to the end of a 5 MB file read about the
+// limit's worth of lines, not the file a hundred times over.
+func TestBudget_MaxLinesStopsTheReadAtTheLimit(t *testing.T) {
+	const maxLines = 1000
+	path, lines, size := largeTimedLog(t, 35_000)
+	var values []string
+	for i := range 100 {
+		values = append(values, iso(lines[i].ms)+"..")
+	}
+	counter := withCountingOpen(t)
+	_, err := Resolve(t.Context(), Request{Path: path, Timestamps: values, IndexLoader: NoIndex, MaxLines: maxLines})
+	if !errors.Is(err, ErrTooManyLines) {
+		t.Fatalf("err %v; want ErrTooManyLines", err)
+	}
+	// The detection head, the search for the hundred starts, and the
+	// lines up to the limit, each with a read buffer.
+	if read, budget := counter.Load(), int64(timestamps.SampleBytes)+2*maxLines*150+128*1024; read > budget {
+		t.Errorf("read %d bytes of %d; budget %d", read, size, budget)
+	}
+}

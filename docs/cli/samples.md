@@ -61,6 +61,11 @@ zstd file, never using the index. A gzip, bzip2, xz or plain zstd file
 cannot be entered there, so it decompresses its text up to that line
 once more.
 
+`rx samples` holds whatever answer it is asked for: it runs as your own
+process, so it has no limit on the lines of an answer. The HTTP API has
+one, `RX_SAMPLES_MAX_LINES` (see
+[`GET /v1/samples`](../api/endpoints/samples.md#status-codes)).
+
 ## Flags
 
 | Flag | Type | Default | Description |

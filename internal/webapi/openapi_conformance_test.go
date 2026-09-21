@@ -409,6 +409,10 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("samples outside the root", "/v1/samples", q("path", "/etc/hosts", "lines", "1"), http.StatusForbidden)
 	get("samples of a missing file", "/v1/samples", q("path", at("nope.log"), "lines", "1"), http.StatusNotFound)
 	get("samples without a path", "/v1/samples", q("lines", "1"), http.StatusUnprocessableEntity)
+	// An answer of more lines than RX_SAMPLES_MAX_LINES allows.
+	t.Setenv("RX_SAMPLES_MAX_LINES", "1000")
+	get("samples over the line limit", "/v1/samples", q("path", at("app.log"), "lines", "1-1001"), http.StatusBadRequest)
+	t.Setenv("RX_SAMPLES_MAX_LINES", "")
 	get("samples by time, a single time and a range", "/v1/samples",
 		q("path", at("timed.log"), "timestamps", "2025-12-10T07:01:00", "timestamps", "07:02:00..07:02:05"), http.StatusOK)
 	get("samples with lines before the first timestamp", "/v1/samples", q("path", at("traced.log"), "lines", "1-6"), http.StatusOK)

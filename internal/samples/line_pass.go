@@ -105,7 +105,7 @@ func resolveLineWindows(req Request, kind filekind.Kind, resp *collected) error 
 	if err != nil {
 		return err
 	}
-	if err := readWantedLines(req.context(), source, wants); err != nil {
+	if err := readWantedLines(req.context(), source, wants, resp.budget); err != nil {
 		return err
 	}
 	for _, w := range wants {
@@ -204,7 +204,7 @@ func addWithin(a, b int64) int64 {
 // INVARIANT: when no window is active, the cursor is at or before the
 // start of the next window (originOf never returns a line after the one
 // asked for), so every window sees all of its lines.
-func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLines) error {
+func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLines, budget *lineBudget) error {
 	sort.SliceStable(wants, func(i, j int) bool { return wants[i].from < wants[j].from })
 	var (
 		cursor  *textCursor
@@ -260,7 +260,9 @@ func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLine
 			active = append(active, wants[next])
 			next++
 		}
-		collectLine(active, raw, lineNum, pos)
+		if err := collectLine(active, raw, lineNum, pos, budget); err != nil {
+			return err
+		}
 		// Keep the windows that hold lines after this one. Filtering
 		// into active[:0] reuses the slice's array: each kept window is
 		// written at or before the place it is read from.
@@ -280,9 +282,10 @@ func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLine
 }
 
 // collectLine files one line, number lineNum starting at pos, in every
-// active window that holds it. Its text is made once and shared: a Go
-// string never changes, so windows that overlap hold one copy.
-func collectLine(active []*wantedLines, raw []byte, lineNum, pos int64) {
+// active window that holds it, taking each from budget first. Its text
+// is made once and shared: a Go string never changes, so windows that
+// overlap hold one copy.
+func collectLine(active []*wantedLines, raw []byte, lineNum, pos int64, budget *lineBudget) error {
 	var text string
 	made := false
 	for _, w := range active {
@@ -292,12 +295,16 @@ func collectLine(active []*wantedLines, raw []byte, lineNum, pos int64) {
 		if lineNum < w.first || lineNum > w.last {
 			continue
 		}
+		if err := budget.take(); err != nil {
+			return err
+		}
 		if !made {
 			text, made = string(trimOneLineBreak(raw)), true
 		}
 		w.lines = append(w.lines, text)
 		w.starts = append(w.starts, pos)
 	}
+	return nil
 }
 
 // trimOneLineBreak drops a trailing \n and one \r before it, as
