@@ -54,6 +54,13 @@ byte up to the last wanted line, then the read stops. A seekable zstd
 file with an index decompresses only the frames that hold the wanted
 lines.
 
+When the first line of a sample has no timestamp of its own, the text
+before it is read back for `line_timestamps`: at most
+`RX_TIMESTAMP_LOOKBACK_KB` KiB (64 by default) of a plain or seekable
+zstd file, never using the index. A gzip, bzip2, xz or plain zstd file
+cannot be entered there, so it decompresses its text up to that line
+once more.
+
 ## Flags
 
 | Flag | Type | Default | Description |
@@ -285,7 +292,8 @@ payload`, `--lines=1,30,99 --json`:
   "compression_format": null,
   "cli_command": null,
   "timestamps": {},
-  "time_format": null
+  "time_format": null,
+  "line_timestamps": null
 }
 ```
 
@@ -294,6 +302,26 @@ assumed_zone}`, in every mode, or `null` when no format is recognized
 in the first mebibyte of its text, as here. Without an index it costs a
 read of that mebibyte; with one, nothing. `timestamps` is filled only by
 `--timestamps`.
+
+`line_timestamps` gives each sample line its effective timestamp, keyed
+and ordered as `samples`, in every mode: milliseconds since the Unix
+epoch as a UTC instant, or `null`. A line without a timestamp of its
+own (a traceback line) carries that of the nearest earlier line with
+one, when that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB (64)
+before it ([effective timestamps](../concepts/timestamps.md#effective-timestamps)).
+The whole field is `null` when `time_format` is. Human output does not
+show it: each line's text already carries its time. On a log whose
+lines 2 to 4 read
+
+```text
+2025-12-10 12:34:56,123 ERROR LINE 2
+Traceback LINE 3
+2025-12-10 12:34:57,000 INFO LINE 4
+```
+
+`--lines=3 --context=1 --json` answers
+`"line_timestamps": {"3": [1765370096123, 1765370096123, 1765370097000]}`:
+the traceback line carries line 2's time.
 
 ### Compressed file
 

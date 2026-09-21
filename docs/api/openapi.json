@@ -946,6 +946,26 @@
           "is_compressed": {
             "type": "boolean"
           },
+          "line_timestamps": {
+            "additionalProperties": {
+              "items": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "description": "Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "lines": {
             "additionalProperties": {
               "format": "int64",
@@ -999,7 +1019,8 @@
           "compression_format",
           "cli_command",
           "timestamps",
-          "time_format"
+          "time_format",
+          "line_timestamps"
         ],
         "type": "object"
       },

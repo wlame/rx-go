@@ -85,6 +85,15 @@ type SamplesResponse struct {
 	// recognized in the first mebibyte of its text. Present in every
 	// mode.
 	TimeFormat *SamplesTimeFormat `json:"time_format" doc:"The file's timestamp format, in every mode; null when no format is recognized in the first mebibyte of its text."`
+	// LineTimestamps maps each key of Samples to the effective timestamp
+	// of each line of its sample, in the same order: milliseconds since
+	// the Unix epoch, as a UTC instant, or nil for a line that has none.
+	// A line's effective timestamp is its own, or else the own timestamp
+	// of the nearest earlier line that has one when that line starts at
+	// most RX_TIMESTAMP_LOOKBACK_KB KiB before it. A key whose sample is
+	// null has a null entry. The whole map is nil (null) when the file
+	// has no timestamp format. Present in every mode.
+	LineTimestamps map[string][]*int64 `json:"line_timestamps" nullable:"true" doc:"Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode."`
 }
 
 // SamplesTimeFormat is the timestamp format of a file a samples answer

@@ -6,11 +6,15 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/internal/testutil/counting"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -205,5 +209,82 @@ func TestLastStampFromEnd_StepsBackPastATimelessTail(t *testing.T) {
 	got, found, err := lastStampFromEnd(bytes.NewReader(text), int64(len(text)), parserFor(t, text[:70]))
 	if err != nil || !found || got.Ms != timeBase+1000 {
 		t.Fatalf("last stamp %+v %v %v, want 07:30:01", got, found, err)
+	}
+}
+
+// tracebackHeavyLog is a log whose first 5,000 lines hold a record
+// every 50 lines (enough for detection to find the format), and whose
+// later lines are one long traceback, every line about 100 bytes, so a
+// window inside it reads back for its record.
+func tracebackHeavyLog(lines int) []byte {
+	var b strings.Builder
+	for n := 1; n <= lines; n++ {
+		if n <= 5000 && n%50 == 1 {
+			fmt.Fprintf(&b, "%s ERROR LINE %d failed\n", time.UnixMilli(timeBase+int64(n)).UTC().Format("2006-01-02 15:04:05.000"), n)
+			continue
+		}
+		fmt.Fprintf(&b, "    at com.example.Frame%05d.call(Frame.java:%d) LINE %d %s\n", n, n, n, strings.Repeat("x", 40))
+	}
+	return []byte(b.String())
+}
+
+// The read back for a sample whose first line has no timestamp reads at
+// most RX_TIMESTAMP_LOOKBACK_KB KiB and one byte more, from a plain
+// file and from a seekable one by position, cold and with an index; a
+// stream-compressed copy cannot be entered there and decompresses its
+// text up to the line once more. The extra bytes are measured as the
+// difference from the same request with a lookback of 0, which reads
+// nothing back. Line 5300 has its record 35 KB back; line 7000 has none
+// within 64 KiB, so its read covers the whole lookback.
+func TestBudget_LookbackReadsAtMostTheSetting(t *testing.T) {
+	const frameText = 4096
+	text := tracebackHeavyLog(8000)
+	dir := t.TempDir()
+	paths := map[string]string{
+		"plain":    filepath.Join(dir, "app.log"),
+		"gzip":     filepath.Join(dir, "app.log.gz"),
+		"seekable": filepath.Join(dir, "app.log.zst"),
+	}
+	writeFile(t, paths["plain"], text)
+	writeFile(t, paths["gzip"], compressedcopy.Encode(t, compressedcopy.Gzip, text))
+	seekablefile.Write(t, paths["seekable"], seekablefile.SplitEvery(text, frameText))
+	lookback := int64(64 * 1024)
+	for name, path := range paths {
+		for loaderName, loader := range loadersFor(t, path) {
+			read := func(lookbackKB string, line int64) (int64, *rxtypes.SamplesResponse) {
+				t.Setenv("RX_TIMESTAMP_LOOKBACK_KB", lookbackKB)
+				counter := withCountingOpen(t)
+				resp, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: line}}, IndexLoader: loader})
+				if err != nil {
+					t.Fatalf("%s %s: resolve: %v", name, loaderName, err)
+				}
+				return counter.Load(), resp
+			}
+			for _, line := range []int64{5300, 7000} {
+				without, _ := read("0", line)
+				with, resp := read("64", line)
+				extra := with - without
+				budget := lookback + 1
+				switch name {
+				case "gzip":
+					// The text up to the line again, and what the
+					// decoder reads ahead.
+					budget = without + decoderReadAhead
+				case "seekable":
+					// The frames that hold the bytes read back: the
+					// lookback, and a frame at each end that it
+					// covers in part.
+					budget = lookback + 1 + 2*frameText
+				}
+				if extra <= 0 || extra > budget {
+					t.Errorf("%s %s line %d: the read back cost %d bytes (%d against %d); budget %d",
+						name, loaderName, line, extra, with, without, budget)
+				}
+				got := resp.LineTimestamps[strconv.FormatInt(line, 10)]
+				if wantNull := line == 7000; len(got) != 1 || (got[0] == nil) != wantNull {
+					t.Errorf("%s %s line %d: line_timestamps %v", name, loaderName, line, got)
+				}
+			}
+		}
 	}
 }

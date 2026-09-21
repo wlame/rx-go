@@ -43,7 +43,7 @@ var decodeSeekableFrame = func(d *seekable.Decoder, src paths.Pinned, frame int,
 //
 // It returns errNoFrameIndex when there is no index to use, and the
 // caller streams instead. An index only ever makes the answer faster.
-func resolveSeekableLines(req Request, resp *rxtypes.SamplesResponse) error {
+func resolveSeekableLines(req Request, resp *collected) error {
 	if req.IndexLoader == nil {
 		return errNoFrameIndex
 	}
@@ -91,7 +91,7 @@ func resolveSeekableLines(req Request, resp *rxtypes.SamplesResponse) error {
 // range.
 func answerOneWindow(
 	req Request,
-	resp *rxtypes.SamplesResponse,
+	resp *collected,
 	want OffsetOrRange,
 	frames []rxtypes.FrameLineInfo,
 	table *seekable.SeekTable,
@@ -135,7 +135,7 @@ func answerOneWindow(
 	resp.Samples[key] = nil
 	resp.Lines[key] = -1
 
-	lines, offsets, err := readLinesFromFrames(req.Source, frames, table, decoder, first, last)
+	lines, starts, err := readLinesFromFrames(req.Source, frames, table, decoder, first, last)
 	if err != nil {
 		return err
 	}
@@ -144,17 +144,18 @@ func answerOneWindow(
 		return nil
 	}
 	resp.Samples[key] = lines
-	if reported > 0 {
-		if offset, ok := offsets[reported]; ok {
-			resp.Lines[key] = offset
-		}
+	resp.starts[key] = starts
+	// The lines run from `first` on, so the reported line, when the
+	// file has it, is at its distance from `first`.
+	if at := reported - first; reported > 0 && at < int64(len(starts)) {
+		resp.Lines[key] = starts[at]
 	}
 	return nil
 }
 
 // readLinesFromFrames decompresses the smallest run of frames that can
 // contain lines first..last and returns their text, plus the byte offset
-// of each line in the decompressed stream.
+// each line starts at in the decompressed stream, in the same order.
 //
 // The run starts at a frame whose first byte lies on a line before
 // `first` (see frameRunFor), so line `first` begins inside the run and
@@ -166,7 +167,7 @@ func readLinesFromFrames(
 	table *seekable.SeekTable,
 	decoder *seekable.Decoder,
 	first, last int64,
-) ([]string, map[int64]int64, error) {
+) ([]string, []int64, error) {
 	startFrame, endFrame, ok := frameRunFor(frames, first, last)
 	if !ok {
 		return []string{}, nil, nil
@@ -187,16 +188,16 @@ func readLinesFromFrames(
 	// The first newline in the run terminates the run's first line.
 	lineNumber := frames[startFrame].FirstLine
 	position := startOffset
-	collected := []string{}
-	offsets := map[int64]int64{}
+	texts := []string{}
+	starts := []int64{}
 
 	reader := bufio.NewReaderSize(bytes.NewReader(data), 256*1024)
 	for {
 		raw, readErr := reader.ReadBytes('\n')
 		if len(raw) > 0 {
 			if lineNumber >= first && lineNumber <= last {
-				collected = append(collected, trimNewline(string(raw)))
-				offsets[lineNumber] = position
+				texts = append(texts, trimNewline(string(raw)))
+				starts = append(starts, position)
 			}
 			position += int64(len(raw))
 			lineNumber++
@@ -211,7 +212,7 @@ func readLinesFromFrames(
 			break
 		}
 	}
-	return collected, offsets, nil
+	return texts, starts, nil
 }
 
 // frameRunFor picks the contiguous run of frames that has to be
