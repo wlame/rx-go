@@ -3,7 +3,6 @@ package samples
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -621,28 +620,74 @@ func textByPosition(file positionalFile, kind filekind.Kind) (io.ReaderAt, int64
 	if len(frames) > 0 {
 		size = frames[len(frames)-1].DecompressedEnd()
 	}
-	return seekableTextAt{file: file, table: kind.Table, decoder: seekable.NewDecoder()}, size, nil
+	return &seekableTextAt{file: file, table: kind.Table, decoder: seekable.NewDecoder()}, size, nil
 }
 
-// seekableTextAt reads a seekable zstd file's text by position,
-// decompressing the frames that hold the bytes asked for.
+// seekableTextAt reads a seekable zstd file's text by position. It
+// decodes one frame at a time and keeps the last two it decoded, so a
+// run of reads that moves through the text a little at a time, forward
+// or back, decodes each frame once: the read back from the end for a
+// file's last timestamp steps back a mebibyte at a time through frames
+// that are often larger, and the lookback sweep of line_timestamps
+// reads short spans in ascending order. Each read used to decode every
+// frame it touched again.
+//
+// It holds at most two decoded frames, each as long as the seek table
+// says (the decoder refuses a frame that decodes to another length).
 type seekableTextAt struct {
 	file    io.ReaderAt
 	table   *seekable.SeekTable
 	decoder *seekable.Decoder
+	// kept are the frames decoded last, the most recent first.
+	kept [2]decodedFrame
+}
+
+// decodedFrame is one frame's text; data is nil for no frame.
+type decodedFrame struct {
+	index int
+	data  []byte
 }
 
 // ReadAt implements io.ReaderAt over the decompressed text.
-func (s seekableTextAt) ReadAt(p []byte, offset int64) (int, error) {
-	data, err := s.decoder.DecompressRangeAt(context.Background(), s.file, s.table, offset, int64(len(p)))
-	if err != nil {
-		return 0, err
+func (s *seekableTextAt) ReadAt(p []byte, offset int64) (int, error) {
+	if offset < 0 {
+		return 0, fmt.Errorf("read the text at %d: a negative offset", offset)
 	}
-	n := copy(p, data)
-	if n < len(p) {
-		return n, io.EOF
+	n := 0
+	for n < len(p) {
+		at := offset + int64(n)
+		// The frame holding byte at: the first that ends after it. The
+		// table's frames are contiguous, so it also starts at or before
+		// it.
+		index := sort.Search(len(s.table.Frames), func(i int) bool {
+			return s.table.Frames[i].DecompressedEnd() > at
+		})
+		if index == len(s.table.Frames) {
+			return n, io.EOF
+		}
+		data, err := s.frame(index)
+		if err != nil {
+			return n, err
+		}
+		n += copy(p[n:], data[at-s.table.Frames[index].DecompressedOffset:])
 	}
 	return n, nil
+}
+
+// frame returns frame index's text, from the frames kept or decoded
+// now, and keeps it.
+func (s *seekableTextAt) frame(index int) ([]byte, error) {
+	for _, kept := range s.kept {
+		if kept.data != nil && kept.index == index {
+			return kept.data, nil
+		}
+	}
+	data, err := decodeFrameAt(s.decoder, s.file, index, s.table)
+	if err != nil {
+		return nil, err
+	}
+	s.kept[1], s.kept[0] = s.kept[0], decodedFrame{index: index, data: data}
+	return data, nil
 }
 
 // lastStampOfStream reads a compressed stream to its end and returns
@@ -772,4 +817,10 @@ func trimLineEnd(b []byte) []byte { return b[:contentEndOf(b)] }
 func windowOfContent(line []byte) []byte {
 	content := trimLineEnd(line)
 	return content[:min(len(content), timestamps.WindowBytes)]
+}
+
+// decodeFrameAt decompresses one frame of a seekable file read by
+// position. It is a variable so a test can count the bytes decoded.
+var decodeFrameAt = func(d *seekable.Decoder, file io.ReaderAt, index int, table *seekable.SeekTable) ([]byte, error) {
+	return d.DecompressFrameAt(file, index, table)
 }

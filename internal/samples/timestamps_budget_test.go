@@ -3,11 +3,13 @@ package samples
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -350,7 +352,7 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 		t.Fatalf("seek table: %v", err)
 	}
 	file := counting.NewReaderAt(f)
-	compressed := seekableTextAt{file: file, table: table, decoder: seekable.NewDecoder()}
+	compressed := &seekableTextAt{file: file, table: table, decoder: seekable.NewDecoder()}
 	stamp, found, err = lastStampFromEnd(compressed, int64(len(text)), parser)
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("seekable: last stamp %+v %v %v", stamp, found, err)
@@ -359,5 +361,61 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	// at most, never once per line.
 	if read, budget := file.Load(), 8*info.Size(); read > budget {
 		t.Errorf("seekable: read %d compressed bytes of a %d-byte file; budget %d", read, info.Size(), budget)
+	}
+}
+
+// countDecodedFrames counts the bytes the reads by position of a
+// seekable file decode, for the duration of the test.
+func countDecodedFrames(t *testing.T) *atomic.Int64 {
+	t.Helper()
+	decoded := new(atomic.Int64)
+	orig := decodeFrameAt
+	decodeFrameAt = func(d *seekable.Decoder, file io.ReaderAt, index int, table *seekable.SeekTable) ([]byte, error) {
+		data, err := orig(d, file, index, table)
+		decoded.Add(int64(len(data)))
+		return data, err
+	}
+	t.Cleanup(func() { decodeFrameAt = orig })
+	return decoded
+}
+
+// Many samples whose first lines have no timestamp, in a seekable file
+// of large frames, decode each frame their read back covers once: the
+// read back sweeps the keys in ascending order and keeps the frame it
+// decoded last. Two hundred keys inside the first two frames used to
+// decode those frames once per key.
+func TestBudget_LookbackDecodesEachSeekableFrameOnce(t *testing.T) {
+	const frameText = 1 << 20
+	text := tracebackHeavyLog(40_000)
+	path := filepath.Join(t.TempDir(), "app.log.zst")
+	seekablefile.Write(t, path, seekablefile.SplitEvery(text, frameText))
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	var lines []OffsetOrRange
+	for line := int64(5100); line < 7100; line += 10 {
+		lines = append(lines, OffsetOrRange{Start: line})
+	}
+	read := func(lookbackKB string) (compressed, decoded int64) {
+		t.Setenv("RX_TIMESTAMP_LOOKBACK_KB", lookbackKB)
+		counter := withCountingOpen(t)
+		frames := countDecodedFrames(t)
+		resp, err := Resolve(Request{Path: path, Lines: lines, IndexLoader: NoIndex})
+		if err != nil {
+			t.Fatalf("resolve: %v", err)
+		}
+		if got := resp.LineTimestamps["5100"]; len(got) != 1 || (got[0] == nil) != (lookbackKB == "0") {
+			t.Fatalf("lookback %s KiB: line_timestamps of line 5100: %v", lookbackKB, got)
+		}
+		return counter.Load(), frames.Load()
+	}
+	withoutCompressed, _ := read("0")
+	withCompressed, decoded := read("64")
+	if extra := withCompressed - withoutCompressed; extra > info.Size() {
+		t.Errorf("the read back read %d compressed bytes of a %d-byte file", extra, info.Size())
+	}
+	if decoded > 2*frameText {
+		t.Errorf("the read back decoded %d bytes; its keys lie in two frames of %d", decoded, frameText)
 	}
 }
