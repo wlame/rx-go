@@ -1,0 +1,168 @@
+package config
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	// The zone database compiled into the binary, so a zone name in
+	// RX_LOG_TZ or RX_QUERY_TZ works on a host without /usr/share/zoneinfo
+	// (a minimal container image). It adds about 450 KB; Go uses the
+	// host's database first when there is one.
+	_ "time/tzdata"
+)
+
+// ZoneSetting describes one time-zone environment variable: its name,
+// the zone used when it is unset or not acceptable, and whether it
+// accepts `local` for the process's own zone.
+//
+// Every zone variable follows one rule, applied by Value:
+//
+//   - unset or empty: Default, silently;
+//   - `UTC`, an IANA zone name (`Europe/Berlin`) or a fixed offset
+//     `±HH:MM` up to 18 hours: that zone;
+//   - `local`, when AcceptsLocal is set: the process's zone;
+//   - anything else: Default, with one invalid_setting warning per
+//     variable and value in a process, as the integer settings warn.
+type ZoneSetting struct {
+	// Name is the environment variable, e.g. "RX_LOG_TZ".
+	Name string
+	// Default is the zone used when Name is unset or not acceptable, in
+	// a form the rule accepts; "" means no zone, which the caller reads
+	// as its own default.
+	Default string
+	// AcceptsLocal makes `local` name the process's zone.
+	AcceptsLocal bool
+}
+
+// Zone is the value of a ZoneSetting.
+type Zone struct {
+	// Location is the zone, or nil when the setting names none (unset,
+	// with an empty Default).
+	Location *time.Location
+	// Name is the zone as the setting gave it (`Europe/Berlin`,
+	// `+02:00`, `UTC`, `local`), or "" with no zone.
+	Name string
+}
+
+// localZoneName is the value that names the process's own zone.
+const localZoneName = "local"
+
+// maxFixedOffsetHours bounds a `±HH:MM` value: 18 hours, the largest
+// offset RFC 3339 readers and Go's time package accept.
+const maxFixedOffsetHours = 18
+
+// The zone settings, as data. docs/configuration.md lists the same rows
+// ("Zone settings"), and a test keeps the two in step.
+var (
+	// LogTZSetting is RX_LOG_TZ: the zone a file's timestamps were
+	// written in when they carry none.
+	LogTZSetting = ZoneSetting{Name: "RX_LOG_TZ", Default: "UTC"}
+
+	// QueryTZSetting is RX_QUERY_TZ: the zone a time query is read in
+	// when it carries none. Unset reads such a query in the file's own
+	// frame.
+	QueryTZSetting = ZoneSetting{Name: "RX_QUERY_TZ", AcceptsLocal: true}
+)
+
+// ZoneSettings is every zone setting rx reads, in the order the
+// documentation lists them.
+var ZoneSettings = []ZoneSetting{LogTZSetting, QueryTZSetting}
+
+// LogTZ returns RX_LOG_TZ, by the rule on ZoneSetting.
+func LogTZ() Zone { return LogTZSetting.Value() }
+
+// QueryTZ returns RX_QUERY_TZ, by the rule on ZoneSetting.
+func QueryTZ() Zone { return QueryTZSetting.Value() }
+
+// Value returns the setting's zone from the environment, by the rule on
+// ZoneSetting. It reads the environment on every call, so a test's
+// t.Setenv takes effect at once.
+func (s ZoneSetting) Value() Zone {
+	raw := os.Getenv(s.Name)
+	if raw == "" {
+		return s.defaultZone()
+	}
+	zone, err := s.parse(raw)
+	if err != nil {
+		fallback := s.defaultZone()
+		warnInvalidZone(s, raw, err.Error(), fallback)
+		return fallback
+	}
+	return zone
+}
+
+// defaultZone is the zone Default names. Default is written by this
+// package in a form parse accepts, so its error is never seen.
+func (s ZoneSetting) defaultZone() Zone {
+	if s.Default == "" {
+		return Zone{}
+	}
+	zone, _ := s.parse(s.Default)
+	return zone
+}
+
+// parse reads one non-empty value by the rule on ZoneSetting.
+func (s ZoneSetting) parse(raw string) (Zone, error) {
+	switch {
+	case strings.EqualFold(raw, localZoneName) && s.AcceptsLocal:
+		return Zone{Location: time.Local, Name: localZoneName}, nil
+	case raw[0] == '+' || raw[0] == '-':
+		return parseFixedOffset(raw)
+	case strings.EqualFold(raw, localZoneName):
+		// time.LoadLocation reads "Local" as the process's zone; only
+		// a setting that accepts `local` may name it.
+		return Zone{}, fmt.Errorf("the process's zone is not accepted here")
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil {
+		return Zone{}, fmt.Errorf("not a zone name")
+	}
+	return Zone{Location: loc, Name: raw}, nil
+}
+
+// parseFixedOffset reads `±HH:MM` as a zone that is always that far
+// from UTC.
+func parseFixedOffset(raw string) (Zone, error) {
+	bad := fmt.Errorf("not an offset of the form ±HH:MM up to 18 hours")
+	if len(raw) != len("+00:00") || raw[3] != ':' {
+		return Zone{}, bad
+	}
+	hours, errH := strconv.Atoi(raw[1:3])
+	minutes, errM := strconv.Atoi(raw[4:6])
+	if errH != nil || errM != nil || hours > maxFixedOffsetHours || minutes > 59 ||
+		(hours == maxFixedOffsetHours && minutes > 0) {
+		return Zone{}, bad
+	}
+	seconds := (hours*60 + minutes) * 60
+	if raw[0] == '-' {
+		seconds = -seconds
+	}
+	return Zone{Location: time.FixedZone(raw, seconds), Name: raw}, nil
+}
+
+// warnInvalidZone logs one invalid_setting warning for s holding raw,
+// unless this process has already logged it.
+func warnInvalidZone(s ZoneSetting, raw, problem string, used Zone) {
+	if _, loaded := warnedSettings.LoadOrStore(s.Name+"="+raw, struct{}{}); loaded {
+		return
+	}
+	accepted := "UTC, an IANA zone name or ±HH:MM"
+	if s.AcceptsLocal {
+		accepted += ", or local"
+	}
+	using := used.Name
+	if using == "" {
+		using = "(unset)"
+	}
+	slog.Default().Warn("invalid_setting",
+		"name", s.Name,
+		"value", raw,
+		"problem", problem,
+		"accepted", accepted,
+		"using", using,
+	)
+}

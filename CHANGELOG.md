@@ -42,6 +42,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timestamped_lines, backward_steps, max_backward_ms}`, or `null` for a
   file with no timestamp format (`max_before` is left out). Part of
   contract 1.5.
+- `rx samples --timestamps=T` (`-t`) finds lines by time: the line at T
+  is the first line, in file order, whose own timestamp is T or later,
+  printed with its context as `--lines` prints a line. `T1..T2` gives
+  the lines from the line at T1 to the line before the first line later
+  than T2, without context; `..T2` and `T1..` leave an end open; both
+  ends are inclusive to the millisecond. A time may be ISO 8601 or
+  RFC 3339, a date, a time of day (dated from the file when its first
+  and last timestamps fall on one date, refused with both dates
+  otherwise), epoch seconds or milliseconds, or a timestamp copied from
+  a line. The flag repeats, and a value is never split on commas
+  (`2025-12-10 12:34:56,123` is one value); at most 1,000 per request.
+  It cannot be combined with `--lines` or `--offsets`, and a value that
+  is not a time or a file without a timestamp format exits 2. A time no
+  line reaches answers `-1` and a `null` sample, with a warning, as a
+  line past the end does. With an index the search starts at the
+  checkpoint whose `max_before` says the answer is past it and reads at
+  most one index step; the line and its context are then read by the
+  `--lines` code, so the two agree. Plain, compressed and seekable zstd
+  files answer the same. `--json` adds `timestamps`, each query mapped
+  to the line it found (a range to its first line), `{}` in the other
+  modes.
+- Every `samples` answer reports the file's timestamp format as
+  `time_format`, `{format, has_zone, assumed_zone}`, or `null` when none
+  is recognized in the first mebibyte. With an index it costs nothing;
+  without one, an answer now also reads the head of the text (at most
+  1 MiB) to detect it.
+- `RX_LOG_TZ` (default `UTC`) names the zone a file's zone-less
+  timestamps were written in, and `RX_QUERY_TZ` the zone a time query
+  without a zone is read in (unset: the file's own frame, so a time
+  copied from a line finds it; `local`: the process's zone). Each takes
+  `UTC`, an IANA zone name or `±HH:MM`; another value keeps the default
+  with an `invalid_setting` warning. The zone database is built into
+  the binary (about 450 KB), so zone names work without
+  `/usr/share/zoneinfo`.
 
 ### Changed
 

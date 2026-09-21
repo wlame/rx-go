@@ -30,8 +30,10 @@ import (
 //	rx samples PATH --lines=200-350,450-600       # multi-range
 //	rx samples PATH --lines=-1 --before=2 --after=5
 //	rx samples PATH --lines=100 --regex 'error.*' --color=always
+//	rx samples PATH --timestamps='2025-12-10 12:34:56,123'  # by time
+//	rx samples PATH -t 14:33:12..14:35:15                  # a time range
 //
-// Exactly one of --offsets / --lines is required. // rework: both modes now dispatch to internal/samples.Resolve which is
+// Exactly one of --offsets / --lines / --timestamps is required. // rework: both modes now dispatch to internal/samples.Resolve which is
 // shared with the HTTP handler — no more divergence between CLI and
 // HTTP behavior.
 //
@@ -47,6 +49,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	var (
 		offsets    []string
 		lines      []string
+		times      []string
 		ctxLines   int
 		beforeCtx  int
 		afterCtx   int
@@ -67,12 +70,13 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 				colorFlag = "never"
 			}
 			return runSamples(out, samplesParams{
-				path:      args[0],
-				offsets:   offsets,
-				lines:     lines,
-				ctxLines:  ctxLines,
-				beforeCtx: beforeCtx,
-				afterCtx:  afterCtx,
+				path:       args[0],
+				offsets:    offsets,
+				lines:      lines,
+				timestamps: times,
+				ctxLines:   ctxLines,
+				beforeCtx:  beforeCtx,
+				afterCtx:   afterCtx,
 				// --before=0 asks for no lines before, which is not the
 				// same as leaving the flag out; only Changed() can tell
 				// the two apart on an int flag.
@@ -103,6 +107,10 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	// spellings work in both backends so a command written for either one
 	// runs on the other, which is what the drop-in-replacement contract
 	// asks for. The aliases are hidden so --help stays one name per flag.
+	// A time query is never split on commas: Python's logging writes
+	// `12:34:56,123`. Several queries repeat the flag.
+	cmd.Flags().StringArrayVarP(&times, "timestamps", "t", nil,
+		"Times or time ranges (T, T1..T2, ..T2, T1..); repeat the flag for several")
 	cmd.Flags().StringArrayVar(&offsets, "byte-offset", nil, "Alias for --offsets (rx-python spelling)")
 	cmd.Flags().StringArrayVar(&lines, "line-offset", nil, "Alias for --lines (rx-python spelling)")
 	_ = cmd.Flags().MarkHidden("byte-offset")
@@ -121,12 +129,14 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 }
 
 type samplesParams struct {
-	path      string
-	offsets   []string
-	lines     []string
-	ctxLines  int
-	beforeCtx int
-	afterCtx  int
+	path    string
+	offsets []string
+	lines   []string
+	// timestamps are time queries, one per --timestamps flag.
+	timestamps []string
+	ctxLines   int
+	beforeCtx  int
+	afterCtx   int
 	// beforeSet and afterSet say whether --before / --after were given;
 	// a given value, 0 included, overrides --context.
 	beforeSet  bool
@@ -142,9 +152,9 @@ type samplesParams struct {
 // in-line implementation with the shared resolver.
 func runSamples(out io.Writer, p samplesParams) error {
 	// Mode mutual exclusion.
-	if (len(p.offsets) == 0) == (len(p.lines) == 0) {
+	if modesGiven(p) != 1 {
 		return exitWithError(os.Stderr, ExitUsageError,
-			"must provide exactly one of --offsets or --lines")
+			"must provide exactly one of --offsets, --lines or --timestamps")
 	}
 
 	// Sandbox + stat.
@@ -168,9 +178,10 @@ func runSamples(out io.Writer, p samplesParams) error {
 		parsedOffsets []samples.OffsetOrRange
 		parsedLines   []samples.OffsetOrRange
 	)
-	if len(p.offsets) > 0 {
+	switch {
+	case len(p.offsets) > 0:
 		parsedOffsets, err = samples.ParseCSV(strings.Join(p.offsets, ","))
-	} else {
+	case len(p.lines) > 0:
 		parsedLines, err = samples.ParseCSV(strings.Join(p.lines, ","))
 	}
 	if err != nil {
@@ -247,11 +258,17 @@ func runSamples(out io.Writer, p samplesParams) error {
 		Kind:          &kind,
 		Offsets:       parsedOffsets,
 		Lines:         parsedLines,
+		Timestamps:    p.timestamps,
 		BeforeContext: before,
 		AfterContext:  after,
 		IndexLoader:   loader,
 	}
 	resp, err := samples.Resolve(req)
+	if samples.IsUsageError(err) {
+		// A time the request names wrongly, or a time query on a file
+		// without timestamps: the request, not the file, is at fault.
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+	}
 	if err != nil {
 		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
 	}
@@ -328,6 +345,28 @@ func warnAboutMissingPositions(w io.Writer, resp *rxtypes.SamplesResponse) {
 			_, _ = fmt.Fprintf(w, "Warning: offset %s is not in the file.\n", key)
 		}
 	}
+	for _, query := range output.SortedTimeQueries(resp.Timestamps) {
+		if resp.Timestamps[query] != -1 {
+			continue
+		}
+		if strings.Contains(query, "..") {
+			_, _ = fmt.Fprintf(w, "Warning: no line of the file is in the range %s.\n", query)
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "Warning: no line at or after %s in the file.\n", query)
+	}
+}
+
+// modesGiven counts the kinds of position p names: byte offsets, line
+// numbers and times. A request names exactly one.
+func modesGiven(p samplesParams) int {
+	count := 0
+	for _, given := range [][]string{p.offsets, p.lines, p.timestamps} {
+		if len(given) > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 // sortedPositionKeys orders the keys numerically, so the warnings come

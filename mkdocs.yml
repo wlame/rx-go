@@ -91,6 +91,11 @@ plugins:
       type: timeago
       enable_creation_date: true
       fallback_to_build_date: true
+      # A page not committed yet has no git history: the plugin dates it
+      # by the build and says so at INFO level instead of as a warning,
+      # so the strict build (just ci) can pass for a commit that adds a
+      # page. Every other warning still fails it.
+      strict: false
 
 markdown_extensions:
   # Core Markdown niceties.
@@ -182,6 +187,7 @@ nav:
       - Chunking: concepts/chunking.md
       - Caching: concepts/caching.md
       - Line indexes: concepts/line-indexes.md
+      - Timestamps: concepts/timestamps.md
       - Byte offsets vs line numbers: concepts/byte-offsets-vs-line-numbers.md
       - Compression: concepts/compression.md
       - Analyzers: concepts/analyzers.md

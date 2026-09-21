@@ -93,6 +93,17 @@ it:
 
 Both are overridden by explicit `--color=always`.
 
+## Timestamps
+
+`rx samples --timestamps` and `GET /v1/samples?timestamps=` find lines
+by time ([timestamps](concepts/timestamps.md)). Two variables say which
+zone a time without one is in:
+
+| Variable | Default | Description |
+|---|---|---|
+| `RX_LOG_TZ` | `UTC` | The zone a file's timestamps were written in when they carry none. A query with a zone is turned into the file's wall-clock time with it, and `time_format.assumed_zone` reports it. |
+| `RX_QUERY_TZ` | unset | The zone a time query is read in when it carries none. Unset reads such a query in the file's own frame: as the file's wall clock, or at the offset of the first timestamp of a file whose timestamps carry zones, so a time copied from a line finds that line. `local` reads it in the zone of the rx process. |
+
 ## Search-root sandbox
 
 | Variable | Default | Description |
@@ -256,6 +267,30 @@ every plain file counted as large. The maxima bound the work and
 memory one setting can ask for: 256 ripgrep processes at once, and
 sizes that stay far from overflowing when turned into bytes or a
 duration.
+
+## Zone settings
+
+Each zone variable accepts `UTC`, an IANA zone name (`Europe/Berlin`,
+`America/New_York`) or a fixed offset `±HH:MM` up to 18 hours
+(`+05:30`); `RX_QUERY_TZ` also accepts `local`. The zone names are
+built into the binary, so they work on a host without
+`/usr/share/zoneinfo`.
+
+| Variable | Default | Also accepts |
+|---|---|---|
+| `RX_LOG_TZ` | `UTC` | — |
+| `RX_QUERY_TZ` | unset | `local` |
+
+Any other value keeps the default and logs one `invalid_setting`
+warning per process, as the integer settings do:
+
+```text
+WARN invalid_setting name=RX_LOG_TZ value=Europe/Berln problem="not a zone name" accepted="UTC, an IANA zone name or ±HH:MM" using=UTC
+```
+
+A daylight-saving change is not special: a zone-less time is read in
+the zone's offset at that moment, and a wall time that a change skips
+or repeats takes one of its readings, as Go's `time.Date` documents.
 
 ## Example environment for production
 

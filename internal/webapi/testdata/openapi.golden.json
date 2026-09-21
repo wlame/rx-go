@@ -974,6 +974,18 @@
               ]
             },
             "type": "object"
+          },
+          "time_format": {
+            "$ref": "#/components/schemas/SamplesTimeFormat",
+            "description": "The file's timestamp format, in every mode; null when no format is recognized in the first mebibyte of its text."
+          },
+          "timestamps": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "Each time query of a timestamps request mapped to the line it found: the first line whose own timestamp is at or after the time, or a range's first line; -1 when there is none (its sample is null). Empty in the other modes.",
+            "type": "object"
           }
         },
         "required": [
@@ -985,9 +997,46 @@
           "samples",
           "is_compressed",
           "compression_format",
-          "cli_command"
+          "cli_command",
+          "timestamps",
+          "time_format"
         ],
         "type": "object"
+      },
+      "SamplesTimeFormat": {
+        "additionalProperties": false,
+        "properties": {
+          "assumed_zone": {
+            "description": "The zone a timestamp without one is read in: RX_LOG_TZ (default UTC) for a file whose timestamps carry no zone, UTC for one whose timestamps do.",
+            "type": "string"
+          },
+          "format": {
+            "description": "The timestamp format of the lines.",
+            "enum": [
+              "iso",
+              "clf",
+              "ctime",
+              "syslog",
+              "slash",
+              "dotted",
+              "epoch"
+            ],
+            "type": "string"
+          },
+          "has_zone": {
+            "description": "Whether most timestamps carry a zone.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "format",
+          "has_zone",
+          "assumed_zone"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
       },
       "SandboxError": {
         "additionalProperties": false,

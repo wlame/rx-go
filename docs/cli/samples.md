@@ -1,22 +1,24 @@
 # `rx samples`
 
-Retrieve lines of content from a file, addressed by byte offset or line
-number, with optional surrounding context.
+Retrieve lines of content from a file, addressed by byte offset, line
+number or time, with optional surrounding context.
 
 ## Synopsis
 
 ```text
 rx samples PATH -b OFFSETS [flags]
 rx samples PATH -l LINES   [flags]
+rx samples PATH -t TIME    [flags]
 ```
 
-Exactly one of `-b` / `--offsets` or `-l` / `--lines` is required.
+Exactly one of `-b` / `--offsets`, `-l` / `--lines` or `-t` /
+`--timestamps` is required; combining them exits 2.
 
 ## Description
 
 `rx samples` is a content-retrieval tool — given a file and a set of
 addresses, it prints the targeted lines along with configurable context
-above and below each one. The command has two address modes:
+above and below each one. The command has three address modes:
 
 - **Byte offset** (`--offsets`): each value is a byte position; the line
   containing that byte is the target. Works on any uncompressed file;
@@ -24,8 +26,12 @@ above and below each one. The command has two address modes:
 - **Line number** (`--lines`): each value is a 1-based line number. When
   a cached line index exists, the read starts at the nearest checkpoint;
   otherwise it starts at byte 0.
+- **Time** (`--timestamps`): each value is a time or a time range; the
+  target is the first line whose own timestamp is at or after the time.
+  See [By time](#by-time) and [Timestamps](../concepts/timestamps.md).
 
-Both modes accept single values, ranges, and comma-separated lists. A
+The first two modes accept single values, ranges, and comma-separated
+lists. A
 single call can retrieve content from many locations across a file in
 one pass.
 
@@ -54,6 +60,7 @@ lines.
 |------|------|---------|-------------|
 | `-b`, `--offsets` | `string` | — | Comma-separated byte offsets / ranges |
 | `-l`, `--lines` | `string` | — | Comma-separated 1-based line numbers / ranges |
+| `-t`, `--timestamps` | `string` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the flag for several, never comma-separated |
 | `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100) |
 | `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context` |
 | `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context` |
@@ -125,9 +132,47 @@ and no index is built for it. See
 a match it could not number. rx-python answers identically, on plain,
 gzipped and seekable-zstd files alike.
 
+### By time
+
+`--timestamps=T` finds the first line whose own timestamp is T or
+later and prints it with its context, as `--lines` prints that line.
+`--timestamps=T1..T2` prints the lines from the line at T1 to the last
+line before the first line later than T2, without context; either end
+may be left open. A time may be written as ISO 8601 or RFC 3339 (zone
+optional), a date, a time of day, epoch seconds or milliseconds, or
+exactly as the file writes it. Each query is its own flag:
+
+```bash
+rx samples app.log --timestamps='2025-12-10 12:34:56,123'
+rx samples app.log -t 14:33:12..14:35:15 -t 15:00
+rx samples app.log.gz --timestamps=2025-12-10T07:30:00Z --context=10
+```
+
+The heading names the line each query found:
+
+```text
+=== app.log:4 @ 2025-12-10 12:34:57,000 ===
+2025-12-10 12:34:57,000 INFO LINE 4
+```
+
+A range heading names its lines (`app.log:2-4 @ 12:34:56..12:34:57`).
+A query no line answers prints `:-1`, gives `-1` and a `null` sample in
+`--json`, warns on stderr (`Warning: no line at or after 2026-01-01 in
+the file.`) and exits 0. A value that is not a time, a time of day on a
+file whose timestamps span two dates, and a file with no timestamp
+format exit 2. In `--json`, `timestamps` maps each query to the line it
+found (a range to its first line) and `samples` holds its lines under
+the query.
+
+With an index the search reads at most one index step from the
+checkpoint before the answer; without one it reads from the first line.
+The rule, the formats and the zone settings (`RX_LOG_TZ`,
+`RX_QUERY_TZ`) are in [Timestamps](../concepts/timestamps.md).
+
 ### Address syntax
 
-Both `--offsets` and `--lines` accept the same grammar:
+Both `--offsets` and `--lines` accept the same grammar (`--timestamps`
+has its own, above):
 
 - Single: `100`
 - Range: `100-200`
@@ -238,9 +283,17 @@ payload`, `--lines=1,30,99 --json`:
   },
   "is_compressed": false,
   "compression_format": null,
-  "cli_command": null
+  "cli_command": null,
+  "timestamps": {},
+  "time_format": null
 }
 ```
+
+`time_format` is the file's timestamp format, `{format, has_zone,
+assumed_zone}`, in every mode, or `null` when no format is recognized
+in the first mebibyte of its text, as here. Without an index it costs a
+read of that mebibyte; with one, nothing. `timestamps` is filled only by
+`--timestamps`.
 
 ### Compressed file
 

@@ -76,4 +76,24 @@ type SamplesResponse struct {
 	IsCompressed      bool                `json:"is_compressed"`
 	CompressionFormat *string             `json:"compression_format"`
 	CLICommand        *string             `json:"cli_command"`
+	// Timestamps maps each time query of a timestamps-mode request to
+	// the line it found: the line at T for a single time, the first line
+	// of a range. -1 when no line is at T, or the range holds none; its
+	// sample is then null. Empty in the other modes.
+	Timestamps map[string]int64 `json:"timestamps" doc:"Each time query of a timestamps request mapped to the line it found: the first line whose own timestamp is at or after the time, or a range's first line; -1 when there is none (its sample is null). Empty in the other modes."`
+	// TimeFormat is the file's timestamp format, or nil when none is
+	// recognized in the first mebibyte of its text. Present in every
+	// mode.
+	TimeFormat *SamplesTimeFormat `json:"time_format" doc:"The file's timestamp format, in every mode; null when no format is recognized in the first mebibyte of its text."`
+}
+
+// SamplesTimeFormat is the timestamp format of a file a samples answer
+// read: the format family, whether its timestamps carry zones, and the
+// zone assumed for a timestamp that carries none. Nullable for the
+// reason LineLengthStats gives.
+type SamplesTimeFormat struct {
+	_           struct{} `nullable:"true"`
+	Format      string   `json:"format" enum:"iso,clf,ctime,syslog,slash,dotted,epoch" doc:"The timestamp format of the lines."`
+	HasZone     bool     `json:"has_zone" doc:"Whether most timestamps carry a zone."`
+	AssumedZone string   `json:"assumed_zone" doc:"The zone a timestamp without one is read in: RX_LOG_TZ (default UTC) for a file whose timestamps carry no zone, UTC for one whose timestamps do."`
 }

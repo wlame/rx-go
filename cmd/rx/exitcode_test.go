@@ -310,3 +310,38 @@ func TestExitCode_InterruptedIsFive(t *testing.T) {
 		t.Errorf("exit code: got %d, want 5", exitErr.ExitCode())
 	}
 }
+
+// A time query that cannot be answered is a usage error, exit 2: modes
+// mixed, a value that is not a time, a file without timestamps. A
+// timestamp with a comma is one value, and a time no line reaches
+// answers -1 with exit 0.
+func TestExitCode_SamplesByTime(t *testing.T) {
+	dir := t.TempDir()
+	timed := filepath.Join(dir, "timed.log")
+	if err := os.WriteFile(timed, []byte("2025-12-10 12:34:56,123 one\n2025-12-10 12:34:57,000 two\n"+
+		"2025-12-10 12:34:58,000 three\n"), 0o600); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	_, plain := writeLog(t)
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"a timestamp with a comma", []string{"samples", timed, "--timestamps=2025-12-10 12:34:56,123"}, 0},
+		{"short flag, repeated", []string{"samples", timed, "-t", "12:34:57", "-t", "12:34:58"}, 0},
+		{"no line at the time", []string{"samples", timed, "--timestamps=2026-01-01"}, 0},
+		{"with --lines", []string{"samples", timed, "--timestamps=12:34:57", "--lines=1"}, 2},
+		{"with --offsets", []string{"samples", timed, "--timestamps=12:34:57", "--offsets=0"}, 2},
+		{"not a time", []string{"samples", timed, "--timestamps=soon"}, 2},
+		{"a file without timestamps", []string{"samples", plain, "--timestamps=12:34:57"}, 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			code, _, stderr := runRx(t, tc.args...)
+			if code != tc.want {
+				t.Errorf("exit code %d, want %d (stderr: %s)", code, tc.want, stderr)
+			}
+		})
+	}
+}
