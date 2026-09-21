@@ -102,14 +102,29 @@ var (
 	// make the server hold gigabytes. `rx samples` has no limit: it
 	// runs as the user's own process.
 	SamplesMaxLinesSetting = IntSetting{Name: "RX_SAMPLES_MAX_LINES", Default: DefaultSamplesMaxLines, Min: 1000, Max: 10_000_000}
+
+	// SamplesMaxBytesSetting is RX_SAMPLES_MAX_BYTES: the most bytes of
+	// line text one GET /v1/samples answer may hold, summed over its
+	// samples. samples returns whole lines and a log's line can be
+	// megabytes long, so a line count alone does not bound the memory
+	// of an answer. Its maximum, 16 GiB, needs a 64-bit int, which
+	// every platform rx is built for has.
+	SamplesMaxBytesSetting = IntSetting{Name: "RX_SAMPLES_MAX_BYTES", Default: DefaultSamplesMaxBytes, Min: 1 << 20, Max: 16 << 30}
 )
 
 // DefaultSamplesMaxLines is the default of RX_SAMPLES_MAX_LINES.
 const DefaultSamplesMaxLines = 100_000
 
+// DefaultSamplesMaxBytes is the default of RX_SAMPLES_MAX_BYTES: 256 MiB.
+const DefaultSamplesMaxBytes = 256 << 20
+
 // SamplesMaxLines returns RX_SAMPLES_MAX_LINES, from 1000 to 10000000
 // lines, or DefaultSamplesMaxLines.
 func SamplesMaxLines() int { return SamplesMaxLinesSetting.Value() }
+
+// SamplesMaxBytes returns RX_SAMPLES_MAX_BYTES, from 1 MiB to 16 GiB, or
+// DefaultSamplesMaxBytes.
+func SamplesMaxBytes() int64 { return int64(SamplesMaxBytesSetting.Value()) }
 
 // IntSettings is every integer setting rx reads, in the order the
 // documentation lists them.
@@ -125,6 +140,7 @@ var IntSettings = []IntSetting{
 	SamplesWaitSecondsSetting,
 	TimestampLookbackKBSetting,
 	SamplesMaxLinesSetting,
+	SamplesMaxBytesSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

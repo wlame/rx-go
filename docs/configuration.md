@@ -144,6 +144,7 @@ See [concepts/security](concepts/security.md) and
 | `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them, from 1 minute to one week (10080). At most 256 tasks are kept; past that, the oldest finished ones go first. |
 | `RX_SAMPLES_WAIT_SECONDS` | `5` | How long a `GET /v1/samples` request that sends `Prefer: respond-async` waits for the line index it needs to be built (a background `index` task, one per file) before it answers `202` with the task instead of the lines; a request without the header waits for the build. From 0 to 3600; `0` answers `202` at once whenever a build is needed. `rx samples` ignores it and waits for the build. See [`GET /v1/samples`](api/endpoints/samples.md#response-202-accepted). |
 | `RX_SAMPLES_MAX_LINES` | `100000` | The most lines one `GET /v1/samples` answer may hold, summed over all its samples (a line in two samples counts twice). A request whose answer would hold more is refused with `400`, naming the setting and the count reached; the lines are counted as they are read, so the refused request stops reading there. From 1000 to 10000000. `rx samples` has no limit: it runs as the user's own process. See [`GET /v1/samples`](api/endpoints/samples.md). |
+| `RX_SAMPLES_MAX_BYTES` | `268435456` (256 MiB) | The most bytes of line text one `GET /v1/samples` answer may hold, summed over all its samples like `RX_SAMPLES_MAX_LINES` (line breaks not counted). Samples are whole lines and a log's line can be megabytes long, so the line count alone does not bound an answer's memory. Past it the request is refused with `400` naming this setting; a line longer than the limit is never held whole. From 1048576 (1 MiB) to 17179869184 (16 GiB). `rx samples` has no limit. |
 
 ## Logging
 
@@ -250,6 +251,7 @@ range:
 | `RX_SAMPLES_WAIT_SECONDS` | 5 | 0 | 3600 | seconds |
 | `RX_TIMESTAMP_LOOKBACK_KB` | 64 | 0 | 1024 | KiB |
 | `RX_SAMPLES_MAX_LINES` | 100000 | 1000 | 10000000 | lines |
+| `RX_SAMPLES_MAX_BYTES` | 268435456 | 1048576 | 17179869184 | bytes (1 MiB to 16 GiB) |
 
 One rule applies to all of them:
 

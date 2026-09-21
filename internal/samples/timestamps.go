@@ -46,7 +46,8 @@ func IsUsageError(err error) bool {
 	return errors.Is(err, timestamps.ErrInvalidQuery) ||
 		errors.Is(err, ErrNoTimeFormat) ||
 		errors.Is(err, ErrTooManyTimestamps) ||
-		errors.Is(err, ErrTooManyLines)
+		errors.Is(err, ErrTooManyLines) ||
+		errors.Is(err, ErrTooManyBytes)
 }
 
 // tailStepBytes is how much of a file's text one step of the read back
@@ -307,7 +308,7 @@ func answerTimeWindows(req Request, kind filekind.Kind, windows []timeWindow, re
 	// the answer then files each window's lines under every query that
 	// asked for it, and those are taken from the answer's budget, since
 	// line_timestamps and the encoded answer hold them once per query.
-	answer := newCollected(&rxtypes.SamplesResponse{Offsets: map[string]int64{}, Lines: map[string]int64{}, Samples: map[string][]string{}}, req.MaxLines)
+	answer := newCollected(&rxtypes.SamplesResponse{Offsets: map[string]int64{}, Lines: map[string]int64{}, Samples: map[string][]string{}}, req)
 	if err := resolveLineWindows(sub, kind, answer); err != nil {
 		return err
 	}
@@ -319,8 +320,8 @@ func answerTimeWindows(req Request, kind filekind.Kind, windows []timeWindow, re
 			// answering it would give the wrong line.
 			return fmt.Errorf("samples of %s: line %d, found at %q, was not read back", req.Path, w.first, w.value)
 		}
-		for range sample {
-			if err := resp.budget.take(); err != nil {
+		for _, line := range sample {
+			if err := resp.budget.take(int64(len(line))); err != nil {
 				return err
 			}
 		}
