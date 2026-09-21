@@ -403,8 +403,13 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 		if length == 0 {
 			break
 		}
-		text := string(trimOneLineBreak(raw))
 		textBytes := textLength(raw, length)
+		// A line cut to the limit is never filed (taking it fails), so
+		// none of it is copied into a string or kept in the ring.
+		var text string
+		if int64(len(raw)) == length {
+			text = string(trimOneLineBreak(raw))
+		}
 		end := pos + length
 
 		// Start every window whose offset falls on this line.
