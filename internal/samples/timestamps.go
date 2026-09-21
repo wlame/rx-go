@@ -708,26 +708,34 @@ func lastStampFromEnd(text io.ReaderAt, size int64, parser *timestamps.Parser) (
 // lineWindow returns the bytes the parser looks at for the line that
 // starts at lineStart: the line without its trailing \r and \n bytes,
 // cut to timestamps.WindowBytes, as index.LineStamp gives them to it.
-// rest is the text from lineStart on that the caller has in hand.
+// rest is the text from lineStart on that the caller has in hand: at
+// least timestamps.WindowBytes bytes, or all of the text to its end.
 //
-// When the line ends within the window, rest holds all of it. When it
-// runs past the window, the parser sees the window whole, unless every
-// byte from the window's last one to the line break is a \r: then
-// those bytes are line-break bytes and are dropped. Only that case
-// reads further, past the run of \r bytes.
+// The window is the line's content (the line without its trailing \r
+// and \n bytes) cut to WindowBytes. When the line ends within rest, the
+// content is in hand: the line break is searched for in all of rest,
+// so a line a little longer than the window, such as one whose window
+// ends with the \r of a \r\n, costs no further read. When the line runs
+// past rest, the parser sees rest's first WindowBytes whole, unless
+// every byte from the window's last one to the line break is a \r:
+// then those bytes are line-break bytes and are dropped. Only that case
+// reads further, past the run of \r bytes. lastStampFromEnd hands each
+// line start of a step the text up to WindowBytes past the step, so at
+// most the last line start of a step reads further.
 func lineWindow(text io.ReaderAt, rest []byte, lineStart, size int64) ([]byte, error) {
-	limit := min(len(rest), timestamps.WindowBytes)
-	if i := bytes.IndexByte(rest[:limit], '\n'); i >= 0 {
-		return trimLineEnd(rest[:i+1]), nil
+	if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+		return windowOfContent(rest[:i+1]), nil
 	}
-	if lineStart+int64(limit) >= size {
-		return trimLineEnd(rest[:limit]), nil
+	if lineStart+int64(len(rest)) >= size {
+		return windowOfContent(rest), nil
 	}
-	window := rest[:limit]
-	if window[limit-1] != '\r' {
+	window := rest[:timestamps.WindowBytes]
+	if len(trimLineEnd(rest)) >= timestamps.WindowBytes {
+		// A byte other than \r at or after the window's last one: the
+		// content runs to the end of the window at least.
 		return window, nil
 	}
-	endsLine, err := onlyCarriageReturnsUntilLineEnd(text, lineStart+int64(limit), size)
+	endsLine, err := onlyCarriageReturnsUntilLineEnd(text, lineStart+int64(len(rest)), size)
 	if err != nil || !endsLine {
 		return window, err
 	}
@@ -758,3 +766,10 @@ func onlyCarriageReturnsUntilLineEnd(text io.ReaderAt, offset, size int64) (bool
 
 // trimLineEnd drops the trailing \r and \n bytes of b.
 func trimLineEnd(b []byte) []byte { return b[:contentEndOf(b)] }
+
+// windowOfContent returns the window the parser looks at for a whole
+// line: its content, cut to timestamps.WindowBytes.
+func windowOfContent(line []byte) []byte {
+	content := trimLineEnd(line)
+	return content[:min(len(content), timestamps.WindowBytes)]
+}
