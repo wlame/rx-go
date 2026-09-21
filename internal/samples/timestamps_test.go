@@ -1,6 +1,7 @@
 package samples
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -123,7 +124,7 @@ type timeRequest struct {
 // askByTime resolves req against path with the stored index, as `rx
 // samples` does, and returns the answer or the error.
 func askByTime(path string, req timeRequest) (*rxtypes.SamplesResponse, error) {
-	return Resolve(Request{
+	return Resolve(context.Background(), Request{
 		Path: path, Timestamps: req.values,
 		BeforeContext: req.before, AfterContext: req.after,
 		IndexLoader: StoredIndex,
@@ -470,7 +471,7 @@ func TestTimestamps_FileWithoutTimestamps(t *testing.T) {
 	if !errors.Is(err, ErrNoTimeFormat) || !IsUsageError(err) {
 		t.Fatalf("err = %v; want ErrNoTimeFormat as a usage error", err)
 	}
-	resp, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: 3}}, IndexLoader: StoredIndex})
+	resp, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: 3}}, IndexLoader: StoredIndex})
 	if err != nil {
 		t.Fatalf("lines: %v", err)
 	}
@@ -503,11 +504,11 @@ func TestTimestamps_TimeFormatInLinesAndOffsetsModes(t *testing.T) {
 	for _, name := range []string{"plain", "gzip", "seekable"} {
 		path := timeCopies(t, text)[name]
 		samplesanswer.ColdAndIndexed(t, path, timeIndexStep, func(t testing.TB) any {
-			byLine, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: 5}}, IndexLoader: StoredIndex})
+			byLine, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: 5}}, IndexLoader: StoredIndex})
 			if err != nil {
 				t.Fatalf("lines: %v", err)
 			}
-			byOffset, err := Resolve(Request{Path: path, Offsets: []OffsetOrRange{{Start: 100}}, IndexLoader: StoredIndex})
+			byOffset, err := Resolve(t.Context(), Request{Path: path, Offsets: []OffsetOrRange{{Start: 100}}, IndexLoader: StoredIndex})
 			if err != nil {
 				t.Fatalf("offsets: %v", err)
 			}

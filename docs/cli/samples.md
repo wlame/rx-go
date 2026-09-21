@@ -388,8 +388,9 @@ Measured on a 465 MB log in the page cache, whole command included:
 
 - **Byte offset 403 MB in, no index**: 15 ms; with an index: 14 ms.
 - **Line 700000 with an index**: 13 ms; without one: 90 ms.
-- **Multiple addresses in one call**: amortized — the file is opened
-  once and scanned once, gathering all targeted windows.
+- **Multiple addresses in one call**: amortized — the text is read
+  once, in order of position, up to the last address, gathering all
+  targeted windows; with an index the read seeks over the gaps.
 - **Compressed line mode**: proportional to the target line number
   because the decompressor has no random access.
 

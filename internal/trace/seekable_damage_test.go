@@ -368,7 +368,7 @@ func TestTraceReadsAZstWhoseSeekTableDoesNotDescribeItAsPlainZstd(t *testing.T) 
 // `rx samples --lines=n` does without an index, and returns its text.
 func samplesLine(t *testing.T, path string, n int64) (string, error) {
 	t.Helper()
-	resp, err := samples.Resolve(samples.Request{
+	resp, err := samples.Resolve(t.Context(), samples.Request{
 		Path:   path,
 		Source: pinForTest(t, path),
 		Lines:  []samples.OffsetOrRange{{Start: n}},

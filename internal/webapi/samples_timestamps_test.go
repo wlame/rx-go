@@ -1,9 +1,11 @@
 package webapi
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/internal/testutil/samplesanswer"
 )
 
@@ -162,5 +165,26 @@ func TestSamples_LineTimestampsOverHTTP(t *testing.T) {
 	status, body := getSamples(t, ts.URL, url.Values{"path": {files["plain.log"]}, "lines": {"2"}})
 	if status != http.StatusOK || !strings.Contains(string(body), `"line_timestamps":null`) {
 		t.Errorf("file without timestamps: status %d, body %s; want line_timestamps null", status, body)
+	}
+}
+
+// A request whose client has gone away stops reading the file: the
+// samples lookup gets the request's context and answers its error.
+func TestSamples_CancelledRequestStopsTheRead(t *testing.T) {
+	files := timedRoot(t)
+	t.Setenv("RX_NO_INDEX", "true")
+	srv := NewServer(Config{AppVersion: "unit-test", TaskManager: tasks.New(tasks.Config{})})
+	for _, query := range []url.Values{
+		{"path": {files["app.log"]}, "lines": {"2"}},
+		{"path": {files["app.log"]}, "timestamps": {"12:34:56"}},
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		req := httptest.NewRequest(http.MethodGet, "/v1/samples?"+query.Encode(), nil).WithContext(ctx)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), context.Canceled.Error()) {
+			t.Errorf("%s: status %d, body %s; want 500 naming the cancel", query.Encode(), rec.Code, rec.Body.String())
+		}
 	}
 }

@@ -86,7 +86,7 @@ func TestOffsetsWindowReachesBackAcrossCheckpointGaps(t *testing.T) {
 
 	// The oracle: the plain file read from its first byte, checked
 	// against the text itself.
-	want, err := Resolve(request(plainPath, NoIndex, offsets...))
+	want, err := Resolve(t.Context(), request(plainPath, NoIndex, offsets...))
 	if err != nil {
 		t.Fatalf("resolve plain without an index: %v", err)
 	}
@@ -110,13 +110,13 @@ func TestOffsetsWindowReachesBackAcrossCheckpointGaps(t *testing.T) {
 			t.Run(name+"/"+how, func(t *testing.T) {
 				// All the offsets in one request, then each on its own:
 				// a lone offset is the first window of its pass.
-				got, err := Resolve(request(path, loader, offsets...))
+				got, err := Resolve(t.Context(), request(path, loader, offsets...))
 				if err != nil {
 					t.Fatalf("resolve: %v", err)
 				}
 				requireSameWindows(t, "one request", got.Offsets, want.Offsets, got.Samples, want.Samples)
 				for _, off := range offsets {
-					one, err := Resolve(request(path, loader, off))
+					one, err := Resolve(t.Context(), request(path, loader, off))
 					if err != nil {
 						t.Fatalf("resolve %d: %v", off, err)
 					}
@@ -131,7 +131,7 @@ func TestOffsetsWindowReachesBackAcrossCheckpointGaps(t *testing.T) {
 				// --lines is the inverse of --offsets: the window around
 				// the line holding an offset is the window around it.
 				line := want.Offsets[strconv.FormatInt(offsets[0], 10)]
-				byLine, err := Resolve(Request{
+				byLine, err := Resolve(t.Context(), Request{
 					Path: path, Lines: []OffsetOrRange{{Start: line}},
 					BeforeContext: context, AfterContext: context, IndexLoader: loader,
 				})

@@ -178,7 +178,7 @@ func TestOffsetsOnACompressedFileAnswerAsThePlainFile(t *testing.T) {
 	request := func(path string, loader IndexLoader) Request {
 		return Request{Path: path, Offsets: spec, BeforeContext: 2, AfterContext: 2, IndexLoader: loader}
 	}
-	plain, err := Resolve(request(plainPath, NoIndex))
+	plain, err := Resolve(t.Context(), request(plainPath, NoIndex))
 	if err != nil {
 		t.Fatalf("resolve plain: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestOffsetsOnACompressedFileAnswerAsThePlainFile(t *testing.T) {
 	for name, path := range compressedCopiesOf(t, text, dir) {
 		for how, loader := range loadersFor(t, path) {
 			t.Run(name+"/"+how, func(t *testing.T) {
-				got, err := Resolve(request(path, loader))
+				got, err := Resolve(t.Context(), request(path, loader))
 				if err != nil {
 					t.Fatalf("resolve: %v", err)
 				}
@@ -224,7 +224,7 @@ func TestLinesAndOffsetsAreInversesOnACompressedFile(t *testing.T) {
 		for how, loader := range loadersFor(t, path) {
 			t.Run(name+"/"+how, func(t *testing.T) {
 				for _, n := range lines {
-					byLine, err := Resolve(Request{
+					byLine, err := Resolve(t.Context(), Request{
 						Path: path, Lines: []OffsetOrRange{{Start: int64(n)}}, IndexLoader: loader,
 					})
 					if err != nil {
@@ -234,7 +234,7 @@ func TestLinesAndOffsetsAreInversesOnACompressedFile(t *testing.T) {
 					if offset != starts[n-1] {
 						t.Fatalf("lines=%d reports offset %d, want %d", n, offset, starts[n-1])
 					}
-					byOffset, err := Resolve(Request{
+					byOffset, err := Resolve(t.Context(), Request{
 						Path: path, Offsets: []OffsetOrRange{{Start: offset}}, IndexLoader: loader,
 					})
 					if err != nil {
@@ -281,7 +281,7 @@ func TestSeekableOffsets_DistrustAFrameTableThatDoesNotAddUp(t *testing.T) {
 	loader := func(string) (*rxtypes.UnifiedFileIndex, error) { return idx, nil }
 
 	n := 1500
-	got, err := Resolve(Request{Path: path, Offsets: []OffsetOrRange{{Start: starts[n-1]}}, IndexLoader: loader})
+	got, err := Resolve(t.Context(), Request{Path: path, Offsets: []OffsetOrRange{{Start: starts[n-1]}}, IndexLoader: loader})
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestSeekableOffsets_DecodeOnlyTheFramesAroundTheOffset(t *testing.T) {
 	}
 	t.Cleanup(func() { decodeSeekableFrame = orig })
 
-	got, err := Resolve(Request{
+	got, err := Resolve(t.Context(), Request{
 		Path: zstPath, Offsets: []OffsetOrRange{{Start: offset}},
 		BeforeContext: 3, AfterContext: 3, IndexLoader: loader,
 	})
@@ -350,7 +350,7 @@ func TestStreamedOffsets_StopAfterTheLastWindow(t *testing.T) {
 	}
 
 	counter := withCountingOpen(t)
-	got, err := Resolve(Request{
+	got, err := Resolve(t.Context(), Request{
 		Path: path, Offsets: []OffsetOrRange{{Start: starts[499]}},
 		BeforeContext: 3, AfterContext: 3, IndexLoader: NoIndex,
 	})
@@ -405,7 +405,7 @@ func TestOffsets_AReadErrorIsReportedNotTakenForTheEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { openFileForSamples = orig })
 
-	_, err := Resolve(Request{Path: path, Offsets: []OffsetOrRange{{Start: starts[4900]}}, IndexLoader: NoIndex})
+	_, err := Resolve(t.Context(), Request{Path: path, Offsets: []OffsetOrRange{{Start: starts[4900]}}, IndexLoader: NoIndex})
 	if !errors.Is(err, errDiskGone) {
 		t.Fatalf("err = %v, want the read error", err)
 	}

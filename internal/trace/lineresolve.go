@@ -2,6 +2,7 @@ package trace
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"sort"
 	"strconv"
@@ -184,7 +185,7 @@ func numberCompressedText(src sandbox.Pinned, wanted []int64, loader samples.Ind
 	for i, off := range wanted {
 		spec[i] = samples.OffsetOrRange{Start: off}
 	}
-	resp, err := samples.Resolve(samples.Request{Path: src.Path(), Source: src, Offsets: spec, IndexLoader: loader})
+	resp, err := samples.Resolve(context.Background(), samples.Request{Path: src.Path(), Source: src, Offsets: spec, IndexLoader: loader})
 	if err != nil {
 		return nil
 	}

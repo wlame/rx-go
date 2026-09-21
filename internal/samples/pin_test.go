@@ -100,7 +100,7 @@ func TestResolve_RefusesALinkRetargetedAfterTheCheck(t *testing.T) {
 				t.Fatalf("symlink: %v", err)
 			}
 
-			resp, err := Resolve(req)
+			resp, err := Resolve(t.Context(), req)
 			if !errors.Is(err, paths.ErrFileChanged) {
 				t.Errorf("Resolve = %+v, %v; want ErrFileChanged", resp, err)
 			}
@@ -117,7 +117,7 @@ func TestResolve_PinsAnUncheckedPathItself(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	resp, err := Resolve(Request{Path: outsideLink, Lines: []OffsetOrRange{{Start: 1}}, IndexLoader: NoIndex})
+	resp, err := Resolve(t.Context(), Request{Path: outsideLink, Lines: []OffsetOrRange{{Start: 1}}, IndexLoader: NoIndex})
 
 	var outside *paths.ErrPathOutsideRoots
 	if !errors.As(err, &outside) {

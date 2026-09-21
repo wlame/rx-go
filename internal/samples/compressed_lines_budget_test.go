@@ -67,7 +67,7 @@ func TestStreamedLines_StopAfterTheLastWantedLine(t *testing.T) {
 			for loaderName, loader := range loadersFor(t, path) {
 				end := int64(220)
 				counter := withCountingOpen(t)
-				got, err := Resolve(Request{
+				got, err := Resolve(t.Context(), Request{
 					Path:  path,
 					Lines: []OffsetOrRange{{Start: 500}, {Start: 200, End: &end}},
 					// Line 518 is empty (every 37th is), the others read "LINE n".
@@ -112,7 +112,7 @@ func TestStreamedLines_TakeTheLineCountFromTheIndex(t *testing.T) {
 			read := map[string]int64{}
 			for loaderName, loader := range loaders {
 				counter := withCountingOpen(t)
-				got, err := Resolve(Request{
+				got, err := Resolve(t.Context(), Request{
 					Path: path, Lines: []OffsetOrRange{{Start: -2}},
 					BeforeContext: 0, AfterContext: 0, IndexLoader: loader,
 				})
@@ -153,7 +153,7 @@ func TestStreamedLines_AnswerAsThePlainFileWithAndWithoutAnIndex(t *testing.T) {
 	}
 	request := func(path string, loader IndexLoader) *rxtypes.SamplesResponse {
 		t.Helper()
-		got, err := Resolve(Request{Path: path, Lines: spec, BeforeContext: 5, AfterContext: 4, IndexLoader: loader})
+		got, err := Resolve(t.Context(), Request{Path: path, Lines: spec, BeforeContext: 5, AfterContext: 4, IndexLoader: loader})
 		if err != nil {
 			t.Fatalf("resolve %s: %v", path, err)
 		}

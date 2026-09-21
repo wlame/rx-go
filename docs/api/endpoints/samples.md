@@ -380,8 +380,11 @@ Status: `400`. A file whose text holds a NUL byte in its first 8 KiB
 - Without an index, line lookups scale linearly with line number
 - Byte-offset mode reads from the nearest checkpoint before the offset,
   or from byte 0 without an index, to number the line
-- Multiple addresses in one request are amortized — the file is
-  opened once and walked once
+- Multiple addresses in one request are amortized — the text is
+  walked once, in order of position, up to the last address; with an
+  index the walk seeks over the gaps between addresses
+- A client that disconnects stops the read: the lookup ends at its
+  next buffer of text
 - Compressed line-mode (except seekable zstd with an index) streams the
   decompressed file up to the last wanted line
 

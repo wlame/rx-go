@@ -255,7 +255,8 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		if noIndex {
 			loader = samples.NoIndex
 		}
-		resp, err := samples.Resolve(samples.Request{
+		// ctx ends when the client disconnects, which stops the read.
+		resp, err := samples.Resolve(ctx, samples.Request{
 			Path:          validated,
 			Source:        source,
 			Kind:          &kind,

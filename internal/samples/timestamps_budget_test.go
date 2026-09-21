@@ -2,6 +2,7 @@ package samples
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -54,7 +55,7 @@ func TestBudget_IndexedTimeSearchReadsOneStep(t *testing.T) {
 	target := lines[17_345].ms + 50 // between two lines: the answer is line 17,347
 
 	counter := withCountingOpen(t)
-	byTime, err := Resolve(Request{Path: path, Timestamps: []string{iso(target)}, BeforeContext: 3, AfterContext: 3, IndexLoader: loader})
+	byTime, err := Resolve(t.Context(), Request{Path: path, Timestamps: []string{iso(target)}, BeforeContext: 3, AfterContext: 3, IndexLoader: loader})
 	if err != nil {
 		t.Fatalf("by time: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestBudget_IndexedTimeSearchReadsOneStep(t *testing.T) {
 	}
 
 	counter.Store(0)
-	if _, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: 17_347}}, BeforeContext: 3, AfterContext: 3, IndexLoader: loader}); err != nil {
+	if _, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: 17_347}}, BeforeContext: 3, AfterContext: 3, IndexLoader: loader}); err != nil {
 		t.Fatalf("by line: %v", err)
 	}
 	lineRead := counter.Load()
@@ -81,7 +82,7 @@ func TestBudget_IndexedTimeSearchReadsOneStep(t *testing.T) {
 func TestBudget_TimeFormatDetectionReadsOnlyTheHead(t *testing.T) {
 	path, _, size := largeTimedLog(t, 20_000)
 	counter := withCountingOpen(t)
-	resp, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: 1}}, IndexLoader: NoIndex})
+	resp, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: 1}}, IndexLoader: NoIndex})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestBudget_LastTimestampReadsOneStepFromTheEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	text := counting.NewReaderAt(f)
-	stamp, found, err := lastStampFromEnd(text, size, parserFor(t, textOf(lines)))
+	stamp, found, err := lastStampFromEnd(context.Background(), text, size, parserFor(t, textOf(lines)))
 	if err != nil || !found || stamp.Ms != lines[len(lines)-1].ms {
 		t.Fatalf("last stamp %+v, %v, %v; want %d", stamp, found, err, lines[len(lines)-1].ms)
 	}
@@ -202,7 +203,7 @@ func TestStampReaders_AgreeWithTheIndexWalk(t *testing.T) {
 	if _, _, length, _ := reader.next(); length != 0 {
 		t.Fatalf("a line after the last: %d bytes", length)
 	}
-	got, found, err := lastStampFromEnd(bytes.NewReader(text), int64(len(text)), parser)
+	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parser)
 	if err != nil || !found || got != lastWant {
 		t.Fatalf("last stamp %+v %v %v, want %+v", got, found, err, lastWant)
 	}
@@ -217,7 +218,7 @@ func TestLastStampFromEnd_StepsBackPastATimelessTail(t *testing.T) {
 		b.WriteString("    at a frame of a very long traceback\n")
 	}
 	text := b.Bytes()
-	got, found, err := lastStampFromEnd(bytes.NewReader(text), int64(len(text)), parserFor(t, text[:70]))
+	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parserFor(t, text[:70]))
 	if err != nil || !found || got.Ms != timeBase+1000 {
 		t.Fatalf("last stamp %+v %v %v, want 07:30:01", got, found, err)
 	}
@@ -265,7 +266,7 @@ func TestBudget_LookbackReadsAtMostTheSetting(t *testing.T) {
 			read := func(lookbackKB string, line int64) (int64, *rxtypes.SamplesResponse) {
 				t.Setenv("RX_TIMESTAMP_LOOKBACK_KB", lookbackKB)
 				counter := withCountingOpen(t)
-				resp, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: line}}, IndexLoader: loader})
+				resp, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: line}}, IndexLoader: loader})
 				if err != nil {
 					t.Fatalf("%s %s: resolve: %v", name, loaderName, err)
 				}
@@ -328,7 +329,7 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	perStep := int64(timestamps.WindowBytes + 1 + 4096)
 
 	plain := counting.NewReaderAt(bytes.NewReader(text))
-	stamp, found, err := lastStampFromEnd(plain, int64(len(text)), parser)
+	stamp, found, err := lastStampFromEnd(context.Background(), plain, int64(len(text)), parser)
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("plain: last stamp %+v %v %v", stamp, found, err)
 	}
@@ -352,8 +353,8 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 		t.Fatalf("seek table: %v", err)
 	}
 	file := counting.NewReaderAt(f)
-	compressed := &seekableTextAt{file: file, table: table, decoder: seekable.NewDecoder()}
-	stamp, found, err = lastStampFromEnd(compressed, int64(len(text)), parser)
+	compressed := &seekableTextAt{ctx: context.Background(), file: file, table: table, decoder: seekable.NewDecoder()}
+	stamp, found, err = lastStampFromEnd(context.Background(), compressed, int64(len(text)), parser)
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("seekable: last stamp %+v %v %v", stamp, found, err)
 	}
@@ -401,7 +402,7 @@ func TestBudget_LookbackDecodesEachSeekableFrameOnce(t *testing.T) {
 		t.Setenv("RX_TIMESTAMP_LOOKBACK_KB", lookbackKB)
 		counter := withCountingOpen(t)
 		frames := countDecodedFrames(t)
-		resp, err := Resolve(Request{Path: path, Lines: lines, IndexLoader: NoIndex})
+		resp, err := Resolve(t.Context(), Request{Path: path, Lines: lines, IndexLoader: NoIndex})
 		if err != nil {
 			t.Fatalf("resolve: %v", err)
 		}

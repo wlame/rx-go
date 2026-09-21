@@ -17,6 +17,9 @@
 //     the offset is of the REQUESTED position (not the context window).
 //     For ranges the offset is sentinel -1 in line mode and the start
 //     line number in byte-offset mode.
+//  6. One pass per request: every window a request names is read in
+//     one pass over the text, in order of position, and a pass stops
+//     at the next read once the Resolve context is canceled.
 //
 // This package deliberately has ZERO dependencies on internal/webapi or
 // internal/clicommand to keep the dependency arrows pointing inward.

@@ -51,11 +51,11 @@ func requireSamplesInvertTrace(t *testing.T, path string, resp *rxtypes.TraceRes
 		offsets = append(offsets, samples.OffsetOrRange{Start: m.Offset})
 		lines = append(lines, samples.OffsetOrRange{Start: int64(m.AbsoluteLineNumber)})
 	}
-	byOffset, err := samples.Resolve(samples.Request{Path: path, Offsets: offsets, IndexLoader: samples.NoIndex})
+	byOffset, err := samples.Resolve(t.Context(), samples.Request{Path: path, Offsets: offsets, IndexLoader: samples.NoIndex})
 	if err != nil {
 		t.Fatalf("samples --offsets: %v", err)
 	}
-	byLine, err := samples.Resolve(samples.Request{Path: path, Lines: lines, IndexLoader: samples.NoIndex})
+	byLine, err := samples.Resolve(t.Context(), samples.Request{Path: path, Lines: lines, IndexLoader: samples.NoIndex})
 	if err != nil {
 		t.Fatalf("samples --lines: %v", err)
 	}

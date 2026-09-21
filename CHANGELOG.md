@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `samples` reads every line window of a request in one pass over the
+  text, in order of position, instead of one pass per window: by line
+  (`--lines`, `?lines=`) and by time. Without an index, 1,000 lines near
+  the end of a 5 MB file read 5.5 GB; they now read the file once. With
+  an index the pass seeks over the gaps between windows, and a seekable
+  zstd file decodes each frame it needs once. `GET /v1/samples` stops
+  reading when its client disconnects. A negative `--after` on a
+  compressed file now reports the asked line's offset, as a plain file
+  does, and the line after the last line of a plain file that ends with
+  a line break reports `-1` with its context, as the compressed copies
+  do, rather than the file's size.
 - Reading a seekable zstd file by position (the read back of
   `line_timestamps`, the read back from the end for a time query)
   decodes each frame once per answer. The read back for each sample

@@ -72,11 +72,11 @@ func TestResolveReadsLinesOutOfACompressedFile(t *testing.T) {
 					IndexLoader: NoIndex,
 				}
 			}
-			fromPlain, err := Resolve(req(plain))
+			fromPlain, err := Resolve(t.Context(), req(plain))
 			if err != nil {
 				t.Fatalf("resolve plain: %v", err)
 			}
-			fromGzip, err := Resolve(req(compressed))
+			fromGzip, err := Resolve(t.Context(), req(compressed))
 			if err != nil {
 				t.Fatalf("resolve gzip: %v", err)
 			}
@@ -117,7 +117,7 @@ func TestResolveNumbersTheLinesItReadsFromACompressedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	resp, err := Resolve(Request{
+	resp, err := Resolve(t.Context(), Request{
 		Path: compressed, Lines: spec, BeforeContext: 1, AfterContext: 1, IndexLoader: NoIndex,
 	})
 	if err != nil {
@@ -144,7 +144,7 @@ func TestResolveCountsLinesFromTheEndOfACompressedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCSV: %v", err)
 	}
-	resp, err := Resolve(Request{Path: compressed, Lines: spec, IndexLoader: NoIndex})
+	resp, err := Resolve(t.Context(), Request{Path: compressed, Lines: spec, IndexLoader: NoIndex})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestResolveCountsAnUnterminatedLastLineOfACompressedFile(t *testing.T) {
 	request := func(path string, loader IndexLoader) Request {
 		return Request{Path: path, Lines: []OffsetOrRange{{Start: -1}, {Start: -3}}, BeforeContext: 1, IndexLoader: loader}
 	}
-	plain, err := Resolve(request(plainPath, NoIndex))
+	plain, err := Resolve(t.Context(), request(plainPath, NoIndex))
 	if err != nil {
 		t.Fatalf("resolve plain: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestResolveCountsAnUnterminatedLastLineOfACompressedFile(t *testing.T) {
 	for name, path := range compressedCopiesOf(t, text, dir) {
 		for how, loader := range loadersFor(t, path) {
 			t.Run(name+"/"+how, func(t *testing.T) {
-				got, err := Resolve(request(path, loader))
+				got, err := Resolve(t.Context(), request(path, loader))
 				if err != nil {
 					t.Fatalf("resolve: %v", err)
 				}
@@ -215,14 +215,14 @@ func TestResolveAnswersALineAskedForTwiceOnce(t *testing.T) {
 		request := func(path string, loader IndexLoader) Request {
 			return Request{Path: path, Lines: spec, BeforeContext: 1, AfterContext: 1, IndexLoader: loader}
 		}
-		plain, err := Resolve(request(plainPath, NoIndex))
+		plain, err := Resolve(t.Context(), request(plainPath, NoIndex))
 		if err != nil {
 			t.Fatalf("resolve plain: %v", err)
 		}
 		for name, path := range compressedCopiesOf(t, text, dir) {
 			for how, loader := range loadersFor(t, path) {
 				t.Run(what+"/"+name+"/"+how, func(t *testing.T) {
-					got, err := Resolve(request(path, loader))
+					got, err := Resolve(t.Context(), request(path, loader))
 					if err != nil {
 						t.Fatalf("resolve: %v", err)
 					}
@@ -250,11 +250,11 @@ func TestResolveReportsTheByteOffsetOfACompressedLine(t *testing.T) {
 		t.Fatalf("ParseCSV: %v", err)
 	}
 
-	fromPlain, err := Resolve(Request{Path: plain, Lines: spec, IndexLoader: NoIndex})
+	fromPlain, err := Resolve(t.Context(), Request{Path: plain, Lines: spec, IndexLoader: NoIndex})
 	if err != nil {
 		t.Fatalf("resolve plain: %v", err)
 	}
-	fromGzip, err := Resolve(Request{Path: compressed, Lines: spec, IndexLoader: NoIndex})
+	fromGzip, err := Resolve(t.Context(), Request{Path: compressed, Lines: spec, IndexLoader: NoIndex})
 	if err != nil {
 		t.Fatalf("resolve gzip: %v", err)
 	}
