@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/rand/v2"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,7 +15,9 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/samplesanswer"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -376,5 +381,47 @@ func TestLineTimestamps_ValueOutsideTheYearRangeIsNull(t *testing.T) {
 				t.Errorf("RX_LOG_TZ=%s: line %d is %s", zone, i+1, describeMs(ms))
 			}
 		}
+	}
+}
+
+// A read back that fails (a damaged frame the lines themselves do not
+// need) does not fail the answer: the sample whose read back failed
+// carries no earlier timestamp, so its lines without one of their own
+// are null, the other samples keep theirs, and the failure is logged.
+func TestLineTimestamps_AFailedReadBackLeavesThatSampleNull(t *testing.T) {
+	const frameText = 4096
+	text := tracebackHeavyLog(8000)
+	path := filepath.Join(t.TempDir(), "app.log.zst")
+	seekablefile.Write(t, path, seekablefile.SplitEvery(text, frameText))
+	// The frames holding lines 2001 to 2010: the read back of line 2010
+	// needs them, the lines themselves are read by another path.
+	from := bytes.Index(text, []byte("LINE 2001 "))
+	to := bytes.Index(text, []byte("LINE 2010 "))
+	damaged := func(frame int) bool { return frame >= from/frameText && frame <= (to-1)/frameText }
+	orig := decodeFrameAt
+	decodeFrameAt = func(d *seekable.Decoder, file io.ReaderAt, index int, table *seekable.SeekTable) ([]byte, error) {
+		if damaged(index) {
+			return nil, fmt.Errorf("%w: frame %d", seekable.ErrDamagedFrame, index)
+		}
+		return orig(d, file, index, table)
+	}
+	t.Cleanup(func() { decodeFrameAt = orig })
+	var log bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&log, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	resp, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: 2010}, {Start: 4510}}, IndexLoader: NoIndex})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := resp.LineTimestamps["2010"]; len(got) != 1 || got[0] != nil {
+		t.Errorf("line 2010, whose read back failed: %v, want [null]", got)
+	}
+	if got := resp.LineTimestamps["4510"]; len(got) != 1 || got[0] == nil {
+		t.Errorf("line 4510: %v, want its carried timestamp", got)
+	}
+	if !strings.Contains(log.String(), "line_timestamps_read_back_failed") || !strings.Contains(log.String(), "frame") {
+		t.Errorf("log %q names no failed read back", log.String())
 	}
 }

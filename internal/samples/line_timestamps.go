@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 
 	"github.com/wlame/rx-go/internal/config"
@@ -171,6 +172,12 @@ func (t *fileTimes) effectiveStamps(lines []string, starts []int64, carried stam
 //
 // Every line it reads ends before the start it reads for, which is a
 // line start, so each line is in hand whole.
+//
+// A read that fails (a damaged frame of a seekable file that the lines
+// themselves did not need) leaves its start absent rather than failing
+// the answer: that sample's lines without a timestamp of their own get
+// none, which line_timestamps spells null, "not known". The failure is
+// logged once per answer. A canceled request is the answer's error.
 func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, lookback int64) (map[int64]stampedLine, error) {
 	if len(asks) == 0 {
 		return nil, nil
@@ -181,11 +188,15 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 
 	text, closeText, err := lookbackTextOf(req, kind)
 	if err != nil {
-		return nil, err
+		return nil, readBackFailed(req, len(asks), err)
 	}
 	defer func() { _ = closeText() }()
 
 	found := make(map[int64]stampedLine, len(asks))
+	var (
+		failures  int
+		firstFail error
+	)
 	var carried stampedLine
 	// covered is where the last read ended: a line start, or -1 before
 	// the first read.
@@ -212,7 +223,16 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 			}
 			buf = slices.Grow(buf[:0], int(start-readFrom))[:start-readFrom]
 			if err := readTextAt(text, buf, readFrom); err != nil {
-				return nil, fmt.Errorf("read back from line start %d of %s: %w", start, req.Path, err)
+				if ctxErr := req.context().Err(); ctxErr != nil {
+					return nil, ctxErr
+				}
+				if failures++; firstFail == nil {
+					firstFail = fmt.Errorf("read back from line start %d: %w", start, err)
+				}
+				// Nothing is known to have been read: the next start
+				// reads its own lookback whole.
+				carried, covered = stampedLine{}, -1
+				continue
 			}
 			carried = t.lastStampedIn(buf, readFrom, atLineStart, carried)
 			covered = start
@@ -221,7 +241,23 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 			found[start] = carried
 		}
 	}
+	if failures > 0 {
+		_ = readBackFailed(req, failures, firstFail)
+	}
 	return found, nil
+}
+
+// readBackFailed logs that the read back for line_timestamps failed for
+// samples of the answer, and returns the request's error when it was
+// canceled (the answer fails with it), else nil (those samples carry no
+// earlier timestamp).
+func readBackFailed(req Request, samples int, err error) error {
+	if ctxErr := req.context().Err(); ctxErr != nil {
+		return ctxErr
+	}
+	slog.Default().Warn("line_timestamps_read_back_failed",
+		"path", req.Path, "samples", samples, "error", err.Error())
+	return nil
 }
 
 // lastStampedIn returns the last line with a timestamp of its own among
