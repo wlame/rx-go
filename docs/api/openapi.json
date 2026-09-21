@@ -2087,6 +2087,27 @@
             }
           },
           {
+            "description": "A time or time range (T, T1..T2, ..T2, T1..); repeat the parameter for several, at most 1000. Each answers the first line whose own timestamp is at or after the time, with context, or a range's lines without context. A value is never split at commas.",
+            "explode": true,
+            "in": "query",
+            "name": "timestamps",
+            "schema": {
+              "description": "A time or time range (T, T1..T2, ..T2, T1..); repeat the parameter for several, at most 1000. Each answers the first line whose own timestamp is at or after the time, with context, or a range's lines without context. A value is never split at commas.",
+              "examples": [
+                [
+                  "2025-12-10T07:30:00"
+                ]
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
             "description": "Context lines before AND after each offset (-1 = default 3)",
             "explode": false,
             "in": "query",
@@ -2254,7 +2275,7 @@
           },
           {}
         ],
-        "summary": "Get context lines around byte offsets or line numbers",
+        "summary": "Get context lines around byte offsets, line numbers or times",
         "tags": [
           "Context"
         ]

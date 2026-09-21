@@ -63,6 +63,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files answer the same. `--json` adds `timestamps`, each query mapped
   to the line it found (a range to its first line), `{}` in the other
   modes.
+- `GET /v1/samples?timestamps=T` answers the same time queries over
+  HTTP: the parameter repeats (`?timestamps=A&timestamps=B`), is never
+  split at commas, and cannot be combined with `lines` or `offsets`
+  (400). An invalid value, a time of day on a file of two dates, a file
+  without timestamps and more than 1,000 values are 400 with the reason.
+  The request builds or waits for the line index as a `lines` request
+  does (202 with `Prefer: respond-async`), and `cli_command` renders one
+  `--timestamps=…` per value. The 400 for a request with no address now
+  reads "Must provide one of 'offsets', 'lines' or 'timestamps'.".
+  `timestamps` and `time_format` in the answer, and the parameter, are
+  part of contract 1.5.
 - Every `samples` answer reports the file's timestamp format as
   `time_format`, `{format, has_zone, assumed_zone}`, or `null` when none
   is recognized in the first mebibyte. With an index it costs nothing;

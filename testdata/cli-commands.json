@@ -123,6 +123,15 @@
       "expected": "rx samples /var/log/app.log --offsets=4096 --before=2 --after=7"
     },
     {
+      "name": "samples by time, one flag per value, a comma kept",
+      "endpoint": "samples",
+      "params": {
+        "path": "/var/log/app.log",
+        "timestamps": ["2025-12-10 12:34:56,123", "14:33:12..14:35"]
+      },
+      "expected": "rx samples /var/log/app.log --timestamps='2025-12-10 12:34:56,123' --timestamps=14:33:12..14:35"
+    },
+    {
       "name": "samples renders a zero context rather than dropping it",
       "endpoint": "samples",
       "params": { "path": "/var/log/app.log", "lines": "1", "context": 0 },
