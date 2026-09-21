@@ -120,6 +120,38 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				ti["max_before"] = make([]any, checkpoints)
 			})
 		}},
+		// The fixture has 200 lines; first, last and the count of
+		// timestamped lines must describe lines it has.
+		{"time section with a negative count of timestamped lines", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["timestamped_lines"] = -1
+			})
+		}},
+		{"time section without first and last for its timestamped lines", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["timestamped_lines"] = 3
+			})
+		}},
+		{"time section whose first line is line 0", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["timestamped_lines"] = 3
+				ti["first"] = map[string]any{"ms": 1, "line": 0, "offset": 0}
+				ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+			})
+		}},
+		{"time section whose last line is past the last line", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["timestamped_lines"] = 3
+				ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
+				ti["last"] = map[string]any{"ms": 2, "line": 201, "offset": 0}
+			})
+		}},
+		{"time section with a zone offset beyond 18 hours", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["has_zone"] = true
+				ti["first_zone_offset_minutes"] = 18*60 + 1
+			})
+		}},
 	}
 	for _, tc := range damages {
 		t.Run(tc.name, func(t *testing.T) {
@@ -139,6 +171,22 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				t.Errorf("no warning naming the damaged index; log:\n%s", logged)
 			}
 		})
+	}
+}
+
+// A time section at the edges of what the checks accept still loads:
+// first on line 1, last on the file's last line, a zone 18 hours east.
+func TestLoadFromPath_TimeSectionAtTheEdgesLoads(t *testing.T) {
+	_, cachePath := storedIndexFixture(t)
+	rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+		ti["has_zone"] = true
+		ti["timestamped_lines"] = 200
+		ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
+		ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+		ti["first_zone_offset_minutes"] = -18 * 60
+	})
+	if idx, err := LoadFromPath(cachePath); idx == nil || idx.TimeIndex == nil {
+		t.Fatalf("LoadFromPath = %v, %v; want the index with its time section", idx, err)
 	}
 }
 

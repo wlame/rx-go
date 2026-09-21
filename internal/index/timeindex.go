@@ -252,11 +252,17 @@ func (f *frameMarks) markLine(t *timeIndexer, number, start, end int64) {
 	}
 }
 
+// maxZoneOffsetMinutes is the largest zone offset a timestamp can
+// carry, east or west of UTC: 18 hours, the bound RFC 3339 readers and
+// Go's time package accept.
+const maxZoneOffsetMinutes = 18 * 60
+
 // validTimeIndex reports why a stored time section cannot be used, or
-// nil when it can: its format must be one this build can parse, and
-// max_before must have one entry per checkpoint and never decrease. A
-// time search trusts both, so an index that breaks either is treated
-// as damaged.
+// nil when it can: its format must be one this build can parse, its
+// first and last lines must be lines of the file, its zone offset a
+// real one, and max_before must have one entry per checkpoint and never
+// decrease. A time search trusts all of these, so an index that breaks
+// one is treated as damaged.
 func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	ti := idx.TimeIndex
 	if ti == nil {
@@ -271,6 +277,13 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	if err := format.Validate(); err != nil {
 		return fmt.Errorf("time_index: %w", err)
 	}
+	if err := validTimeSpan(ti, idx.LineCount); err != nil {
+		return fmt.Errorf("time_index: %w", err)
+	}
+	if offset := ti.FirstZoneOffsetMinutes; offset != nil &&
+		(*offset < -maxZoneOffsetMinutes || *offset > maxZoneOffsetMinutes) {
+		return fmt.Errorf("time_index: first_zone_offset_minutes %d is beyond 18 hours", *offset)
+	}
 	if len(ti.MaxBefore) != len(idx.LineIndex) {
 		return fmt.Errorf("time_index: max_before has %d entries for %d checkpoints",
 			len(ti.MaxBefore), len(idx.LineIndex))
@@ -283,6 +296,37 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 		if v != nil {
 			previous = v
 		}
+	}
+	return nil
+}
+
+// validTimeSpan checks the count of timestamped lines and the first and
+// last of them against lineCount, the index's count of lines: a
+// negative count is refused, first and last are present exactly when
+// the count is above zero, and both name lines between 1 and lineCount,
+// first no later than last.
+func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
+	if ti.TimestampedLines < 0 {
+		return fmt.Errorf("timestamped_lines is %d", ti.TimestampedLines)
+	}
+	hasLines := ti.TimestampedLines > 0
+	if (ti.First != nil) != hasLines || (ti.Last != nil) != hasLines {
+		return fmt.Errorf("first and last do not match %d timestamped lines", ti.TimestampedLines)
+	}
+	if !hasLines {
+		return nil
+	}
+	lines := int64(0)
+	if lineCount != nil {
+		lines = *lineCount
+	}
+	for name, point := range map[string]*rxtypes.TimePoint{"first": ti.First, "last": ti.Last} {
+		if point.Line < 1 || point.Line > lines {
+			return fmt.Errorf("%s names line %d of a file of %d lines", name, point.Line, lines)
+		}
+	}
+	if ti.First.Line > ti.Last.Line {
+		return fmt.Errorf("first names line %d, after last's line %d", ti.First.Line, ti.Last.Line)
 	}
 	return nil
 }
