@@ -304,9 +304,8 @@ func TestBudget_TimeRangeStopsReadingBackAtTheCap(t *testing.T) {
 	if resp.Source != TimeRangeFromScan || resp.FirstMs == nil || *resp.FirstMs != timeBase || resp.LastMs != nil {
 		t.Fatalf("%s; want the first timestamp and last_ms null", rangeText(resp))
 	}
-	// Each step reads one byte before it and a window past it.
-	steps := int64(TimeRangeTailBytes / tailStepBytes)
-	budget := int64(timestamps.SampleBytes+TimeRangeTailBytes) + steps*(timestamps.WindowBytes+1)
+	// The read back reads the tail once and the byte before it.
+	budget := int64(timestamps.SampleBytes + TimeRangeTailBytes + 1)
 	if read := counter.Load(); read > budget {
 		t.Errorf("read %d bytes of %d; budget %d", read, text.Len(), budget)
 	}
@@ -415,9 +414,10 @@ func TestTimeRange_SeekableFramesOfSixteenMiBAnswerAsPlain(t *testing.T) {
 }
 
 // A tail of lines that are a few bytes followed by a long run of \r
-// bytes is read within the same budget as any other tail: the read back
-// knows whether a run of \r bytes ends its line from the bytes the step
-// after it read, and reads no further for it. Runs about a step long
+// bytes is read within the same budget as any other tail, once and the
+// byte before it: the read back knows whether a run of \r bytes ends its
+// line from the bytes the step after it read, and reads no further for
+// it. Runs about a step long
 // are the worst case for a read that looked forward for the line end.
 func TestBudget_TimeRangeReadsACarriageReturnTailWithinTheCap(t *testing.T) {
 	t.Setenv("RX_LOG_TZ", "")
@@ -437,10 +437,37 @@ func TestBudget_TimeRangeReadsACarriageReturnTailWithinTheCap(t *testing.T) {
 			if resp.Source != TimeRangeFromScan || resp.FirstMs == nil || *resp.FirstMs != timeBase || resp.LastMs != nil {
 				t.Fatalf("%s; want the first timestamp and last_ms null", rangeText(resp))
 			}
-			steps := int64(TimeRangeTailBytes / tailStepBytes)
-			budget := int64(timestamps.SampleBytes+TimeRangeTailBytes) + steps*(timestamps.WindowBytes+1)
+			budget := int64(timestamps.SampleBytes + TimeRangeTailBytes + 1)
 			if read := counter.Load(); read > budget {
 				t.Errorf("read %d bytes of %d; budget %d", read, text.Len(), budget)
+			}
+		})
+	}
+}
+
+// The read back from the end over the whole TimeRangeTailBytes decodes
+// each frame of a seekable file about once, for frames of a step's size
+// and larger, cut where a step ends or not: the frames that hold the
+// tail and the one before it. Frames of a mebibyte, which a step and the
+// bytes past it touched three of, used to be decoded twice and to take
+// the read past TimeRangeDecodeBytes.
+func TestBudget_TimeRangeDecodesEachSeekableFrameOnce(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
+	const size = 24<<20 + 12345
+	// The last timestamped line starts just after the cap's floor, so the
+	// read goes back all the way.
+	text, lastMs := logWithLastStampAt(size-TimeRangeTailBytes+64, size)
+	for _, frame := range []int{tailStepBytes, tailStepBytes + 77, 4 * tailStepBytes, 4*tailStepBytes + 300} {
+		t.Run(fmt.Sprint(frame), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "app.log.zst")
+			seekablefile.Write(t, path, seekablefile.SplitEvery(text, frame))
+			decoded := countDecodedFrames(t)
+			resp := timeRangeOf(t, path, NoIndex)
+			if resp.LastMs == nil || *resp.LastMs != lastMs {
+				t.Fatalf("%s; want last %d", rangeText(resp), lastMs)
+			}
+			if got, budget := decoded.Load(), int64(TimeRangeTailBytes+2*frame); got > budget {
+				t.Errorf("decoded %d bytes of frames of %d; budget %d", got, frame, budget)
 			}
 		})
 	}

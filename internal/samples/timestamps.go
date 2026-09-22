@@ -653,13 +653,14 @@ func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind
 }
 
 // seekableTextAt reads a seekable zstd file's text by position. It
-// decodes one frame at a time and keeps the last two it decoded, so a
-// run of reads that moves through the text a little at a time, forward
-// or back, decodes each frame once: the read back from the end for a
-// file's last timestamp steps back a mebibyte at a time through frames
-// that are often larger, and the lookback sweep of line_timestamps
-// reads short spans in ascending order. Each read used to decode every
-// frame it touched again.
+// decodes one frame at a time and keeps two decoded frames, so a run of
+// reads that moves through the text a little at a time, forward or
+// back, decodes each frame once: the read back from the end for a
+// file's last timestamp steps back a mebibyte at a time, and the
+// lookback sweep of line_timestamps reads short spans in ascending
+// order. A newly decoded frame replaces the kept frame farthest from
+// it, which is the one such a sweep has left behind. Each read used to
+// decode every frame it touched again.
 //
 // It holds at most two decoded frames, each as long as the seek table
 // says (the decoder refuses a frame that decodes to another length).
@@ -738,8 +739,27 @@ func (s *seekableTextAt) frame(index int) ([]byte, error) {
 		return nil, err
 	}
 	s.decoded += size
-	s.kept[1], s.kept[0] = s.kept[0], decodedFrame{index: index, data: data}
+	s.kept[s.slotFor(index)] = decodedFrame{index: index, data: data}
 	return data, nil
+}
+
+// slotFor returns the slot of kept that frame index replaces: an empty
+// one, else the one whose frame is farthest from index. A read that
+// moves back through the text reads each step's frames in ascending
+// order, so the frame it needs next is the one below the frame it reads
+// now, and the one above is done with; a read that moves forward needs
+// the reverse. Either way the farthest frame is the one left behind.
+func (s *seekableTextAt) slotFor(index int) int {
+	for slot, kept := range s.kept {
+		if kept.data == nil {
+			return slot
+		}
+	}
+	distance := func(slot int) int { return max(s.kept[slot].index-index, index-s.kept[slot].index) }
+	if distance(0) > distance(1) {
+		return 0
+	}
+	return 1
 }
 
 // lastStampOfStream reads a compressed stream to its end and returns
@@ -791,50 +811,92 @@ func lastStampFromEnd(ctx context.Context, text io.ReaderAt, size int64, parser 
 // stops when visit returns true. The window is valid only during the
 // call.
 //
-// It reads at most limit bytes plus, per step, one byte before it and
-// timestamps.WindowBytes after it, and nothing else, however long a line
-// or a run of \r bytes: a step covers the line starts in [start, end),
-// reads one byte before start, to tell whether start begins a line, and
-// up to timestamps.WindowBytes after end, the most of a line the parser
-// looks at.
+// It reads each byte of the last limit bytes once, and the one byte
+// before them, and nothing else, however long a line or a run of \r
+// bytes. A step reads the text in [start, end). The line starts it
+// visits are those in (start, end]: whether a position begins a line is
+// told by the byte before it, which the step holds. A window reaches up
+// to timestamps.WindowBytes past the step's end, into text the step
+// before in the loop (the one after in the text) read already and hands
+// on in ahead. The line start at the floor itself is visited last, and
+// reads the byte before it.
 //
 // A line whose window ends in \r bytes needs one fact from past the
 // bytes in hand: whether those \r bytes run on to a \n (line-break
-// bytes, dropped) or to another byte (content, kept). The steps go back
-// through the text, so the step before in the loop, the one after in
-// the text, has already read those bytes: each step works out the fact
+// bytes, dropped) or to another byte (content, kept). The step after in
+// the text has read those bytes too, so each step works out the fact
 // for the next and hands it on in endsLine.
+//
+// Reading each step's text once, with nothing past it, is what lets a
+// seekable file's reader keep the frames a step needs: a step touches
+// the frames of [start, end) only, and the next step's frames end with
+// the lowest of them.
 func tailWindows(ctx context.Context, text io.ReaderAt, size, limit int64, visit func(lineStart int64, window []byte) bool) error {
 	floor := max(0, size-limit)
 	// endsLine says whether the text from the end of this step's bytes
-	// on holds only \r bytes before a \n or the end of the text. The
-	// first step's bytes run to the end of the text.
+	// on holds only \r bytes before a \n or the end of the text; ahead
+	// is the text from the step's end on, as far as a window reaches.
+	// The first step ends at the end of the text.
 	endsLine := true
+	var ahead []byte
 	for end := size; end > floor; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		start := max(floor, end-tailStepBytes)
-		from := max(0, start-1)
-		buf := make([]byte, min(size, end+timestamps.WindowBytes)-from)
-		n, err := text.ReadAt(buf, from)
-		// ReadAt may report io.EOF with a full buffer at the end of the
-		// text; only a short read is a failure.
-		if err != nil && (!errors.Is(err, io.EOF) || n < len(buf)) {
+		// buf is the text from start to the end of ahead.
+		buf := make([]byte, end-start+int64(len(ahead)))
+		if err := readFullAt(text, buf[:end-start], start); err != nil {
 			return err
 		}
-		for lineStart := end - 1; lineStart >= start; lineStart-- {
-			if lineStart > 0 && buf[lineStart-1-from] != '\n' {
+		copy(buf[end-start:], ahead)
+		// The end of the text begins no line.
+		for lineStart := min(end, size-1); lineStart > start; lineStart-- {
+			if buf[lineStart-1-start] != '\n' {
 				continue
 			}
-			if visit(lineStart, lineWindow(buf[lineStart-from:], endsLine)) {
+			if visit(lineStart, lineWindow(buf[lineStart-start:], endsLine)) {
 				return nil
 			}
 		}
-		// The next step's bytes end WindowBytes past start (or at the end
-		// of the text), which is within this step's bytes.
-		endsLine = onlyCarriageReturnsBeforeLineEnd(buf[min(size, start+timestamps.WindowBytes)-from:], endsLine)
+		// The bytes the next step hands its windows end WindowBytes past
+		// start (or at the end of the text), which is within buf.
+		next := min(int64(len(buf)), timestamps.WindowBytes)
+		endsLine = onlyCarriageReturnsBeforeLineEnd(buf[next:], endsLine)
+		ahead = bytes.Clone(buf[:next])
 		end = start
+	}
+	return visitFloor(text, floor, size, ahead, endsLine, visit)
+}
+
+// visitFloor calls visit for the line start at floor, the lowest
+// position tailWindows looks at, when floor begins a line: it is the
+// start of the text or follows a \n, the one byte it reads. ahead and
+// endsLine are what the step that began at floor handed on.
+func visitFloor(text io.ReaderAt, floor, size int64, ahead []byte, endsLine bool, visit func(lineStart int64, window []byte) bool) error {
+	if floor >= size {
+		return nil
+	}
+	if floor > 0 {
+		var before [1]byte
+		if err := readFullAt(text, before[:], floor-1); err != nil {
+			return err
+		}
+		if before[0] != '\n' {
+			return nil
+		}
+	}
+	visit(floor, lineWindow(ahead, endsLine))
+	return nil
+}
+
+// readFullAt fills buf with the text at offset. ReadAt may report
+// io.EOF with a full buffer at the end of the text; only a short read
+// is a failure.
+func readFullAt(text io.ReaderAt, buf []byte, offset int64) error {
+	n, err := text.ReadAt(buf, offset)
+	if err != nil && (!errors.Is(err, io.EOF) || n < len(buf)) {
+		return err
 	}
 	return nil
 }

@@ -384,23 +384,18 @@ func crlfTail(lines int) []byte {
 }
 
 // The read back from the end for the last timestamp reads each byte of
-// a tail of \r\n lines about once, on a plain file and on a seekable
-// one: a step reads its mebibyte, one byte before it and the window
-// past it, and nothing further to find where a line ends.
+// a tail of \r\n lines once, on a plain file and on a seekable one: a
+// step reads its mebibyte, and nothing further to find where a line
+// ends.
 func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	text := crlfTail(20_000)
 	parser := parserFor(t, text[:200])
-	steps := int64(len(text)/tailStepBytes + 1)
-	// Past its mebibyte, a step reads the window after it and one byte
-	// before it.
-	perStep := int64(timestamps.WindowBytes + 1)
-
 	plain := counting.NewReaderAt(bytes.NewReader(text))
 	stamp, found, err := lastStampFromEnd(context.Background(), plain, int64(len(text)), parser, int64(len(text)))
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("plain: last stamp %+v %v %v", stamp, found, err)
 	}
-	if read, budget := plain.Load(), int64(len(text))+steps*perStep; read > budget {
+	if read, budget := plain.Load(), int64(len(text)); read > budget {
 		t.Errorf("plain: read %d bytes of a %d-byte text; budget %d", read, len(text), budget)
 	}
 
@@ -425,9 +420,9 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("seekable: last stamp %+v %v %v", stamp, found, err)
 	}
-	// Each frame is decoded by the steps that cover it, a few times
-	// at most, never once per line.
-	if read, budget := file.Load(), 8*info.Size(); read > budget {
+	// Each frame is decoded by the step that covers it, and a frame a
+	// step ends inside once more by the step below; never once per line.
+	if read, budget := file.Load(), 2*info.Size(); read > budget {
 		t.Errorf("seekable: read %d compressed bytes of a %d-byte file; budget %d", read, info.Size(), budget)
 	}
 }
