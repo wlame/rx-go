@@ -166,6 +166,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   up to 64 GiB. A zstd file whose first frame declares a window above
   16 MiB (`zstd --long` writes 128 MiB) is now taken for text without
   being probed; the command that reads it decompresses it as before.
+- An xz file no longer costs the dictionary its block headers declare
+  before rx has checked it. An xz block header names the dictionary its
+  decoder reserves, up to 4 GiB, so a 64-byte file whose header named
+  2 GiB cost 2 GiB in every command and in each `GET /v1/tree` that
+  listed it. rx now reads the xz container itself and checks each block
+  header, of every block, before the dictionary is reserved: deciding
+  what a file is decodes blocks that declare at most 16 MiB and takes a
+  file whose first block declares more for text without probing it
+  (`xz -9` declares 64 MiB); every command reads xz with at most a
+  128 MiB dictionary and refuses a block that declares more.
+- An xz file cut short where a block or its index should start was read
+  as complete, its text up to the cut answered as all of it; it is now
+  a stream that ends early.
 - An index build no longer copies the first lines of a file to decide
   its line ending; it counts the endings where it reads them. A file
   whose first line is 10 MiB long cost 10 MiB more. The answer is the

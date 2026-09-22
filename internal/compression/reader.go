@@ -8,7 +8,6 @@ import (
 	"io"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/ulikunitz/xz"
 )
 
 // NewReader returns an io.ReadCloser that decompresses `src` according
@@ -91,7 +90,9 @@ func NewReader(src io.ReadCloser, format Format) (io.ReadCloser, error) {
 		}
 		return &chainCloser{wrapped: zstdReaderCloser{r: r}, src: src}, nil
 	case FormatXz:
-		r, err := xz.NewReader(src)
+		// The dictionary a block declares is reserved before the block
+		// is decoded, so it is held to WindowLimit (see NewXzReader).
+		r, err := NewXzReader(src, WindowLimit)
 		if err != nil {
 			return nil, fmt.Errorf("xz reader: %w", err)
 		}

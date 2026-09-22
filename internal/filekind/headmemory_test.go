@@ -8,10 +8,12 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/ulikunitz/xz"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
+	"github.com/wlame/rx-go/internal/testutil/xzfile"
 )
 
 // largeFrameBytes is the text of one frame in the large-frame fixtures:
@@ -170,6 +172,38 @@ func TestReadTextHead_SeekableHeadEqualsThePlainHead(t *testing.T) {
 			}
 			if !bytes.Equal(head, want) {
 				t.Errorf("seekable head (%d bytes) differs from the plain head (%d bytes)", len(head), len(want))
+			}
+		})
+	}
+}
+
+// An xz block header names the dictionary its decoder reserves before
+// it decodes the block. Classifying a 64-byte xz file whose header names
+// gigabytes costs a few mebibytes: the probe refuses a dictionary above
+// its limit before reserving it, in any block, and takes the file for
+// text, as it does a zstd frame whose window is above its limit.
+func TestOf_AnXzFileDeclaringAHugeDictionaryCostsAFewMebibytes(t *testing.T) {
+	small := xzfile.Encode(t, []byte("hello\n"), xz.WriterConfig{})
+	twoBlocks := xzfile.Encode(t, numberedLog(2_000), xz.WriterConfig{BlockSize: 4 << 10}) // the probe reads into block 2
+	files := map[string][]byte{
+		"1 GiB":                     xzfile.WithDictionaryCode(t, small, 0, 36),
+		"2 GiB":                     xzfile.WithDictionaryCode(t, small, 0, 38),
+		"4 GiB":                     xzfile.WithDictionaryCode(t, small, 0, 40),
+		"2 GiB in the second block": xzfile.WithDictionaryCode(t, twoBlocks, 1, 38),
+	}
+	for name, body := range files {
+		t.Run(name, func(t *testing.T) {
+			r := bytes.NewReader(body)
+			var kind Kind
+			allocated := allocatedBy(func() { kind = Of(r, int64(len(body))) })
+			t.Logf("Of allocated %d KiB for a %d-byte file", allocated>>10, len(body))
+			const budget = 12 << 20
+			if allocated > budget {
+				t.Errorf("Of allocated %d MiB for a %d-byte file; budget %d MiB",
+					allocated>>20, len(body), budget>>20)
+			}
+			if kind.Format != compression.FormatXz || !kind.IsText() {
+				t.Errorf("Of = %+v; want xz text", kind)
 			}
 		})
 	}

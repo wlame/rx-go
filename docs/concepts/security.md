@@ -642,6 +642,13 @@ happens at all.
   holds one window of at most 16 MiB and refuses a frame that declares
   more; see
   [Compression](compression.md#how-rx-decides-what-a-file-is)
+- Exhausting the server's memory with a directory listing or a command
+  that meets a small xz file declaring a dictionary of gigabytes (a
+  64-byte file can declare 4 GiB, in any of its blocks) — blocked by
+  reading the xz container in rx and checking every block header before
+  its dictionary is reserved: at most 16 MiB to decide what a file is,
+  128 MiB to read it; see
+  [Compression](compression.md#how-rx-decides-what-a-file-is)
 - Exhausting the server's memory or its disk with one
   `GET /v1/samples` (a thousand line ranges open to the end of the
   file held 34 million lines; a thousand windows near the end read a

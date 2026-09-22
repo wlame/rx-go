@@ -304,6 +304,14 @@ func openText(r io.ReaderAt, size int64, kind Kind, windowLimit uint64) (io.Read
 			return nil, fmt.Errorf("decompress: %w", err)
 		}
 		return dec, nil
+	case kind.Format == compression.FormatXz:
+		// An xz block's dictionary is reserved before the block is
+		// decoded, so it is held to the same limit as a zstd window.
+		dec, err := compression.NewXzReader(file, windowLimit)
+		if err != nil {
+			return nil, fmt.Errorf("decompress: %w", err)
+		}
+		return io.NopCloser(dec), nil
 	case kind.IsCompressed():
 		dec, err := compression.NewReader(io.NopCloser(file), kind.Format)
 		if err != nil {

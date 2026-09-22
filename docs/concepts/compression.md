@@ -63,6 +63,16 @@ detect the timestamp format is decompressed the same way with at most a
 128 MiB window, the most `zstd -d` accepts without `--long=N`; a file
 whose frames need more cannot be indexed, and the build says why.
 
+An xz file is held to the same limits. Each xz block header names the
+dictionary its decoder reserves before decoding the block (`xz -6`
+writes 8 MiB, `xz -9` 64 MiB), and a header can name up to 4 GiB
+whatever the file's size, so rx reads the xz container itself and
+checks every block header before the dictionary is reserved. Deciding
+what a file is decodes blocks that name at most 16 MiB; a file whose
+first block names more is taken for text without being probed. Every
+command reads an xz file with at most a 128 MiB dictionary and refuses
+a block that names more.
+
 ## Why compressed files lose random access
 
 A compressed stream is a state machine. Decompressing byte N typically
