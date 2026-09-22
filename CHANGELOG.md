@@ -26,7 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dates, epoch values), the first and the last timestamped line, how
   many lines carry a timestamp, how many step back by more than a second
   (`backward_steps`, `max_backward_ms`), and for each checkpoint the
-  latest timestamp before it (`max_before`). The format is decided from
+  latest timestamp before it (`max_before`), and the first timestamp as
+  its line writes it (`first_text`: printable ASCII, other bytes written
+  as `\xHH`, at most 64 bytes). The format is decided from
   the first mebibyte of the text; `time_index` is `null` when none is
   recognized. A few crafted lines cannot steer the choice: lines that
   start with a timestamp outrank a timestamp further into each line only

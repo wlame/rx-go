@@ -195,6 +195,11 @@ type TimeIndex struct {
 	// line, or null when none of those lines has one. It never
 	// decreases.
 	MaxBefore []*int64 `json:"max_before"`
+	// FirstText is the timestamp of the first line, as that line writes
+	// it (timestamps.Parser.Text: printable ASCII, other bytes escaped,
+	// at most 64 bytes); null when no line has one. A client shows the
+	// file's times in its own layout from it.
+	FirstText *string `json:"first_text"`
 }
 
 // TimePoint is one timestamped line: its timestamp, its 1-based line

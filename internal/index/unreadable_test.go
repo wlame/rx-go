@@ -58,7 +58,7 @@ func rewriteTimeIndex(t *testing.T, cachePath string, edit func(ti map[string]an
 		"format": "iso", "anchored": true, "day_first": nil, "has_zone": false,
 		"year_from_mtime": false, "timestamped_lines": 0, "first": nil, "last": nil,
 		"first_zone_offset_minutes": nil, "backward_steps": 0, "max_backward_ms": 0,
-		"max_before": make([]any, checkpoints),
+		"max_before": make([]any, checkpoints), "first_text": nil,
 	}
 	edit(ti, checkpoints)
 	doc["time_index"] = ti
@@ -146,6 +146,30 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				ti["last"] = map[string]any{"ms": 2, "line": 201, "offset": 0}
 			})
 		}},
+		// The text of the first timestamp is shown to a client as it is:
+		// it must be there for a first line, short, and printable.
+		{"time section without the text of its first timestamp", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+			})
+		}},
+		{"time section whose first text is too long", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = strings.Repeat("9", 65)
+			})
+		}},
+		{"time section whose first text holds a control byte", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10\x1b[31m"
+			})
+		}},
+		{"time section with a first text and no first line", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+			})
+		}},
 		{"time section with a zone offset beyond 18 hours", func(t *testing.T, cachePath string) {
 			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
 				ti["has_zone"] = true
@@ -174,8 +198,17 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 	}
 }
 
+// setFirstAndLast gives a time section three timestamped lines, with
+// a first and a last line the fixture has.
+func setFirstAndLast(ti map[string]any) {
+	ti["timestamped_lines"] = 3
+	ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
+	ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+}
+
 // A time section at the edges of what the checks accept still loads:
-// first on line 1, last on the file's last line, a zone 18 hours east.
+// first on line 1, last on the file's last line, a zone 18 hours west,
+// a first text of the longest length.
 func TestLoadFromPath_TimeSectionAtTheEdgesLoads(t *testing.T) {
 	_, cachePath := storedIndexFixture(t)
 	rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
@@ -184,6 +217,7 @@ func TestLoadFromPath_TimeSectionAtTheEdgesLoads(t *testing.T) {
 		ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
 		ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
 		ti["first_zone_offset_minutes"] = -18 * 60
+		ti["first_text"] = strings.Repeat("9", 64)
 	})
 	if idx, err := LoadFromPath(cachePath); idx == nil || idx.TimeIndex == nil {
 		t.Fatalf("LoadFromPath = %v, %v; want the index with its time section", idx, err)
