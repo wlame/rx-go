@@ -766,23 +766,53 @@ func (t *fileTimes) lastStampOfStream(ctx context.Context, src paths.Pinned, for
 	}
 }
 
-// lastStampFromEnd reads text, size bytes long, back from its end in
-// steps of tailStepBytes and returns the own timestamp of its last
-// timestamped line, or false when no line has one. It looks at the line
-// starts in the last limit bytes only, and reads at most limit bytes
-// plus, per step, one byte before it and timestamps.WindowBytes after
-// it (and, for a line of many \r bytes, up to the line's end, which is
-// within the limit too).
-//
-// A step covers the line starts in [start, end); it reads one byte
-// before start, to tell whether start begins a line, and up to
-// timestamps.WindowBytes after end, the most of a line the parser looks
-// at. The latest line start whose line has a timestamp is the answer.
+// lastStampFromEnd reads text, size bytes long, back from its end and
+// returns the own timestamp of its last timestamped line that starts in
+// the last limit bytes, or false when no such line has one. It reads
+// what tailWindows reads, no more.
 func lastStampFromEnd(ctx context.Context, text io.ReaderAt, size int64, parser *timestamps.Parser, limit int64) (timestamps.Stamp, bool, error) {
+	var stamp timestamps.Stamp
+	found := false
+	err := tailWindows(ctx, text, size, limit, func(_ int64, window []byte) bool {
+		stamp, found = parser.Own(window)
+		return found
+	})
+	if err != nil {
+		return timestamps.Stamp{}, false, err
+	}
+	return stamp, found, nil
+}
+
+// tailWindows reads text, size bytes long, back from its end in steps of
+// tailStepBytes and calls visit with the start of each line that starts
+// in the last limit bytes, the last line first, and the bytes the parser
+// looks at for it: the line without its trailing \r and \n bytes, cut
+// to timestamps.WindowBytes, as index.LineStamp gives them to it. It
+// stops when visit returns true. The window is valid only during the
+// call.
+//
+// It reads at most limit bytes plus, per step, one byte before it and
+// timestamps.WindowBytes after it, and nothing else, however long a line
+// or a run of \r bytes: a step covers the line starts in [start, end),
+// reads one byte before start, to tell whether start begins a line, and
+// up to timestamps.WindowBytes after end, the most of a line the parser
+// looks at.
+//
+// A line whose window ends in \r bytes needs one fact from past the
+// bytes in hand: whether those \r bytes run on to a \n (line-break
+// bytes, dropped) or to another byte (content, kept). The steps go back
+// through the text, so the step before in the loop, the one after in
+// the text, has already read those bytes: each step works out the fact
+// for the next and hands it on in endsLine.
+func tailWindows(ctx context.Context, text io.ReaderAt, size, limit int64, visit func(lineStart int64, window []byte) bool) error {
 	floor := max(0, size-limit)
+	// endsLine says whether the text from the end of this step's bytes
+	// on holds only \r bytes before a \n or the end of the text. The
+	// first step's bytes run to the end of the text.
+	endsLine := true
 	for end := size; end > floor; {
 		if err := ctx.Err(); err != nil {
-			return timestamps.Stamp{}, false, err
+			return err
 		}
 		start := max(floor, end-tailStepBytes)
 		from := max(0, start-1)
@@ -791,82 +821,59 @@ func lastStampFromEnd(ctx context.Context, text io.ReaderAt, size int64, parser 
 		// ReadAt may report io.EOF with a full buffer at the end of the
 		// text; only a short read is a failure.
 		if err != nil && (!errors.Is(err, io.EOF) || n < len(buf)) {
-			return timestamps.Stamp{}, false, err
+			return err
 		}
 		for lineStart := end - 1; lineStart >= start; lineStart-- {
 			if lineStart > 0 && buf[lineStart-1-from] != '\n' {
 				continue
 			}
-			window, err := lineWindow(text, buf[lineStart-from:], lineStart, size)
-			if err != nil {
-				return timestamps.Stamp{}, false, err
-			}
-			if stamp, ok := parser.Own(window); ok {
-				return stamp, true, nil
+			if visit(lineStart, lineWindow(buf[lineStart-from:], endsLine)) {
+				return nil
 			}
 		}
+		// The next step's bytes end WindowBytes past start (or at the end
+		// of the text), which is within this step's bytes.
+		endsLine = onlyCarriageReturnsBeforeLineEnd(buf[min(size, start+timestamps.WindowBytes)-from:], endsLine)
 		end = start
 	}
-	return timestamps.Stamp{}, false, nil
+	return nil
 }
 
-// lineWindow returns the bytes the parser looks at for the line that
-// starts at lineStart: the line without its trailing \r and \n bytes,
-// cut to timestamps.WindowBytes, as index.LineStamp gives them to it.
-// rest is the text from lineStart on that the caller has in hand: at
-// least timestamps.WindowBytes bytes, or all of the text to its end.
+// lineWindow returns the bytes the parser looks at for the line whose
+// text from its start on, as far as the caller has it in hand, is rest:
+// the line without its trailing \r and \n bytes, cut to
+// timestamps.WindowBytes, as index.LineStamp gives them to it. rest
+// holds at least timestamps.WindowBytes bytes, or all of the text to its
+// end. endsLine says whether the text after rest holds only \r bytes
+// before a \n or the end of the text.
 //
-// The window is the line's content (the line without its trailing \r
-// and \n bytes) cut to WindowBytes. When the line ends within rest, the
-// content is in hand: the line break is searched for in all of rest,
-// so a line a little longer than the window, such as one whose window
-// ends with the \r of a \r\n, costs no further read. When the line runs
-// past rest, the parser sees rest's first WindowBytes whole, unless
-// every byte from the window's last one to the line break is a \r:
-// then those bytes are line-break bytes and are dropped. Only that case
-// reads further, past the run of \r bytes. lastStampFromEnd hands each
-// line start of a step the text up to WindowBytes past the step, so at
-// most the last line start of a step reads further.
-func lineWindow(text io.ReaderAt, rest []byte, lineStart, size int64) ([]byte, error) {
+// When the line ends within rest, its content is in hand: the line
+// break is searched for in all of rest, so a line a little longer than
+// the window, such as one whose window ends with the \r of a \r\n, is
+// read right. When the line runs past rest, the \r bytes at the end of
+// rest are line-break bytes when endsLine is set, and content when it
+// is not (a byte other than \r and \n follows them).
+func lineWindow(rest []byte, endsLine bool) []byte {
 	if i := bytes.IndexByte(rest, '\n'); i >= 0 {
-		return windowOfContent(rest[:i+1]), nil
+		return windowOfContent(rest[:i+1])
 	}
-	if lineStart+int64(len(rest)) >= size {
-		return windowOfContent(rest), nil
+	if endsLine {
+		return windowOfContent(rest)
 	}
-	window := rest[:timestamps.WindowBytes]
-	if len(trimLineEnd(rest)) >= timestamps.WindowBytes {
-		// A byte other than \r at or after the window's last one: the
-		// content runs to the end of the window at least.
-		return window, nil
-	}
-	endsLine, err := onlyCarriageReturnsUntilLineEnd(text, lineStart+int64(len(rest)), size)
-	if err != nil || !endsLine {
-		return window, err
-	}
-	return trimLineEnd(window), nil
+	return rest[:min(len(rest), timestamps.WindowBytes)]
 }
 
-// onlyCarriageReturnsUntilLineEnd reports whether the text from offset
-// on holds only \r bytes before a \n or the end of the text.
-func onlyCarriageReturnsUntilLineEnd(text io.ReaderAt, offset, size int64) (bool, error) {
-	buf := make([]byte, 4096)
-	for offset < size {
-		n, err := text.ReadAt(buf[:min(int64(len(buf)), size-offset)], offset)
-		for _, c := range buf[:n] {
-			if c != '\r' {
-				return c == '\n', nil
-			}
+// onlyCarriageReturnsBeforeLineEnd reports whether the text from b's
+// first byte on holds only \r bytes before a \n or the end of the text,
+// given endsLine, the same answer for the text after b. It reads b only
+// as far as its first byte other than \r.
+func onlyCarriageReturnsBeforeLineEnd(b []byte, endsLine bool) bool {
+	for _, c := range b {
+		if c != '\r' {
+			return c == '\n'
 		}
-		if err != nil && !errors.Is(err, io.EOF) {
-			return false, err
-		}
-		if n == 0 {
-			break
-		}
-		offset += int64(n)
 	}
-	return true, nil
+	return endsLine
 }
 
 // trimLineEnd drops the trailing \r and \n bytes of b.

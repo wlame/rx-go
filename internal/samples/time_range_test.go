@@ -413,3 +413,35 @@ func TestTimeRange_SeekableFramesOfSixteenMiBAnswerAsPlain(t *testing.T) {
 		t.Errorf("decoded %d bytes of frames; the limit is %d", got, TimeRangeDecodeBytes)
 	}
 }
+
+// A tail of lines that are a few bytes followed by a long run of \r
+// bytes is read within the same budget as any other tail: the read back
+// knows whether a run of \r bytes ends its line from the bytes the step
+// after it read, and reads no further for it. Runs about a step long
+// are the worst case for a read that looked forward for the line end.
+func TestBudget_TimeRangeReadsACarriageReturnTailWithinTheCap(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
+	for _, run := range []int{200 << 10, tailStepBytes - 200, tailStepBytes + 200, tailStepBytes + 4096, 3 << 19, 2*tailStepBytes + 100} {
+		t.Run(fmt.Sprint(run), func(t *testing.T) {
+			var text bytes.Buffer
+			text.Write(timeRangeHead())
+			line := "abc" + strings.Repeat("\r", run) + "\n"
+			for text.Len() < 20<<20+timestamps.SampleBytes {
+				text.WriteString(line)
+			}
+			path := filepath.Join(t.TempDir(), "app.log")
+			writeFile(t, path, text.Bytes())
+
+			counter := withCountingOpen(t)
+			resp := timeRangeOf(t, path, NoIndex)
+			if resp.Source != TimeRangeFromScan || resp.FirstMs == nil || *resp.FirstMs != timeBase || resp.LastMs != nil {
+				t.Fatalf("%s; want the first timestamp and last_ms null", rangeText(resp))
+			}
+			steps := int64(TimeRangeTailBytes / tailStepBytes)
+			budget := int64(timestamps.SampleBytes+TimeRangeTailBytes) + steps*(timestamps.WindowBytes+1)
+			if read := counter.Load(); read > budget {
+				t.Errorf("read %d bytes of %d; budget %d", read, text.Len(), budget)
+			}
+		})
+	}
+}
