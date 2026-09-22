@@ -31,7 +31,10 @@ type timeRangeOutput struct {
 // of one file, which `rx time-range` gives from a terminal.
 //
 // The request reads at most the head of the file's text and 16 MiB
-// back from its end, or nothing when an index holds the range. It
+// back from its end, or nothing when an index holds the range. For a
+// seekable zstd file the frames it decodes for the read back hold at
+// most samples.TimeRangeDecodeBytes of text, since a frame decodes
+// whole. It
 // never builds an index and never decompresses a whole file: a gzip,
 // bzip2, xz or plain zstd file without an index answers source "none",
 // and a client asks again once the index a samples request starts has

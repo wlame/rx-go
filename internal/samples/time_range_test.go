@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -308,5 +309,107 @@ func TestBudget_TimeRangeStopsReadingBackAtTheCap(t *testing.T) {
 	budget := int64(timestamps.SampleBytes+TimeRangeTailBytes) + steps*(timestamps.WindowBytes+1)
 	if read := counter.Load(); read > budget {
 		t.Errorf("read %d bytes of %d; budget %d", read, text.Len(), budget)
+	}
+}
+
+// timeRangeHead is the head of the logs the tail tests write: 100
+// timestamped lines, a second apart from timeBase.
+func timeRangeHead() []byte {
+	var b bytes.Buffer
+	for i := range 100 {
+		fmt.Fprintf(&b, "%s INFO LINE %d\n", time.UnixMilli(timeBase+int64(i)*1000).UTC().Format("2006-01-02 15:04:05.000"), i+1)
+	}
+	return b.Bytes()
+}
+
+// padWithFiller appends lines without a timestamp to b until it is n
+// bytes long; it does nothing when b is that long already.
+func padWithFiller(b *bytes.Buffer, n int) {
+	filler := strings.Repeat("x", 120) + "\n"
+	for n-b.Len() > len(filler) {
+		b.WriteString(filler)
+	}
+	if rest := n - b.Len(); rest > 0 {
+		b.WriteString(strings.Repeat("x", rest-1) + "\n")
+	}
+}
+
+// logWithLastStampAt is a log size bytes long whose last timestamped
+// line starts at byte lastAt, with lines without a timestamp around it,
+// and the value of that line's timestamp.
+func logWithLastStampAt(lastAt, size int) ([]byte, int64) {
+	var b bytes.Buffer
+	b.Write(timeRangeHead())
+	padWithFiller(&b, lastAt)
+	lastMs := timeBase + 3_600_000
+	fmt.Fprintf(&b, "%s INFO LAST\n", time.UnixMilli(lastMs).UTC().Format("2006-01-02 15:04:05.000"))
+	padWithFiller(&b, size)
+	return b.Bytes(), lastMs
+}
+
+// A seekable file whose read back from the end would decode more than
+// TimeRangeDecodeBytes of frames answers last_ms null, having decoded
+// no more than that: a frame that would pass the limit is refused
+// before it is decoded, whatever the seek table says of the file's
+// compressed size.
+func TestBudget_TimeRangeDecodesAtMostTheLimitOfASeekableFile(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
+	const mib = 1 << 20
+	const size = 35 * mib
+	cases := []struct {
+		name string
+		// lastFromEnd is how far before the end of the text the last
+		// timestamped line starts, well within TimeRangeTailBytes.
+		lastFromEnd int
+		cuts        []int
+	}{
+		{"a last frame larger than the limit", 1000, []int{size - 33*mib}},
+		{"the last two frames larger than the limit together", 3 * mib, []int{size - 33*mib, size - 2*mib}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			text, _ := logWithLastStampAt(size-tc.lastFromEnd, size)
+			path := filepath.Join(t.TempDir(), "app.log.zst")
+			seekablefile.Write(t, path, seekablefile.SplitAt(text, tc.cuts...))
+
+			decoded := countDecodedFrames(t)
+			resp := timeRangeOf(t, path, NoIndex)
+			if resp.Source != TimeRangeFromScan || resp.FirstMs == nil || *resp.FirstMs != timeBase || resp.LastMs != nil {
+				t.Fatalf("%s; want the first timestamp and last_ms null from a scan", rangeText(resp))
+			}
+			if got := decoded.Load(); got > TimeRangeDecodeBytes {
+				t.Errorf("decoded %d bytes of frames; the limit is %d", got, TimeRangeDecodeBytes)
+			}
+		})
+	}
+}
+
+// A seekable file of 16 MiB frames, the largest the compression docs
+// suggest for logs read by position, keeps its answer when the read back
+// goes the whole TimeRangeTailBytes: the two frames that read covers fit
+// TimeRangeDecodeBytes, and the answer is the plain copy's.
+func TestTimeRange_SeekableFramesOfSixteenMiBAnswerAsPlain(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
+	const frame = 16 << 20
+	const size = 3 * frame
+	// The last timestamped line starts just after the cap's floor, so
+	// the read back reaches into the second frame for it.
+	text, lastMs := logWithLastStampAt(size-TimeRangeTailBytes+64, size)
+	plainPath := filepath.Join(t.TempDir(), "app.log")
+	writeFile(t, plainPath, text)
+	seekablePath := filepath.Join(t.TempDir(), "app.log.zst")
+	seekablefile.Write(t, seekablePath, seekablefile.SplitEvery(text, frame))
+
+	plain := timeRangeOf(t, plainPath, NoIndex)
+	if plain.LastMs == nil || *plain.LastMs != lastMs {
+		t.Fatalf("plain %s; want last %d", rangeText(plain), lastMs)
+	}
+	decoded := countDecodedFrames(t)
+	seekableResp := timeRangeOf(t, seekablePath, NoIndex)
+	if !sameRange(seekableResp, plain) {
+		t.Fatalf("seekable %s\nplain    %s", rangeText(seekableResp), rangeText(plain))
+	}
+	if got := decoded.Load(); got > TimeRangeDecodeBytes {
+		t.Errorf("decoded %d bytes of frames; the limit is %d", got, TimeRangeDecodeBytes)
 	}
 }

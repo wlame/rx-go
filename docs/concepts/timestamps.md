@@ -151,7 +151,7 @@ and last are those of the first and the last line with a timestamp of
 its own, read in `RX_LOG_TZ` like `line_timestamps`, so a query for
 either finds that line. A line index holds them; without one a plain or
 seekable zstd file is read at its head and at most 16 MiB back from its
-end, and a gzip, bzip2, xz or plain zstd file gives no range over HTTP
+end (decoding at most 32 MiB of a seekable file's frames), and a gzip, bzip2, xz or plain zstd file gives no range over HTTP
 until its index is built (`rx time-range` builds it).
 
 ## How a line is found

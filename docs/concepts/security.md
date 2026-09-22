@@ -677,6 +677,14 @@ happens at all.
   the byte limit is never held whole. A client that disconnects stops
   the read. `rx samples` on the command line has neither limit; see
   [`GET /v1/samples`](../api/endpoints/samples.md#answer-over-the-line-or-byte-limit)
+- Exhausting the server's memory with `GET /v1/time-range` over a small
+  seekable zstd file of large frames (a 34 KB file of two frames held
+  250 MiB of text, and reading its last mebibyte decoded a 130 MiB
+  frame per request) — blocked by adding up the text of every frame the
+  read back from the end decodes and refusing, before it is decoded, a
+  frame that would take the sum past 32 MiB, twice the 16 MiB of text
+  the read examines; the answer then has `last_ms: null`; see
+  [`GET /v1/time-range`](../api/endpoints/time-range.md#what-a-request-reads)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range

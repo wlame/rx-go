@@ -3,6 +3,7 @@ package samples
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/wlame/rx-go/internal/config"
@@ -33,6 +34,15 @@ const (
 // whose last timestamped line starts further back answers last_ms null.
 const TimeRangeTailBytes = 16 * tailStepBytes
 
+// TimeRangeDecodeBytes is the most text the read back from the end of a
+// seekable zstd file decodes: twice TimeRangeTailBytes. A frame decodes
+// whole, and a frame may hold up to 128 MiB of text, so a read of a
+// mebibyte of text can cost a hundred times that. A file whose frames
+// at its end are too large for the limit answers last_ms null. Frames
+// of 16 MiB fit: the TimeRangeTailBytes of text the read examines lie
+// in at most two of them.
+const TimeRangeDecodeBytes = 2 * TimeRangeTailBytes
+
 // TimeRange returns the time range of one file: its timestamp format,
 // its first and last timestamp as UTC instants, the zone its lines show
 // times in, and its first timestamp as written. It reads req.Path
@@ -47,7 +57,9 @@ const TimeRangeTailBytes = 16 * tailStepBytes
 //   - without one, a plain or seekable zstd file: the head of its text,
 //     at most timestamps.SampleBytes, gives the format and the first
 //     timestamp, and a read back from the end in steps of a mebibyte,
-//     at most TimeRangeTailBytes, the last (source "scan").
+//     at most TimeRangeTailBytes, the last (source "scan"). The read
+//     back decodes at most TimeRangeDecodeBytes of a seekable file's
+//     frames; past either limit last_ms is null.
 //   - without one, a gzip, bzip2, xz or plain zstd file: the head of its
 //     text gives the format; first_ms and last_ms stay null (source
 //     "none"). The answer never decompresses a whole file: an index
@@ -155,11 +167,7 @@ func scanTimeRange(req Request, kind filekind.Kind, logZone config.Zone) (*rxtyp
 		r.first, r.example = &first, &text
 	}
 	if byPosition && r.first != nil {
-		text, size, err := textByPosition(req.context(), file, kind)
-		if err != nil {
-			return nil, err
-		}
-		last, ok, err := lastStampFromEnd(req.context(), text, size, parser, TimeRangeTailBytes)
+		last, ok, err := lastStampOfTail(req.context(), file, kind, parser)
 		if err != nil {
 			return nil, err
 		}
@@ -174,6 +182,24 @@ func scanTimeRange(req Request, kind filekind.Kind, logZone config.Zone) (*rxtyp
 		resp.FirstMs = nil
 	}
 	return resp, nil
+}
+
+// lastStampOfTail returns the own timestamp of the last timestamped line
+// that starts within TimeRangeTailBytes of the end of file's text, a
+// plain or seekable zstd file, and false when there is none or when
+// finding it would decode more than TimeRangeDecodeBytes of a seekable
+// file's frames. The answer is then unknown rather than an error: the
+// first timestamp still makes a useful answer.
+func lastStampOfTail(ctx context.Context, file positionalFile, kind filekind.Kind, parser *timestamps.Parser) (timestamps.Stamp, bool, error) {
+	text, size, err := textByPosition(ctx, file, kind, TimeRangeDecodeBytes)
+	if err != nil {
+		return timestamps.Stamp{}, false, err
+	}
+	last, ok, err := lastStampFromEnd(ctx, text, size, parser, TimeRangeTailBytes)
+	if errors.Is(err, errDecodeLimit) {
+		return timestamps.Stamp{}, false, nil
+	}
+	return last, ok, err
 }
 
 // describe fills the format, zone, example and instants of resp.
