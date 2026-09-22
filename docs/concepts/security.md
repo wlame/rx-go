@@ -647,7 +647,8 @@ happens at all.
   64-byte file can declare 4 GiB, in any of its blocks) — blocked by
   reading the xz container in rx and checking every block header before
   its dictionary is reserved: at most 16 MiB to decide what a file is,
-  128 MiB to read it; see
+  128 MiB to read it, and no more than the text of a block whose header
+  declares that size; see
   [Compression](compression.md#how-rx-decides-what-a-file-is)
 - Exhausting the server's memory with a search, a samples request or an
   index build over a small zstd file that declares a window of

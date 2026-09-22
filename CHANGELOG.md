@@ -179,6 +179,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file whose first block declares more for text without probing it
   (`xz -9` declares 64 MiB); every command probes and reads xz with at
   most a 128 MiB dictionary and refuses a block that declares more.
+- An xz block whose header declares the size of its text now reserves
+  a dictionary of that size (at least 4 KiB) instead of the one the
+  header names, which no match in the block can use. A 99 KB file of
+  5,500 empty blocks that each declared their size and named 128 MiB
+  cost `rx samples` 18 s and 420 MB; it now costs 0.08 s and 21 MB.
+  `xz -T` writes the size in every block, so its files decode with
+  less memory, to the same text. A block that leaves the size out
+  still reserves what it names, up to the 128 MiB limit.
 - An xz file cut short where a block or its index should start was read
   as complete, its text up to the cut answered as all of it; it is now
   a stream that ends early.
