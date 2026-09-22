@@ -8,7 +8,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -157,35 +156,21 @@ func TestEncodeDecode_RoundTrip_Parallel(t *testing.T) {
 		t.Errorf("expected multiple frames, got %d", tbl.NumFrames)
 	}
 
+	// Decode every frame, in order, from the encoded bytes.
 	encoded := out.Bytes()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.zst")
-	if err := os.WriteFile(path, encoded, 0o644); err != nil {
+	r := bytes.NewReader(encoded)
+	parsed, err := ReadSeekTable(r, int64(len(encoded)))
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	// Decode all frames in parallel.
 	dec := NewDecoder()
-	parsed, err := ReadSeekTable(bytes.NewReader(encoded), int64(len(encoded)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	indices := make([]int, parsed.NumFrames)
-	for i := range indices {
-		indices[i] = i
-	}
-	got, err := dec.DecompressFrames(context.Background(), path, indices, parsed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != parsed.NumFrames {
-		t.Errorf("got %d frames, want %d", len(got), parsed.NumFrames)
-	}
-
-	// Reassemble by order and compare.
 	var reconstructed bytes.Buffer
-	for i := 0; i < parsed.NumFrames; i++ {
-		reconstructed.Write(got[i])
+	for i := range parsed.NumFrames {
+		frame, err := dec.DecompressFrameAt(r, i, parsed)
+		if err != nil {
+			t.Fatalf("DecompressFrameAt[%d]: %v", i, err)
+		}
+		reconstructed.Write(frame)
 	}
 	if !bytes.Equal(reconstructed.Bytes(), payload) {
 		t.Errorf("payload mismatch: got %d bytes, want %d", reconstructed.Len(), len(payload))
@@ -224,44 +209,6 @@ func TestEncodeDecode_FramesAreNewlineAligned(t *testing.T) {
 		if len(data) == 0 || data[len(data)-1] != '\n' {
 			t.Errorf("frame %d does not end with newline", i)
 		}
-	}
-}
-
-func TestDecompressRange(t *testing.T) {
-	t.Parallel()
-	payload := []byte(strings.Repeat("abcdefghij", 2000)) // 20000 bytes, no newlines
-	// Force newline-aligned chunks: add a newline every 500 bytes.
-	var aligned bytes.Buffer
-	for i, b := range payload {
-		aligned.WriteByte(b)
-		if (i+1)%500 == 0 {
-			aligned.WriteByte('\n')
-		}
-	}
-	full := aligned.Bytes()
-	enc := NewEncoder(EncoderConfig{FrameSize: 600})
-	var out bytes.Buffer
-	tbl, err := enc.Encode(context.Background(), bytes.NewReader(full), int64(len(full)), &out)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	encoded := out.Bytes()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.zst")
-	os.WriteFile(path, encoded, 0o644)
-
-	dec := NewDecoder()
-	// Pick a slice in the middle.
-	start := int64(5000)
-	length := int64(200)
-	got, err := dec.DecompressRange(context.Background(), path, tbl, start, length)
-	if err != nil {
-		t.Fatalf("DecompressRange: %v", err)
-	}
-	want := full[start : start+length]
-	if !bytes.Equal(got, want) {
-		t.Errorf("range mismatch at [%d, %d):\ngot %q\nwant %q", start, start+length, got, want)
 	}
 }
 

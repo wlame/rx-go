@@ -27,9 +27,9 @@ import (
 // returns. Under streaming, we expect the total decompressed count to
 // equal the number of frames (every frame eventually ran through the
 // seam). The key behavioral discriminator is that the seam is actually
-// INVOKED per-frame rather than bypassed — if the implementation used
-// a bulk DecompressFrames call (the old behavior), the seam would be
-// invoked zero times, the counter would stay at 0, and the test fails.
+// INVOKED per-frame rather than bypassed — if the implementation
+// decoded a batch's frames in one bulk call, the seam would be invoked
+// zero times, the counter would stay at 0, and the test fails.
 //
 // This is weaker than a live lockstep observation but strong enough to
 // catch regressions toward the batch-materialization pattern: any code
@@ -81,9 +81,9 @@ func TestScanFrameBatch_BoundedMemory(t *testing.T) {
 	}
 
 	// Assertion: the streaming seam was invoked for every frame in the
-	// file. If the old batch-materialization path were still in place
-	// (scanFrameBatch calling dec.DecompressFrames in bulk), the seam
-	// would never be reached and the counter would be zero.
+	// file. If scanFrameBatch decoded a batch's frames in one bulk
+	// call instead, the seam would never be reached and the counter
+	// would be zero.
 	tbl, err := readSeekTable(pinForTest(t, path))
 	if err != nil {
 		t.Fatalf("readSeekTable: %v", err)
