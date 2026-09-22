@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -306,5 +308,14 @@ func TestNewReader_AppliesTheWindowLimitToZstd(t *testing.T) {
 	}
 	if allocated > 16<<20 {
 		t.Errorf("256 MiB window: allocated %d MiB to refuse it", allocated>>20)
+	}
+}
+
+// The reason every command gives for a refused file names the limit
+// the decoders apply, so the two cannot drift apart.
+func TestTooLargeToDecodeReason_NamesTheWindowLimit(t *testing.T) {
+	limit := fmt.Sprintf("more than %d MiB at once", WindowLimit>>20)
+	if !strings.Contains(TooLargeToDecodeReason, limit) {
+		t.Errorf("reason %q does not say %q", TooLargeToDecodeReason, limit)
 	}
 }

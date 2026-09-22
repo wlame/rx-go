@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -311,8 +310,5 @@ func TestTraceKeepsNoMatchOfAStreamWhoseLaterFrameNeedsMoreThanTheLimit(t *testi
 	requireSkipReasons(t, resp, map[string]string{path: compression.TooLargeToDecodeReason})
 	if len(resp.Matches) != 0 {
 		t.Errorf("trace kept %d matches of the frame before the refused one", len(resp.Matches))
-	}
-	if !strings.Contains(compression.TooLargeToDecodeReason, "128 MiB") {
-		t.Errorf("reason %q does not name the 128 MiB limit", compression.TooLargeToDecodeReason)
 	}
 }
