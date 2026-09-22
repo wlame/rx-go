@@ -26,6 +26,7 @@ No parameters, no body.
   "status":            "ok",
   "ripgrep_available": true,
   "app_version":       "2.2.1-go",
+  "contract_version":  "1.3",
   "go_version":        "go1.26.2",
   "os_info": {
     "system":   "linux",
@@ -82,6 +83,7 @@ No parameters, no body.
 | `status` | string | Always `"ok"` when the server returns a response |
 | `ripgrep_available` | bool | `true` if `rg` is on `PATH`. When `false`, `/v1/trace` and `/v1/samples` return `503` |
 | `app_version` | string | `rx` version (`"2.2.1-go"` or `"dev"` in unreleased builds) |
+| `contract_version` | string | HTTP wire contract version, `MAJOR.MINOR`. A higher minor adds fields or parameters; a different major means a client written for another major cannot read this server |
 | `go_version` | string | Go toolchain version the binary was built with |
 | `os_info` | object | `{system, machine, compiler, version}` from `runtime.GOOS`, `runtime.GOARCH`, etc. |
 | `system_resources` | object | CPU cores and RAM totals. `ram_*` fields are `null` on non-Linux hosts |
