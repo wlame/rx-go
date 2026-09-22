@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/wlame/rx-go/internal/compression"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -86,6 +87,7 @@ var skipReasons = []struct {
 	err    error
 	reason string
 }{
+	{compression.ErrTooLargeToDecode, compression.TooLargeToDecodeReason},
 	{ErrIncompleteStream, reasonIncompleteStream},
 	{seekable.ErrDamagedFrame, reasonDamagedFrames},
 	{errLineMatchesNoPattern, "a matched line matches none of the patterns alone, so which pattern it belongs to cannot be told"},

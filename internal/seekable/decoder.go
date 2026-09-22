@@ -30,12 +30,30 @@ var ErrFrameIndexOutOfRange = errors.New("frame index out of range")
 var ErrDamagedFrame = errors.New("seekable zstd frame is damaged")
 
 // DecodeFrame decompresses compressed, the bytes of frame as the seek
-// table places them, with zd, a decoder used through its stateless
-// DecodeAll. The text must be exactly as long as the table says: a
-// frame that gives another length would shift every offset after it.
-// An error wraps ErrDamagedFrame and names the frame.
+// table places them, with zd, a decoder from compression.AcquireDecoder
+// used through its stateless DecodeAll. The text must be exactly as
+// long as the table says: a frame that gives another length would
+// shift every offset after it. An error wraps ErrDamagedFrame and names
+// the frame, except a refusal for size.
+//
+// SECURITY: the whole text is held, so it is held to
+// compression.WindowLimit. A frame the table gives more than that is
+// refused before anything is decoded (ReadSeekTable has refused such a
+// table already), and so is a frame whose header declares a window
+// above it, both with an error wrapping compression.ErrWindowTooLarge:
+// the file is too large to read, not damaged, and must not be answered
+// as if its other frames were all of it. A frame that would give more
+// text than its entry is stopped by the decoder at the limit and is
+// damaged.
 func DecodeFrame(zd *zstd.Decoder, compressed []byte, frame FrameInfo) ([]byte, error) {
+	if frameTooLarge(frame) {
+		return nil, fmt.Errorf("frame %d: %w: the seek table gives it %d bytes of text in %d bytes",
+			frame.Index, compression.ErrWindowTooLarge, frame.DecompressedSize, frame.CompressedSize)
+	}
 	out, err := zd.DecodeAll(compressed, nil)
+	if errors.Is(err, zstd.ErrWindowSizeExceeded) {
+		return nil, fmt.Errorf("frame %d: %w: %w", frame.Index, compression.ErrWindowTooLarge, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: frame %d: %w", ErrDamagedFrame, frame.Index, err)
 	}

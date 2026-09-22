@@ -253,6 +253,12 @@ func ProcessCompressed(
 	// rg after hitting maxResults, the io.Copy goroutine sees EPIPE
 	// or "io: read/write on closed pipe" on its next write — those
 	// are EXPECTED and should not be logged as corruption.
+	// A stream refused for its window or dictionary is refused whole:
+	// the matches before the refusal are dropped, so a file rx cannot
+	// read is never answered as the part of it that came first.
+	if errors.Is(copyErr, compression.ErrTooLargeToDecode) {
+		return nil, nil, elapsed, fmt.Errorf("%s: %w", source.Path(), copyErr)
+	}
 	if copyErr != nil && !isCopyTerminationNoise(copyErr) {
 		slog.Default().Warn("compressed_stream_copy_error",
 			"path", source.Path(),

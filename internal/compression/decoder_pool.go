@@ -26,11 +26,17 @@ import (
 // when Get finds the pool empty; items returned via Put may be GC'd at
 // any time, so the pool is a best-effort cache, not a guarantee of reuse.
 // For hot paths with many frames this is exactly what we want.
+//
+// SECURITY: the decoders are created with boundedOptions, so DecodeAll
+// refuses a frame whose window or declared content size is above
+// WindowLimit before it allocates for it, and stops a frame whose text
+// grows past WindowLimit. A frame decoded whole costs at most that.
 var decoderPool = sync.Pool{
 	New: func() any {
-		// zstd.NewReader(nil) never errors for nil source — the returned
-		// decoder is used only via DecodeAll, which is stateless.
-		d, _ := zstd.NewReader(nil)
+		// zstd.NewReader(nil) never errors for nil source and valid
+		// options — the returned decoder is used only via DecodeAll,
+		// which is stateless.
+		d, _ := zstd.NewReader(nil, boundedOptions()...)
 		return d
 	},
 }

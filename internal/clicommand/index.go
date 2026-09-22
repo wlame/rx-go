@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wlame/rx-go/internal/analyzer"
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
@@ -468,6 +469,12 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		}
 
 		idx, err := index.Build(path, buildOpts)
+		if errors.Is(err, compression.ErrTooLargeToDecode) {
+			// A file rx refuses to decompress is skipped with the reason,
+			// as trace skips it, not counted as a failure to index.
+			result.skip(path, compression.TooLargeToDecodeReason)
+			continue
+		}
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
 				Path:     path,

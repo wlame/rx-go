@@ -112,6 +112,12 @@ type Kind struct {
 	// with `cat`, or a damaged table): the error says why, and the file
 	// is read as plain zstd, which gives its whole text. Nil otherwise.
 	TableMismatch error
+	// TableUnused is set for a zstd file whose seek table describes it
+	// but gives a frame more than rx decodes whole
+	// (seekable.ErrFrameTooLargeToHold): the error says which, and the
+	// file is read as plain zstd, which gives the same text a window at
+	// a time. Nil otherwise.
+	TableUnused error
 }
 
 // IsText reports whether the file's text is text rx can read.
@@ -202,6 +208,9 @@ func FormatOf(r io.ReaderAt, size int64) Kind {
 	table, err := seekable.ReadSeekTable(r, size)
 	if errors.Is(err, seekable.ErrSeekTableMismatch) {
 		return Kind{Format: compression.FormatZstd, TableMismatch: err}
+	}
+	if errors.Is(err, seekable.ErrFrameTooLargeToHold) {
+		return Kind{Format: compression.FormatZstd, TableUnused: err}
 	}
 	if err != nil {
 		return Kind{Format: compression.FormatZstd}

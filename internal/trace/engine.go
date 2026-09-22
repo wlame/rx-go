@@ -250,6 +250,12 @@ func (e *Engine) RunWithOptions(
 			slog.Default().Warn("seek_table_mismatch", "path", fp, "error", kind.TableMismatch.Error(),
 				"read_as", "plain zstd")
 		}
+		if kind.TableUnused != nil {
+			// The same text, one stream instead of frames in parallel:
+			// slower, which an operator may want to know about.
+			slog.Default().Warn("seek_table_unused", "path", fp, "error", kind.TableUnused.Error(),
+				"read_as", "plain zstd")
+		}
 		// Seekable zstd: a zstd file whose seek table describes it. One
 		// whose table does not is read as the plain zstd stream it still
 		// is, below.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/output"
@@ -271,6 +272,9 @@ func runSamples(out io.Writer, p samplesParams) error {
 		// A time the request names wrongly, or a time query on a file
 		// without timestamps: the request, not the file, is at fault.
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+	}
+	if errors.Is(err, compression.ErrTooLargeToDecode) {
+		return exitWithError(os.Stderr, ExitGenericError, "%s: %s", compression.TooLargeToDecodeReason, p.path)
 	}
 	if err != nil {
 		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())

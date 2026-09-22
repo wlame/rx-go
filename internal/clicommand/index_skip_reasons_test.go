@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ulikunitz/xz"
+
+	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/testutil/xzfile"
 )
 
 // archiveFixture writes a gzipped archive, which is not text.
@@ -91,3 +96,22 @@ func assertSkipReasons(t *testing.T, reasons []any, want map[string]string) {
 // archiveReason is why archiveFixture is not indexed: its decompressed
 // text holds NUL bytes, as a tar stream's does.
 const archiveReason = "not a text file: a NUL byte in the first 8 KiB of its decompressed text"
+
+// A file rx refuses to decompress, here an xz file whose block declares
+// a 256 MiB dictionary, is skipped with the reason, as trace skips it,
+// rather than failing the command.
+func TestIndex_JSONSkipsAFileThatNeedsMoreThanTheLimitToDecode(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	text := bytes.Repeat([]byte("2025-12-10 07:00:00.000 INFO a line\n"), 1000)
+	path := filepath.Join(t.TempDir(), "big-dictionary.log.xz")
+	body := xzfile.WithDictionaryCode(t, xzfile.Encode(t, text, xz.WriterConfig{}), 0, 32)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	zero := 0
+	result := runIndexJSON(t, indexParams{paths: []string{path}, threshold: &zero})
+
+	reasons, _ := result["skip_reasons"].([]any)
+	assertSkipReasons(t, reasons, map[string]string{path: compression.TooLargeToDecodeReason})
+}

@@ -3,6 +3,7 @@ package compression
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"testing"
 
@@ -258,5 +259,52 @@ func TestNewReader_CloseClosesSource_Bzip2(t *testing.T) {
 	}
 	if !spy.closed {
 		t.Errorf("wrapper.Close did not close source spy — R2M2 contract broken")
+	}
+}
+
+// zstdWithWindow compresses text as a zstd stream whose frame declares a
+// window of window bytes. The writer declares the window it is given
+// only for an input longer than its first block.
+func zstdWithWindow(t *testing.T, text []byte, window int) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w, err := zstd.NewWriter(&out, zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(window))
+	if err != nil {
+		t.Fatalf("zstd: %v", err)
+	}
+	if _, err := w.Write(text); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+	return out.Bytes()
+}
+
+// NewReader, which every command reads a zstd stream through, decodes a
+// frame whose window is WindowLimit (what `zstd --long` writes) and
+// refuses one whose window is above it, before reserving it.
+func TestNewReader_AppliesTheWindowLimitToZstd(t *testing.T) {
+	text := bytes.Repeat([]byte("2025-12-10 07:00:00.000 INFO a line of the text\n"), 10_000)
+	read := func(body []byte) ([]byte, error) {
+		r, err := NewReader(io.NopCloser(bytes.NewReader(body)), FormatZstd)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = r.Close() }()
+		return io.ReadAll(r)
+	}
+	got, err := read(zstdWithWindow(t, text, WindowLimit))
+	if err != nil || !bytes.Equal(got, text) {
+		t.Errorf("128 MiB window: %d bytes, %v; want the text", len(got), err)
+	}
+	tooLarge := zstdWithWindow(t, text, 2*WindowLimit)
+	var refusal error
+	allocated := allocatedBy(func() { _, refusal = read(tooLarge) })
+	if !errors.Is(refusal, ErrWindowTooLarge) || !errors.Is(refusal, ErrTooLargeToDecode) {
+		t.Errorf("256 MiB window: err = %v; want ErrWindowTooLarge", refusal)
+	}
+	if allocated > 16<<20 {
+		t.Errorf("256 MiB window: allocated %d MiB to refuse it", allocated>>20)
 	}
 }

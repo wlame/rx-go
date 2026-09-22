@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+
+	"github.com/wlame/rx-go/internal/compression"
 )
 
 // TestDecoder_ThreeFrameRoundTrip is the regression test for the
@@ -210,5 +213,79 @@ func TestDecodeFrame_RefusesDamagedBytesAndAWrongLength(t *testing.T) {
 				t.Fatalf("DecodeFrame err = %v, want ErrDamagedFrame naming frame 7", err)
 			}
 		})
+	}
+}
+
+// A frame too large to hold whole is refused as too large, never as
+// damaged: a frame whose header declares a window above
+// compression.WindowLimit, and one whose seek-table entry gives it more
+// text than that, which is refused before anything is decoded. A
+// search goes around a damaged frame and keeps the rest; a refused one
+// must stop the whole read.
+func TestDecodeFrame_RefusesAFrameTooLargeToHoldAsTooLargeNotDamaged(t *testing.T) {
+	t.Parallel()
+	// The writer declares the window it is given only for an input
+	// longer than its first block.
+	text := bytes.Repeat([]byte("LINE 1 some text\n"), 25_000)
+	var stream bytes.Buffer
+	w, err := zstd.NewWriter(&stream, zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(256<<20))
+	if err != nil {
+		t.Fatalf("create encoder: %v", err)
+	}
+	if _, err := w.Write(text); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	decoder := compression.AcquireDecoder()
+	defer compression.ReleaseDecoder(decoder)
+
+	cases := map[string]FrameInfo{
+		"a 256 MiB window": {Index: 3, DecompressedSize: int64(len(text)), CompressedSize: int64(stream.Len())},
+		"an entry of more text than the limit": {
+			Index: 3, DecompressedSize: compression.WindowLimit + 1, CompressedSize: int64(stream.Len()),
+		},
+	}
+	for name, frame := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := DecodeFrame(decoder, stream.Bytes(), frame)
+			if !errors.Is(err, compression.ErrWindowTooLarge) || errors.Is(err, ErrDamagedFrame) {
+				t.Errorf("err = %v; want compression.ErrWindowTooLarge and not ErrDamagedFrame", err)
+			}
+			if !strings.Contains(fmt.Sprint(err), "frame 3") {
+				t.Errorf("err = %v; want it to name frame 3", err)
+			}
+		})
+	}
+}
+
+// A seek table that describes its file but gives a frame more text than
+// compression.WindowLimit is not used: ReadSeekTable returns
+// ErrFrameTooLargeToHold, which is not ErrSeekTableMismatch, and the
+// file is read as the zstd stream it also is. The same text in frames
+// within the limit keeps its table.
+func TestReadSeekTable_DoesNotUseATableWithAFrameAboveTheLimit(t *testing.T) {
+	line := []byte("2025-12-10 07:00:00.000 INFO same line again\n")
+	text := bytes.Repeat(line, (compression.WindowLimit+1<<20)/len(line))
+	encode := func(frameSize int) []byte {
+		var out bytes.Buffer
+		enc := NewEncoder(EncoderConfig{FrameSize: frameSize, Workers: 1})
+		if _, err := enc.Encode(context.Background(), bytes.NewReader(text), int64(len(text)), &out); err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		return out.Bytes()
+	}
+
+	oneFrame := encode(len(text))
+	_, err := ReadSeekTable(bytes.NewReader(oneFrame), int64(len(oneFrame)))
+	if !errors.Is(err, ErrFrameTooLargeToHold) || errors.Is(err, ErrSeekTableMismatch) {
+		t.Errorf("one %d MiB frame: err = %v; want ErrFrameTooLargeToHold only", len(text)>>20, err)
+	}
+
+	framesWithinTheLimit := encode(compression.WindowLimit / 2)
+	tbl, err := ReadSeekTable(bytes.NewReader(framesWithinTheLimit), int64(len(framesWithinTheLimit)))
+	if err != nil || tbl.NumFrames != 3 {
+		t.Errorf("frames of 64 MiB: %v, %v; want a table of 3 frames", tbl, err)
 	}
 }
