@@ -23,8 +23,8 @@ func allFormats() []Format {
 	return out
 }
 
-// FuzzOwn: no input panics, and nothing past the window changes the
-// answer.
+// FuzzOwn: no input panics, nothing past the window changes the
+// answer, and Locate finds Own's timestamp in a span of the window.
 func FuzzOwn(f *testing.F) {
 	for _, bl := range ownBenchLines {
 		f.Add([]byte(bl.line))
@@ -43,6 +43,13 @@ func FuzzOwn(f *testing.F) {
 	f.Fuzz(func(t *testing.T, line []byte) {
 		for _, p := range parsers {
 			got, ok := p.Own(line)
+			located, span, locatedOK := p.Locate(line)
+			if located != got || locatedOK != ok {
+				t.Fatalf("%s: Locate %+v,%t differs from Own %+v,%t", p, located, locatedOK, got, ok)
+			}
+			if ok && (span.Start < 0 || span.End <= span.Start || span.End > min(len(line), WindowBytes)) {
+				t.Fatalf("%s: span %+v outside the window of a %d-byte line", p, span, len(line))
+			}
 			if len(line) <= WindowBytes {
 				continue
 			}
