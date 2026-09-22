@@ -1439,6 +1439,56 @@
               "description": "URL to POST when the whole trace completes",
               "type": "string"
             }
+          },
+          {
+            "description": "Match case-insensitively (ripgrep -i)",
+            "explode": false,
+            "in": "query",
+            "name": "ignore_case",
+            "schema": {
+              "description": "Match case-insensitively (ripgrep -i)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Match only whole words (ripgrep -w)",
+            "explode": false,
+            "in": "query",
+            "name": "word_regexp",
+            "schema": {
+              "description": "Match only whole words (ripgrep -w)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Match only whole lines (ripgrep -x)",
+            "explode": false,
+            "in": "query",
+            "name": "line_regexp",
+            "schema": {
+              "description": "Match only whole lines (ripgrep -x)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Treat every pattern as literal text (ripgrep -F)",
+            "explode": false,
+            "in": "query",
+            "name": "fixed_strings",
+            "schema": {
+              "description": "Treat every pattern as literal text (ripgrep -F)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)",
+            "explode": false,
+            "in": "query",
+            "name": "pcre2",
+            "schema": {
+              "description": "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

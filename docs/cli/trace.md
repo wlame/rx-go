@@ -165,6 +165,9 @@ rx -P "timeout(?=\s+after)" /var/log/app.log    # PCRE2 look-ahead
 
 Each answer is the one `rg` gives for the same flags. `-P` needs a
 ripgrep built with PCRE2 (`rg --pcre2-version` says whether yours is).
+Over HTTP the same flags are query parameters of
+[`GET /v1/trace`](../api/endpoints/trace.md#matching-flags), such as
+`ignore_case=true`.
 
 ### Directory scan with depth control
 
