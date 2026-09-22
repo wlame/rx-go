@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GET /health` lists `features`: the names of the features this build
+  serves, sorted (`trace_matching_flags`, `trace_context_and_switches`,
+  `samples_index_build`, `samples_timestamps`, `line_timestamps`), so a
+  client checks for a name instead of comparing contract versions.
+  Part of contract 1.5.
 - `RX_SAMPLES_MAX_LINES` (default 100,000, from 1,000 to 10,000,000)
   caps the lines one `GET /v1/samples` answer holds, summed over its
   samples. A request whose answer would hold more is refused with

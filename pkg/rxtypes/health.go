@@ -15,7 +15,10 @@ type HealthResponse struct {
 	// ContractVersion is the HTTP wire contract this backend speaks,
 	// MAJOR.MINOR. Both backends report the same value; a client that
 	// does not know the major must refuse to run against it.
-	ContractVersion string            `json:"contract_version" doc:"HTTP wire contract version, MAJOR.MINOR"`
+	ContractVersion string `json:"contract_version" doc:"HTTP wire contract version, MAJOR.MINOR"`
+	// Features names what this build serves, sorted: a client shows a
+	// control that needs one only when its name is listed.
+	Features        []string          `json:"features" nullable:"false" doc:"The names of the features this build serves, sorted. A client checks whether a name is listed before it uses the feature; the API documentation lists the names."`
 	GoVersion       string            `json:"go_version"`
 	OSInfo          map[string]string `json:"os_info"`
 	SystemResources map[string]any    `json:"system_resources"`
