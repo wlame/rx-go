@@ -1,16 +1,15 @@
 // Package index implements unified file indexes for the rx-go trace
-// engine. It handles on-disk persistence, cache-validity checking, and
-// (in later milestones) index building.
+// engine: index building, on-disk persistence, and cache-validity
+// checking.
 //
-// At M2 the module ships with:
+// The package provides:
+//   - Build (builder.go), which walks a source file and produces its
+//     UnifiedFileIndex.
 //   - Cache path scheme matching Python's unified_index.py exactly.
 //   - Save + Load using pkg/rxtypes.UnifiedFileIndex as the wire type.
-//   - IsValidForSource: mtime + size mtime-based validation per user
-//     decision 6.9.1 — the index is invalidated when source.mtime
-//     exceeds the recorded mtime OR sizes differ.
-//
-// The index builder itself (Build()) is a stub at M2; it's fleshed out
-// in M3 when the trace engine comes online.
+//   - IsValidForSource: the index is invalidated when the source's
+//     size or mtime differs from the recorded values, or its inode,
+//     ctime or content fingerprint no longer match.
 package index
 
 import (
@@ -207,10 +206,9 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 // stat failures — a missing/unreadable source is treated as "index
 // is stale".
 //
-// invalidation is mtime-based, no TTL, no
-// size-cap. The field SourceModifiedAt carries the Python-style ISO
-// timestamp; we compare it byte-for-byte with the current mtime
-// formatted the same way. Size check is exact.
+// Invalidation has no TTL and no size cap. The field SourceModifiedAt
+// carries the Python-style ISO timestamp; we compare it byte-for-byte
+// with the current mtime formatted the same way. Size check is exact.
 func IsValidForSource(idx *rxtypes.UnifiedFileIndex, sourcePath string) bool {
 	info, err := os.Stat(sourcePath)
 	if err != nil {
@@ -284,9 +282,9 @@ func SourceIdentityFields(info os.FileInfo) (*uint64, *string) {
 	return &inode, &stamp
 }
 
-// FormatMtime exposes the mtime-to-string conversion so tests (and the
-// index builder when it lands in M3) can stamp the same format. Local
-// time, NOT UTC — Python parity.
+// FormatMtime exposes the mtime-to-string conversion so the trace
+// cache and tests can stamp the same format. Local time, NOT UTC —
+// Python parity.
 func FormatMtime(t time.Time) string { return formatMtime(t) }
 
 // formatMtime converts t to the Python-compatible ISO layout in LOCAL

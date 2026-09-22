@@ -9,8 +9,6 @@ import (
 // isoTimeLayout is the exact format Python's datetime.isoformat() emits
 // for UTC-naive datetimes: YYYY-MM-DDTHH:MM:SS.microseconds, NO timezone
 // suffix. Go's reference time is "2006-01-02T15:04:05.000000".
-//
-// Decision 5.7 in stage-5-decisions.md locks this layout.
 const isoTimeLayout = "2006-01-02T15:04:05.000000"
 
 // ISOTime is a time.Time wrapper whose JSON form matches Python's
@@ -21,7 +19,7 @@ const isoTimeLayout = "2006-01-02T15:04:05.000000"
 // nanosecond precision and a "Z" suffix. rx-python writes
 // ~/.cache/rx/ JSON artifacts using the Python layout; if the Go port
 // re-emitted those timestamps in Go's default shape, the cache files
-// would fail the round-trip parity invariant (spec §6.3).
+// would fail the round-trip parity invariant.
 //
 // Round-trip behavior:
 //

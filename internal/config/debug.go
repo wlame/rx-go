@@ -15,8 +15,8 @@ func DebugMode() bool {
 //
 // Precedence:
 //  1. $RX_DEBUG_DIR (explicit override)
-//  2. $TMPDIR/rx-debug     (spec §9 intentional deviation 4: Go writes
-//     debug files to TMPDIR to keep the user's CWD clean, whereas Python
+//  2. $TMPDIR/rx-debug     (a deliberate difference: Go writes debug
+//     files to TMPDIR to keep the user's CWD clean, whereas Python
 //     writes them to the current working directory)
 //  3. /tmp/rx-debug        (fallback when TMPDIR is unset)
 func DebugDir() string {

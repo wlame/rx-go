@@ -207,9 +207,8 @@ func TestDetector_LongRun(t *testing.T) {
 // the real index.Build pipeline and its anomalies surface in the
 // UnifiedFileIndex.Anomalies list with Detector == detectorName.
 //
-// This is the test mandated by the plan's Task 7: "end-to-end test via
-// index.Build(opts{Analyze: true}) asserting the detector appears in
-// UnifiedFileIndex.Anomalies".
+// This is the end-to-end test via index.Build(opts{Analyze: true}),
+// asserting the detector's anomaly appears in UnifiedFileIndex.Anomalies.
 func TestDetector_EndToEnd_ViaIndexBuild(t *testing.T) {
 	// Six identical lines surrounded by singleton lines so the run is
 	// unambiguous.
@@ -314,9 +313,8 @@ func TestDetector_SharedInstance_StateLeakScenario(t *testing.T) {
 	}
 }
 
-// Make sure the detector metadata is what the plan specifies. If
-// someone tweaks a constant here, this test fails loudly so the change
-// is deliberate.
+// Pin the detector's metadata. If someone tweaks a constant here, this
+// test fails loudly so the change is deliberate.
 func TestDetector_Metadata(t *testing.T) {
 	d := New()
 	cases := []struct {

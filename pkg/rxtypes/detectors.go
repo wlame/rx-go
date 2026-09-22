@@ -9,10 +9,9 @@ type SeverityRange struct {
 // DetectorInfo is the metadata for one registered analyzer, returned by
 // GET /v1/detectors.
 //
-// At v1 rx-go ships with an empty registry (per user instructions). This
-// struct is still defined so the endpoint emits the correct envelope
-// shape and the rx-viewer frontend doesn't need to branch on a missing
-// field.
+// The endpoint emits the same envelope shape whether or not any
+// detector is registered, so the rx-viewer frontend doesn't need to
+// branch on a missing field.
 type DetectorInfo struct {
 	Name string `json:"name" doc:"Stable identifier, kebab-case (e.g. \"traceback-python\"). Never display-formatted; use it as a key."`
 	//nolint:lll // doc strings are long by nature; they are the spec text.

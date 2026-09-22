@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// TestDecoder_ThreeFrameRoundTrip is the safety-net regression for the
-// sync.Pool migration of the per-frame decompression path (Task 1 of
-// the performance plan). It encodes a deterministic payload into exactly
-// a multi-frame seekable-zstd file (we aim for ≥3 frames by keeping the
-// FrameSize small and the payload large), then:
+// TestDecoder_ThreeFrameRoundTrip is the regression test for the
+// pooled (sync.Pool) per-frame decompression path. It encodes a
+// deterministic payload into exactly a multi-frame seekable-zstd file
+// (we aim for ≥3 frames by keeping the FrameSize small and the payload
+// large), then:
 //
 //  1. Decodes every frame individually via DecompressFrame and asserts
 //     the concatenation equals the original payload.

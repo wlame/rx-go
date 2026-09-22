@@ -53,8 +53,8 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 )
 
-// Metadata constants — top of file so /v1/detectors output is trivial to
-// audit against the plan.
+// Metadata constants — top of file so the values /v1/detectors reports
+// are easy to find.
 const (
 	detectorName        = "long-line"
 	detectorVersion     = "0.1.0"
@@ -90,8 +90,8 @@ const (
 	// this branch still produces a sensible ceiling.
 	medianMultiplier = 4
 
-	// severity is the plan-mandated value for this detector. Navigation
-	// hint, not a verdict.
+	// severity is the fixed severity of every anomaly this detector
+	// emits. Navigation hint, not a verdict.
 	severity = 0.3
 )
 

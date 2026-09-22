@@ -9,7 +9,7 @@ import (
 )
 
 // CachePath returns the on-disk location for one analyzer's output for
-// one source file, per decision 5.3:
+// one source file:
 //
 //	<cache-base>/analyzers/<name>/v<version>/<file-sha256-prefix>_<basename>.json
 //
@@ -18,7 +18,7 @@ import (
 // at the filename and know which file's output it is.
 //
 // The hash is sha256(abs_path)[:16] — same as Python's trace cache
-// path_hash (spec §5.2) for cross-format consistency.
+// path_hash for cross-format consistency.
 func CachePath(name, version, sourcePath string) string {
 	sum := sha256.Sum256([]byte(sourcePath))
 	prefix := hex.EncodeToString(sum[:8]) // 16 hex chars = 8 bytes

@@ -285,7 +285,7 @@ func TestValidate_PrefixAmbiguity(t *testing.T) {
 	}
 }
 
-// Go-specific test (per plan §6.5.5 "new (Go-specific ENOENT case)"):
+// Go-specific test (ENOENT case):
 // ValidatePathWithinRoots must not fail on a nonexistent file; it's the
 // CALLER's job to produce a nice 404-style error after the open fails.
 func TestValidate_NonexistentPath_UsesAbsOnly(t *testing.T) {

@@ -65,8 +65,8 @@ type LineEvent struct {
 }
 
 // FlushContext carries file-global stats to detectors' Finalize calls.
-// Populated by the coordinator driver (the index builder, wired in
-// Task 5) from the already-computed line-stats accumulator.
+// Populated by the coordinator driver (the index builder) from the
+// already-computed line-stats accumulator.
 //
 // Detectors read only what they need. A detector that does not depend
 // on these stats may ignore the argument entirely.

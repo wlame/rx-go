@@ -142,12 +142,12 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	}
 
 	// Wire up the analyzer coordinator when --analyze is on. One
-	// coordinator per scan; today the builder is sequential so that's
-	// effectively one "worker". When the builder later shards the file
-	// across K workers (plan §Solution Overview), each worker will get
-	// its own Coordinator, and the per-worker anomaly slices will be
-	// combined by analyzer.Deduplicate before storage — preserving the
-	// W-line-overlap correctness story described in the plan.
+	// coordinator per scan; the builder is sequential, so that's
+	// effectively one "worker". A builder that sharded the file across
+	// K workers would give each worker its own Coordinator and combine
+	// the per-worker anomaly slices with analyzer.Deduplicate before
+	// storage, so an anomaly seen in two overlapping windows is kept
+	// once.
 	//
 	// When Analyze is false we pass a nil coordinator; walkLines skips
 	// all per-line dispatch so the hot loop stays byte-identical to its
@@ -246,8 +246,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// deduplicated by analyzer.Deduplicate — today there is only one
 	// "worker" (the single sequential walk) so dedup is effectively a
 	// pass-through, but writing the code through Deduplicate keeps the
-	// plumbing ready for the future chunk-parallel builder described in
-	// the plan.
+	// plumbing ready for a chunk-parallel builder.
 	//
 	// Empty slice vs nil: rxtypes.UnifiedFileIndex.Anomalies is
 	// *[]AnomalyRangeResult so a nil pointer serializes to JSON null

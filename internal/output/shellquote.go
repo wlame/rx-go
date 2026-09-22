@@ -3,7 +3,7 @@ package output
 import "strings"
 
 // Quote returns a shell-safe rendition of arg, matching Python's
-// shlex.quote exactly (Decision 5.8).
+// shlex.quote exactly.
 //
 // Algorithm, verbatim from Python's stdlib:
 //  1. Empty string → "”" (two single quotes).

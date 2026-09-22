@@ -1,9 +1,10 @@
-// Package analyzer hosts the pluggable file-analyzer registry. rx-go
-// ships WITHOUT any built-in analyzers at v1 (per user instructions);
-// the registry and interface are defined now so analyzers can be added
-// one at a time in future releases without reshaping the core.
+// Package analyzer hosts the pluggable analyzer registry. It accepts
+// metadata-only FileAnalyzers (Register) and streaming LineDetectors
+// (RegisterLineDetector), which the index builder drives through a
+// Coordinator. The built-in detectors are all LineDetectors, so new
+// ones can be added one at a time without reshaping the core.
 //
-// Design points (from spec §7 and decision 6.9.4):
+// Design points:
 //
 //   - Analyzers register themselves from package init() via Register().
 //   - main() calls Freeze() exactly once, before starting the HTTP
@@ -35,13 +36,13 @@ import "context"
 // parallel.
 type FileAnalyzer interface {
 	// Name is the stable identifier used in cache keys, the detectors
-	// endpoint, and the analyzer namespace (decision 5.3). Must be
+	// endpoint, and the analyzer namespace. Must be
 	// globally unique among registered analyzers.
 	Name() string
 
 	// Version is a semver string. When it changes, the analyzer's
 	// cached output is invalidated (cache keys include the version
-	// segment per decision 5.3).
+	// segment).
 	Version() string
 
 	// Category is a human-readable bucket name — "log-pattern",

@@ -37,8 +37,8 @@ func RequestIDFromContext(ctx context.Context) string {
 // it through ctx and the X-Request-ID response header.
 //
 // UUID v7 is time-sortable (prefix is ms since epoch) which makes log
-// triage much easier than v4 randoms; the spec's decision 5.9 pins
-// request IDs to v7.
+// triage much easier than v4 randoms, so generated request IDs are v7
+// (v4 only when v7 generation fails).
 //
 // If the client supplies an X-Request-ID header we trust it (caps at
 // 128 chars so a malicious client can't pollute logs with huge values).

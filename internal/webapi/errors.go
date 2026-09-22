@@ -27,8 +27,7 @@ import (
 //     {"title": "...", "status": 404, "detail": "...", "errors": [...]}
 //
 // We keep the "detail" field but suppress the others so the frontend's
-// error handling code continues to work untouched. This is documented
-// in .go-rewriter/stage-5-decisions.md (Appendix A.4).
+// error handling code continues to work untouched.
 
 // humaNewError is installed as huma.NewError so every typed handler
 // error (huma.Error404NotFound, huma.Error422UnprocessableEntity, etc)

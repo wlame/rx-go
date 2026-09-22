@@ -114,8 +114,8 @@ func TestProcessCompressed_NonCompressedError(t *testing.T) {
 // writeCorruptGzipFile produces a gzip file whose HEADER is valid
 // (gzip.NewReader succeeds) but whose DEFLATE stream is corrupted
 // mid-stream. Reading far enough surfaces "flate: corrupt input"
-// from the decompressor via io.Copy's Read path — exercising
-// R2M3's silent-error-swallowing bug.
+// from the decompressor via io.Copy's Read path — so a test can
+// check that a decompression error is reported, not swallowed.
 func writeCorruptGzipFile(t *testing.T, body []byte) string {
 	t.Helper()
 	var buf bytes.Buffer

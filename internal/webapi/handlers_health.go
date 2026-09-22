@@ -28,7 +28,7 @@ type healthOutput struct {
 // registerHealthHandlers mounts GET /health.
 //
 // Matches rx-python/src/rx/web.py:291-331. Key differences vs Python:
-//   - python_version → go_version (Appendix A.1 of the spec).
+//   - python_version → go_version.
 //   - python_packages → go_packages (see buildGoPackages).
 //   - Everything else stays on its Python name so rx-viewer's health
 //     dashboard code doesn't need a branch.
