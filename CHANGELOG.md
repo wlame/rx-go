@@ -391,6 +391,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `--max-results` search of a seekable `.zst` keeps the first matches
+  in the file. The frame-parallel scan ordered its matches by a line
+  number that restarts in every frame before applying the cap, so it
+  kept the first matching line of each frame instead: on a 55 MB
+  PostgreSQL log, `--max-results=5` returned offsets 0, 8.8 M, 21.9 M,
+  35 M and 48 M where `rg -m5` finds 0, 13 K, 618 K, 1.63 M and 1.64 M.
+  It now orders by offset, as rx-python does.
+
 - The viewer's `version.json` and `favicon.svg` are served with
   `Cache-Control: no-cache` instead of a year-long `immutable`. Only the
   files under `assets/` carry a hash of their content in their name; the
