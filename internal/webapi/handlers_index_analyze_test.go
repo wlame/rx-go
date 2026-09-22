@@ -1,6 +1,6 @@
 package webapi
 
-// Tests for Task 6: the `analyze_window_lines` request body field on
+// Tests for the `analyze_window_lines` request body field on
 // POST /v1/index. The field is plumbed through
 // analyzer.ResolveWindowLines → BuildOptions.WindowLines; these tests
 // verify the wire contract (the field parses, round-trips, and the

@@ -441,7 +441,7 @@ func TestIndexResponse_JSON(t *testing.T) {
 
 func TestHealthResponse_MissingPythonPackages(t *testing.T) {
 	t.Parallel()
-	// Per Appendix A.1, the Go port must NOT emit python_packages.
+	// The Go backend must NOT emit python_packages.
 	h := HealthResponse{
 		Status:           "ok",
 		RipgrepAvailable: true,

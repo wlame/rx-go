@@ -522,8 +522,8 @@ var openFileForSamples = func(path string) (readSeekCloser, error) {
 //
 // When idx is non-nil and has a checkpoint at-or-before startLine, we
 // seek to that checkpoint first instead of scanning from byte 0. This
-// is the "index-aware seek" path called for in // user design: line-offset queries get O(1) seek-to-chunk when the
-// unified index is cached.
+// is the "index-aware seek" path: line-offset queries get O(1)
+// seek-to-chunk when the unified index is cached.
 //
 // # Bounded-read contract
 //

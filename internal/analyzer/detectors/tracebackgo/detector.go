@@ -80,15 +80,15 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 )
 
-// Metadata constants — kept as a block at the top so /v1/detectors
-// output is trivially auditable against the plan.
+// Metadata constants — kept as a block at the top so the values
+// /v1/detectors reports are easy to find.
 const (
 	detectorName        = "traceback-go"
 	detectorVersion     = "0.1.0"
 	detectorCategory    = "log-traceback"
 	detectorDescription = "Go runtime tracebacks (panic: / fatal error: / goroutine N [state]:)"
 
-	// severity is the plan-mandated value for this detector.
+	// severity is the fixed severity of every anomaly this detector emits.
 	severity = 0.8
 )
 
@@ -320,7 +320,8 @@ func (d *Detector) handleInStack(ev analyzer.LineEvent) {
 // handleInStackBlank handles the stateInStackBlank branch: the previous
 // line was blank and we need to decide whether the region continues.
 //
-// Per the plan's close rule ("blank line followed by non-continuation"):
+// Close rule: a blank line followed by a non-continuation line ends the
+// region.
 //
 //   - Continuation line: the blank was an internal separator between
 //     goroutine blocks. Extend through both the blank (already accounted

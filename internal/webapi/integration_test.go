@@ -190,7 +190,7 @@ func TestIntegration_SPAFlow(t *testing.T) {
 
 // TestIntegration_HealthShape verifies the /health response includes
 // the Go-specific fields (go_version, go_packages) and excludes the
-// Python-specific ones that the spec dropped.
+// Python-specific ones that rx-go does not emit.
 func TestIntegration_HealthShape(t *testing.T) {
 	srv := NewServer(Config{
 		AppVersion: "test-1.2.3",

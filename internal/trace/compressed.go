@@ -34,22 +34,17 @@ var ErrIncompleteStream = errors.New("compressed stream ended early")
 // ProcessCompressed runs the full scan pipeline for a non-seekable
 // compressed file: read file → pure-Go decompressor pipe → rg --json.
 //
-// STATIC-BINARY CONSOLIDATION:
+// STATIC BINARY:
 //
-// Prior to consolidation this function shelled out to external
-// `gzip -d -c`, `xz -d -c`, `bzip2 -d -c`, or `zstd -d -c` binaries
-// to produce the decompressed stream. That required the host to have
-// those binaries on PATH — fine on full Linux distros, broken on
-// distroless / busybox / slim Docker images that rx-go now targets
-// per decision 5.15 ("single static binary").
-//
-// Post-consolidation: we read the source file ourselves, wrap it in
-// compression.NewReader (which uses compress/gzip, compress/bzip2,
-// github.com/ulikunitz/xz, and github.com/klauspost/compress/zstd —
-// all pure Go), and pipe the resulting io.Reader directly into rg's
-// stdin. Zero external binaries required for the decompression step.
-// The only subprocess remaining is rg itself, which is expected to be
-// on PATH (it's the core of the app).
+// Decompression runs in-process. We read the source file ourselves,
+// wrap it in compression.NewReader (which uses compress/gzip,
+// compress/bzip2, github.com/ulikunitz/xz, and
+// github.com/klauspost/compress/zstd — all pure Go), and pipe the
+// resulting io.Reader directly into rg's stdin. No external `gzip`,
+// `xz`, `bzip2` or `zstd` binary is needed, so the scan works on
+// distroless, busybox and slim Docker images that lack them. The only
+// subprocess is rg itself, which is expected to be on PATH (it's the
+// core of the app).
 //
 // Offset semantics:
 //   - MatchRaw.Offset is the DECOMPRESSED byte offset (matches Python).

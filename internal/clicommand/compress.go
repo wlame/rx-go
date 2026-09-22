@@ -39,7 +39,8 @@ import (
 //	   "index":             {"line_count": 1234, "frame_count": 17}   // optional
 //	}]}
 //
-// Matches user decisions 5.4 (native Go zstd) and 5.14 (no t2sz binary).
+// Compression uses the native Go seekable-zstd encoder; no t2sz binary
+// is needed.
 func NewCompressCommand(out io.Writer) *cobra.Command {
 	var (
 		output     string

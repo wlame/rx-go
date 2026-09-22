@@ -69,15 +69,15 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 )
 
-// Metadata constants — kept as a block at the top so /v1/detectors
-// output is trivially auditable against the plan.
+// Metadata constants — kept as a block at the top so the values
+// /v1/detectors reports are easy to find.
 const (
 	detectorName        = "traceback-js"
 	detectorVersion     = "0.1.0"
 	detectorCategory    = "log-traceback"
 	detectorDescription = "JavaScript / Node.js stack traces (Error: ... / at ...)"
 
-	// severity is the plan-mandated value for this detector.
+	// severity is the fixed severity of every anomaly this detector emits.
 	severity = 0.6
 )
 
@@ -277,8 +277,8 @@ func (d *Detector) handlePending(ev analyzer.LineEvent) {
 
 // handleInStack handles the stateInStack branch: the current line is
 // either a continuation (extend span), a new opener (close + re-open as
-// pending), or something else (close; the plan's rule is "first non-at
-// line closes").
+// pending), or something else (close: the first non-`at` line ends the
+// region).
 func (d *Detector) handleInStack(ev analyzer.LineEvent) {
 	if isContinuationLine(ev.Bytes) {
 		d.endLine = ev.Number

@@ -73,15 +73,15 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 )
 
-// Metadata constants — kept as a block at the top so /v1/detectors
-// output is trivially auditable against the plan.
+// Metadata constants — kept as a block at the top so the values
+// /v1/detectors reports are easy to find.
 const (
 	detectorName        = "json-blob-multiline"
 	detectorVersion     = "0.1.0"
 	detectorCategory    = "format"
 	detectorDescription = "Multi-line JSON objects or arrays spanning several lines"
 
-	// severity is the plan-mandated value for this detector.
+	// severity is the fixed severity of every anomaly this detector emits.
 	severity = 0.3
 )
 

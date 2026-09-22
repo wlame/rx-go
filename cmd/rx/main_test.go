@@ -100,11 +100,9 @@ func TestPreprocessArgs(t *testing.T) {
 	}
 }
 
-// TestPreprocessArgs_TruthTable is the borrowed-from-another-rx-go parity
-// table. It pins down the full truth table of routing decisions so that
-// the planned structural refactor (map → []string + shouldRouteToTrace
-// predicate) preserves behavior exactly. This test MUST pass both before
-// and after the refactor.
+// TestPreprocessArgs_TruthTable pins down the full truth table of
+// routing decisions made by preprocessArgs and shouldRouteToTrace, so a
+// change to either cannot alter which argv shapes are routed to trace.
 func TestPreprocessArgs_TruthTable(t *testing.T) {
 	tests := []struct {
 		name string
