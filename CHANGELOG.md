@@ -236,6 +236,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /v1/detectors` reported every detector's `severity_range` as
+  `0..1`, which tells a client nothing it can scale an indicator by. Each
+  detector now states its band through `analyzer.SeverityRanger` — every
+  rx-go detector emits one fixed severity, so the band is a point, from
+  `0.3` for a long line to `1.0` for a secret — and a detector that
+  states none is still reported as `0..1`.
+
 - `/health` reported every `RX_*` variable by value, and it answers
   without a token, so a secret set in the environment was public to
   anyone who could reach the port — including `RX_API_TOKEN`, which

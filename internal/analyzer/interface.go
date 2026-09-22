@@ -62,6 +62,16 @@ type FileAnalyzer interface {
 	Analyze(ctx context.Context, input Input) (*Report, error)
 }
 
+// SeverityRanger is implemented by an analyzer that can state the band
+// of severities its anomalies carry, so /v1/detectors can publish the
+// band before any anomaly exists and a client can scale its indicator
+// by it. An analyzer without it is reported as the full 0..1 scale.
+type SeverityRanger interface {
+	// SeverityRange returns the lowest and highest severity the
+	// analyzer's anomalies can have, each within 0..1.
+	SeverityRange() (lowest, highest float64)
+}
+
 // Input is the handoff from the engine to the analyzer.
 //
 // Named Input (not AnalyzerInput) to avoid stutter at the call site:

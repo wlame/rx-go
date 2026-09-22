@@ -51,16 +51,17 @@ func categoryDescription(cat string) string {
 	return cat
 }
 
-// buildDetectorsResponse walks the frozen analyzer registry and produces
-// the DetectorsResponse payload. One DetectorInfo per registered detector,
-// and a CategoryInfo bucket per distinct Category() value.
-//
-// Severity ranges are currently hard-coded to the full [0.0, 1.0] interval
-// per detector — the registry doesn't expose a per-detector range today,
-// and the 4-level scale in SeverityScale is the stable UI contract.
-// When a detector starts reporting its own range we can widen this.
+// buildDetectorsResponse describes the frozen analyzer registry.
 func buildDetectorsResponse() rxtypes.DetectorsResponse {
-	registered := analyzer.Snapshot()
+	return detectorsResponseFrom(analyzer.Snapshot())
+}
+
+// detectorsResponseFrom produces the DetectorsResponse payload for the
+// given analyzers: one DetectorInfo per analyzer and a CategoryInfo
+// bucket per distinct Category() value. Each detector's severity_range
+// is the band it states through analyzer.SeverityRanger, or the full
+// 0..1 scale when it states none.
+func detectorsResponseFrom(registered []analyzer.FileAnalyzer) rxtypes.DetectorsResponse {
 	detectors := make([]rxtypes.DetectorInfo, 0, len(registered))
 
 	// Track categories in encounter order so the Categories slice is
@@ -74,14 +75,11 @@ func buildDetectorsResponse() rxtypes.DetectorsResponse {
 		name := a.Name()
 		category := a.Category()
 		detectors = append(detectors, rxtypes.DetectorInfo{
-			Name:        name,
-			Category:    category,
-			Description: a.Description(),
-			SeverityRange: rxtypes.SeverityRange{
-				Min: 0.0,
-				Max: 1.0,
-			},
-			Examples: []string{},
+			Name:          name,
+			Category:      category,
+			Description:   a.Description(),
+			SeverityRange: severityRangeOf(a),
+			Examples:      []string{},
 		})
 		if _, seen := categoryMembers[category]; !seen {
 			categoryOrder = append(categoryOrder, category)
@@ -126,4 +124,14 @@ func registerDetectorsHandlers(_ *Server, api huma.API) {
 	}, func(_ context.Context, _ *struct{}) (*detectorsOutput, error) {
 		return &detectorsOutput{Body: buildDetectorsResponse()}, nil
 	})
+}
+
+// severityRangeOf returns the band an analyzer states, or the full 0..1
+// scale for one that states none.
+func severityRangeOf(a analyzer.FileAnalyzer) rxtypes.SeverityRange {
+	if ranger, ok := a.(analyzer.SeverityRanger); ok {
+		lowest, highest := ranger.SeverityRange()
+		return rxtypes.SeverityRange{Min: lowest, Max: highest}
+	}
+	return rxtypes.SeverityRange{Min: 0.0, Max: 1.0}
 }
