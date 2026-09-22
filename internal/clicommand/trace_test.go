@@ -3,6 +3,7 @@ package clicommand
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,9 +109,7 @@ func TestParseFrameSize(t *testing.T) {
 // TestTraceCommand_JSONOutput runs the cobra command end-to-end,
 // capturing stdout and parsing the JSON.
 func TestTraceCommand_JSONOutput(t *testing.T) {
-	if _, err := os.Stat("/usr/bin/rg"); err != nil {
-		// Some CI images don't have rg; the trace invocation exits 1
-		// early with a clear message.
+	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg not installed")
 	}
 	root := t.TempDir()

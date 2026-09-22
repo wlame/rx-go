@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -780,10 +781,8 @@ func TestStaticFile_FaviconReachable(t *testing.T) {
 // with a simple regex over a small file. /v1/trace is GET-only so
 // we pass params via query string.
 func TestTraceEndpoint_GetQuery(t *testing.T) {
-	if _, err := os.Stat("/usr/bin/rg"); err != nil {
-		if _, err := os.Stat("/usr/local/bin/rg"); err != nil {
-			t.Skip("rg not installed")
-		}
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
 	}
 	root := t.TempDir()
 	p := filepath.Join(root, "a.log")
