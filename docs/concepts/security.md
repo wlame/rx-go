@@ -659,7 +659,11 @@ happens at all.
   plain stream, a window at a time. A request holds one such decoder,
   except a search of a seekable file, which holds one per worker
   (`RX_WORKERS`, else the number of CPUs up to `RX_MAX_SUBPROCESSES`),
-  and a samples request, which keeps up to three decoded frames; see
+  and a samples request, which keeps up to three decoded frames. The
+  index build a samples request waits for holds one decoded frame and
+  nothing for each of its lines: a 128 MiB frame of empty lines is 134
+  million lines, and what grows with them is the index's checkpoints,
+  one per 10,000 lines; see
   [Compression](compression.md#how-rx-decides-what-a-file-is)
 - Exhausting the server's memory or its disk with one
   `GET /v1/samples` (a thousand line ranges open to the end of the

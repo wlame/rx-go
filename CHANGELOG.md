@@ -200,6 +200,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain zstd stream it also is, a window at a time, with the same
   answers (the 129 MiB frame above now costs 18 to 29 MiB); a trace
   logs `seek_table_unused` for it.
+- Building the index of a seekable zstd file no longer holds a slice
+  for each line of a frame. A frame of 128 MiB, the most rx decodes at
+  once, can hold 134 million empty lines and compress to a few KB; the
+  build kept 24 bytes for each, so a 98 KB file of 24 such frames cost
+  `rx index`, and the `rx samples` or `GET /v1/samples` that builds the
+  index first, almost 10 GB. The build now finds the line breaks where
+  the frame holds them and keeps only its checkpoints, one per 10,000
+  lines: the same file costs 556 MB, and every index is the same as
+  before.
 - An index build no longer copies the first lines of a file to decide
   its line ending; it counts the endings where it reads them. A file
   whose first line is 10 MiB long cost 10 MiB more. The answer is the
