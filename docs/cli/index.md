@@ -1,6 +1,6 @@
 # CLI reference
 
-`rx` exposes five subcommands. `trace` is the default — any invocation whose
+`rx` exposes six subcommands. `trace` is the default — any invocation whose
 first argument isn't a subcommand name gets `trace` prepended automatically.
 
 ```text
@@ -10,6 +10,7 @@ Subcommands:
   trace      Search files/directories for regex patterns (default)
   index      Build, inspect, or delete line-offset indexes
   samples    Retrieve context lines by byte offset or line number
+  time-range Show the format and first and last timestamp of files
   compress   Encode files as seekable zstd
   serve      Start the HTTP API server
 ```
@@ -24,7 +25,7 @@ rx trace "error" /var/log/app.log
 ```
 
 If the first positional argument matches a known subcommand name
-(`trace`, `index`, `samples`, `compress`, `serve`, `help`, `completion`,
+(`trace`, `index`, `samples`, `time-range`, `compress`, `serve`, `help`, `completion`,
 `version`), it's routed to that subcommand. Otherwise, `trace` is
 assumed.
 
@@ -87,6 +88,9 @@ success; `skipped_files` is for files that could not be read.
 
 - **[`rx samples`](samples.md)**  
   Read content around byte offsets or line numbers, with context.
+
+- **[`rx time-range`](time-range.md)**  
+  The timestamp format and the first and last timestamp of each file.
 
 - **[`rx compress`](compress.md)**  
   Encode files as seekable zstd for random-access decompression.

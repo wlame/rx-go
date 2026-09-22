@@ -34,6 +34,7 @@ on an Apple-silicon Mac:
     "line_timestamps",
     "samples_index_build",
     "samples_timestamps",
+    "time_range",
     "trace_context_and_switches",
     "trace_matching_flags"
   ],
@@ -122,6 +123,7 @@ tells a client whether it can read this server at all.
 | `samples_index_build` | [`GET /v1/samples`](samples.md) builds a large or compressed file's line index in a background task and may answer `202` with it; [`GET /v1/tasks/{task_id}`](tasks.md) reports the build's `progress` |
 | `samples_timestamps` | `timestamps` on `GET /v1/samples`: lines by time |
 | `line_timestamps` | `line_timestamps` in every `GET /v1/samples` answer |
+| `time_range` | [`GET /v1/time-range`](time-range.md): a file's timestamp format and first and last timestamp |
 
 rx-python reports no `features`.
 

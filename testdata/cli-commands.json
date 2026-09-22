@@ -150,6 +150,18 @@
       "expected": "rx samples /var/log/app.log --lines=5 --context=2 --after=0"
     },
     {
+      "name": "time range of one file",
+      "endpoint": "time_range",
+      "params": { "path": "/var/log/app.log" },
+      "expected": "rx time-range /var/log/app.log"
+    },
+    {
+      "name": "time range quotes a path that needs it",
+      "endpoint": "time_range",
+      "params": { "path": "/var/log/my app.log" },
+      "expected": "rx time-range '/var/log/my app.log'"
+    },
+    {
       "name": "index read",
       "endpoint": "index_get",
       "params": { "path": "/var/log/app.log" },

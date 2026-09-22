@@ -21,6 +21,7 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `GET` | `/health` | Service status + system info | [health](endpoints/health.md) |
 | `GET` | `/v1/trace` | Regex search | [trace](endpoints/trace.md) |
 | `GET` | `/v1/samples` | Content retrieval by offset/line | [samples](endpoints/samples.md) |
+| `GET` | `/v1/time-range` | A file's timestamp format and first and last timestamp | [time-range](endpoints/time-range.md) |
 | `GET` | `/v1/index` | Read cached line index | [line-index](endpoints/line-index.md) |
 | `POST` | `/v1/index` | Build a new index (background task) | [line-index](endpoints/line-index.md) |
 | `POST` | `/v1/compress` | Compress to seekable zstd (background task) | [compress](endpoints/compress.md) |

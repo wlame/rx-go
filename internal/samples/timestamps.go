@@ -612,7 +612,11 @@ func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp
 	if err != nil {
 		return timestamps.Stamp{}, err
 	}
-	stamp, found, err := lastStampFromEnd(req.context(), text, size, t.parser)
+	// No limit: the answer must equal the indexed one, which knows the
+	// last timestamp wherever it is, so the read goes back as far as the
+	// last timestamped line. A time-of-day query on a file without an
+	// index reads the file from its start for the line anyway.
+	stamp, found, err := lastStampFromEnd(req.context(), text, size, t.parser, size)
 	if err == nil && !found {
 		err = fmt.Errorf("%s: no timestamped line found reading back from the end", req.Source.Path())
 	}
@@ -735,18 +739,23 @@ func (t *fileTimes) lastStampOfStream(ctx context.Context, src paths.Pinned, for
 
 // lastStampFromEnd reads text, size bytes long, back from its end in
 // steps of tailStepBytes and returns the own timestamp of its last
-// timestamped line, or false when no line has one.
+// timestamped line, or false when no line has one. It looks at the line
+// starts in the last limit bytes only, and reads at most limit bytes
+// plus, per step, one byte before it and timestamps.WindowBytes after
+// it (and, for a line of many \r bytes, up to the line's end, which is
+// within the limit too).
 //
 // A step covers the line starts in [start, end); it reads one byte
 // before start, to tell whether start begins a line, and up to
 // timestamps.WindowBytes after end, the most of a line the parser looks
 // at. The latest line start whose line has a timestamp is the answer.
-func lastStampFromEnd(ctx context.Context, text io.ReaderAt, size int64, parser *timestamps.Parser) (timestamps.Stamp, bool, error) {
-	for end := size; end > 0; {
+func lastStampFromEnd(ctx context.Context, text io.ReaderAt, size int64, parser *timestamps.Parser, limit int64) (timestamps.Stamp, bool, error) {
+	floor := max(0, size-limit)
+	for end := size; end > floor; {
 		if err := ctx.Err(); err != nil {
 			return timestamps.Stamp{}, false, err
 		}
-		start := max(0, end-tailStepBytes)
+		start := max(floor, end-tailStepBytes)
 		from := max(0, start-1)
 		buf := make([]byte, min(size, end+timestamps.WindowBytes)-from)
 		n, err := text.ReadAt(buf, from)

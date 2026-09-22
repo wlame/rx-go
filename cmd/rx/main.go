@@ -62,6 +62,7 @@ var appVersion = "dev"
 var knownSubcommands = []string{
 	"trace",
 	"samples",
+	"time-range",
 	"index",
 	"compress",
 	"serve",
@@ -198,6 +199,7 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(clicommand.NewTraceCommand(os.Stdout))
 	root.AddCommand(clicommand.NewSamplesCommand(os.Stdout))
+	root.AddCommand(clicommand.NewTimeRangeCommand(os.Stdout))
 	root.AddCommand(clicommand.NewIndexCommand(os.Stdout))
 	root.AddCommand(clicommand.NewCompressCommand(os.Stdout))
 	root.AddCommand(clicommand.NewServeCommand(os.Stdout, appVersion))

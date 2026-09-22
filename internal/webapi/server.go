@@ -138,6 +138,7 @@ func NewServer(cfg Config) *Server {
 	registerHealthHandlers(s, api)
 	registerTraceHandlers(s, api)
 	registerSamplesHandlers(s, api)
+	registerTimeRangeHandlers(s, api)
 	registerIndexHandlers(s, api)
 	registerCompressHandlers(s, api)
 	registerTaskHandlers(s, api)

@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `samples_index_build`, `samples_timestamps`, `line_timestamps`), so a
   client checks for a name instead of comparing contract versions.
   Part of contract 1.5.
+- `GET /v1/time-range?path=…` and `rx time-range PATH… [--json]` give a
+  file's time range: its timestamp `format`, `has_zone`, `day_first`,
+  the zone its lines show times in (`display_zone`: `RX_LOG_TZ` for a
+  file whose timestamps carry no zone, the first timestamp's offset for
+  one whose timestamps do), its first timestamp as written (`example`),
+  the first and last timestamp as UTC instants (`first_ms`, `last_ms`,
+  read in `RX_LOG_TZ` as `line_timestamps` reads them) and `source`:
+  `index` when the line index holds them (nothing of the file is read),
+  `scan` for a plain or seekable zstd file without one (its first
+  mebibyte, and at most 16 MiB back from its end; past that `last_ms`
+  is `null`), `none` for a gzip, bzip2, xz or plain zstd file without
+  one, which a request never decompresses whole. A request writes
+  nothing to the cache; `rx time-range` builds the index of such a
+  stream first, as `rx samples` does. The command prints one line per
+  file with the first and last timestamp in the file's own layout and
+  zone, and `--json` prints one object for one path, an array for
+  several. `features` lists `time_range`. Part of contract 1.5.
 - `RX_SAMPLES_MAX_LINES` (default 100,000, from 1,000 to 10,000,000)
   caps the lines one `GET /v1/samples` answer holds, summed over its
   samples. A request whose answer would hold more is refused with

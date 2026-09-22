@@ -28,6 +28,8 @@ var featureTable = []string{
 	"samples_timestamps",
 	// line_timestamps: every samples answer carries line_timestamps.
 	"line_timestamps",
+	// time_range: GET /v1/time-range gives a file's time range.
+	"time_range",
 }
 
 // Features returns the names of featureTable, sorted.

@@ -311,6 +311,8 @@ func conformanceFixtures(t *testing.T) string {
 		fmt.Fprintf(&timed, "2025-12-10 07:%02d:%02d.%03d INFO request %d served\n", n/60, n%60, n%1000, n)
 	}
 	write("timed.log", timed.Bytes())
+	// Its gzip copy, never indexed: a time range of it is unknown.
+	write("timed.log.gz", gzipped(t, timed.Bytes()))
 	// Two lines before the first timestamp, then records each followed
 	// by a traceback line: line_timestamps holds nulls and inherited
 	// values.
@@ -425,6 +427,15 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("samples by a time of day in a file of two dates", "/v1/samples",
 		q("path", at("midnight.log"), "timestamps", "00:00:01"), http.StatusBadRequest)
 
+	get("time range of a plain file", "/v1/time-range", q("path", at("timed.log")), http.StatusOK)
+	get("time range of a gzip file without an index", "/v1/time-range", q("path", at("timed.log.gz")), http.StatusOK)
+	get("time range of a file without timestamps", "/v1/time-range", q("path", at("three.log")), http.StatusOK)
+	get("time range of an indexed gzip file", "/v1/time-range", q("path", at("app.log.gz")), http.StatusOK)
+	get("time range of a directory", "/v1/time-range", q("path", at("emptydir")), http.StatusBadRequest)
+	get("time range outside the root", "/v1/time-range", q("path", "/etc/hosts"), http.StatusForbidden)
+	get("time range of a missing file", "/v1/time-range", q("path", at("nope.log")), http.StatusNotFound)
+	get("time range without a path", "/v1/time-range", nil, http.StatusUnprocessableEntity)
+
 	get("index before it is built", "/v1/index", q("path", at("app.log")), http.StatusNotFound)
 	get("index outside the root", "/v1/index", q("path", "/etc/hosts"), http.StatusForbidden)
 	get("index without a path", "/v1/index", nil, http.StatusUnprocessableEntity)
@@ -434,6 +445,7 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	timedIndex := post("index a timestamped file", "/v1/index", map[string]any{"path": at("timed.log"), "threshold": 0}, http.StatusOK)
 	run.finishTask("finished index task of a timestamped file", timedIndex)
 	get("index of a timestamped file", "/v1/index", q("path", at("timed.log")), http.StatusOK)
+	get("time range of an indexed timestamped file", "/v1/time-range", q("path", at("timed.log")), http.StatusOK)
 	post("index a file below the threshold", "/v1/index", map[string]any{"path": at("sub/other.log")}, http.StatusBadRequest)
 	post("index a missing file", "/v1/index", map[string]any{"path": at("nope.log")}, http.StatusNotFound)
 	post("index a file outside the root", "/v1/index", map[string]any{"path": "/etc/hosts", "analyze": true}, http.StatusForbidden)
