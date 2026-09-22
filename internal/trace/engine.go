@@ -783,7 +783,7 @@ func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDir
 // empty for a file the search reads, and otherwise says why it is
 // skipped: the file cannot be opened, or its text is not text.
 func classifyForSearch(src sandbox.Pinned) (file searchFile, reason string) {
-	kind, err := filekind.OfPinned(src)
+	kind, err := filekind.OfPinnedForReading(src)
 	if err != nil {
 		return searchFile{}, skipReason(err)
 	}

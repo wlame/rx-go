@@ -53,12 +53,14 @@ not refused by the rule: the command that reads it reports the damage
 where it meets it.
 
 The rule decompresses a zstd file, seekable or not, a stream at a time
-and holds one frame's window, at most 16 MiB, whatever size the frame
-declares: classifying a file, also every file of a `GET /v1/tree`
-listing, costs a few mebibytes at most. A zstd file whose first frame
-declares a larger window (`zstd --long` writes 128 MiB) is taken for
-text without being probed; the command that reads it decompresses it
-with the window it needs. The first mebibyte an index build reads to
+and holds one frame's window, never the frame. For a `GET /v1/tree`
+listing the window is at most 16 MiB, whatever size the frame declares,
+so classifying every file of a listing costs a few mebibytes at most; a
+zstd file whose first frame declares a larger window (`zstd --long`
+writes 128 MiB) is listed as text without being probed. A command that
+reads the file (trace, samples, index, compress) probes it with the
+window it reads with, at most 128 MiB, so a binary file stored with a
+large window is still refused as binary. The first mebibyte an index build reads to
 detect the timestamp format is decompressed the same way with at most a
 128 MiB window, the most `zstd -d` accepts without `--long=N`; a file
 whose frames need more cannot be indexed, and the build says why.
@@ -67,11 +69,11 @@ An xz file is held to the same limits. Each xz block header names the
 dictionary its decoder reserves before decoding the block (`xz -6`
 writes 8 MiB, `xz -9` 64 MiB), and a header can name up to 4 GiB
 whatever the file's size, so rx reads the xz container itself and
-checks every block header before the dictionary is reserved. Deciding
-what a file is decodes blocks that name at most 16 MiB; a file whose
-first block names more is taken for text without being probed. Every
-command reads an xz file with at most a 128 MiB dictionary and refuses
-a block that names more.
+checks every block header before the dictionary is reserved. A
+listing decodes blocks that name at most 16 MiB, and lists a file whose
+first block names more as text without probing it. Every command probes
+and reads an xz file with at most a 128 MiB dictionary and refuses a
+block that names more.
 
 ## Why compressed files lose random access
 

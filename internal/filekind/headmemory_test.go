@@ -208,3 +208,48 @@ func TestOf_AnXzFileDeclaringAHugeDictionaryCostsAFewMebibytes(t *testing.T) {
 		})
 	}
 }
+
+// largeWindowFiles are files whose text starts with a NUL byte, so they
+// are not text, stored so that decoding them needs 32 MiB: a zstd
+// stream whose frame declares a 32 MiB window, and an xz file whose
+// block declares a 32 MiB dictionary.
+func largeWindowFiles(t *testing.T) map[string][]byte {
+	t.Helper()
+	// The zstd writer declares the window it was given only for an
+	// input longer than its first block; for less it declares less.
+	text := append([]byte("\x00binary header\n"), numberedLog(10_000)...)
+	var stream bytes.Buffer
+	w, err := zstd.NewWriter(&stream, zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(32<<20))
+	if err != nil {
+		t.Fatalf("zstd: %v", err)
+	}
+	if _, err := w.Write(text); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+	return map[string][]byte{
+		"zstd, 32 MiB window":   stream.Bytes(),
+		"xz, 32 MiB dictionary": xzfile.WithDictionaryCode(t, xzfile.Encode(t, text, xz.WriterConfig{}), 0, 26),
+	}
+}
+
+// A listing probes a file's text with at most a 16 MiB window, so it
+// takes a file that needs more for text without looking. A command that
+// reads the file probes it with the window it will read it with, and
+// so finds what the listing did not look at.
+func TestOfForReading_ProbesAFileTheListingTakesForTextUnprobed(t *testing.T) {
+	for name, body := range largeWindowFiles(t) {
+		t.Run(name, func(t *testing.T) {
+			r := bytes.NewReader(body)
+			if listed := Of(r, int64(len(body))); !listed.IsText() {
+				t.Errorf("Of = %+v; want the listing to take it for text unprobed", listed)
+			}
+			read := OfForReading(r, int64(len(body)))
+			if read.NotText != notTextReasons[nulByte][1] {
+				t.Errorf("OfForReading NotText = %q; want %q", read.NotText, notTextReasons[nulByte][1])
+			}
+		})
+	}
+}

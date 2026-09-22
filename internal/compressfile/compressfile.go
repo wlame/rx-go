@@ -159,7 +159,7 @@ func checkOpened(inputPath string, src *os.File, outputPath string, reencodeSeek
 	if err != nil {
 		return filekind.Kind{}, fmt.Errorf("stat input: %w", err)
 	}
-	kind := filekind.Of(src, info.Size())
+	kind := filekind.OfForReading(src, info.Size())
 	if err := kind.Err(); err != nil {
 		return kind, err
 	}

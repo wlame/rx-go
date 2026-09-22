@@ -1,11 +1,14 @@
 package trace
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
 
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
@@ -150,5 +153,40 @@ func TestSkipReasonsDoNotRevealWhatALinkLeadsTo(t *testing.T) {
 				t.Errorf("%s: reason %q reveals %q", item.Path, item.Reason, hidden)
 			}
 		}
+	}
+}
+
+// A zstd file whose frame declares a 32 MiB window is taken for text by
+// a listing, which probes with at most 16 MiB. A search reads the file
+// with up to a 128 MiB window, so it probes it with that too: a binary
+// file is skipped as binary, not searched with rg --text.
+func TestTraceSkipsABinaryZstdFileWhoseWindowIsAboveTheListingProbe(t *testing.T) {
+	requireRipgrep(t)
+	var stream bytes.Buffer
+	w, err := zstd.NewWriter(&stream, zstd.WithEncoderConcurrency(1), zstd.WithWindowSize(32<<20))
+	if err != nil {
+		t.Fatalf("zstd: %v", err)
+	}
+	// The writer declares the window it was given only for an input
+	// longer than its first block; for less it declares less.
+	text := append([]byte("\x00\x01binary NEEDLE\n"), bytes.Repeat([]byte("filler line\n"), 40_000)...)
+	if _, err := w.Write(text); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "blob.zst")
+	if err := os.WriteFile(path, stream.Bytes(), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	resp := traceOnce(t, path, []string{"NEEDLE"}, Options{NoCache: true})
+
+	requireSkipReasons(t, resp, map[string]string{
+		path: "not a text file: a NUL byte in the first 8 KiB of its decompressed text",
+	})
+	if len(resp.Matches) != 0 {
+		t.Errorf("got %d matches in a binary file; want none", len(resp.Matches))
 	}
 }

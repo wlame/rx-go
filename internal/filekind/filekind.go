@@ -40,21 +40,22 @@ import (
 // text: the first 8 KiB, the amount rx-python's is_text_file reads.
 const TextProbeBytes = 8192
 
-// probeWindowLimit is the largest zstd window the text probe decodes
-// with: 16 MiB, twice the 8 MiB window rx's encoder and zstd's levels up
-// to 19 write. A frame that declares more is not decoded by the probe
-// (see Of), so classifying a file costs at most about this much memory
-// whatever size the file declares, and a directory listing that
-// classifies every file stays bounded.
+// probeWindowLimit is the largest zstd window, or xz dictionary, a
+// listing's text probe decodes with: 16 MiB, twice the 8 MiB window
+// rx's encoder and zstd's levels up to 19 write, and the dictionary of
+// `xz -7`. A frame or block that declares more is not decoded by the
+// probe (see Of), so classifying a file for a listing costs at most
+// about this much memory whatever size the file declares, and a
+// directory listing that classifies every file stays bounded.
 const probeWindowLimit = 16 << 20
 
-// HeadWindowLimit is the largest zstd window ReadTextHead decodes with:
-// 128 MiB, the window `zstd --long` and `zstd --ultra -22` write and the
-// most the reference zstd tool decodes without an explicit
-// `--long=N` or `--memory=` (and so the most rx-python's decoder
-// accepts). A frame that declares more is refused with an error
-// wrapping compression.ErrWindowTooLarge.
-const HeadWindowLimit = 128 << 20
+// HeadWindowLimit is the largest zstd window, or xz dictionary,
+// ReadTextHead and OfForReading decode with: compression.WindowLimit,
+// the most any command reads a file with. A frame or block that
+// declares more is refused with an error wrapping
+// compression.ErrWindowTooLarge (zstd) or
+// compression.ErrDictionaryTooLarge (xz).
+const HeadWindowLimit = compression.WindowLimit
 
 // NotTextPrefix starts every reason Kind.NotText gives. A caller that
 // only needs to know the file was refused as binary can match on it.
@@ -134,7 +135,10 @@ func (k Kind) CompressionName() string {
 	return string(k.Format)
 }
 
-// Of decides the Kind of the open file r, size bytes long.
+// Of decides the Kind of the open file r, size bytes long, for a
+// listing: a reader that only reports what the file is, such as
+// GET /v1/tree. A command that goes on to read the file's text uses
+// OfForReading, which probes as far as that read will go.
 //
 // It reads, at most: the first bytes of the file (the signature); a
 // zstd file's seek table and one frame header per frame
@@ -145,14 +149,16 @@ func (k Kind) CompressionName() string {
 // (at most 128 KiB), or whatever gzip or xz need to fill it.
 //
 // A zstd file, seekable or not, is probed through a decoder that holds
-// one frame's window, at most probeWindowLimit, never a whole frame.
-// The window is what the frame header declares, so a file of a few
-// kilobytes can declare gigabytes; the probe does not decode a frame
-// that declares more than the limit, and classifies the file by the
-// text read before that frame, which for a first frame is none: the
-// file is taken for text. Such a frame is legitimate (`zstd --long`
-// writes a 128 MiB window), and the command that reads the file decodes
-// it with the window it needs.
+// one frame's window, at most probeWindowLimit, never a whole frame,
+// and an xz file through blocks whose dictionary is at most that. The
+// window and the dictionary are what the file declares, so a file of a
+// few bytes can declare gigabytes; the probe does not decode a frame
+// or block that declares more than the limit, and classifies the file
+// by the text read before it, which for a first frame or block is
+// none: the file is taken for text. Such a frame is legitimate
+// (`zstd --long` writes a 128 MiB window, `xz -9` a 64 MiB dictionary),
+// and OfForReading, which every command that reads the file uses,
+// probes it with the window the read needs.
 //
 // A file whose text cannot be read past the signature (a damaged
 // stream, a seekable file whose first frame is damaged) is not refused
@@ -162,8 +168,23 @@ func (k Kind) CompressionName() string {
 // Go note: io.ReaderAt reads by position and keeps no cursor, so the
 // read position of an *os.File passed as r is left where it was.
 func Of(r io.ReaderAt, size int64) Kind {
+	return classify(r, size, probeWindowLimit)
+}
+
+// OfForReading is Of for a command that reads the file's text after
+// deciding what it is: trace, samples, index and compress. It probes
+// with HeadWindowLimit, the window the command reads with, rather than
+// a listing's 16 MiB, so a file whose first frame or block needs more
+// than a listing decodes is probed too, not taken for text. It costs
+// at most that window, which the read that follows costs anyway.
+func OfForReading(r io.ReaderAt, size int64) Kind {
+	return classify(r, size, HeadWindowLimit)
+}
+
+// classify is Of with the largest window its text probe decodes with.
+func classify(r io.ReaderAt, size int64, windowLimit uint64) Kind {
 	kind := FormatOf(r, size)
-	kind.NotText = notTextReason(probeText(r, size, kind), kind.IsCompressed())
+	kind.NotText = notTextReason(probeText(r, size, kind, windowLimit), kind.IsCompressed())
 	return kind
 }
 
@@ -188,11 +209,24 @@ func FormatOf(r io.ReaderAt, size int64) Kind {
 	return Kind{Format: compression.FormatSeekableZstd, Table: table}
 }
 
-// OfPinned opens src through its pin, decides its Kind (Of) and closes
-// it. The error is the open's or the stat's: the file cannot be read
-// (fs.ErrPermission for a file the process may not read), or the path
-// no longer leads to the file that was checked (paths.ErrFileChanged).
+// OfPinned opens src through its pin, decides its Kind for a listing
+// (Of) and closes it. The error is the open's or the stat's: the file
+// cannot be read (fs.ErrPermission for a file the process may not
+// read), or the path no longer leads to the file that was checked
+// (paths.ErrFileChanged).
 func OfPinned(src paths.Pinned) (Kind, error) {
+	return ofPinned(src, Of)
+}
+
+// OfPinnedForReading is OfPinned for a command that reads the file's
+// text next (OfForReading).
+func OfPinnedForReading(src paths.Pinned) (Kind, error) {
+	return ofPinned(src, OfForReading)
+}
+
+// ofPinned opens src through its pin, decides its Kind with decide and
+// closes it.
+func ofPinned(src paths.Pinned, decide func(io.ReaderAt, int64) Kind) (Kind, error) {
 	f, err := src.Open()
 	if err != nil {
 		return Kind{}, err
@@ -202,7 +236,7 @@ func OfPinned(src paths.Pinned) (Kind, error) {
 	if err != nil {
 		return Kind{}, err
 	}
-	return Of(f, info.Size()), nil
+	return decide(f, info.Size()), nil
 }
 
 // FormatOfFile is FormatOf for an open file, at the size it has now. It
@@ -230,10 +264,10 @@ func FormatOfPinned(src paths.Pinned) (Kind, error) {
 
 // probeText returns the first TextProbeBytes of the file's text, or as
 // much of it as can be read: a damaged stream keeps what was read
-// before the damage, and a zstd frame whose window is above
-// probeWindowLimit what was read before that frame.
-func probeText(r io.ReaderAt, size int64, kind Kind) []byte {
-	head, _ := readTextHead(r, size, kind, TextProbeBytes, probeWindowLimit)
+// before the damage, and a zstd frame whose window, or an xz block
+// whose dictionary, is above windowLimit what was read before it.
+func probeText(r io.ReaderAt, size int64, kind Kind, windowLimit uint64) []byte {
+	head, _ := readTextHead(r, size, kind, TextProbeBytes, windowLimit)
 	return head
 }
 

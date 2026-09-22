@@ -251,7 +251,7 @@ func Classify(req Request) (filekind.Kind, error) {
 	if req.Kind != nil {
 		return *req.Kind, req.Kind.Err()
 	}
-	kind, err := filekind.OfPinned(req.Source)
+	kind, err := filekind.OfPinnedForReading(req.Source)
 	if err != nil {
 		return kind, err
 	}

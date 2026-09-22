@@ -454,7 +454,10 @@ Paste the output. Do not summarize it.
 - rg's `absolute_offset` is relative to rg's stdin; add `chunk.Offset`.
 - Every rg search takes its base arguments from `newRgArgs`
   (`worker.go`), and they include `--text` and `--encoding=none`.
-  `filekind.Of` is the one place that decides what a file is — its
+  `filekind` is the one place that decides what a file is (`Of` for a
+  listing, which probes with at most a 16 MiB window; `OfForReading`
+  for a command that reads the file next, which probes with the
+  128 MiB it reads with) — its
   format from the magic bytes (never the name), seekable from the seek
   table, text against binary from a NUL byte in the first 8 KiB of its
   text (decompressed for a compressed file) — and every command and
