@@ -18,9 +18,7 @@ func readAllThroughHeadDecoder(t *testing.T, stream []byte, windowLimit uint64) 
 		t.Fatalf("NewHeadDecoder: %v", err)
 	}
 	defer func() { _ = dec.Close() }()
-	if err := dec.Reset(bytes.NewReader(stream)); err != nil {
-		return nil, err
-	}
+	dec.Reset(bytes.NewReader(stream))
 	return io.ReadAll(dec)
 }
 
@@ -84,5 +82,28 @@ func TestHeadDecoder_RefusesAWindowAboveTheLimit(t *testing.T) {
 				t.Errorf("read %d bytes, %v; want the %d bytes of the text", len(got), err, len(text))
 			}
 		})
+	}
+}
+
+// Reset only takes the stream; it reads none of it. The first frame's
+// header is read by the first Read, so a frame whose window is above
+// the limit is refused there, before the window is reserved.
+func TestHeadDecoder_RefusesAFirstFrameAboveTheLimitOnTheFirstRead(t *testing.T) {
+	text := bytes.Repeat([]byte("a line of the text\n"), 13_000) // about 240 KiB
+	frame := zstdFrame(t, text, zstd.WithWindowSize(128<<10))
+	dec, err := NewHeadDecoder(64 << 10)
+	if err != nil {
+		t.Fatalf("NewHeadDecoder: %v", err)
+	}
+	defer func() { _ = dec.Close() }()
+	src := &countingReader{r: bytes.NewReader(frame)}
+
+	dec.Reset(src)
+	if src.n != 0 {
+		t.Errorf("Reset read %d bytes; want none", src.n)
+	}
+	n, err := dec.Read(make([]byte, 4096))
+	if n != 0 || !errors.Is(err, ErrWindowTooLarge) {
+		t.Errorf("first Read = %d, %v; want 0, ErrWindowTooLarge", n, err)
 	}
 }

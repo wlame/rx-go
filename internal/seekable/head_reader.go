@@ -103,25 +103,20 @@ func (h *HeadReader) read(p []byte) (int, error) {
 		if h.next >= h.tbl.NumFrames {
 			return 0, io.EOF
 		}
-		if err := h.startFrame(h.tbl.Frames[h.next]); err != nil {
-			return 0, err
-		}
+		h.startFrame(h.tbl.Frames[h.next])
 		h.next++
 	}
 }
 
 // startFrame points the decoder at frame's compressed bytes. The
-// decoder reads the frame's header here, so a frame whose window is
-// above the limit is refused here.
-func (h *HeadReader) startFrame(frame FrameInfo) error {
+// decoder reads the frame's header on the next Read, which is where a
+// frame whose window is above the limit is refused (see frameError).
+func (h *HeadReader) startFrame(frame FrameInfo) {
 	h.frame = frame
 	h.left = frame.DecompressedSize
 	h.src = &frameSource{r: io.NewSectionReader(h.r, frame.CompressedOffset, frame.CompressedSize)}
 	h.open = true
-	if err := h.dec.Reset(h.src); err != nil {
-		return h.frameError(err)
-	}
-	return nil
+	h.dec.Reset(h.src)
 }
 
 // finishFrame checks that the frame whose text was read to the length
