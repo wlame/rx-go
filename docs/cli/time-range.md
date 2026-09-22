@@ -20,7 +20,7 @@ lines show times in, and where the range came from:
 |---|---|
 | `index` | The file's [line index](../concepts/line-indexes.md#the-time-section) stores it. Nothing of the file is read |
 | `scan` | A plain or seekable zstd file without an index: the first mebibyte of the text gives the format and the first timestamp, and a read back from the end, a mebibyte at a time and at most 16 MiB, the last |
-| `none` | A gzip, bzip2, xz or plain zstd file without an index (only with `RX_NO_INDEX`): its last timestamp needs the whole text decompressed, so the range is not given |
+| `none` | A gzip, bzip2, xz or plain zstd file without an index (under `RX_NO_INDEX`, or when its index could not be built or stored): its last timestamp needs the whole text decompressed, so the range is not given |
 
 A gzip, bzip2, xz or plain zstd file without an index gets one built
 first, as [`rx samples`](samples.md#the-index-it-may-build) builds one,

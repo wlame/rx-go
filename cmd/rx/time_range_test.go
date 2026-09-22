@@ -12,6 +12,10 @@ import (
 	"github.com/wlame/rx-go/internal/clicommand"
 )
 
+// utcLogs reads zone-less timestamps as UTC whatever the developer's
+// environment says, since the tests name the expected instants in UTC.
+var utcLogs = []string{"RX_LOG_TZ="}
+
 // timeRangeFixture writes a timestamped log, its gzip copy, a file
 // without timestamps and a binary file into a fresh directory.
 func timeRangeFixture(t *testing.T) (dir, timed, gz, plain, binary string) {
@@ -44,7 +48,7 @@ func timeRangeFixture(t *testing.T) (dir, timed, gz, plain, binary string) {
 // timestamp as the file writes them, the zone and the source.
 func TestTimeRange_HumanOutputIsOneLinePerFile(t *testing.T) {
 	dir, timed, gz, plain, _ := timeRangeFixture(t)
-	code, stdout, stderr := runRxIn(t, dir, nil, "time-range", timed, gz, plain)
+	code, stdout, stderr := runRxIn(t, dir, utcLogs, "time-range", timed, gz, plain)
 	if code != clicommand.ExitSuccess {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -63,7 +67,7 @@ func TestTimeRange_HumanOutputIsOneLinePerFile(t *testing.T) {
 func TestTimeRange_JSONShapes(t *testing.T) {
 	dir, timed, gz, _, _ := timeRangeFixture(t)
 
-	code, stdout, stderr := runRxIn(t, dir, nil, "time-range", timed, "--json")
+	code, stdout, stderr := runRxIn(t, dir, utcLogs, "time-range", timed, "--json")
 	var one map[string]any
 	if code != 0 || json.Unmarshal([]byte(stdout), &one) != nil {
 		t.Fatalf("one path: exit %d, stdout %q, stderr %s", code, stdout, stderr)
@@ -74,7 +78,7 @@ func TestTimeRange_JSONShapes(t *testing.T) {
 		t.Fatalf("answer %v", one)
 	}
 
-	code, stdout, stderr = runRxIn(t, dir, nil, "time-range", timed, gz, "--json")
+	code, stdout, stderr = runRxIn(t, dir, utcLogs, "time-range", timed, gz, "--json")
 	var several []map[string]any
 	if code != 0 || json.Unmarshal([]byte(stdout), &several) != nil || len(several) != 2 {
 		t.Fatalf("two paths: exit %d, stdout %q, stderr %s", code, stdout, stderr)
@@ -83,7 +87,7 @@ func TestTimeRange_JSONShapes(t *testing.T) {
 		t.Fatalf("gzip answer %v; want it from the index it built", several[1])
 	}
 
-	code, stdout, _ = runRxIn(t, dir, []string{"RX_NO_INDEX=true"}, "time-range", gz, "--json")
+	code, stdout, _ = runRxIn(t, dir, append([]string{"RX_NO_INDEX=true"}, utcLogs...), "time-range", gz, "--json")
 	if code != 0 || json.Unmarshal([]byte(stdout), &one) != nil || one["source"] != "none" || one["last_ms"] != nil {
 		t.Fatalf("gzip under RX_NO_INDEX: exit %d, %v", code, one)
 	}
@@ -111,14 +115,14 @@ func TestTimeRange_ExitCodes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			code, _, stderr := runRxIn(t, dir, nil, tc.args...)
+			code, _, stderr := runRxIn(t, dir, utcLogs, tc.args...)
 			if code != tc.want {
 				t.Errorf("exit code %d, want %d (stderr: %s)", code, tc.want, stderr)
 			}
 		})
 	}
 
-	code, stdout, _ := runRxIn(t, dir, nil, "time-range", timed, filepath.Join(dir, "nope.log"), "--json")
+	code, stdout, _ := runRxIn(t, dir, utcLogs, "time-range", timed, filepath.Join(dir, "nope.log"), "--json")
 	var answers []map[string]any
 	if code != clicommand.ExitFileNotFound || json.Unmarshal([]byte(stdout), &answers) != nil || len(answers) != 1 {
 		t.Fatalf("exit %d, stdout %q; want 3 and the good file's answer", code, stdout)

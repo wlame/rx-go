@@ -101,6 +101,7 @@ func firstAndLastStamped(lines []timedLine) (firstLine, lastLine int64, firstMs,
 // an index and with one: the index answers what a scan reads, and a
 // gzip file without an index leaves the range unknown.
 func TestTimeRange_EveryStorageWithAndWithoutAnIndex(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "") // the expected instants are the wall clock read as UTC
 	lines := timeRangeLines(300)
 	_, _, firstMs, lastMs := firstAndLastStamped(lines)
 	copies := timeCopies(t, textOf(lines))
@@ -252,6 +253,7 @@ func TestTimeRange_SamplesAtTheEndsLandOnTheFirstAndLastTimestampedLines(t *test
 
 // With an index, the range is read from it: nothing of the file.
 func TestBudget_IndexedTimeRangeReadsNothing(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
 	path, lines, _ := largeTimedLog(t, 20_000)
 	loader := indexedLoader(t, path)
 	counter := withCountingOpen(t)
@@ -267,6 +269,7 @@ func TestBudget_IndexedTimeRangeReadsNothing(t *testing.T) {
 // Without an index, a plain file's range reads the head of the text
 // and one step back from its end when that step holds a timestamp.
 func TestBudget_ScannedTimeRangeReadsTheHeadAndOneTailStep(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
 	path, lines, size := largeTimedLog(t, 20_000)
 	counter := withCountingOpen(t)
 	resp := timeRangeOf(t, path, NoIndex)
@@ -283,6 +286,7 @@ func TestBudget_ScannedTimeRangeReadsTheHeadAndOneTailStep(t *testing.T) {
 // TimeRangeTailBytes answers last_ms null, having read the head and no
 // more than that much of the tail.
 func TestBudget_TimeRangeStopsReadingBackAtTheCap(t *testing.T) {
+	t.Setenv("RX_LOG_TZ", "")
 	var text bytes.Buffer
 	for i := range 100 {
 		fmt.Fprintf(&text, "%s INFO LINE %d\n", time.UnixMilli(timeBase+int64(i)*1000).UTC().Format("2006-01-02 15:04:05.000"), i+1)
