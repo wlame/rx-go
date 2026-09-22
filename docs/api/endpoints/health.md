@@ -89,7 +89,7 @@ No parameters, no body.
 | `system_resources` | object | CPU cores and RAM totals. `ram_*` fields are `null` on non-Linux hosts |
 | `go_packages` | object | Key dependency versions from the embedded build info |
 | `constants` | object | Current runtime tunables — see [configuration](../../configuration.md) |
-| `environment` | object | Every env var prefixed with `RX_`, `UVICORN_`, `PROMETHEUS_`, plus `NEWLINE_SYMBOL` |
+| `environment` | object | Every env var prefixed with `RX_`, `UVICORN_`, `PROMETHEUS_`, plus `NEWLINE_SYMBOL`. A variable whose name contains `TOKEN`, `SECRET`, `PASSWORD` or `API_KEY` reads `<redacted>`, so `RX_API_TOKEN` never leaves the server ([security](../../concepts/security.md#opt-in-api-token)) |
 | `hooks` | object | Effective webhook env configuration |
 | `docs_url` | string | Static URL to the `rx-tool` project |
 | `search_roots` | `string[] \| null` | Configured roots, or `null` when running unsandboxed (rare in serve mode) |
