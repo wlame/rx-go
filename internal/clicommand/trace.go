@@ -29,7 +29,7 @@ import (
 //   - --json switches to JSON output.
 //   - --no-cache and --no-index disable caching.
 //   - ripgrep's matching flags (-i, -w, -x, -F, -P) are accepted under
-//     ripgrep's own spelling; see ripgrepMatchingFlags. Any other flag is
+//     ripgrep's own spelling; see trace.MatchingFlags. Any other flag is
 //     a usage error, exit 2.
 func NewTraceCommand(out io.Writer) *cobra.Command {
 	var (
@@ -56,9 +56,6 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		// behavior for users who want top-level-only scans.
 		recursive   bool
 		noRecursive bool
-		// matchingFlagSet[i] records whether ripgrepMatchingFlags[i] was
-		// given; cobra writes each bool when it parses the flag.
-		matchingFlagSet = make([]bool, len(ripgrepMatchingFlags))
 	)
 
 	cmd := &cobra.Command{
@@ -103,7 +100,7 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 				// We silence the unused warning by passing through.
 				recursive:   recursive,
 				noRecursive: noRecursive,
-				rgFlags:     selectedRipgrepFlags(matchingFlagSet),
+				rgFlags:     trace.RipgrepArgs(selectedMatchingFlags(cmd)),
 			})
 		},
 	}
@@ -135,51 +132,23 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 		"Recurse into subdirectories (default: true; Python-compat flag)")
 	cmd.Flags().BoolVar(&noRecursive, "no-recursive", false,
 		"Stop at top-level directory entries (Go-specific escape hatch)")
-	for i, f := range ripgrepMatchingFlags {
-		cmd.Flags().BoolVarP(&matchingFlagSet[i], f.long, f.short, false, f.usage)
+	for _, f := range trace.MatchingFlags {
+		cmd.Flags().BoolP(f.Long, f.Short, false, f.Usage)
 	}
 
 	return cmd
 }
 
-// ripgrepMatchingFlag is one ripgrep option that changes which lines
-// match, exposed on `rx trace` under ripgrep's own spelling.
-type ripgrepMatchingFlag struct {
-	long  string // long name without dashes, as ripgrep spells it
-	short string // one-letter name without the dash; also what rg is given
-	usage string
-}
-
-// ripgrepMatchingFlags is the whole set of ripgrep options `rx trace`
-// accepts. Each one the user gives reaches ripgrep as "-" + short, on
-// every path: plain chunks, compressed streams, seekable frames, and the
-// trace-cache key.
-//
-// SECURITY: the set is closed on purpose. ripgrep also has options that
-// run a program (--pre), change the output the JSON parser reads
-// (--count, --files) or let a match cross the newline-aligned chunk
-// boundaries (--multiline). Forwarding unknown flags would hand all of
-// them to anyone who can shape a command line, so an unknown flag is a
-// usage error instead.
-var ripgrepMatchingFlags = []ripgrepMatchingFlag{
-	{long: "ignore-case", short: "i", usage: "Match case-insensitively (ripgrep -i)"},
-	{long: "word-regexp", short: "w", usage: "Match only whole words (ripgrep -w)"},
-	{long: "line-regexp", short: "x", usage: "Match only whole lines (ripgrep -x)"},
-	{long: "fixed-strings", short: "F", usage: "Treat every pattern as literal text (ripgrep -F)"},
-	{long: "pcre2", short: "P", usage: "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)"},
-}
-
-// selectedRipgrepFlags returns the ripgrep arguments for the matching
-// flags that are set, in table order, so two commands that differ only
-// in the order their flags were typed send ripgrep the same arguments.
-func selectedRipgrepFlags(set []bool) []string {
-	out := []string{}
-	for i, on := range set {
-		if on {
-			out = append(out, "-"+ripgrepMatchingFlags[i].short)
-		}
+// selectedMatchingFlags reads back which of trace.MatchingFlags the
+// command line set, keyed by long name. cobra registered each one under
+// that name, so GetBool cannot fail here; a flag it does not know reads
+// as unset.
+func selectedMatchingFlags(cmd *cobra.Command) map[string]bool {
+	selected := make(map[string]bool, len(trace.MatchingFlags))
+	for _, f := range trace.MatchingFlags {
+		selected[f.Long], _ = cmd.Flags().GetBool(f.Long)
 	}
-	return out
+	return selected
 }
 
 // traceParams bundles the resolved flag/arg state. Keeping a dedicated
