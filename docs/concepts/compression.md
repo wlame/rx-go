@@ -73,7 +73,10 @@ checks every block header before the dictionary is reserved. A
 listing decodes blocks that name at most 16 MiB, and lists a file whose
 first block names more as text without probing it. Every command probes
 and reads an xz file with at most a 128 MiB dictionary and refuses a
-block that names more.
+block that names more. A block whose header also declares the size of
+its text (`xz -T` writes it in every block) gets a dictionary no larger
+than that text, at least 4 KiB: every block starts with an empty
+dictionary, so nothing in it refers back further than its own text.
 
 Every command holds at most 128 MiB of a compressed file's history at a
 time: a zstd frame's window (what `zstd -d` accepts without
