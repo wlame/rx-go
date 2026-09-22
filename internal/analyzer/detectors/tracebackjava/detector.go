@@ -180,6 +180,13 @@ func (d *Detector) Category() string { return detectorCategory }
 // Description returns the one-line human summary.
 func (d *Detector) Description() string { return detectorDescription }
 
+// SeverityRange states the band of severities this detector's anomalies
+// carry: every one of them has the same severity.
+func (d *Detector) SeverityRange() (float64, float64) { return severity, severity }
+
+// The registry reads the band through this interface.
+var _ analyzer.SeverityRanger = (*Detector)(nil)
+
 // Supports says yes to anything. Java stack traces can appear in any
 // text-shaped log (application logs, CI output, container stdout, etc.).
 // Non-Java logs simply never match the opener cues so the detector is a
