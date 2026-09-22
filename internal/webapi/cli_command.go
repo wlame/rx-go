@@ -31,6 +31,7 @@ func BuildCLICommand(subcommand string, params map[string]any) string {
 		parts = append(parts, "trace")
 		parts = appendStringSlicePositional(parts, params["path"])
 		parts = appendStringSliceFlag(parts, "--regexp", params["regexp"])
+		parts = appendSwitches(parts, params["matching_flags"])
 		parts = appendIntPtrFlag(parts, "--max-results", params["max_results"])
 	case "samples":
 		parts = append(parts, "samples")
@@ -74,6 +75,17 @@ func appendStringSliceFlag(parts []string, name string, v any) []string {
 	}
 	for _, item := range s {
 		parts = append(parts, name+"="+output.Quote(item))
+	}
+	return parts
+}
+
+// appendSwitches appends "--name" for every long flag name in a
+// []string value: flags that are on by being present and take no value,
+// such as the matching flag --ignore-case. No-op when v is nil or empty.
+func appendSwitches(parts []string, v any) []string {
+	names, _ := v.([]string)
+	for _, name := range names {
+		parts = append(parts, "--"+name)
 	}
 	return parts
 }
