@@ -60,6 +60,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx serve` serves the directory `RX_FRONTEND_PATH` names as it is.
+  The daily viewer check used to treat it as the viewer cache: on a
+  local `rx-viewer` build without `.metadata.json` it downloaded the
+  newest release and replaced the build's files. Now rx asks GitHub
+  nothing for that directory, downloads nothing into it, writes no
+  `.metadata.json` in it, does not create it and applies no range check;
+  the banner reads `Viewer: <version> from <dir> (RX_FRONTEND_PATH,
+  served as it is)`, with the version from the build's `version.json`.
+  A directory without `index.html` and `assets/`, or a missing one,
+  serves no viewer and prints one warning, where it used to receive a
+  download. `RX_FRONTEND_URL` and `RX_FRONTEND_VERSION` are ignored
+  beside it, with a warning, and `--update-viewer` exits 2. To move the
+  cache rx manages, set `RX_CACHE_DIR`.
 - A zone name in `--file-tz`, `file_tz`, `RX_LOG_TZ` or `RX_QUERY_TZ`
   is accepted only as the zone database spells it, letter case
   included. On macOS, whose file system ignores case, `utc` and

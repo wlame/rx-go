@@ -103,11 +103,15 @@ const (
 )
 
 // viewerModeFor maps the two flags to a mode. Together they contradict
-// each other, which is a usage error.
-func viewerModeFor(skipFrontend, updateViewer bool) (viewerMode, error) {
+// each other, which is a usage error. So is --update-viewer when
+// servesLocalPath says RX_FRONTEND_PATH names the viewer: rx serves that
+// directory as it is, so there is nothing to update.
+func viewerModeFor(skipFrontend, updateViewer, servesLocalPath bool) (viewerMode, error) {
 	switch {
 	case skipFrontend && updateViewer:
 		return 0, fmt.Errorf("--update-viewer and --skip-frontend cannot be used together")
+	case updateViewer && servesLocalPath:
+		return 0, fmt.Errorf("--update-viewer has nothing to update: RX_FRONTEND_PATH names a viewer build rx serves as it is")
 	case skipFrontend:
 		return viewerUnmanaged, nil
 	case updateViewer:
@@ -151,7 +155,10 @@ func runServe(out io.Writer, p serveParams) error {
 	// only the level-reporting side channel changes.
 	configureLogLevelFromEnv()
 
-	mode, err := viewerModeFor(p.skipFrontend, p.updateViewer)
+	// The manager only reads the environment here; it touches the disk
+	// and the network later, in prepareViewer.
+	fm := frontend.NewManager(frontend.Config{})
+	mode, err := viewerModeFor(p.skipFrontend, p.updateViewer, fm.ServesLocalPath())
 	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
@@ -211,7 +218,6 @@ func runServe(out io.Writer, p serveParams) error {
 	// corporate network shouldn't stop the server — rx-viewer degrades
 	// gracefully (SPA fallback → /docs). It runs before the listener
 	// binds, so the bundle never changes under a request.
-	fm := frontend.NewManager(frontend.Config{})
 	served := prepareViewer(fm, mode, os.Stderr)
 
 	// One hook dispatcher (queue, HTTP client, workers) for the whole

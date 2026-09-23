@@ -604,6 +604,8 @@ func TestServed_Describe(t *testing.T) {
 		{Served{Reason: ServedNone}, "none (/ redirects to /docs)"},
 		{Served{Reason: ServedFromCache}, "unrecorded version (cached)"},
 		{Served{Version: "custom", Reason: ServedOverride}, "custom (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)"},
+		{Served{Version: "v0.6.0-6-g03013b5", Reason: ServedLocalPath, Dir: "/srv/viewer"}, "v0.6.0-6-g03013b5 from /srv/viewer (RX_FRONTEND_PATH, served as it is)"},
+		{Served{Reason: ServedLocalPath, Dir: "/srv/viewer"}, "unrecorded version from /srv/viewer (RX_FRONTEND_PATH, served as it is)"},
 	}
 	for _, tc := range cases {
 		if got := tc.served.Describe(); got != tc.want {
