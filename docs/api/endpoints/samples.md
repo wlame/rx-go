@@ -154,9 +154,11 @@ zone is read in ZONE unless `RX_QUERY_TZ` is set; `cli_command` gains
 `--file-tz=ZONE`. A value that names no zone answers `400`
 (`Invalid file_tz "Mars/Base": invalid time zone: not a zone name; give
 UTC, an IANA zone name or ±HH:MM`). For a file whose timestamps carry
-zones the index holds instants, so a time query under `file_tz` reads
-from the first line rather than from a checkpoint: the same answer, a
-longer read.
+zones the index holds instants and records where the offset the lines
+write changes (`zone_offsets`), so a time query under `file_tz` is
+shifted by each stretch's offset and still starts at a checkpoint. A
+file whose offset changes more than 1,024 times is searched from its
+first line: the same answer, a longer read.
 
 ### Context defaults
 

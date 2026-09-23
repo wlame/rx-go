@@ -162,16 +162,30 @@ without one. What the index can do depends on the file:
 - **Timestamps without a zone.** The index holds wall clocks, so a
   file zone is applied as the query is resolved; the index serves the
   search and the range as without one.
-- **Timestamps with a zone.** The index holds instants, which cannot
-  give back the wall clock each line wrote (the offset may change in
-  the file, at a daylight-saving change for one). A time search under
-  a file zone does not use the index's `max_before` and reads from the
-  first line, as without an index: exact, and as slow as a search of
-  an unindexed file. The time range takes the first timestamp from the
-  index with the offset it stores, and reads the last timestamped line
-  again at the byte offset the index stores, a window of one line. A
-  gzip, bzip2, xz or plain zstd file cannot be read at an offset, so
-  its range is unknown under a file zone (source `none`).
+- **Timestamps with a zone.** The index holds instants, and records
+  where the offset the lines write changes (`zone_offsets`, at a
+  daylight-saving change for one). Within one stretch of lines that
+  write one offset, an instant plus that offset is the wall clock the
+  line wrote, so a file zone is applied to the query instead of to the
+  stored values: the line at a wall clock W is, in each stretch, the
+  first whose instant is at least W minus the stretch's offset. The
+  search looks at the stretches in file order, each from the
+  checkpoint `max_before` names inside it and only to its end, and the
+  first stretch that holds a line gives the answer. That is about one
+  index step per stretch when the instants rise through the file. When
+  a stretch's instants lie below an earlier stretch's (a clock moved
+  back further than the offset changed), `max_before` cannot place the
+  line, and that stretch is read from its start. The time range takes
+  the first and last timestamps from the index with their lines'
+  offsets, with no read, for a compressed file too.
+- **Too many changes.** A file whose offset changes more than 1,024
+  times records `zone_offsets: null`. A time search under a file zone
+  then reads from the first line, as without an index: exact, and as
+  slow as a search of an unindexed file. The time range takes the first
+  timestamp from the index with the offset it stores and reads the last
+  timestamped line again at the byte offset the index stores, a window
+  of one line; a gzip, bzip2, xz or plain zstd file cannot be read at an
+  offset, so its range is then unknown (source `none`).
 
 ## The time range of a file
 

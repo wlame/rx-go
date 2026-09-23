@@ -56,8 +56,9 @@ const tailStepBytes = 1 << 20
 
 // fileTimes is what the samples answer knows about a file's timestamps:
 // its format, the frame the answer reads them in, a parser of that
-// frame and, when the file has a line index whose time section holds
-// values of that frame, the section and the index's checkpoints.
+// frame and, when the file has a line index whose time section can give
+// values of that frame, the section, the index's checkpoints and the
+// segments that turn the section's values into the frame's.
 type fileTimes struct {
 	// parser reads each line's own timestamp in frame.
 	parser *timestamps.Parser
@@ -67,9 +68,68 @@ type fileTimes struct {
 	frame    timeFrame
 	// section and checkpoints are the stored index's time_index and
 	// line_index; section is nil without an index, and when the
-	// section's values are in another frame than the answer's.
+	// section's values cannot be turned into the answer's frame (a file
+	// zone on a file whose zone offsets change too often to record).
 	section     *rxtypes.TimeIndex
 	checkpoints []rxtypes.LineIndexEntry
+	// segments turn section's stored values into the answer's frame:
+	// one segment of offset 0 when the section holds values of the
+	// frame, and the file's zone_offsets under a file zone (see
+	// segmentsToFrame). Set exactly when section is.
+	segments []zoneSegment
+}
+
+// zoneSegment is a run of lines whose stored time values all differ
+// from the answer's frame by one offset: from line firstLine on, until
+// the next segment, a line's value in the frame is its stored value
+// plus offsetMs.
+//
+// Under a file zone the frame is the wall clock each line writes, and
+// an index of a file whose timestamps carry zones stores the instant,
+// that wall clock minus the offset the line writes. zone_offsets
+// records where that written offset changes, so it gives the segments
+// directly.
+type zoneSegment struct {
+	firstLine int64
+	offsetMs  int64
+}
+
+// storedFrame is the segments of a section whose values are already in
+// the answer's frame: every line, offset 0.
+var storedFrame = []zoneSegment{{firstLine: 1, offsetMs: 0}}
+
+// segmentsToFrame returns the segments that turn the values ti stores
+// for a file of format detected into frame f, and false when there are
+// none: f reads the stored frame (storedFrame), or it is a file zone on
+// a file whose timestamps carry zones and ti records where their offset
+// changes (one segment per entry of zone_offsets). A null zone_offsets
+// (too many changes to record) leaves the stored instants without a way
+// back to the written wall clocks.
+func segmentsToFrame(f timeFrame, detected timestamps.Format, ti *rxtypes.TimeIndex) ([]zoneSegment, bool) {
+	if f.readsStoredFrame(detected) {
+		return storedFrame, true
+	}
+	if ti.ZoneOffsets == nil {
+		return nil, false
+	}
+	segments := make([]zoneSegment, len(ti.ZoneOffsets))
+	for i, z := range ti.ZoneOffsets {
+		segments[i] = zoneSegment{firstLine: z.Line, offsetMs: int64(z.OffsetMinutes) * msPerMinute}
+	}
+	return segments, true
+}
+
+// frameValueAt turns stored, the value the index stores for line, into
+// the answer's frame: plus the offset of the segment that holds the
+// line. A line before the first segment has no timestamp, and is given
+// the first segment's offset; without segments (a file with no
+// timestamped line) the value is returned as it is.
+func frameValueAt(segments []zoneSegment, line, stored int64) int64 {
+	if len(segments) == 0 {
+		return stored
+	}
+	k := sort.Search(len(segments), func(i int) bool { return segments[i].firstLine > line })
+	return stored + segments[max(k-1, 0)].offsetMs
 }
 
 // timeFrame is how one answer reads the values of a file's lines: as
@@ -108,8 +168,8 @@ func (f timeFrame) parserFormat(detected timestamps.Format) timestamps.Format {
 // detected holds its time values in f. An index holds them in the
 // file's own frame (instants when detected has zones, wall clocks when
 // it has none), so only a file zone on a file whose timestamps carry
-// zones reads another: an index's instants cannot give back the wall
-// clock each line wrote.
+// zones reads another: each stored instant gives back the wall clock its
+// line wrote only with the offset the line wrote (segmentsToFrame).
 func (f timeFrame) readsStoredFrame(detected timestamps.Format) bool {
 	return f.hasZone == detected.HasZone
 }
@@ -163,9 +223,11 @@ func timesForMode(req Request, kind filekind.Kind) (*fileTimes, error) {
 // without one, the head of the text is read (at most
 // timestamps.SampleBytes of text) and the format detected from it.
 //
-// The index's time section serves the answer only when it holds values
-// of the answer's frame (timeFrame.readsStoredFrame). Under a file zone
-// on a file whose timestamps carry zones it does not: the answer then
+// The index's time section serves the answer when its values can be
+// turned into the answer's frame (segmentsToFrame): always without a
+// file zone and for a file whose timestamps carry no zone, and under a
+// file zone on a file whose timestamps carry zones when the index
+// records where their offset changes. When they cannot, the answer
 // searches from the first line, as without an index, and still uses the
 // index's checkpoints to read the lines it found.
 func timesOf(req Request, kind filekind.Kind) (*fileTimes, error) {
@@ -182,8 +244,8 @@ func timesOf(req Request, kind filekind.Kind) (*fileTimes, error) {
 		if err != nil {
 			return nil, err
 		}
-		if times.frame.readsStoredFrame(detected) {
-			times.section, times.checkpoints = ti, idx.LineIndex
+		if segments, ok := segmentsToFrame(times.frame, detected, ti); ok {
+			times.section, times.checkpoints, times.segments = ti, idx.LineIndex, segments
 		}
 		return times, nil
 	}
@@ -437,8 +499,10 @@ func (t *fileTimes) resolveContext(req Request, kind filekind.Kind, text textSou
 		return c, nil
 	}
 	if t.section != nil {
-		if t.section.First != nil && t.section.Last != nil {
-			c.FirstMs, c.LastMs, c.HasSpan = t.section.First.Ms, t.section.Last.Ms, true
+		if first, last := t.section.First, t.section.Last; first != nil && last != nil {
+			c.FirstMs = frameValueAt(t.segments, first.Line, first.Ms)
+			c.LastMs = frameValueAt(t.segments, last.Line, last.Ms)
+			c.HasSpan = true
 		}
 		if t.section.FirstZoneOffsetMinutes != nil {
 			c.FirstOffsetMinutes = *t.section.FirstZoneOffsetMinutes
@@ -481,95 +545,244 @@ func hasWallEndpoint(q timestamps.Query) bool {
 // whose own timestamp is at least the bound (lineAt).
 //
 // Without an index every bound is answered by one pass from the first
-// line. With one, a bound's pass starts at the last checkpoint whose
-// max_before (the latest timestamp of every line before it) is below
-// the bound: no earlier line can answer it, and the next checkpoint's
-// max_before is at least the bound, so a line before that checkpoint
-// does. The pass then reads at most one index step. The answer is the
-// same either way; the index only says where it cannot be.
+// line. With one, the index says where a bound's line cannot be, and
+// each pass starts after that (searchPlan): the answer is the same
+// either way, the index only saves reading.
 //
-// Bounds that start at the same checkpoint share one pass. A stream
-// compressed file (gzip, bzip2, xz, plain zstd) is decompressed from
-// its first byte whatever the checkpoint, so all its bounds share one
-// pass, from the earliest start.
+// Bounds whose passes start and stop at the same place share one pass.
+// A stream compressed file (gzip, bzip2, xz, plain zstd) is decompressed
+// from its first byte whatever the checkpoint, so all its bounds share
+// one pass, from the earliest start, to the end of the text.
 func (t *fileTimes) searchBounds(ctx context.Context, text textSource, bounds []int64) (map[int64]lineAt, error) {
 	found := make(map[int64]lineAt, len(bounds))
-	groups := map[int64][]int64{}
+	var pending []int64
 	for _, bound := range bounds {
-		if _, seen := found[bound]; seen {
-			continue
+		if _, seen := found[bound]; !seen {
+			found[bound] = notFound
+			pending = append(pending, bound)
 		}
-		found[bound] = notFound
-		start := t.searchStart(bound)
-		groups[start] = append(groups[start], bound)
 	}
-	if _, streamed := text.(streamedText); streamed && len(groups) > 1 {
-		groups = mergedGroups(groups)
+	if t.section == nil {
+		return found, t.searchFrom(ctx, text, wholeText, pending, found)
 	}
-	starts := make([]int64, 0, len(groups))
-	for start := range groups {
-		starts = append(starts, start)
+	_, streamed := text.(streamedText)
+	plans := make(map[int64]*searchPlan, len(pending))
+	for _, bound := range pending {
+		plans[bound] = t.newSearchPlan(bound)
 	}
-	sort.Slice(starts, func(i, j int) bool { return starts[i] < starts[j] })
-	for _, start := range starts {
-		if err := t.searchFrom(ctx, text, start, groups[start], found); err != nil {
+	// Each round runs, for every bound not answered yet, the pass of the
+	// next segment that may hold its line. A round moves every plan on
+	// by at least one segment, so there are at most as many rounds as
+	// segments (index.MaxZoneOffsets).
+	for len(pending) > 0 {
+		passes := map[searchPass][]int64{}
+		for _, bound := range pending {
+			if pass, ok := plans[bound].next(); ok {
+				passes[pass] = append(passes[pass], bound)
+			}
+		}
+		if streamed {
+			passes = mergedPasses(passes)
+		}
+		if err := t.runPasses(ctx, text, passes, found); err != nil {
 			return nil, err
 		}
+		pending = pending[:0]
+		for bound, plan := range plans {
+			if found[bound].line < 0 && !plan.done() && !streamed {
+				pending = append(pending, bound)
+			}
+		}
+		// The map's order is random; a sorted list keeps the passes of a
+		// round, and so the reads, the same from run to run.
+		sort.Slice(pending, func(i, j int) bool { return pending[i] < pending[j] })
 	}
 	return found, nil
 }
 
-// mergedGroups puts every bound in one group at the earliest start.
-func mergedGroups(groups map[int64][]int64) map[int64][]int64 {
-	earliest := int64(math.MaxInt64)
+// searchPass is one pass of a search: from the line start at or before
+// byte offset start up to, not including, line stop.
+type searchPass struct {
+	start int64
+	stop  int64
+}
+
+// wholeText is the pass over the whole text, from its first line to its
+// end.
+var wholeText = searchPass{start: 0, stop: math.MaxInt64}
+
+// runPasses runs every pass, in text order, answering the bounds each
+// lists.
+func (t *fileTimes) runPasses(ctx context.Context, text textSource, passes map[searchPass][]int64, found map[int64]lineAt) error {
+	order := make([]searchPass, 0, len(passes))
+	for pass := range passes {
+		order = append(order, pass)
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].start != order[j].start {
+			return order[i].start < order[j].start
+		}
+		return order[i].stop < order[j].stop
+	})
+	for _, pass := range order {
+		if err := t.searchFrom(ctx, text, pass, passes[pass], found); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mergedPasses puts every bound in one pass from the earliest start to
+// the end of the text. The pass reads each line's own timestamp in the
+// answer's frame, so a line it finds for a bound before the bound's own
+// start is impossible (the index ruled those lines out), and reading on
+// past a segment's end finds what the next segment's pass would.
+func mergedPasses(passes map[searchPass][]int64) map[searchPass][]int64 {
+	merged := searchPass{start: math.MaxInt64, stop: math.MaxInt64}
 	var all []int64
-	for start, bounds := range groups {
-		earliest = min(earliest, start)
+	for pass, bounds := range passes {
+		merged.start = min(merged.start, pass.start)
 		all = append(all, bounds...)
 	}
-	return map[int64][]int64{earliest: all}
+	if len(all) == 0 {
+		return nil
+	}
+	return map[searchPass][]int64{merged: all}
 }
 
-// searchStart is the byte offset of the checkpoint a search for bound
-// starts from: the last whose max_before is below bound, or 0 without
-// an index.
+// searchPlan walks one bound through the index's segments, in file
+// order, giving the pass of each segment that may hold the bound's line.
+//
+// Within segment k a line's value in the answer's frame is its stored
+// value plus the segment's offset, so it reaches the bound exactly when
+// its stored value reaches the bound minus that offset: the segment's
+// target. max_before (the latest stored value of every line before a
+// checkpoint) then says, as for a file read in its own frame, where the
+// segment's lines cannot reach the target:
+//
+//   - the segment is skipped when the first checkpoint at or after its
+//     end has a max_before below the target: no line before that
+//     checkpoint, the whole segment included, reaches it;
+//   - otherwise its pass starts at the last checkpoint inside the
+//     segment whose max_before is below the target, or at the last
+//     checkpoint at or before the segment's first line, and stops at the
+//     segment's end.
+//
+// The first segment whose pass finds a line gives the answer: every
+// line before it lies in a segment skipped or read through. With one
+// segment (a file read in its own frame) this is the search from the
+// checkpoint max_before names, to the end of the text.
+//
+// A segment's pass reads about one index step when the stored values
+// rise through the file, as they do across a change of summer time.
+// When an earlier segment holds stored values above a later segment's
+// (an offset that grows while the wall clock goes back), max_before
+// cannot place the later segment's line, and its pass reads from the
+// segment's first line, up to the segment's end at most.
+type searchPlan struct {
+	t     *fileTimes
+	bound int64
+	// segment is the next segment to look at.
+	segment int
+}
+
+// newSearchPlan returns the plan of bound over t's segments.
+func (t *fileTimes) newSearchPlan(bound int64) *searchPlan {
+	return &searchPlan{t: t, bound: bound}
+}
+
+// done reports whether every segment has been looked at.
+func (p *searchPlan) done() bool { return p.segment >= len(p.t.segments) }
+
+// next returns the pass of the next segment that may hold the bound's
+// line, and false when no segment left may.
+func (p *searchPlan) next() (searchPass, bool) {
+	t := p.t
+	for ; p.segment < len(t.segments); p.segment++ {
+		k := p.segment
+		target := minusOffset(p.bound, t.segments[k].offsetMs)
+		stop := int64(math.MaxInt64)
+		if k+1 < len(t.segments) {
+			stop = t.segments[k+1].firstLine
+		}
+		if t.segmentBelow(target, stop) {
+			continue
+		}
+		p.segment++
+		return searchPass{start: t.segmentStart(target, t.segments[k].firstLine, stop), stop: stop}, true
+	}
+	return searchPass{}, false
+}
+
+// minusOffset is bound minus offsetMs, held at the int64 range: a bound
+// of math.MinInt64 (the first timestamped line) stays the lowest value.
+func minusOffset(bound, offsetMs int64) int64 {
+	if offsetMs > 0 && bound < math.MinInt64+offsetMs {
+		return math.MinInt64
+	}
+	if offsetMs < 0 && bound > math.MaxInt64+offsetMs {
+		return math.MaxInt64
+	}
+	return bound - offsetMs
+}
+
+// segmentBelow reports whether every line before line stop has a stored
+// value below target, by the max_before of the first checkpoint at or
+// after stop. Without such a checkpoint it cannot tell, and says no.
 //
 // max_before never decreases, and a null (no earlier timestamp) only
-// precedes the values (validTimeIndex refuses anything else), so "is
-// at least bound" is false and then true along the list, which is what
-// a binary search needs.
-func (t *fileTimes) searchStart(bound int64) int64 {
-	if t.section == nil || len(t.checkpoints) == 0 {
-		return 0
+// precedes the values (validTimeIndex refuses anything else), so the
+// lists searched here are ordered the way sort.Search needs.
+func (t *fileTimes) segmentBelow(target, stop int64) bool {
+	i := sort.Search(len(t.checkpoints), func(i int) bool { return t.checkpoints[i].LineNumber >= stop })
+	if i == len(t.checkpoints) {
+		return false
 	}
-	maxBefore := t.section.MaxBefore
-	reached := sort.Search(len(maxBefore), func(i int) bool {
-		return maxBefore[i] != nil && *maxBefore[i] >= bound
-	})
-	if reached == 0 {
-		return 0
-	}
-	return t.checkpoints[reached-1].ByteOffset
+	before := t.section.MaxBefore[i]
+	return before == nil || *before < target
 }
 
-// searchFrom runs one pass from the line start at or before byte offset
-// start, answering bounds (each still notFound in found) as the lines go
-// by, and stops once every one is answered or the text ends.
+// segmentStart is the byte offset a pass for target in the segment of
+// lines [first, stop) starts from: the last checkpoint inside the
+// segment whose max_before is below target, or else the last checkpoint
+// at or before line first (0 without one).
+func (t *fileTimes) segmentStart(target, first, stop int64) int64 {
+	cps, maxBefore := t.checkpoints, t.section.MaxBefore
+	lo := sort.Search(len(cps), func(i int) bool { return cps[i].LineNumber >= first })
+	hi := sort.Search(len(cps), func(i int) bool { return cps[i].LineNumber >= stop })
+	reached := lo + sort.Search(hi-lo, func(i int) bool {
+		v := maxBefore[lo+i]
+		return v != nil && *v >= target
+	})
+	if reached > lo {
+		return cps[reached-1].ByteOffset
+	}
+	at := sort.Search(len(cps), func(i int) bool { return cps[i].LineNumber > first }) - 1
+	if at < 0 {
+		return 0
+	}
+	return cps[at].ByteOffset
+}
+
+// searchFrom runs one pass, from the line start at or before byte offset
+// pass.start, answering bounds (each still notFound in found) as the
+// lines go by, and stops once every one is answered, at line pass.stop,
+// or at the end of the text.
 //
 // A line answers every pending bound its own timestamp reaches. The
 // bounds are kept sorted, so those are a prefix of them, and a line
 // costs one comparison however many bounds are pending.
-func (t *fileTimes) searchFrom(ctx context.Context, text textSource, start int64, bounds []int64, found map[int64]lineAt) error {
+func (t *fileTimes) searchFrom(ctx context.Context, text textSource, pass searchPass, bounds []int64, found map[int64]lineAt) error {
 	pending := append([]int64(nil), bounds...)
 	sort.Slice(pending, func(i, j int) bool { return pending[i] < pending[j] })
-	cursor, err := text.openNear(start, 0)
+	cursor, err := text.openNear(pass.start, 0)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = cursor.close() }()
 
 	lines := newStampReader(withContext(ctx, cursor), t.parser, searchBufferBytes(t.section != nil))
-	for number := cursor.line; len(pending) > 0; number++ {
+	for number := cursor.line; len(pending) > 0 && number < pass.stop; number++ {
 		stamp, ok, length, err := lines.next()
 		if err != nil {
 			return err

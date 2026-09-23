@@ -45,11 +45,13 @@ finds its first timestamped line.
 wall clocks their lines write, in ZONE, ignoring a zone a line writes;
 `display_zone` is ZONE and the human line shows the times in it,
 `has_zone` stays the file's. For a file whose timestamps carry zones,
-its index holds instants: the first comes from the index with the
-offset it stores, and the last line is read again at the byte offset
-the index stores (one line). A gzip, bzip2, xz or plain zstd file of
-that kind cannot be read at an offset, so it answers source `none`
-under `--file-tz`, with an index too.
+its index holds instants and the offset each line writes
+(`zone_offsets`), so the first and last come from the index with no
+read, for a compressed file too. When that file's offset changes more
+than 1,024 times the index records no offsets: the first comes from the
+index with the offset it stores, the last line is read again at the
+byte offset the index stores (one line), and a gzip, bzip2, xz or plain
+zstd file, which cannot be read at an offset, answers source `none`.
 
 ```bash
 rx time-range app.log-2025121008 --file-tz=Europe/Berlin

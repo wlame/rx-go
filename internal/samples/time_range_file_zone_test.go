@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -81,10 +82,10 @@ func berlinDSTRangeText(t *testing.T) ([]byte, []timedLine) {
 // A file whose lines write zones, the offset changing mid-file, read in
 // UTC: first_ms and last_ms are the first and last lines' written wall
 // clocks read as UTC, each with the offset its own line writes ignored.
-// With an index the two lines are read again at the offsets it stores,
-// since its instants cannot give the wall clocks; the answer equals the
-// scan's. A gzip copy cannot be read at an offset, so with an index too
-// its range is unknown.
+// With an index each stored instant is turned back into its line's wall
+// clock with the offset zone_offsets records for it, so every copy, a
+// gzip one included, answers from the index what the scan answers. A
+// gzip copy without an index has no range, as without a file zone.
 func TestTimeRange_FileZoneOnAZonedFile(t *testing.T) {
 	text, lines := berlinDSTRangeText(t)
 	_, _, firstMs, lastMs := firstAndLastStamped(lines)
@@ -97,24 +98,23 @@ func TestTimeRange_FileZoneOnAZonedFile(t *testing.T) {
 	utc := zoneNamed(t, "UTC")
 	for name, path := range timeCopies(t, text) {
 		t.Run(name, func(t *testing.T) {
-			indexed := timeRangeIn(t, path, indexedLoader(t, path), utc)
+			requireRange(t, "indexed", timeRangeIn(t, path, indexedLoader(t, path), utc), want, TimeRangeFromIndex)
+			cold := timeRangeIn(t, path, NoIndex, utc)
 			if name == "gzip" {
-				if indexed.Source != TimeRangeNone || indexed.FirstMs != nil || indexed.LastMs != nil ||
-					indexed.DisplayZone == nil || *indexed.DisplayZone != "UTC" {
-					t.Errorf("gzip with an index: %s; want no range in UTC", rangeText(indexed))
+				if cold.Source != TimeRangeNone || cold.FirstMs != nil || cold.LastMs != nil {
+					t.Errorf("gzip without an index: %s; want no range", rangeText(cold))
 				}
 				return
 			}
-			requireRange(t, "cold", timeRangeIn(t, path, NoIndex, utc), want, TimeRangeFromScan)
-			requireRange(t, "indexed", indexed, want, TimeRangeFromIndex)
+			requireRange(t, "cold", cold, want, TimeRangeFromScan)
 		})
 	}
 }
 
-// With an index, the range of a zoned file under a file zone reads the
-// stored last timestamped line, a window of it, and nothing else; the
-// first comes from the index's first offset with no read.
-func TestBudget_IndexedTimeRangeUnderAFileZoneReadsOneLineWindow(t *testing.T) {
+// With an index, the range of a zoned file under a file zone reads
+// nothing of the file: the first and the last wall clock come from the
+// stored instants and the offsets zone_offsets records.
+func TestBudget_IndexedTimeRangeUnderAFileZoneReadsNothing(t *testing.T) {
 	path, lines, size := zonedLargeLog(t, 20_000)
 	loader := indexedLoader(t, path)
 	counter := withCountingOpen(t)
@@ -123,8 +123,52 @@ func TestBudget_IndexedTimeRangeUnderAFileZoneReadsOneLineWindow(t *testing.T) {
 		resp.LastMs == nil || *resp.LastMs != lines[len(lines)-1].ms {
 		t.Fatalf("%s", rangeText(resp))
 	}
-	if read := counter.Load(); read > timestamps.WindowBytes {
-		t.Errorf("read %d bytes of %d; budget %d", read, size, timestamps.WindowBytes)
+	if read := counter.Load(); read != 0 {
+		t.Errorf("read %d bytes of %d; want none", read, size)
+	}
+}
+
+// An index whose zone_offsets is null (the offset changes too often to
+// record) cannot turn its last instant back into a wall clock: the
+// range then reads the last timestamped line again at its stored
+// offset, a window of one line, and a gzip copy, which cannot be read
+// at an offset, has no range. A plain or seekable copy answers what the
+// scan answers.
+func TestTimeRange_FileZoneWithoutZoneOffsetsReadsTheLastLineAgain(t *testing.T) {
+	var runs []writtenRun
+	for i := 0; i <= index.MaxZoneOffsets; i++ {
+		zone := "+01:00"
+		if i%2 == 1 {
+			zone = "+02:00"
+		}
+		runs = append(runs, writtenRun{1, timeBase + int64(i)*1000, 1000, zone})
+	}
+	lines := writtenLines(runs...)
+	first, last := lines[0], lines[len(lines)-1]
+	want := wantRange{hasZone: true, displayZone: "UTC", example: first.text[:strings.Index(first.text, " ")],
+		firstMs: first.ms, lastMs: last.ms}
+	utc := zoneNamed(t, "UTC")
+	for name, path := range timeCopies(t, textOf(lines)) {
+		t.Run(name, func(t *testing.T) {
+			loader := indexedLoader(t, path)
+			if idx, _ := loader(path); idx.TimeIndex == nil || idx.TimeIndex.ZoneOffsets != nil {
+				t.Fatalf("zone_offsets is not null")
+			}
+			counter := withCountingOpen(t)
+			indexed := timeRangeIn(t, path, loader, utc)
+			read := counter.Load()
+			if name == "gzip" {
+				if indexed.Source != TimeRangeNone || indexed.FirstMs != nil || indexed.LastMs != nil {
+					t.Errorf("gzip with an index: %s; want no range", rangeText(indexed))
+				}
+				return
+			}
+			requireRange(t, "indexed", indexed, want, TimeRangeFromIndex)
+			requireRange(t, "cold", timeRangeIn(t, path, NoIndex, utc), want, TimeRangeFromScan)
+			if name == "plain" && read > timestamps.WindowBytes {
+				t.Errorf("read %d bytes; budget %d", read, timestamps.WindowBytes)
+			}
+		})
 	}
 }
 
