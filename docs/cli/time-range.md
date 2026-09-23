@@ -7,7 +7,7 @@ log covers.
 ## Synopsis
 
 ```text
-rx time-range PATH... [--json]
+rx time-range PATH... [--json] [--file-tz=ZONE]
 ```
 
 ## Description
@@ -41,11 +41,30 @@ zone has its wall clock read in `RX_LOG_TZ` (default `UTC`), as
 `line_timestamps` reads it, so `rx samples --timestamps=<first_ms>`
 finds its first timestamped line.
 
+`--file-tz=ZONE` reads each file's first and last timestamps as the
+wall clocks their lines write, in ZONE, ignoring a zone a line writes;
+`display_zone` is ZONE and the human line shows the times in it,
+`has_zone` stays the file's. For a file whose timestamps carry zones,
+its index holds instants: the first comes from the index with the
+offset it stores, and the last line is read again at the byte offset
+the index stores (one line). A gzip, bzip2, xz or plain zstd file of
+that kind cannot be read at an offset, so it answers source `none`
+under `--file-tz`, with an index too.
+
+```bash
+rx time-range app.log-2025121008 --file-tz=Europe/Berlin
+```
+
+```text
+app.log-2025121008  iso  2025-12-10 07:00:04.574 .. 2025-12-10 08:00:04.390  Europe/Berlin  scan
+```
+
 ## Flags
 
 | Flag | Default | Description |
 |---|---|---|
 | `--json` | `false` | One JSON object for one path, an array of objects (in the order of the paths) for several |
+| `--file-tz` | — | Read every file's timestamps as wall clock in this zone (`UTC`, an IANA name or `±HH:MM`), ignoring any zone its lines write; another value exits 2 |
 
 The [global flags](index.md#global-flags) apply; `--search-root`
 refuses a path outside the roots.

@@ -132,6 +132,12 @@
       "expected": "rx samples /var/log/app.log --timestamps='2025-12-10 12:34:56,123' --timestamps=14:33:12..14:35"
     },
     {
+      "name": "samples read in a file zone renders the zone after the times",
+      "endpoint": "samples",
+      "params": { "path": "/var/log/app.log", "timestamps": ["07:30:00"], "file_tz": "UTC", "context": 1 },
+      "expected": "rx samples /var/log/app.log --timestamps=07:30:00 --file-tz=UTC --context=1"
+    },
+    {
       "name": "samples renders a zero context rather than dropping it",
       "endpoint": "samples",
       "params": { "path": "/var/log/app.log", "lines": "1", "context": 0 },
@@ -160,6 +166,18 @@
       "endpoint": "time_range",
       "params": { "path": "/var/log/my app.log" },
       "expected": "rx time-range '/var/log/my app.log'"
+    },
+    {
+      "name": "time range read in a file zone",
+      "endpoint": "time_range",
+      "params": { "path": "/var/log/app.log", "file_tz": "Asia/Tokyo" },
+      "expected": "rx time-range /var/log/app.log --file-tz=Asia/Tokyo"
+    },
+    {
+      "name": "time range read at a fixed offset quotes nothing",
+      "endpoint": "time_range",
+      "params": { "path": "/var/log/app.log", "file_tz": "-07:00" },
+      "expected": "rx time-range /var/log/app.log --file-tz=-07:00"
     },
     {
       "name": "index read",

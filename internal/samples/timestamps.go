@@ -55,15 +55,89 @@ func IsUsageError(err error) bool {
 const tailStepBytes = 1 << 20
 
 // fileTimes is what the samples answer knows about a file's timestamps:
-// its parser and, when the file has a line index, the index's time
-// section and checkpoints.
+// its format, the frame the answer reads them in, a parser of that
+// frame and, when the file has a line index whose time section holds
+// values of that frame, the section and the index's checkpoints.
 type fileTimes struct {
+	// parser reads each line's own timestamp in frame.
 	parser *timestamps.Parser
+	// detected is the file's format as detection decided it, which
+	// time_format reports whatever the frame.
+	detected timestamps.Format
+	frame    timeFrame
 	// section and checkpoints are the stored index's time_index and
-	// line_index; section is nil without an index.
+	// line_index; section is nil without an index, and when the
+	// section's values are in another frame than the answer's.
 	section     *rxtypes.TimeIndex
 	checkpoints []rxtypes.LineIndexEntry
-	logZone     config.Zone
+}
+
+// timeFrame is how one answer reads the values of a file's lines: as
+// UTC instants (hasZone), or as wall clocks read in zone.
+//
+// Without a file zone it is the file's own frame: instants for a file
+// whose timestamps carry zones, wall clocks read in RX_LOG_TZ for one
+// whose timestamps carry none. With a file zone (Request.FileZone) every
+// value is the wall clock its line writes, read in that zone, and a
+// zone written on a line is ignored.
+type timeFrame struct {
+	hasZone bool
+	zone    config.Zone
+}
+
+// frameFor returns the frame req reads a file of format detected in.
+func (r Request) frameFor(detected timestamps.Format) timeFrame {
+	if r.FileZone.Location != nil {
+		return timeFrame{hasZone: false, zone: r.FileZone}
+	}
+	return timeFrame{hasZone: detected.HasZone, zone: config.LogTZ()}
+}
+
+// parserFormat returns the format a Parser reading in f is built with:
+// detected, with HasZone set to the frame's. A Parser of a format
+// without zones gives a line that writes a zone the wall clock it shows
+// (timestamps.Parser keeps every value of such a file in one frame), so
+// one per-line path serves the file's own frame and a file zone alike,
+// at no cost per line.
+func (f timeFrame) parserFormat(detected timestamps.Format) timestamps.Format {
+	detected.HasZone = f.hasZone
+	return detected
+}
+
+// readsStoredFrame reports whether a line index of a file of format
+// detected holds its time values in f. An index holds them in the
+// file's own frame (instants when detected has zones, wall clocks when
+// it has none), so only a file zone on a file whose timestamps carry
+// zones reads another: an index's instants cannot give back the wall
+// clock each line wrote.
+func (f timeFrame) readsStoredFrame(detected timestamps.Format) bool {
+	return f.hasZone == detected.HasZone
+}
+
+// instant returns the UTC instant of fileMs, a value in f, and false
+// when it falls outside the years 1 to 9999.
+func (f timeFrame) instant(fileMs int64) (int64, bool) {
+	return timestamps.InstantOf(fileMs, f.hasZone, f.zone.Location)
+}
+
+// newFileTimes returns the fileTimes of a file of format detected read
+// in req's frame, without an index section. mtimeNs is the file's mtime,
+// which gives a year-less family its year.
+func newFileTimes(req Request, detected timestamps.Format, mtimeNs int64) (*fileTimes, error) {
+	frame := req.frameFor(detected)
+	parser, err := timestamps.NewParser(frame.parserFormat(detected), mtimeNs)
+	if err != nil {
+		return nil, err
+	}
+	return &fileTimes{parser: parser, detected: detected, frame: frame}, nil
+}
+
+// formatOfSection is the format an index's time section records.
+func formatOfSection(ti *rxtypes.TimeIndex) timestamps.Format {
+	return timestamps.Format{
+		Family: timestamps.Family(ti.Format), Anchored: ti.Anchored,
+		DayFirst: ti.DayFirst, HasZone: ti.HasZone,
+	}
 }
 
 // timesForMode returns timesOf(req, kind) for an answer in req's mode.
@@ -88,35 +162,36 @@ func timesForMode(req Request, kind filekind.Kind) (*fileTimes, error) {
 // (it read the same head with the same function), and nothing is read;
 // without one, the head of the text is read (at most
 // timestamps.SampleBytes of text) and the format detected from it.
+//
+// The index's time section serves the answer only when it holds values
+// of the answer's frame (timeFrame.readsStoredFrame). Under a file zone
+// on a file whose timestamps carry zones it does not: the answer then
+// searches from the first line, as without an index, and still uses the
+// index's checkpoints to read the lines it found.
 func timesOf(req Request, kind filekind.Kind) (*fileTimes, error) {
-	logZone := config.LogTZ()
 	if idx := loadIndexOrNone(req); idx != nil {
 		if idx.TimeIndex == nil {
 			return nil, nil
 		}
 		ti := idx.TimeIndex
-		format := timestamps.Format{
-			Family: timestamps.Family(ti.Format), Anchored: ti.Anchored,
-			DayFirst: ti.DayFirst, HasZone: ti.HasZone,
-		}
+		detected := formatOfSection(ti)
 		// The mtime the index was built with: a syslog line's year
 		// comes from it. The index describes the file only while that
 		// mtime is the file's, so this is the pin's mtime too.
-		parser, err := timestamps.NewParser(format, idx.SourceMtimeNs)
+		times, err := newFileTimes(req, detected, idx.SourceMtimeNs)
 		if err != nil {
 			return nil, err
 		}
-		return &fileTimes{parser: parser, section: ti, checkpoints: idx.LineIndex, logZone: logZone}, nil
+		if times.frame.readsStoredFrame(detected) {
+			times.section, times.checkpoints = ti, idx.LineIndex
+		}
+		return times, nil
 	}
-	format, ok, err := detectTimeFormat(req.Source, kind)
+	detected, ok, err := detectTimeFormat(req.Source, kind)
 	if err != nil || !ok {
 		return nil, err
 	}
-	parser, err := timestamps.NewParser(format, req.Source.Info().ModTime().UnixNano())
-	if err != nil {
-		return nil, err
-	}
-	return &fileTimes{parser: parser, logZone: logZone}, nil
+	return newFileTimes(req, detected, req.Source.Info().ModTime().UnixNano())
 }
 
 // detectTimeFormat reads the head of src's text through the samples
@@ -152,15 +227,16 @@ func (t *fileTimes) describe() *rxtypes.SamplesTimeFormat {
 	if t == nil {
 		return nil
 	}
-	format := t.parser.Format()
 	// A file whose timestamps carry zones reads a line without one as
-	// UTC; a file whose timestamps carry none was written in RX_LOG_TZ.
+	// UTC; a file whose timestamps carry none was written in RX_LOG_TZ,
+	// and under a file zone every line is read in that zone. has_zone
+	// is the file's, whatever the frame.
 	assumed := "UTC"
-	if !format.HasZone {
-		assumed = t.logZone.Name
+	if !t.frame.hasZone {
+		assumed = t.frame.zone.Name
 	}
 	return &rxtypes.SamplesTimeFormat{
-		Format: string(format.Family), HasZone: format.HasZone, AssumedZone: assumed,
+		Format: string(t.detected.Family), HasZone: t.detected.HasZone, AssumedZone: assumed,
 	}
 }
 
@@ -347,16 +423,15 @@ func (w timeWindow) position() OffsetOrRange {
 // found by a search from the start and the last by a read back from
 // the end (lastStamp), each only when a query needs it.
 func (t *fileTimes) resolveContext(req Request, kind filekind.Kind, text textSource, queries []timestamps.Query) (timestamps.ResolveContext, error) {
-	format := t.parser.Format()
 	queryZone := config.QueryTZ()
-	c := timestamps.ResolveContext{HasZone: format.HasZone, LogZone: t.logZone.Location, QueryZone: queryZone.Location}
+	c := timestamps.ResolveContext{HasZone: t.frame.hasZone, LogZone: t.frame.zone.Location, QueryZone: queryZone.Location}
 
 	needsSpan, needsFirst := false, false
 	for _, q := range queries {
 		needsSpan = needsSpan || q.NeedsSpan()
 		// A zoned file reads a query without a zone at its first
 		// timestamp's offset, unless RX_QUERY_TZ names a zone.
-		needsFirst = needsFirst || (format.HasZone && c.QueryZone == nil && hasWallEndpoint(q))
+		needsFirst = needsFirst || (c.HasZone && c.QueryZone == nil && hasWallEndpoint(q))
 	}
 	if !needsSpan && !needsFirst {
 		return c, nil

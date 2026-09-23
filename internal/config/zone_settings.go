@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -77,6 +78,39 @@ func LogTZ() Zone { return LogTZSetting.Value() }
 
 // QueryTZ returns RX_QUERY_TZ, by the rule on ZoneSetting.
 func QueryTZ() Zone { return QueryTZSetting.Value() }
+
+// ErrInvalidZone is returned by ParseZone for a value that names no zone
+// the rule accepts.
+var ErrInvalidZone = errors.New("invalid time zone")
+
+// maxZoneValueBytes bounds a zone value a request gives before it is
+// looked up. The longest IANA zone name is 32 bytes
+// (America/Argentina/ComodRivadavia); a longer value is refused without
+// a look in the zone database.
+const maxZoneValueBytes = 64
+
+// zoneValuesAccepted names what ParseZone accepts, for its errors.
+const zoneValuesAccepted = "UTC, an IANA zone name or ±HH:MM"
+
+// ParseZone reads a zone a request names, such as `rx samples
+// --file-tz=…` or `file_tz=…`: UTC, an IANA zone name or a fixed offset
+// ±HH:MM up to 18 hours, by the rule RX_LOG_TZ follows (two digits in
+// each field of an offset). `local` is refused: the process's zone is
+// not the caller's to name. raw must not be empty; the caller decides
+// what an empty value means.
+//
+// The error wraps ErrInvalidZone and says what is wrong with raw; it
+// does not repeat raw, which the caller names in its own words.
+func ParseZone(raw string) (Zone, error) {
+	if raw == "" || len(raw) > maxZoneValueBytes {
+		return Zone{}, fmt.Errorf("%w: not a zone name; give %s", ErrInvalidZone, zoneValuesAccepted)
+	}
+	zone, err := LogTZSetting.parse(raw)
+	if err != nil {
+		return Zone{}, fmt.Errorf("%w: %s; give %s", ErrInvalidZone, err.Error(), zoneValuesAccepted)
+	}
+	return zone, nil
+}
 
 // Value returns the setting's zone from the environment, by the rule on
 // ZoneSetting. It reads the environment on every call, so a test's

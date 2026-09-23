@@ -138,7 +138,40 @@ Two settings say how a query meets the file
 
 `time_format.assumed_zone` in a samples answer says which zone a
 timestamp without one is read in: `RX_LOG_TZ` for a file whose
-timestamps carry no zone, `UTC` for one whose timestamps do.
+timestamps carry no zone, `UTC` for one whose timestamps do, and the
+file zone under one.
+
+### A file zone
+
+A log whose zone is missing or wrong can be read in a zone named for
+the request: `--file-tz=ZONE` on `rx samples` and `rx time-range`,
+`file_tz=ZONE` on [`GET /v1/samples`](../api/endpoints/samples.md) and
+[`GET /v1/time-range`](../api/endpoints/time-range.md). Every line's
+own timestamp is then the wall clock it writes, read in ZONE; a zone
+the line writes (`+02:00`, `Z`, `UTC`) is ignored, and an epoch value
+counts as its UTC wall clock. ZONE replaces `RX_LOG_TZ` for that
+request: it is `assumed_zone` and `display_zone`, a query without a
+zone is read in it unless `RX_QUERY_TZ` is set, and `first_ms`,
+`last_ms` and `line_timestamps` follow it. `has_zone` keeps saying
+what the file writes. ZONE is `UTC`, an IANA name or `±HH:MM`, as
+`RX_LOG_TZ` takes it; another value is refused (exit 2, `400`).
+
+Nothing stored changes, and the answer is the same with an index as
+without one. What the index can do depends on the file:
+
+- **Timestamps without a zone.** The index holds wall clocks, so a
+  file zone is applied as the query is resolved; the index serves the
+  search and the range as without one.
+- **Timestamps with a zone.** The index holds instants, which cannot
+  give back the wall clock each line wrote (the offset may change in
+  the file, at a daylight-saving change for one). A time search under
+  a file zone does not use the index's `max_before` and reads from the
+  first line, as without an index: exact, and as slow as a search of
+  an unindexed file. The time range takes the first timestamp from the
+  index with the offset it stores, and reads the last timestamped line
+  again at the byte offset the index stores, a window of one line. A
+  gzip, bzip2, xz or plain zstd file cannot be read at an offset, so
+  its range is unknown under a file zone (source `none`).
 
 ## The time range of a file
 
