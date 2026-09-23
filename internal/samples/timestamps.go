@@ -693,11 +693,14 @@ func mergedPasses(passes map[searchPass][]int64) map[searchPass][]int64 {
 //
 // INVARIANT: the passes of one bound never overlap, so a bound reads
 // each line of the text at most once (plus a read buffer per pass). A
-// run ends before a segment j holding a checkpoint at or after its
-// first line; the next pass starts at that checkpoint, or later at the
-// last checkpoint at or before a later segment's first line, which is
-// that checkpoint or a later one. Either way it starts at or after the
-// line where the run stopped.
+// run ends before the first segment j whose own pass would start at a
+// checkpoint inside it, one at or after its first line whose max_before
+// is below j's target; a segment whose checkpoints all have a
+// max_before at or above its target is read on in the run. The next
+// pass starts at that checkpoint of j, or at the last checkpoint at or
+// before a later segment's first line, which is that checkpoint or a
+// later one. Either way it starts at or after the line where the run
+// stopped.
 type searchPlan struct {
 	t     *fileTimes
 	bound int64
