@@ -167,6 +167,10 @@ func (s ZoneSetting) parse(raw string) (Zone, error) {
 	return Zone{Location: loc, Name: raw}, nil
 }
 
+// utcZoneName is the one zone name time.LoadLocation answers without
+// reading a file.
+const utcZoneName = "UTC"
+
 // platformZoneDirs are the directories time.LoadLocation looks a zone
 // name up in on Unix, in its order (time/zoneinfo_unix.go). Where none
 // exists, as on Windows or in a minimal container, it uses the database
@@ -214,6 +218,12 @@ const (
 // of the zone database. The check runs each time a zone value is parsed,
 // a few times per request, never per line.
 func spelledAsInZoneSources(name string, dirs []string) bool {
+	if name == utcZoneName {
+		// time.LoadLocation answers it without a file, so no directory
+		// says how it is spelled; and RX_LOG_TZ's default costs no
+		// directory listing per request.
+		return true
+	}
 	components := strings.Split(name, "/")
 	for _, c := range components {
 		if c == "" || c == "." {
