@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   offset the index stores (a gzip, bzip2, xz or plain zstd file of that
   kind answers source `none`). An epoch value counts as its UTC wall
   clock. The human `rx time-range` line shows the times in ZONE.
+- `file_tz=ZONE` on `GET /v1/samples` and `GET /v1/time-range` does
+  what `--file-tz` does; a value that names no zone answers `400`
+  naming it, and `cli_command` renders `--file-tz=…`. `GET /health`
+  lists the feature `file_tz`. Contract 1.6.
 
 ### Fixed
 

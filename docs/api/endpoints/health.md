@@ -29,8 +29,9 @@ on an Apple-silicon Mac:
   "status": "ok",
   "ripgrep_available": true,
   "app_version": "dev",
-  "contract_version": "1.5",
+  "contract_version": "1.6",
   "features": [
+    "file_tz",
     "line_timestamps",
     "samples_index_build",
     "samples_timestamps",
@@ -124,6 +125,7 @@ tells a client whether it can read this server at all.
 | `samples_timestamps` | `timestamps` on `GET /v1/samples`: lines by time |
 | `line_timestamps` | `line_timestamps` in every `GET /v1/samples` answer |
 | `time_range` | [`GET /v1/time-range`](time-range.md): a file's timestamp format and first and last timestamp |
+| `file_tz` | `file_tz` on [`GET /v1/samples`](samples.md) and [`GET /v1/time-range`](time-range.md): a file's timestamps read as wall clock in a chosen zone |
 
 rx-python reports no `features`.
 

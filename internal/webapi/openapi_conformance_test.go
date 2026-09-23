@@ -427,7 +427,15 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("samples by a time of day in a file of two dates", "/v1/samples",
 		q("path", at("midnight.log"), "timestamps", "00:00:01"), http.StatusBadRequest)
 
+	get("samples by time in a file zone", "/v1/samples",
+		q("path", at("timed.log"), "timestamps", "2025-12-10T07:01:00Z", "file_tz", "Asia/Tokyo"), http.StatusOK)
+	get("samples in an invalid file zone", "/v1/samples", q("path", at("timed.log"), "lines", "1", "file_tz", "Mars/Base"),
+		http.StatusBadRequest)
+
 	get("time range of a plain file", "/v1/time-range", q("path", at("timed.log")), http.StatusOK)
+	get("time range in a file zone", "/v1/time-range", q("path", at("timed.log"), "file_tz", "+05:30"), http.StatusOK)
+	get("time range in an invalid file zone", "/v1/time-range", q("path", at("timed.log"), "file_tz", "+25:00"),
+		http.StatusBadRequest)
 	get("time range of a gzip file without an index", "/v1/time-range", q("path", at("timed.log.gz")), http.StatusOK)
 	get("time range of a file without timestamps", "/v1/time-range", q("path", at("three.log")), http.StatusOK)
 	get("time range of an indexed gzip file", "/v1/time-range", q("path", at("app.log.gz")), http.StatusOK)

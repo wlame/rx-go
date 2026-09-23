@@ -57,6 +57,7 @@ GET /v1/samples?path=...&timestamps=...&timestamps=...
 | `offsets` | `string` | one of three | — | Comma-separated byte offsets / ranges |
 | `lines` | `string` | one of three | — | Comma-separated 1-based line numbers / ranges |
 | `timestamps` | `string`, repeatable | one of three | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the parameter for several, at most 1,000. Never split at commas. See [by time](#by-time) |
+| `file_tz` | `string` | no | — | Read the file's timestamps as the wall clock each line writes, in this zone (`UTC`, an IANA name or `±HH:MM`), ignoring any zone a line writes; see [A file zone](#a-file-zone). Another value answers `400` |
 | `context` | `int` | no | `3` | Lines before AND after each target, at most 100 (`-1` = default) |
 | `before_context` | `int` | no | `3` | Lines before (overrides `context`), at most 100 (`-1` = default) |
 | `after_context` | `int` | no | `3` | Lines after (overrides `context`), at most 100 (`-1` = default) |
@@ -140,6 +141,22 @@ and a time query on a file with no timestamp format ("no timestamp
 format recognized in the first 1 MiB") answer `400`. With an index the
 search reads at most one index step; the request builds or waits for
 an index exactly as a `lines` request does.
+
+### A file zone
+
+`file_tz=ZONE`, in any of the three modes, reads each line's timestamp
+as the wall clock it writes, in ZONE, for a log whose zone is missing or
+wrong ([A file zone](../../concepts/timestamps.md#a-file-zone)): a zone
+a line writes is ignored and ZONE takes the place of `RX_LOG_TZ`. The
+time queries, `line_timestamps` and `time_format.assumed_zone` (ZONE)
+follow it; `time_format.has_zone` stays the file's; a query without a
+zone is read in ZONE unless `RX_QUERY_TZ` is set; `cli_command` gains
+`--file-tz=ZONE`. A value that names no zone answers `400`
+(`Invalid file_tz "Mars/Base": invalid time zone: not a zone name; give
+UTC, an IANA zone name or ±HH:MM`). For a file whose timestamps carry
+zones the index holds instants, so a time query under `file_tz` reads
+from the first line rather than from a checkpoint: the same answer, a
+longer read.
 
 ### Context defaults
 
@@ -258,7 +275,7 @@ client-side and iterate accordingly.
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
-| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; the file needs more than 128 MiB at once to decompress; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) or more bytes of line text than `RX_SAMPLES_MAX_BYTES` (256 MiB by default) allows |
+| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; the file needs more than 128 MiB at once to decompress; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) or more bytes of line text than `RX_SAMPLES_MAX_BYTES` (256 MiB by default) allows; a `file_tz` that names no zone |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |

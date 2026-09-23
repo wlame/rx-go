@@ -968,7 +968,7 @@
                 "null"
               ]
             },
-            "description": "Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode.",
+            "description": "Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ, and under the request's file_tz every line's written wall clock is read in that zone. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode.",
             "type": [
               "object",
               "null"
@@ -1036,7 +1036,7 @@
         "additionalProperties": false,
         "properties": {
           "assumed_zone": {
-            "description": "The zone a timestamp without one is read in: RX_LOG_TZ (default UTC) for a file whose timestamps carry no zone, UTC for one whose timestamps do.",
+            "description": "The zone a timestamp without one is read in: RX_LOG_TZ (default UTC) for a file whose timestamps carry no zone, UTC for one whose timestamps do; the request's file_tz, whatever the file, when it names one.",
             "type": "string"
           },
           "format": {
@@ -1327,7 +1327,7 @@
             ]
           },
           "display_zone": {
-            "description": "The zone to show this file's times in so that they read as its lines do: RX_LOG_TZ (UTC, an IANA name or ±HH:MM) for a file whose timestamps carry no zone; the offset of the first timestamp (±HH:MM) for one whose timestamps do; null when that offset is unknown.",
+            "description": "The zone to show this file's times in so that they read as its lines do: RX_LOG_TZ (UTC, an IANA name or ±HH:MM) for a file whose timestamps carry no zone; the offset of the first timestamp (±HH:MM) for one whose timestamps do; null when that offset is unknown. The request's file_tz, whatever the file, when it names one.",
             "type": [
               "string",
               "null"
@@ -1341,7 +1341,7 @@
             ]
           },
           "first_ms": {
-            "description": "The timestamp of the first line that has one, as a UTC instant in ms; null when unknown.",
+            "description": "The timestamp of the first line that has one, as a UTC instant in ms; null when unknown. Under file_tz, the wall clock the line writes read in that zone.",
             "format": "int64",
             "type": [
               "integer",
@@ -1363,7 +1363,7 @@
             ]
           },
           "last_ms": {
-            "description": "The timestamp of the last line that has one, as a UTC instant in ms; null when unknown: source none, or no timestamped line within the last 16 MiB of the text.",
+            "description": "The timestamp of the last line that has one, as a UTC instant in ms; null when unknown: source none, or no timestamped line within the last 16 MiB of the text. Under file_tz, the wall clock the line writes read in that zone.",
             "format": "int64",
             "type": [
               "integer",
@@ -1375,7 +1375,7 @@
             "type": "string"
           },
           "source": {
-            "description": "How the range was found: index (the file's line index, nothing of the file read), scan (the head of the text and a read back from its end, at most 16 MiB), none (a gzip, bzip2, xz or plain zstd file without an index: first_ms and last_ms are null).",
+            "description": "How the range was found: index (the file's line index; nothing of the file read, except under file_tz the last timestamped line of a file whose timestamps carry zones), scan (the head of the text and a read back from its end, at most 16 MiB), none (a gzip, bzip2, xz or plain zstd file without an index, or under file_tz one whose timestamps carry zones: first_ms and last_ms are null).",
             "enum": [
               "index",
               "scan",
@@ -2268,6 +2268,19 @@
             }
           },
           {
+            "description": "Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM (as RX_LOG_TZ takes it). A zone a line writes is ignored, and the zone takes the place of RX_LOG_TZ for this request. Empty or absent: the file is read as its timestamps say. Another value is refused with 400.",
+            "explode": false,
+            "in": "query",
+            "name": "file_tz",
+            "schema": {
+              "description": "Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM (as RX_LOG_TZ takes it). A zone a line writes is ignored, and the zone takes the place of RX_LOG_TZ for this request. Empty or absent: the file is read as its timestamps say. Another value is refused with 400.",
+              "examples": [
+                "Europe/Berlin"
+              ],
+              "type": "string"
+            }
+          },
+          {
             "description": "RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200.",
             "in": "header",
             "name": "Prefer",
@@ -2471,7 +2484,7 @@
     },
     "/v1/time-range": {
       "get": {
-        "description": "The time range of one file for a timeline: its format, its first and last timestamp as UTC instants, the zone its lines show times in and its first timestamp as written. From the file's line index when there is one; otherwise from the head of its text and at most 16 MiB back from its end, or not at all for a stream-compressed file (source none).",
+        "description": "The time range of one file for a timeline: its format, its first and last timestamp as UTC instants, the zone its lines show times in and its first timestamp as written. From the file's line index when there is one; otherwise from the head of its text and at most 16 MiB back from its end, or not at all for a stream-compressed file (source none). file_tz reads the timestamps as wall clock in a chosen zone; for a file whose timestamps carry zones the index then gives the first timestamp and its last timestamped line is read again at the offset it stores (source none for a stream-compressed file).",
         "operationId": "time_range",
         "parameters": [
           {
@@ -2484,6 +2497,19 @@
               "description": "The file whose time range to give",
               "examples": [
                 "/var/log/app.log"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM (as RX_LOG_TZ takes it). A zone a line writes is ignored, and the zone takes the place of RX_LOG_TZ for this request. Empty or absent: the file is read as its timestamps say. Another value is refused with 400.",
+            "explode": false,
+            "in": "query",
+            "name": "file_tz",
+            "schema": {
+              "description": "Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM (as RX_LOG_TZ takes it). A zone a line writes is ignored, and the zone takes the place of RX_LOG_TZ for this request. Empty or absent: the file is read as its timestamps say. Another value is refused with 400.",
+              "examples": [
+                "Europe/Berlin"
               ],
               "type": "string"
             }
