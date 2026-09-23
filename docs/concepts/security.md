@@ -500,7 +500,7 @@ leaves the last good bundle exactly where it was.
 
 `rx serve` installs the newest published viewer release whose version
 falls inside the range this backend was built against — `0.2.0 <= v <
-0.7.0` today (the viewer is a 0.x product, where a minor bump may break
+0.8.0` today (the viewer is a 0.x product, where a minor bump may break
 compatibility). It reads GitHub's release list, skips drafts and
 pre-releases, and leaves out every release past the range; a newer one is
 logged as `frontend_newer_release_outside_range`. A cached viewer outside

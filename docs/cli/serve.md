@@ -299,7 +299,7 @@ exposed as a flag).
 
 With no `RX_FRONTEND_URL` or `RX_FRONTEND_VERSION` set, `rx serve` serves
 the newest published `rx-viewer` release inside the range this `rx` was
-built against (`0.2.0 <= v < 0.7.0` today). Before the server binds:
+built against (`0.2.0 <= v < 0.8.0` today). Before the server binds:
 
 | Cache | What `rx serve` does | Banner |
 |---|---|---|
