@@ -54,8 +54,8 @@ read in ZONE, and `has_zone` and `example` stay the file's. The reads
 are those of the table above: an indexed file whose timestamps carry
 zones holds instants and the offset each line writes (`zone_offsets`),
 so each stored timestamp plus its line's offset gives the wall clock,
-with no read. Only when that file's offset changes more than 1,024
-times does the index record no offsets: the first timestamp is then the
+with no read. Only when that file's offset changes too often for
+1,024 entries does the index record no offsets: the first timestamp is then the
 stored one plus the offset the index stores for it, and the last
 timestamped line is read again at the byte offset the index stores (a
 window of one line, `source` stays `index`); a gzip, bzip2, xz or plain

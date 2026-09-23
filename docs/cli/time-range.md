@@ -47,8 +47,8 @@ wall clocks their lines write, in ZONE, ignoring a zone a line writes;
 `has_zone` stays the file's. For a file whose timestamps carry zones,
 its index holds instants and the offset each line writes
 (`zone_offsets`), so the first and last come from the index with no
-read, for a compressed file too. When that file's offset changes more
-than 1,024 times the index records no offsets: the first comes from the
+read, for a compressed file too. When that file's offset changes too
+often for 1,024 entries the index records no offsets: the first comes from the
 index with the offset it stores, the last line is read again at the
 byte offset the index stores (one line), and a gzip, bzip2, xz or plain
 zstd file, which cannot be read at an offset, answers source `none`.

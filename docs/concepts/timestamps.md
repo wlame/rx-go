@@ -178,8 +178,8 @@ without one. What the index can do depends on the file:
   line, and that stretch is read from its start. The time range takes
   the first and last timestamps from the index with their lines'
   offsets, with no read, for a compressed file too.
-- **Too many changes.** A file whose offset changes more than 1,024
-  times records `zone_offsets: null`. A time search under a file zone
+- **Too many changes.** A file whose offset changes too often for 1,024
+  entries records `zone_offsets: null`. A time search under a file zone
   then reads from the first line, as without an index: exact, and as
   slow as a search of an unindexed file. The time range takes the first
   timestamp from the index with the offset it stores and reads the last
