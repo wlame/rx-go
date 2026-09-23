@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stored line index whose time section holds a value outside the
+  years 1 to 9999 (`first.ms`, `last.ms` or a `max_before` entry) is
+  treated as damaged, as any index rx could not have written: a search
+  under `--file-tz` adds up to 18 hours to those values, which could
+  wrap on a tampered index.
 - Upgrading `rx` never upgraded its viewer: `rx serve` served a cached
   viewer for ever. Now, with no `RX_FRONTEND_URL` or
   `RX_FRONTEND_VERSION` set, it asks GitHub once a day (when

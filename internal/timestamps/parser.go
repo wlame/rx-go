@@ -245,7 +245,7 @@ func (p *Parser) finish(r fields) (Stamp, bool) {
 	// (ms, the value a zone-less file keeps, see inFileFrame) and the
 	// instant the zone names (s.Ms, the value a zoned file keeps) must
 	// lie in the years 1 to 9999, or the line has no timestamp.
-	if !inValueRange(ms) || !inValueRange(s.Ms) {
+	if !InValueRange(ms) || !InValueRange(s.Ms) {
 		return Stamp{}, false
 	}
 	return s, true

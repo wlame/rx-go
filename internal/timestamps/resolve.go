@@ -79,7 +79,7 @@ func Resolve(q Query, c ResolveContext) (Resolved, error) {
 		return out, err
 	}
 	for _, b := range [...]Bound{out.Start, out.End} {
-		if !b.Open && !inValueRange(b.Ms) {
+		if !b.Open && !InValueRange(b.Ms) {
 			return out, fmt.Errorf("%w %q: names a moment outside the years 1 to 9999", ErrInvalidQuery, q.Value)
 		}
 	}
@@ -156,7 +156,7 @@ func fileValueToInstant(fileMs int64, hasZone bool, logZone *time.Location) int6
 // could break an answer that renders it as a date.
 func InstantOf(fileMs int64, hasZone bool, logZone *time.Location) (int64, bool) {
 	instant := fileValueToInstant(fileMs, hasZone, logZone)
-	return instant, inValueRange(instant)
+	return instant, InValueRange(instant)
 }
 
 // wallToFile turns a wall-clock reading without a zone into the file's
