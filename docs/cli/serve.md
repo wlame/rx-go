@@ -181,6 +181,12 @@ capped at 128 chars if client-supplied via `X-Request-ID`). The ID is:
 - Added as an `X-Request-ID` response header
 - Included in the `slog` log records for this request
 
+When the client goes away before the answer (a browser that replaces a
+request with a newer one, say), the request's work stops and the
+`http_request` log line and `rx_http_responses_total` report status
+`499` instead of the `500` that reached nobody; see
+[metrics](../api/endpoints/metrics.md).
+
 Webhooks carry the trace's own `request_id` (the body field), not this
 ID; see [request IDs](../api/conventions.md#request-ids).
 

@@ -2,6 +2,7 @@ package webapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -87,6 +88,28 @@ func (sr *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// statusClientClosedRequest is the status the request log and
+// rx_http_responses_total report for a request whose client went away
+// before its answer: 499, the code nginx uses for the same event. It is
+// never written to a client, so no operation declares it.
+const statusClientClosedRequest = 499
+
+// reportedStatus returns the status to log and count for a request
+// whose context is ctx and whose handler wrote status written.
+//
+// When the client goes away, net/http cancels the request's context, and
+// a handler that honors it (samples stops its read, trace stops its
+// workers) answers with a server error that reaches nobody. That 5xx is
+// the cancellation's effect, not a server fault, so it is reported as
+// statusClientClosedRequest. Any other status is the answer the request
+// would have had with the client still there, and it stays.
+func reportedStatus(ctx context.Context, written int) int {
+	if written >= http.StatusInternalServerError && errors.Is(ctx.Err(), context.Canceled) {
+		return statusClientClosedRequest
+	}
+	return written
+}
+
 // loggingMiddleware emits one structured log record per request at
 // completion. Keys are deliberately stable so downstream log pipelines
 // can alert on them.
@@ -101,7 +124,7 @@ func loggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("request_id", RequestIDFromContext(r.Context())),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
-				slog.Int("status", sr.status),
+				slog.Int("status", reportedStatus(r.Context(), sr.status)),
 				slog.Int("bytes", sr.bytes),
 				slog.Duration("duration", dur),
 			)
@@ -146,7 +169,8 @@ const unmatchedEndpointLabel = "unmatched"
 
 // metricsMiddleware updates rx_http_responses_total{method,endpoint,status_code}.
 // It is the only place that counts a response, so each request is
-// counted exactly once, with the status the client received.
+// counted exactly once, with the status the client received, or 499 for
+// a request whose client went away first (reportedStatus).
 //
 // The endpoint label is the matched chi route PATTERN, never r.URL.Path,
 // so path parameters do not multiply the series: GET /v1/tasks/abc-123
@@ -160,7 +184,7 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		if sr.status == 0 {
 			sr.status = http.StatusOK
 		}
-		prometheus.RecordHTTPResponse(r.Method, endpointLabel(r), sr.status)
+		prometheus.RecordHTTPResponse(r.Method, endpointLabel(r), reportedStatus(r.Context(), sr.status))
 	})
 }
 

@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -63,14 +64,31 @@ func errorTypeOf(err error) string {
 //
 // count is the per-endpoint helper (prometheus.RecordTraceRequest and
 // friends); the status label is "success" or "error", as rx-python
-// spells it.
-func recordEndpoint(count func(status string), err error) {
+// spells it, or "canceled" for a failure the request log reports as
+// statusClientClosedRequest: a server error written after the client
+// went away (ctx canceled). A canceled request is not a server error,
+// so it never reaches rx_errors_total.
+func recordEndpoint(ctx context.Context, count func(status string), err error) {
+	if err != nil && reportedStatus(ctx, errorStatus(err)) == statusClientClosedRequest {
+		count("canceled")
+		return
+	}
 	if err != nil {
 		count("error")
 		prometheus.RecordError(errorTypeOf(err))
 		return
 	}
 	count("success")
+}
+
+// errorStatus is the HTTP status huma writes for a handler's error: the
+// status the error carries, or 500 for an error that carries none.
+func errorStatus(err error) int {
+	var status huma.StatusError
+	if errors.As(err, &status) {
+		return status.GetStatus()
+	}
+	return http.StatusInternalServerError
 }
 
 // pathKindByExtension maps a file extension onto the trace-duration
