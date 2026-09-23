@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -155,7 +156,117 @@ func (s ZoneSetting) parse(raw string) (Zone, error) {
 	if err != nil {
 		return Zone{}, fmt.Errorf("not a zone name")
 	}
+	// time.LoadLocation opens a file named after raw, so a file system
+	// that ignores letter case (macOS) finds `utc` and `europe/berlin`
+	// too, and the Location keeps raw's spelling. Only the zone
+	// database's own spelling is accepted, so every OS accepts the same
+	// names, as a browser's list of zones does.
+	if !spelledAsInZoneSources(raw, zoneSourceDirs()) {
+		return Zone{}, fmt.Errorf("not a zone name as the zone database spells it (letter case counts)")
+	}
 	return Zone{Location: loc, Name: raw}, nil
+}
+
+// platformZoneDirs are the directories time.LoadLocation looks a zone
+// name up in on Unix, in its order (time/zoneinfo_unix.go). Where none
+// exists, as on Windows or in a minimal container, it uses the database
+// compiled into the binary.
+var platformZoneDirs = []string{
+	"/usr/share/zoneinfo",
+	"/usr/share/lib/zoneinfo",
+	"/usr/lib/locale/TZ",
+	"/etc/zoneinfo",
+}
+
+// zoneSourceDirs is where time.LoadLocation reads zone files from:
+// $ZONEINFO first when it is set, then platformZoneDirs. $ZONEINFO may
+// name a zip file instead, whose names match exactly; listing it fails,
+// which spellingIn reads as a source that does not hold the name.
+func zoneSourceDirs() []string {
+	if dir := os.Getenv("ZONEINFO"); dir != "" {
+		return append([]string{dir}, platformZoneDirs...)
+	}
+	return platformZoneDirs
+}
+
+// spellingInDir is what one zone directory says about a name's
+// spelling.
+type spellingInDir int
+
+const (
+	// nameAbsent: the directory does not hold the name in any case.
+	nameAbsent spellingInDir = iota
+	// nameExact: every component is an entry of that exact spelling.
+	nameExact
+	// nameOtherCase: a component is there only in another letter case.
+	nameOtherCase
+)
+
+// spelledAsInZoneSources reports whether name, a zone name that
+// time.LoadLocation accepted, is spelled as the zone database spells it:
+// no empty or `.` component, and, in the first of dirs that holds it in
+// any letter case, every component an entry of exactly that spelling. A
+// name no directory holds came from the database compiled into the
+// binary, which matches names exactly, and is accepted.
+//
+// It reads one directory listing per component and directory, at most
+// len(dirs) × 32 listings for a name of 64 bytes, and only directories
+// of the zone database. The check runs each time a zone value is parsed,
+// a few times per request, never per line.
+func spelledAsInZoneSources(name string, dirs []string) bool {
+	components := strings.Split(name, "/")
+	for _, c := range components {
+		if c == "" || c == "." {
+			return false
+		}
+	}
+	for _, dir := range dirs {
+		switch spellingIn(dir, components) {
+		case nameExact:
+			return true
+		case nameOtherCase:
+			return false
+		case nameAbsent:
+		}
+	}
+	return true
+}
+
+// spellingIn walks components down from dir, one directory listing per
+// component, and says whether dir holds them in exactly that spelling,
+// only in another letter case, or not at all.
+func spellingIn(dir string, components []string) spellingInDir {
+	path := dir
+	for _, component := range components {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nameAbsent
+		}
+		switch entrySpelling(entries, component) {
+		case nameAbsent:
+			return nameAbsent
+		case nameOtherCase:
+			return nameOtherCase
+		case nameExact:
+		}
+		path = filepath.Join(path, component)
+	}
+	return nameExact
+}
+
+// entrySpelling says whether entries hold name exactly, only in another
+// letter case, or not at all.
+func entrySpelling(entries []os.DirEntry, name string) spellingInDir {
+	found := nameAbsent
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return nameExact
+		}
+		if strings.EqualFold(entry.Name(), name) {
+			found = nameOtherCase
+		}
+	}
+	return found
 }
 
 // parseFixedOffset reads `±HH:MM` as a zone that is always that far
