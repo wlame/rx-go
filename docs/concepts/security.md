@@ -498,13 +498,19 @@ leaves the last good bundle exactly where it was.
 
 ### "Latest" is bounded
 
-`rx serve` resolves the newest viewer release, but installs it only when
-its version falls inside the range this backend was built against —
-`0.2.0 <= v < 0.7.0` today (the viewer is a 0.x product, where a minor bump
-may break compatibility). A newer release is logged as
-`frontend_version_incompatible` and skipped; the server runs without the
-SPA rather than serving a viewer that expects fields this backend does not
-send.
+`rx serve` installs the newest published viewer release whose version
+falls inside the range this backend was built against — `0.2.0 <= v <
+0.7.0` today (the viewer is a 0.x product, where a minor bump may break
+compatibility). It reads GitHub's release list, skips drafts and
+pre-releases, and leaves out every release past the range; a newer one is
+logged as `frontend_newer_release_outside_range`. A cached viewer outside
+the range is not served: it is replaced, or, when no release inside the
+range can be installed, the server runs without the SPA rather than
+serving a viewer that expects fields this backend does not send.
+
+The same rule runs once a day against a cached viewer (see
+[`rx serve`](../cli/serve.md#viewer-updates)), and every download it
+starts goes through the checksum and redirect checks above.
 
 `RX_FRONTEND_VERSION=v0.2.0` pins an exact tag and bypasses the range
 check. `RX_FRONTEND_URL` bypasses release resolution entirely. Both are

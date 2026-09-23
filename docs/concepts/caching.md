@@ -48,7 +48,7 @@ a missing cache directory gracefully return "no cache".
 ├── trace_cache/                            — trace-result caches
 │   └── <patterns_hash16>/
 │       └── <path_hash16>_<basename>.json
-└── frontend/                               — rx-viewer SPA (downloaded once)
+└── frontend/                               — rx-viewer SPA (checked daily)
     ├── index.html
     ├── assets/
     └── .metadata.json
@@ -165,9 +165,13 @@ window or another detector set rebuilds the index. See
 ### `frontend/`
 
 The `rx-viewer` SPA is extracted here on first `rx serve` start. The
-manager writes `.metadata.json` with the SPA version and download
-timestamp so subsequent starts can reuse the cached copy. See
-[`rx serve`](../cli/serve.md) for the fetch behavior.
+manager writes `.metadata.json` with the SPA version, the download time
+and `last_check`, the last time GitHub was asked for a newer release.
+A later start serves the cached copy and, once `last_check` is a day
+old, asks again: a newer release inside the range this `rx` supports
+replaces the cache. A cached viewer outside that range counts as no
+cache. See [`rx serve`](../cli/serve.md#viewer-updates) for the
+details.
 
 ## Cache invalidation
 

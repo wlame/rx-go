@@ -24,9 +24,11 @@ import (
 
 // NewServeCommand builds the `rx serve` cobra command.
 //
-// Starts the HTTP server. Wires up search-root sandbox, ensures the
-// rx-viewer frontend is downloaded (lazy: only when cache is empty),
-// then blocks until SIGINT/SIGTERM.
+// Starts the HTTP server. Wires up search-root sandbox, makes sure the
+// rx-viewer frontend is on disk (downloaded when the cache is empty or
+// outside the supported range, refreshed when a newer release inside the
+// range is out and the last check is a day old, or now with
+// --update-viewer), then blocks until SIGINT/SIGTERM.
 //
 // Parity with rx-python/src/rx/cli/serve.py — flag names and defaults
 // match exactly so users can switch between binaries.
@@ -36,6 +38,7 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 		port         int
 		searchRoots  []string
 		skipFrontend bool
+		updateViewer bool
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -50,6 +53,7 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 				searchRoots:  searchRoots,
 				appVersion:   appVersion,
 				skipFrontend: skipFrontend,
+				updateViewer: updateViewer,
 			})
 		},
 	}
@@ -59,6 +63,9 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 		"Restrict file access to this directory (repeatable; default: current dir)")
 	cmd.Flags().BoolVar(&skipFrontend, "skip-frontend", false,
 		"Don't try to download the rx-viewer SPA — /docs still works")
+	cmd.Flags().BoolVar(&updateViewer, "update-viewer", false,
+		"Check GitHub for a newer rx-viewer release inside the supported range now, "+
+			"instead of once a day")
 	return cmd
 }
 
@@ -79,6 +86,61 @@ type serveParams struct {
 	searchRoots  []string
 	appVersion   string
 	skipFrontend bool
+	updateViewer bool
+}
+
+// viewerMode is how `rx serve` manages the viewer at start-up.
+type viewerMode int
+
+const (
+	// viewerCheckDaily: the default — install when missing, check for a
+	// newer release when the last check is a day old.
+	viewerCheckDaily viewerMode = iota
+	// viewerCheckNow: --update-viewer — check now.
+	viewerCheckNow
+	// viewerUnmanaged: --skip-frontend — serve what is on disk, ask nothing.
+	viewerUnmanaged
+)
+
+// viewerModeFor maps the two flags to a mode. Together they contradict
+// each other, which is a usage error.
+func viewerModeFor(skipFrontend, updateViewer bool) (viewerMode, error) {
+	switch {
+	case skipFrontend && updateViewer:
+		return 0, fmt.Errorf("--update-viewer and --skip-frontend cannot be used together")
+	case skipFrontend:
+		return viewerUnmanaged, nil
+	case updateViewer:
+		return viewerCheckNow, nil
+	default:
+		return viewerCheckDaily, nil
+	}
+}
+
+// viewerStartTimeout bounds the whole viewer step of the start-up: a
+// first install or an update download. The release listing of a daily
+// check has its own, shorter bound (frontend.ReleaseCheckTimeout).
+const viewerStartTimeout = 60 * time.Second
+
+// prepareViewer runs the viewer step of `rx serve` and returns what will
+// be served. It never fails the start: a failed download or check is
+// written to stderr as one warning line that also says what is served
+// instead (the cached viewer, or none), and the server starts either way.
+func prepareViewer(fm *frontend.Manager, mode viewerMode, stderr io.Writer) frontend.Served {
+	if mode == viewerUnmanaged {
+		return fm.Cached()
+	}
+	ensure := fm.Ensure
+	if mode == viewerCheckNow {
+		ensure = fm.Update
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), viewerStartTimeout)
+	defer cancel()
+	served, err := ensure(ctx)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Warning: %v. Serving %s.\n", err, served.Describe())
+	}
+	return served
 }
 
 // runServe wires everything up and blocks.
@@ -88,6 +150,11 @@ func runServe(out io.Writer, p serveParams) error {
 	// handler, so callers that set their own handler are not disturbed;
 	// only the level-reporting side channel changes.
 	configureLogLevelFromEnv()
+
+	mode, err := viewerModeFor(p.skipFrontend, p.updateViewer)
+	if err != nil {
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+	}
 
 	// SECURITY: refuse to start when an env-configured webhook points
 	// somewhere the SSRF guard would block. Checked before anything
@@ -142,16 +209,10 @@ func runServe(out io.Writer, p serveParams) error {
 
 	// Prepare the frontend cache. Best-effort: a download failure on a
 	// corporate network shouldn't stop the server — rx-viewer degrades
-	// gracefully (SPA fallback → /docs).
+	// gracefully (SPA fallback → /docs). It runs before the listener
+	// binds, so the bundle never changes under a request.
 	fm := frontend.NewManager(frontend.Config{})
-	if !p.skipFrontend {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		if err := fm.Ensure(ctx); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr,
-				"Warning: frontend fetch failed (%v). Continuing without SPA.\n", err)
-		}
-		cancel()
-	}
+	served := prepareViewer(fm, mode, os.Stderr)
 
 	// One hook dispatcher (queue, HTTP client, workers) for the whole
 	// server. It holds no URLs: each /v1/trace request resolves its own
@@ -181,6 +242,7 @@ func runServe(out io.Writer, p serveParams) error {
 			_, _ = fmt.Fprintf(out, "  - %s\n", r)
 		}
 	}
+	_, _ = fmt.Fprintf(out, "Viewer: %s\n", served.Describe())
 	if apiToken != "" {
 		_, _ = fmt.Fprintln(out, "API token: required on /v1 (RX_API_TOKEN is set)")
 	}

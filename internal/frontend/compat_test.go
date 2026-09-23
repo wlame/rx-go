@@ -2,6 +2,7 @@ package frontend
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -44,36 +45,41 @@ func TestViewerVersionCompatible(t *testing.T) {
 	}
 }
 
-// TestEnsure_DeclinesIncompatibleLatestRelease is scenario 5: a viewer
-// past the supported range is not installed automatically, the reason is
-// logged, and Ensure does not fail — the server runs without the SPA.
-func TestEnsure_DeclinesIncompatibleLatestRelease(t *testing.T) {
+// TestEnsure_DeclinesReleasesOutsideTheRange: with no cache and only a
+// release past the supported range published, nothing is installed and
+// Ensure says why, naming the newest release and the override. The
+// server runs without the SPA.
+func TestEnsure_DeclinesReleasesOutsideTheRange(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{
+		_, _ = w.Write([]byte(`[{
 			"tag_name": "v9.9.9",
 			"assets": [{"name": "dist.tar.gz", "browser_download_url": "http://127.0.0.1:1/dist.tar.gz"}]
-		}`))
+		}]`))
 	}))
 	t.Cleanup(api.Close)
 
-	var logged strings.Builder
 	cache := t.TempDir()
 	m := NewManager(Config{
 		CacheDir: cache,
 		APIBase:  api.URL,
-		Logger:   slog.New(slog.NewTextHandler(&logged, nil)),
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
+	m.envURL, m.envVersion = "", ""
 
-	if err := m.Ensure(context.Background()); err != nil {
-		t.Fatalf("Ensure: got %v, want nil (a newer viewer is not an error)", err)
+	served, err := m.Ensure(context.Background())
+
+	if err == nil {
+		t.Fatal("Ensure: want an error naming the refused release")
+	}
+	for _, want := range []string{"v9.9.9", "RX_FRONTEND_VERSION", supportedRange()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should name %q", err, want)
+		}
+	}
+	if served != (Served{Reason: ServedNone}) {
+		t.Errorf("served = %+v, want none", served)
 	}
 	if m.IsAvailable() {
 		t.Errorf("an out-of-range viewer must not be installed")
-	}
-	if !strings.Contains(logged.String(), "frontend_version_incompatible") {
-		t.Errorf("the refusal should be logged: %s", logged.String())
-	}
-	if !strings.Contains(logged.String(), "RX_FRONTEND_VERSION") {
-		t.Errorf("the log should name the override: %s", logged.String())
 	}
 }

@@ -119,7 +119,7 @@ See [concepts/security](concepts/security.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag (e.g. `v0.2.0`). When unset, `rx serve` fetches the latest release. |
+| `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag (e.g. `v0.2.0`), with no range check and no daily check. When unset, `rx serve` installs the newest published release inside the range it supports and checks for a newer one once a day (see [`rx serve`](cli/serve.md#viewer-updates)). |
 | `RX_FRONTEND_URL` | unset | Direct URL to a `dist.tar.gz` of the SPA. When set, `rx serve` downloads from this URL on every start. |
 | `RX_FRONTEND_PATH` | — | Alternate directory for the SPA extraction. Defaults to `{cache}/frontend`. Tilde expansion supported. |
 
