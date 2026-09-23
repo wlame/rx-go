@@ -26,8 +26,10 @@ func TestViewerVersionCompatible(t *testing.T) {
 		{"0.4.3", true},
 		{"0.5.0", true}, // released and checked against this backend
 		{"0.5.2", true},
+		{"0.6.0", true}, // released and checked against this backend
+		{"0.6.1", true},
 		{"0.1.9", false}, // below the minimum
-		{"0.6.0", false}, // past the window: a 0.x minor may break
+		{"0.7.0", false}, // past the window: a 0.x minor may break
 		{"1.0.0", false},
 		{"2.4.1", false},
 		{"", true}, // unknown version: do not block on a bad parse
