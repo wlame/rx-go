@@ -115,6 +115,30 @@ func TestFileTZ_InvalidZoneIsABadRequest(t *testing.T) {
 	}
 }
 
+// A long file_tz is refused with a 400 that quotes no more than its first
+// 64 bytes, on both routes.
+func TestFileTZ_LongValueIsQuotedCut(t *testing.T) {
+	files := timedRoot(t)
+	ts := newTestServer(t)
+	zone := strings.Repeat("Z", 1000)
+	for _, route := range []string{"/v1/samples?lines=1&", "/v1/time-range?"} {
+		query := url.Values{"path": {files["app.log"]}, "file_tz": {zone}}
+		resp, err := http.Get(ts.URL + route + query.Encode())
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		var problem struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&problem)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(problem.Detail, zone[:64]) ||
+			strings.Contains(problem.Detail, zone[:65]) {
+			t.Errorf("%s: status %d, detail %q; want 400 quoting the first 64 bytes only", route, resp.StatusCode, problem.Detail)
+		}
+	}
+}
+
 // /health lists file_tz, and the contract is 1.6.
 func TestHealth_ListsFileTZ(t *testing.T) {
 	if !slices.Contains(Features(), "file_tz") {
