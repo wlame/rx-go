@@ -156,8 +156,8 @@ Check the startup output. The banner names the viewer served and why,
 and `rx serve` prints one warning when a download or a check fails:
 
 ```text
-Warning: viewer update check: github returned 500. Serving no viewer (/ redirects to /docs).
-Viewer: no viewer (/ redirects to /docs)
+Warning: viewer update check: github returned 500. Viewer: none (/ redirects to /docs).
+Viewer: none (/ redirects to /docs)
 ```
 
 Either:

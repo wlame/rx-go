@@ -58,22 +58,34 @@ type Served struct {
 	Replaced string
 }
 
+// servedFromUnrecorded is the description key of an update that
+// replaced a cached viewer whose version was not recorded. It is never a
+// Reason; Describe picks it so the text does not have to name a version
+// nobody knows.
+const servedFromUnrecorded ServedReason = "updated-from-unrecorded"
+
 // servedDescriptions holds the human text for each reason; {version}
-// and {replaced} are filled in by Describe.
+// and {replaced} are filled in by Describe. The banner line reads
+// "Viewer: <text>", so no text repeats the word "viewer" at its start.
 var servedDescriptions = map[ServedReason]string{
-	ServedFromCache: "viewer {version} (cached)",
-	ServedUpdated:   "viewer {version} (updated from {replaced})",
-	ServedInstalled: "viewer {version} (installed)",
-	ServedOverride:  "viewer {version} (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)",
-	ServedNone:      "no viewer (/ redirects to /docs)",
+	ServedFromCache:      "{version} (cached)",
+	ServedUpdated:        "{version} (updated from {replaced})",
+	servedFromUnrecorded: "{version} (replaced a cached viewer of unrecorded version)",
+	ServedInstalled:      "{version} (installed)",
+	ServedOverride:       "{version} (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)",
+	ServedNone:           "none (/ redirects to /docs)",
 }
 
 // Describe renders s for the `rx serve` start-up banner, for example
-// "viewer 0.6.0 (updated from 0.2.0)".
+// "v0.6.0 (updated from v0.2.0)".
 func (s Served) Describe() string {
-	text, ok := servedDescriptions[s.Reason]
+	key := s.Reason
+	if key == ServedUpdated && s.Replaced == "" {
+		key = servedFromUnrecorded
+	}
+	text, ok := servedDescriptions[key]
 	if !ok {
-		text = "viewer {version} (" + string(s.Reason) + ")"
+		text = "{version} (" + string(s.Reason) + ")"
 	}
 	return strings.NewReplacer(
 		"{version}", versionLabel(s.Version),
@@ -81,10 +93,15 @@ func (s Served) Describe() string {
 	).Replace(text)
 }
 
-// versionLabel names a version, or says it is not recorded.
+// versionLabel names a version the way a release tag spells it: a
+// number gets the "v" prefix (metadata may record "0.6.0" or "v0.6.0"),
+// any other text ("custom", a build's own stamp) stays as it is.
 func versionLabel(v string) string {
 	if v == "" {
-		return "of unknown version"
+		return "unrecorded version"
+	}
+	if v[0] >= '0' && v[0] <= '9' {
+		return "v" + v
 	}
 	return v
 }
