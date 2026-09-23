@@ -69,6 +69,10 @@ func LineStamp(p *timestamps.Parser, line []byte) (timestamps.Stamp, bool) {
 // It is not safe for use by several goroutines: one walk owns it.
 type timeIndexer struct {
 	parser *timestamps.Parser
+	// hasZone is the parser's Format().HasZone, kept here because
+	// Format copies the format and may allocate, which a per-line call
+	// must not.
+	hasZone bool
 
 	// hasMax and maxMs are the running maximum of the own timestamps
 	// observed so far.
@@ -91,7 +95,22 @@ type timeIndexer struct {
 	// frames, when set, marks the lines a seekable file's checkpoints
 	// can name (see frameMarks).
 	frames *frameMarks
+
+	// zones are the change points of the offset the lines write, in line
+	// order (see rxtypes.TimeIndex.ZoneOffsets); tooManyZones is set
+	// once a change point past MaxZoneOffsets was seen, and zones is no
+	// longer added to.
+	zones        []rxtypes.ZoneOffset
+	tooManyZones bool
 }
+
+// MaxZoneOffsets is the most change points of the written zone offset a
+// time section records (rxtypes.TimeIndex.ZoneOffsets). A file whose
+// offset changes more often records null: a request that reads it in
+// another zone then searches it from its first line. The bound keeps
+// the section small whatever a file holds, and a search under a file
+// zone visits at most this many segments.
+const MaxZoneOffsets = 1024
 
 // maxMark is the running maximum of the own timestamps of every line
 // numbered below line; known is false when none of them had one.
@@ -109,7 +128,7 @@ func newTimeIndexer(f timestamps.Format, mtimeNs int64) (*timeIndexer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &timeIndexer{parser: parser}, nil
+	return &timeIndexer{parser: parser, hasZone: f.HasZone}, nil
 }
 
 // useFrames makes the indexer mark the lines a seekable file's
@@ -155,6 +174,7 @@ func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 		t.firstText, _ = t.parser.Text(stripLineEnd(line))
 	}
 	t.last = point
+	t.observeZone(number, stamp)
 	if !t.hasMax {
 		t.hasMax, t.maxMs = true, stamp.Ms
 		return
@@ -164,6 +184,50 @@ func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 		t.maxBackwardMs = max(t.maxBackwardMs, behind)
 	}
 	t.maxMs = max(t.maxMs, stamp.Ms)
+}
+
+// observeZone records a change point when the timestamped line number
+// writes another zone offset than the line before it.
+//
+// The offset recorded is the one that turns the line's stored value
+// back into the wall clock it writes: the offset the line writes in a
+// file whose timestamps carry zones (0 for a line that writes none,
+// whose value is stored as written), and 0 for every line of a file
+// whose timestamps carry none, where a line that writes a zone keeps
+// the wall clock it shows (timestamps.Parser). So within one entry's
+// lines, stored value plus offset is always the written wall clock.
+//
+// It allocates only at a change point, and at most MaxZoneOffsets
+// times over a build: past the limit it stops recording.
+func (t *timeIndexer) observeZone(number int64, stamp timestamps.Stamp) {
+	if t.tooManyZones {
+		return
+	}
+	offset := 0
+	if t.hasZone {
+		offset = stamp.OffsetMinutes
+	}
+	if n := len(t.zones); n > 0 && t.zones[n-1].OffsetMinutes == offset {
+		return
+	}
+	if len(t.zones) == MaxZoneOffsets {
+		t.tooManyZones, t.zones = true, nil
+		return
+	}
+	t.zones = append(t.zones, rxtypes.ZoneOffset{Line: number, OffsetMinutes: offset})
+}
+
+// zoneOffsets is the recorded list: nil past the limit, and an empty,
+// non-nil list for a file without a timestamped line, which JSON writes
+// as [] rather than null.
+func (t *timeIndexer) zoneOffsets() []rxtypes.ZoneOffset {
+	if t.tooManyZones {
+		return nil
+	}
+	if t.zones == nil {
+		return []rxtypes.ZoneOffset{}
+	}
+	return t.zones
 }
 
 // result builds the time section once the walk has read every line.
@@ -190,6 +254,7 @@ func (t *timeIndexer) result(checkpoints []rxtypes.LineIndexEntry) (*rxtypes.Tim
 		BackwardSteps:    t.backwardSteps,
 		MaxBackwardMs:    t.maxBackwardMs,
 		MaxBefore:        maxBefore,
+		ZoneOffsets:      t.zoneOffsets(),
 	}
 	if t.lines > 0 {
 		first, last, text := t.first, t.last, t.firstText
@@ -314,6 +379,9 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 		(*offset < -maxZoneOffsetMinutes || *offset > maxZoneOffsetMinutes) {
 		return fmt.Errorf("time_index: first_zone_offset_minutes %d is beyond 18 hours", *offset)
 	}
+	if err := validZoneOffsets(ti); err != nil {
+		return fmt.Errorf("time_index: %w", err)
+	}
 	if len(ti.MaxBefore) != len(idx.LineIndex) {
 		return fmt.Errorf("time_index: max_before has %d entries for %d checkpoints",
 			len(ti.MaxBefore), len(idx.LineIndex))
@@ -325,6 +393,68 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 		}
 		if v != nil {
 			previous = v
+		}
+	}
+	return nil
+}
+
+// validZoneOffsets checks zone_offsets against the rest of a time
+// section that validTimeSpan already accepted. A search under a file
+// zone adds each entry's offset to the stored values of its lines, so
+// every entry must be one the build could have written:
+//
+//   - null only for a file whose timestamps carry zones (a file without
+//     zones always records [[first, 0]]), and at most MaxZoneOffsets
+//     entries, checked before the entries are read;
+//   - empty exactly when no line has a timestamp;
+//   - the first entry on the first timestamped line, with the offset of
+//     the first timestamp (first_zone_offset_minutes, or 0 for a file
+//     without zones);
+//   - lines strictly ascending, none after the last timestamped line;
+//   - each offset within 18 hours, and different from the one before
+//     (an entry records a change);
+//   - for a file without zones, nothing past the first entry.
+func validZoneOffsets(ti *rxtypes.TimeIndex) error {
+	points := ti.ZoneOffsets
+	if points == nil {
+		if !ti.HasZone {
+			return errors.New("zone_offsets is null for a file whose timestamps carry no zone")
+		}
+		return nil
+	}
+	if len(points) > MaxZoneOffsets {
+		return fmt.Errorf("zone_offsets has %d entries, more than %d", len(points), MaxZoneOffsets)
+	}
+	if (len(points) > 0) != (ti.TimestampedLines > 0) {
+		return fmt.Errorf("zone_offsets has %d entries for %d timestamped lines", len(points), ti.TimestampedLines)
+	}
+	if len(points) == 0 {
+		return nil
+	}
+	firstOffset := 0
+	if ti.FirstZoneOffsetMinutes != nil {
+		firstOffset = *ti.FirstZoneOffsetMinutes
+	}
+	if points[0].Line != ti.First.Line || points[0].OffsetMinutes != firstOffset {
+		return fmt.Errorf("zone_offsets starts with [%d, %d], not at the first timestamp [%d, %d]",
+			points[0].Line, points[0].OffsetMinutes, ti.First.Line, firstOffset)
+	}
+	if !ti.HasZone && len(points) > 1 {
+		return fmt.Errorf("zone_offsets has %d entries for a file whose timestamps carry no zone", len(points))
+	}
+	for i, p := range points {
+		if p.OffsetMinutes < -maxZoneOffsetMinutes || p.OffsetMinutes > maxZoneOffsetMinutes {
+			return fmt.Errorf("zone_offsets entry %d: offset %d is beyond 18 hours", i, p.OffsetMinutes)
+		}
+		if p.Line > ti.Last.Line {
+			return fmt.Errorf("zone_offsets entry %d names line %d, after the last timestamped line %d", i, p.Line, ti.Last.Line)
+		}
+		if i == 0 {
+			continue
+		}
+		if previous := points[i-1]; p.Line <= previous.Line || p.OffsetMinutes == previous.OffsetMinutes {
+			return fmt.Errorf("zone_offsets entry %d [%d, %d] does not follow [%d, %d] with a change",
+				i, p.Line, p.OffsetMinutes, previous.Line, previous.OffsetMinutes)
 		}
 	}
 	return nil

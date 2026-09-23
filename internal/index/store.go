@@ -65,12 +65,17 @@ import (
 // to skip to the right checkpoint. It is null for a file with no
 // timestamp format. rx-python writes no such field.
 //
+// Version 9: the time section records where the zone offset the lines
+// write changes (zone_offsets), so a request that reads a file in
+// another zone shifts its query by each segment's offset and keeps the
+// index's search, instead of reading the file from its first line.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 8
+const Version = 9
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp

@@ -200,6 +200,17 @@ type TimeIndex struct {
 	// at most 64 bytes); null when no line has one. A client shows the
 	// file's times in its own layout from it.
 	FirstText *string `json:"first_text"`
+	// ZoneOffsets lists where the zone offset the lines write changes,
+	// in line order: the first entry names the first timestamped line,
+	// and each later one the first line that writes another offset. A
+	// line's stored value plus its offset is the wall clock it writes,
+	// which is what a request that reads the file in another zone needs.
+	// A line that writes no zone counts as offset 0 (its value is stored
+	// as written), and in a file whose timestamps carry no zone every
+	// line does, so the list is [[first, 0]]. It is empty when no line
+	// has a timestamp, and null when the offset changes more often than
+	// the index records (index.MaxZoneOffsets entries).
+	ZoneOffsets []ZoneOffset `json:"zone_offsets"`
 }
 
 // TimePoint is one timestamped line: its timestamp, its 1-based line

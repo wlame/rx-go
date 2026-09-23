@@ -9,13 +9,13 @@ checkpoint, whatever the file size.
 ## The file format
 
 An index is stored as a JSON document with the full `UnifiedFileIndex`
-schema, format version 8. The critical field is `line_index`. The
+schema, format version 9. The critical field is `line_index`. The
 start of the index `rx samples` built for a 465 MB log (most of the
 other members trimmed; `rx index --info --json` prints all of them):
 
 ```json
 {
-  "version": 8,
+  "version": 9,
   "source_path": "/var/log/app.log-2025121008",
   "source_modified_at": "2025-12-27T17:30:57.775888",
   "source_size_bytes": 487561499,
@@ -45,7 +45,8 @@ other members trimmed; `rx index --info --json` prints all of them):
     "backward_steps": 0,
     "max_backward_ms": 0,
     "max_before": [null, 1765350019707, 1765350027397, 1765350030944],
-    "first_text": "2025-12-10 07:00:04.574"
+    "first_text": "2025-12-10 07:00:04.574",
+    "zone_offsets": [[1, 0]]
   }
 }
 ```
@@ -141,6 +142,7 @@ values do not depend on the environment of the process that built it.
 | `backward_steps`, `max_backward_ms` | How many lines carry a timestamp more than one second earlier than the latest timestamp before them, and the largest such step. Several programs writing one file disagree by a second or so; a large count says the file is mixed |
 | `first_text` | The first timestamp as its line writes it, such as `2025-12-10 07:00:04.574` or `Dec 10 07:00:12.156`: printable ASCII, any other byte written as `\xHH`, at most 64 bytes; `null` when no line has a timestamp. [`rx time-range`](../cli/time-range.md) and `GET /v1/time-range` give it as `example`, so a client can show the file's times in the layout of its lines |
 | `max_before` | One entry per `line_index` checkpoint: the latest timestamp of every line numbered below the checkpoint's line, or `null` when none of them has one. It never decreases, so a lookup by time can skip every checkpoint whose earlier lines all come before the time it looks for |
+| `zone_offsets` | Where the zone offset the lines write changes: `[line, minutes]` pairs in line order, the first at the first timestamped line, each later one at the first line that writes another offset. A value plus its line's offset is the wall clock the line writes, which a request that reads the file in another zone (`--file-tz`) needs. A line that writes no zone counts as 0, the offset its value is in; a file whose timestamps carry no zone records `[[first, 0]]`. Empty when no line has a timestamp, and `null` when the offset changes more than 1,024 times (see [timestamps](timestamps.md#a-file-zone)) |
 
 A seekable zstd index has checkpoints of its own (each frame, and every
 10,000 lines inside a frame), and its `max_before` follows them; every
