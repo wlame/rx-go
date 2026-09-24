@@ -97,6 +97,22 @@ func TestGroup_EachTemplateFindsItsChainInProvisionalOrder(t *testing.T) {
 			chain: "app.log", parts: []string{"app-2025-02-15.0.log.gz", "app-2025-02-15.1.log.gz", "app.log"},
 			template: "dated-ext", key: "2025-02-15.0",
 		},
+		{
+			// A four-digit number from 1970 to 2100 where a rotation
+			// number goes is a year, and a later year is newer.
+			label: "yearly parts", files: []string{"report.2024", "report.2023.gz", "report.2025", "report"},
+			chain: "report", parts: []string{"report.2023.gz", "report.2024", "report.2025", "report"},
+			template: "numbered", key: "2023",
+		},
+		{
+			label: "yearly parts before the extension", files: []string{"app.2024.log", "app.2023.log.gz", "app.log"},
+			chain: "app.log", parts: []string{"app.2023.log.gz", "app.2024.log", "app.log"},
+			template: "numbered-ext", key: "2023",
+		},
+		{
+			label: "numbers outside the years are rotation numbers", files: []string{"x.1969", "x.2101", "x"},
+			chain: "x", parts: []string{"x.2101", "x.1969", "x"}, template: "numbered", key: "2101",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -311,6 +327,16 @@ func TestMatchName_Keys(t *testing.T) {
 		{"app-2026-10-01T12-00-00.000.log.zst", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 0, 0, 0), "dated-ext"},
 		{"app-2026-10-01T12-00-00.250.log", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 0, 0, 250), "dated-ext"},
 		{"postgresql-2026-10-01_000000.log", "postgresql.log", KeyDate, 0, ms(2026, 10, 1, 0, 0, 0, 0), "dated-ext"},
+		// A four-digit number from 1970 to 2100 in a rotation number's
+		// place is a year: the key is the start of that year.
+		{"report.2023", "report", KeyDate, 0, ms(2023, 1, 1, 0, 0, 0, 0), "numbered"},
+		{"report.1970.gz", "report", KeyDate, 0, 0, "numbered"},
+		{"report.2100", "report", KeyDate, 0, ms(2100, 1, 1, 0, 0, 0, 0), "numbered"},
+		{"app.2024.log.gz", "app.log", KeyDate, 0, ms(2024, 1, 1, 0, 0, 0, 0), "numbered-ext"},
+		{"report.1969", "report", KeyNumber, 1969, 0, "numbered"},
+		{"report.2101", "report", KeyNumber, 2101, 0, "numbered"},
+		{"report.02024", "report", KeyNumber, 2024, 0, "numbered"},
+		{"report.999", "report", KeyNumber, 999, 0, "numbered"},
 	}
 	for _, tc := range cases {
 		m, ok := matchName(tc.name)

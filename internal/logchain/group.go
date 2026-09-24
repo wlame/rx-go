@@ -17,8 +17,7 @@ import (
 // MaxParts is the most parts one chain may have. A group with more is
 // still returned by Group, with Candidate.TooManyParts set, so a
 // listing shows it and describing it says why it cannot be read as one
-// text. It also bounds the missing numbers a chain can name: a numbered
-// chain whose numbers span more than MaxParts is marked the same way.
+// text.
 const MaxParts = 10000
 
 // Entry is one entry of a directory listing, as Group takes it. The
@@ -64,7 +63,8 @@ type Part struct {
 	// File is the file pinned by the listing; read the part through it.
 	File paths.Pinned
 
-	// newestLow is the template's direction, kept for ordering.
+	// newestLow is the direction of the part's key (nameMatch), kept
+	// for ordering.
 	newestLow bool
 }
 
@@ -79,8 +79,7 @@ type Candidate struct {
 	// Missing are the names absent numbered parts would have; never
 	// nil.
 	Missing []string
-	// TooManyParts says that the chain has more than MaxParts parts, or
-	// that its numbers span more than MaxParts (Missing is then empty).
+	// TooManyParts says that the chain has more than MaxParts parts.
 	TooManyParts bool
 }
 
@@ -215,10 +214,8 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 	}
 
 	c := Candidate{Dir: dir, Name: chain, Parts: parts}
-	c.Missing, c.TooManyParts = missingNumbers(parts)
-	if len(parts) > MaxParts {
-		c.TooManyParts = true
-	}
+	c.Missing = missingNumbers(parts)
+	c.TooManyParts = len(parts) > MaxParts
 	sortProvisional(c.Parts)
 	return c, true
 }
@@ -324,7 +321,7 @@ func chooseParts(members []member, classify Classify) []Part {
 			Name: chosen.entry.Name, Path: chosen.entry.Path, Key: chosen.match.key,
 			Duplicates: duplicates, Info: chosen.entry.Info, Template: chosen.match.template.ID,
 			Format: chosen.format, File: chosen.entry.File,
-			newestLow: chosen.match.template.NewestLow,
+			newestLow: chosen.match.newestLow,
 		})
 	}
 	return parts
@@ -335,11 +332,17 @@ func chooseParts(members []member, classify Classify) []Part {
 // number 0, else 1) up to the highest present one that no part has. A
 // missing part is named like the highest-numbered part, without a
 // compression suffix (`dpkg.log.4`, `app.4.log`): its encoding cannot be
-// known. Dated parts have no missing numbers; rotation skips quiet days.
+// known. Dated parts have no missing numbers, years included; rotation
+// skips quiet days.
 //
-// The list is never longer than MaxParts: when the numbers span more,
-// it is empty and tooMany is true.
-func missingNumbers(parts []Part) (missing []string, tooMany bool) {
+// The numbers are named only when no more of them are missing than
+// parts with a number are present. A rotation keeps its parts in an
+// unbroken run, so a few holes are parts lost; a span mostly of holes
+// (`x.1` beside `x.500`) says the numbers are not a rotation's, and
+// naming hundreds of parts that never existed would only hide the
+// chain. The rule also bounds the list by the parts present, so the
+// loop below runs at most twice the number of present numbers.
+func missingNumbers(parts []Part) []string {
 	present := map[int64]bool{}
 	var highest *Part
 	for i := range parts {
@@ -352,16 +355,19 @@ func missingNumbers(parts []Part) (missing []string, tooMany bool) {
 			highest = p
 		}
 	}
-	missing = []string{}
+	missing := []string{}
 	if highest == nil {
-		return missing, false
+		return missing
 	}
 	lowest := int64(1)
 	if present[0] {
 		lowest = 0
 	}
-	if highest.Key.Number-lowest+1 > MaxParts {
-		return missing, true
+	// Every present number lies in [lowest, highest], so the span less
+	// the present numbers is how many are missing.
+	absent := highest.Key.Number - lowest + 1 - int64(len(present))
+	if absent > int64(len(present)) {
+		return missing
 	}
 	// The name of the highest-numbered part around its number, without
 	// a compression suffix.
@@ -371,7 +377,7 @@ func missingNumbers(parts []Part) (missing []string, tooMany bool) {
 			missing = append(missing, m.beforeNumber+strconv.FormatInt(n, 10)+m.afterNumber)
 		}
 	}
-	return missing, false
+	return missing
 }
 
 // sortProvisional puts a chain's parts in the provisional order, oldest

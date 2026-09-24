@@ -45,6 +45,10 @@ optionally followed by `_` or `T` and `HH`, `HH-MM`, `HHMM`,
 text it is: spaces, brackets and other characters in it are only
 characters.
 
+A number of four digits from 1970 to 2100 where `N` goes (`report.2023`,
+`app.2024.log`) is a year, so such a file is a yearly part ordered by its
+year, not the 2023rd rotation.
+
 The file named exactly like the chain is its **active** part, the one a
 program still writes. A chain needs two parts; the active file counts
 when it exists.
@@ -94,7 +98,7 @@ listed in `parts`.
 | `name` | string | The chain's name |
 | `parts` | string[] | The parts' file names in the provisional order, oldest first: by the number or date in each name, in its scheme's direction (a higher number is older, a lower date is older), then by modification time; the active file last. When one chain mixes numbered and dated names, the kind whose newest file is older comes first. The real order of a chain comes from its timestamps |
 | `has_active` | bool | Whether the active file exists |
-| `missing` | string[] | The name each absent number would have, from 0 when a `.0` part exists (else from 1) up to the highest number present, without a compression suffix. Dated parts are never missing. Empty when a chain's numbers span more than 10,000 |
+| `missing` | string[] | The name each absent number would have, from 0 when a `.0` part exists (else from 1) up to the highest number present, without a compression suffix. They are named only when no more numbers are missing than parts with a number are present: `x.1` beside `x.500` names none. Dated parts, years among them, are never missing |
 | `size` | int64 | The sum of the parts' file sizes in bytes, as stored |
 | `compression_formats` | string[] | The distinct compression formats of the parts, sorted: `gzip`, `bz2`, `xz`, `zstd` (a seekable zstd file is `zstd`). A plain part adds none |
 | `is_indexed` | bool | Whether every part but the active file has a current line index |

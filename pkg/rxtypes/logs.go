@@ -18,7 +18,7 @@ type ChainEntry struct {
 	// HasActive says whether the active file exists.
 	HasActive bool `json:"has_active" doc:"Whether the active file (the one named like the chain) exists and is a part."`
 	// Missing names the absent numbers of a numbered chain.
-	Missing []string `json:"missing" nullable:"false" doc:"The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix. Empty for a chain whose parts are all dated."`
+	Missing []string `json:"missing" nullable:"false" doc:"The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix; named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing."`
 	// Size is the sum of the parts' file sizes.
 	Size int64 `json:"size" doc:"The sum of the sizes in bytes of the files listed in parts, as stored (compressed for a compressed part)."`
 	// CompressionFormats are the distinct formats among the parts.
