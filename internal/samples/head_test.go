@@ -283,11 +283,18 @@ func TestResolveFromHead_ReadsAtMostTheHead(t *testing.T) {
 	const (
 		head     = int64(1 << 20)
 		textSize = 12 << 20
-		// readAhead is what the two decompressors, the detection's and the
-		// pass's, may read past the compressed bytes of the text they have
-		// given out.
-		readAhead = 2 * (256 << 10)
 	)
+	// readAhead is what the two readers of the text, the detection's and
+	// the pass's, may read past the file bytes of the text they have
+	// given out, by format. The stream zstd decoder decodes blocks ahead
+	// on goroutines of its own, so how far it gets varies from run to
+	// run; a seekable file is read a frame (256 KiB of text) at a time.
+	readAhead := map[string]int64{
+		"plain":                     4 << 10,
+		compressedcopy.Gzip:         2 * (64 << 10),
+		compressedcopy.Zstd:         2 * (1 << 20),
+		compressedcopy.SeekableZstd: 2 * (256 << 10),
+	}
 	text := headBudgetText(textSize)
 	lineCount := strings.Count(string(text), "\n")
 	paths := map[string]string{"plain": filepath.Join(t.TempDir(), "app.log")}
@@ -318,7 +325,7 @@ func TestResolveFromHead_ReadsAtMostTheHead(t *testing.T) {
 				if answered || err != nil {
 					t.Fatalf("answered %v, error %v; want not answered", answered, err)
 				}
-				budget := 2*head*fileSize(t, path)/int64(len(text)) + readAhead
+				budget := 2*head*fileSize(t, path)/int64(len(text)) + readAhead[name]
 				if got := counter.Load(); got > budget {
 					t.Fatalf("read %d bytes, budget %d (the file is %d bytes)", got, budget, fileSize(t, path))
 				}
