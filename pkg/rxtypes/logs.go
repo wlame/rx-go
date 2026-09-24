@@ -18,7 +18,9 @@ type ChainEntry struct {
 	// HasActive says whether the active file exists.
 	HasActive bool `json:"has_active" doc:"Whether the active file (the one named like the chain) exists and is a part."`
 	// Missing names the absent numbers of a numbered chain.
-	Missing []string `json:"missing" nullable:"false" doc:"The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix; named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing."`
+	Missing []string `json:"missing" nullable:"false" doc:"The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, lowest first, without a compression suffix; at most 100 of them (missing_count gives how many are missing). Named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing."`
+	// MissingCount is how many numbered parts are missing.
+	MissingCount int `json:"missing_count" doc:"How many numbered parts are missing, whether missing names them all or stops at 100; 0 when missing names none."`
 	// Size is the sum of the parts' file sizes.
 	Size int64 `json:"size" doc:"The sum of the sizes in bytes of the files listed in parts, as stored (compressed for a compressed part)."`
 	// CompressionFormats are the distinct formats among the parts.
@@ -83,7 +85,8 @@ type ChainResponse struct {
 	Reasons         []ChainReason      `json:"reasons" nullable:"false" doc:"Why the chain is invalid, one entry per failed check; empty unless state is invalid."`
 	Fingerprint     string             `json:"fingerprint" doc:"16 hex digits that change when the chain's files change: a frozen part renamed, compressed, deleted, added or written to, or the active file replaced. The active file growing does not change it. Send it back as fingerprint to learn, by a 409, that the files changed."`
 	Parts           []ChainPart        `json:"parts" nullable:"false" doc:"The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads."`
-	Missing         []string           `json:"missing" nullable:"false" doc:"The names absent numbered parts would have, as GET /v1/logs/chains gives them."`
+	Missing         []string           `json:"missing" nullable:"false" doc:"The names absent numbered parts would have, as GET /v1/logs/chains gives them: at most 100, lowest first."`
+	MissingCount    int                `json:"missing_count" doc:"How many numbered parts are missing, as GET /v1/logs/chains counts them."`
 	Gaps            []ChainGap         `json:"gaps" nullable:"false" doc:"The stretches of time no part covers, in order, in a ready chain of four parts with lines or more: where the time from a part's highest timestamp to the next part's first is more than 1.5 times the median distance between the first timestamps of neighboring parts. Empty otherwise."`
 	FirstMs         *int64             `json:"first_ms" doc:"The chain's first timestamp: the first of its first part with lines, as a UTC instant in ms. Null unless the chain is ready."`
 	LastMs          *int64             `json:"last_ms" doc:"The chain's last timestamp: the last of its last part with lines, as a UTC instant in ms. Null unless the chain is ready, and when that part's last timestamp is not known (an active file whose last timestamped line is more than 16 MiB from its end)."`

@@ -138,6 +138,7 @@ lists the chain again and answers `409` with the current description.
     }
   ],
   "missing": [],
+  "missing_count": 0,
   "gaps": [],
   "first_ms": 1790640000000,
   "last_ms": 1791324404000,
@@ -157,7 +158,8 @@ lists the chain again and answers `409` with the current description.
 | `reasons` | array | `{code, parts, message, overlap_ms}` per failed check; empty unless invalid |
 | `fingerprint` | string | 16 hex digits; see above |
 | `parts` | array | The parts in the chain's order; fields below |
-| `missing` | string[] | The names absent numbered parts would have, as `GET /v1/logs/chains` gives them |
+| `missing` | string[] | The names absent numbered parts would have, as `GET /v1/logs/chains` gives them: at most 100, lowest first |
+| `missing_count` | int | How many numbered parts are missing, as `GET /v1/logs/chains` counts them |
 | `gaps` | array | `{after, before, from_ms, to_ms}` per time gap |
 | `first_ms`, `last_ms` | int64 \| null | The chain's first and last timestamp; null unless ready (and `last_ms` when the active file's last timestamped line is more than 16 MiB from its end) |
 | `frozen_line_count` | int64 \| null | The lines of every part but the active file; null unless ready |

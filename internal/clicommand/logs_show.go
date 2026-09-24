@@ -269,7 +269,7 @@ func writeChainDescription(out io.Writer, resp *rxtypes.ChainResponse, loc *time
 			timeCell(&g.FromMs, false, loc), timeCell(&g.ToMs, false, loc), output.Printable(g.After), output.Printable(g.Before))
 	}
 	if len(resp.Missing) > 0 {
-		_, _ = fmt.Fprintf(out, "missing: %s\n", missingCell(resp.Missing))
+		_, _ = fmt.Fprintf(out, "missing: %s\n", missingCell(resp.Missing, resp.MissingCount))
 	}
 }
 

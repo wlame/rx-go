@@ -54,7 +54,7 @@ chains it holds, then one row per chain, sorted by name:
 | `PARTS` | How many files the chain has, the active file included; one generation in several encodings counts once |
 | `SIZE` | The parts' total size on disk |
 | `IDX` | `idx` when every part but the active file has a current line index, else `-` |
-| `MISSING` | The names of the absent numbered parts (the first three, then how many more), or `-` |
+| `MISSING` | The names of the absent numbered parts: the first three, then how many more are missing in all (`missing_count`), or `-` |
 
 A chain's handle is its directory joined with its name,
 `/var/log/syslog`, whether that file exists or not; `--json` gives it

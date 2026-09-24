@@ -28,12 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   number or date before the extension). Each entry gives the chain's
   handle (its directory joined with the active file's name), its parts
   oldest first by the number or date in their names, whether the active
-  file exists, the missing numbers, the total size, the compression
-  formats and whether every frozen part has a line index. A four-digit
-  number from 1970 to 2100 where a rotation number goes (`report.2023`)
-  is a year, so yearly files are ordered by year and name no missing
-  parts; missing numbers are named only when no more are missing than
-  numbered parts are present. One generation in several encodings is
+  file exists, the missing numbers (`missing`, at most 100 names, and
+  `missing_count`, how many are missing in all), the total size, the
+  compression formats and whether every frozen part has a line index.
+  A four-digit number from 1970 to 2100 where a rotation number goes
+  (`report.2023`) is a year, so yearly files are ordered by year and
+  name no missing parts; missing numbers are named only when no more
+  are missing than numbered parts are present. One generation in several encodings is
   one part (plain, seekable zstd, zstd, gzip, bzip2, xz, by the bytes);
   directories, hidden entries, `.tmp` files and files that are not text
   are no parts, so `wtmp` and `wtmp.1` form no chain; a chain needs two
@@ -52,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `too_many_parts`), its first and last time, `frozen_line_count` and
   `line_count`, the time gaps (with four parts or more, where a part's
   end and the next part's start are more than 1.5 times the median
-  distance between first timestamps apart), the missing parts, and a
-  fingerprint of its files (16 hex digits; the active file growing does
+  distance between first timestamps apart), the missing parts and
+  `missing_count`, and a fingerprint of its files (16 hex digits; the active file growing does
   not change it). It reads each frozen part's stored index and the head
   and tail of the active file, never a whole part; descriptions of
   chains whose frozen parts are all indexed are kept in memory (64).

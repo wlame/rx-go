@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/wlame/rx-go/internal/paths"
@@ -101,6 +103,67 @@ func TestLogChains_ListsTheChainsOfADirectory(t *testing.T) {
 	for _, key := range []string{"parts", "missing", "compression_formats"} {
 		if _, ok := first[key].([]any); !ok {
 			t.Fatalf("%s is %v, want an array", key, first[key])
+		}
+	}
+}
+
+// The answer grows with the files a directory holds, never with the
+// numbers their names leave out. Forty pairs of empty files `<stem>`
+// and `<stem>.10000`, with 203-byte stems, name no missing part (far
+// more are missing than present); a chain of every other number up to
+// 599 names the first MaxMissingNames of its 299 holes and counts them
+// all. The body stays far below 1 MiB.
+func TestLogChains_MissingNamesAreBounded(t *testing.T) {
+	root := t.TempDir()
+	logs := filepath.Join(root, "logs")
+	if err := os.Mkdir(logs, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	touch := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(logs, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stem := strings.Repeat("s", 200)
+	for i := range 40 {
+		name := fmt.Sprintf("%s%03d", stem, i)
+		touch(name)
+		touch(name + ".10000")
+	}
+	holes := strings.Repeat("h", 200) + ".log"
+	for n := 1; n <= 599; n += 2 {
+		touch(fmt.Sprintf("%s.%d", holes, n))
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(paths.Reset)
+	ts := newTestServer(t)
+
+	status, raw := getChains(t, ts.URL, url.Values{"path": {logs}})
+	if status != http.StatusOK {
+		t.Fatalf("status %d: %.300s", status, raw)
+	}
+	const maxBody = 1 << 20
+	if len(raw) > maxBody {
+		t.Fatalf("a body of %d bytes, want at most %d", len(raw), maxBody)
+	}
+	var resp rxtypes.ChainsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Chains) != 41 {
+		t.Fatalf("%d chains, want 41", len(resp.Chains))
+	}
+	for _, c := range resp.Chains {
+		wantNames, wantCount := 0, 0
+		if c.Name == holes {
+			wantNames, wantCount = 100, 299
+		}
+		if len(c.Missing) != wantNames || c.MissingCount != wantCount {
+			t.Fatalf("chain %.12s…: %d missing names, missing_count %d; want %d and %d",
+				c.Name, len(c.Missing), c.MissingCount, wantNames, wantCount)
 		}
 	}
 }

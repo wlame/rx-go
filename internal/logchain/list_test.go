@@ -49,7 +49,7 @@ func TestList_EntryFields(t *testing.T) {
 	wantSys := rxtypes.ChainEntry{
 		Path: filepath.Join(logs, "syslog"), Name: "syslog",
 		Parts:     []string{"syslog.4.xz", "syslog.2.gz", "syslog.1", "syslog"},
-		HasActive: true, Missing: []string{"syslog.3"},
+		HasActive: true, Missing: []string{"syslog.3"}, MissingCount: 1,
 		Size:               int64(len(textLines("syslog")) + len(textLines("syslog.1")) + len(gz) + len(xz)),
 		CompressionFormats: []string{"gzip", "xz"}, IsIndexed: false,
 	}
@@ -156,7 +156,7 @@ func TestList_UnreadableDirectory(t *testing.T) {
 // equalEntries compares two listing entries field by field.
 func equalEntries(a, b rxtypes.ChainEntry) bool {
 	return a.Path == b.Path && a.Name == b.Name && slices.Equal(a.Parts, b.Parts) && a.HasActive == b.HasActive &&
-		a.Missing != nil && slices.Equal(a.Missing, b.Missing) && a.Size == b.Size &&
+		a.Missing != nil && slices.Equal(a.Missing, b.Missing) && a.MissingCount == b.MissingCount && a.Size == b.Size &&
 		a.CompressionFormats != nil && slices.Equal(a.CompressionFormats, b.CompressionFormats) &&
 		a.IsIndexed == b.IsIndexed && a.Parts != nil
 }

@@ -60,6 +60,7 @@ func listingEntry(c Candidate) rxtypes.ChainEntry {
 		Parts:              make([]string, 0, len(c.Parts)),
 		HasActive:          c.HasActive(),
 		Missing:            c.Missing,
+		MissingCount:       c.MissingCount,
 		CompressionFormats: []string{},
 		IsIndexed:          everyFrozenPartIndexed(c),
 	}
