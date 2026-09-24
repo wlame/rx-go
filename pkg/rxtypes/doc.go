@@ -16,6 +16,6 @@
 //     each one is called out at the struct where it appears.
 //
 // This package depends only on the standard library ("time", "encoding/json",
-// "fmt", "strconv", "strings"). It has no imports from internal/ — cycle
+// "fmt", "strconv", "strings", "cmp"). It has no imports from internal/ — cycle
 // avoidance is deliberate.
 package rxtypes

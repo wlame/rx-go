@@ -177,7 +177,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `time` | number | Wall-clock elapsed seconds for the scan |
 | `patterns` | `{id: pattern}` | Pattern ID → original string map |
 | `files` | `{id: path}` | File ID → absolute path map |
-| `matches` | array | See below |
+| `matches` | array | Sorted by file in the order of `path` (`f1`, `f2`, …, `f10`; a directory's files in walk order), then by `offset`, then by pattern in the order given (`p1`, `p2`, …, `p10`). Under `max_results`, the first of the matches found in this order. See below |
 | `scanned_files` | `string[]` | The files found by walking a directory named in `path`; empty when every path is a file. `files` lists every file searched either way |
 | `skipped_files` | `string[]` | Paths passed over (not text, unreadable, a link the walk refuses, a subdirectory it cannot list) or not searched in full (a truncated stream, a damaged seekable frame: their matches are kept) |
 | `skip_reasons` | `{path, reason}[]` | Why each path of `skipped_files` is there, in the same order; the reasons are listed in [`rx trace`](../../cli/trace.md#skipped-files-and-their-reasons). Contract 1.4 |

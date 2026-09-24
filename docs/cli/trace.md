@@ -24,7 +24,11 @@ patterns and one or more paths, then:
 4. Numbers the matches a `--max-results` cap left unnumbered, from the
    file's line index when one exists (see below)
 5. Optionally fires webhooks per file / per match / per run completion
-6. Emits matches sorted by file, then byte offset
+6. Emits matches sorted by file, in the order the paths were given or
+   walked (`f1`, `f2`, …, `f10`), then by byte offset, then by pattern
+   in the order the patterns were given (`p1`, `p2`, …, `p10`). A
+   `--max-results` cap keeps the first of the matches found in this
+   order
 
 The underlying regex engine is `ripgrep`, so the supported regex syntax
 is Rust's `regex` crate with `ripgrep`'s flag extensions.
@@ -106,9 +110,10 @@ of 3 lines. An explicit zero wins over that shorthand, so
 `--samples --context=0` prints the matched lines and nothing around them.
 
 Context is printed under a `Context (N before, N after):` heading, grouped
-by file. Overlapping windows are merged so no line is printed twice, a
-gap between regions is drawn as `--`, and each line carries its number
-with `:` for a match and `-` for context:
+by file, the files in the order of the match list. Overlapping windows
+are merged so no line is printed twice, a gap between regions is drawn
+as `--`, and each line carries its number with `:` for a match and `-`
+for context:
 
 ```text
 Context (1 before, 1 after):
@@ -119,7 +124,9 @@ Context (1 before, 1 after):
 4- line four delta
 ```
 
-rx-python prints exactly the same text.
+rx-python prints exactly the same text for one file; it lists several
+files by path, and ten or more files or patterns as text (`f10` before
+`f2`).
 
 ### Global flags
 
