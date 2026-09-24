@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   oldest first by the number or date in their names, whether the active
   file exists, the missing numbers (`missing`, at most 100 names, and
   `missing_count`, how many are missing in all), the total size, the
-  compression formats and whether every frozen part has a line index.
+  compression formats and whether every frozen part has a line index
+  built from the file the listing found.
   A four-digit number from 1970 to 2100 where a rotation number goes
   (`report.2023`) is a year, so yearly files are ordered by year and
   name no missing parts; missing numbers are named only when no more
@@ -38,7 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one part (plain, seekable zstd, zstd, gzip, bzip2, xz, by the bytes);
   directories, hidden entries, `.tmp` files and files that are not text
   are no parts, so `wtmp` and `wtmp.1` form no chain; a chain needs two
-  parts and may have 10,000. Errors as `GET /v1/tree` for the same path.
+  parts and may have 10,000. A larger chain is listed with
+  `too_many_parts` and no parts, and its files are checked only until
+  that is known. Errors as `GET /v1/tree` for the same path.
   `GET /health` lists the feature `log_chains`. Contract 1.7.
 - `GET /v1/logs/chain?path=HANDLE[&file_tz=ZONE][&fingerprint=FP]`
   describes one log chain: its parts in time order (by first
@@ -50,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain's state (`pending` until every frozen part has a current line
   index, `ready`, or `invalid` with `reasons`: `no_timestamps`,
   `overlap` with `overlap_ms`, `active_not_last`, `unreadable`,
-  `too_many_parts`), its first and last time, `frozen_line_count` and
+  `too_many_parts`, which lists no part), its first and last time, `frozen_line_count` and
   `line_count`, the time gaps (with four parts or more, where a part's
   end and the next part's start are more than 1.5 times the median
   distance between first timestamps apart), the missing parts and

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -230,7 +231,10 @@ func TestDescribe_Reasons(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(reasonCodes(d), []string{rxtypes.ChainReasonTooManyParts}) || len(d.Response.Parts) != MaxParts+1 {
+		// The answer lists no part; the reason gives the count.
+		if !slices.Equal(reasonCodes(d), []string{rxtypes.ChainReasonTooManyParts}) ||
+			d.Response.Parts == nil || len(d.Response.Parts) != 0 || len(d.Order) != 0 ||
+			!strings.Contains(d.Response.Reasons[0].Message, strconv.Itoa(MaxParts+1)) {
 			t.Fatalf("reasons %+v, %d parts", d.Response.Reasons, len(d.Response.Parts))
 		}
 		if counted.total() != 0 {

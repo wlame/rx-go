@@ -53,7 +53,9 @@ A chain is valid when:
    (default 60; `overlap`, with the overlap in `overlap_ms`);
 3. the active file, when it has lines, comes last (`active_not_last`);
 4. every part can be opened and read (`unreadable`);
-5. it has at most 10,000 parts (`too_many_parts`; no part is read).
+5. it has at most 10,000 parts (`too_many_parts`; no part is read, and
+   `parts` is empty: the reason gives how many parts the files' names
+   give).
 
 Empty parts add no lines and take no part in the checks.
 

@@ -20,10 +20,11 @@ import (
 //
 // What it reads beyond the listing: the text check of those names (at
 // most a file's signature, its seek table and 8 KiB of its text,
-// filekind.OfPinned, as /v1/tree reads every file), and the stored line
+// filekind.OfPinned, as /v1/tree reads every file; in a chain of more
+// than MaxParts parts only until that is known), and the stored line
 // index of each frozen part for is_indexed (index.PeekForSource, as
-// /v1/tree does, stopping at the first part without one). Nothing is
-// written.
+// /v1/tree does, stopping at the first part without one; none for a
+// chain of more than MaxParts parts). Nothing is written.
 //
 // The errors are validateDir's (*paths.ErrPathOutsideRoots,
 // *paths.ErrHiddenPath), the pin's or the listing's (wrapping
@@ -53,17 +54,26 @@ func List(dir string) (*rxtypes.ChainsResponse, error) {
 }
 
 // listingEntry is the listing entry of one candidate.
+//
+// SECURITY: the entry of a chain of more than MaxParts parts lists none
+// of them, and looks at none of their indexes: such a chain is not read
+// as one text, and its entry stays a few hundred bytes however many
+// files share its name.
 func listingEntry(c Candidate) rxtypes.ChainEntry {
 	entry := rxtypes.ChainEntry{
 		Path:               c.Handle(),
 		Name:               c.Name,
-		Parts:              make([]string, 0, len(c.Parts)),
+		Parts:              []string{},
 		HasActive:          c.HasActive(),
 		Missing:            c.Missing,
 		MissingCount:       c.MissingCount,
 		CompressionFormats: []string{},
-		IsIndexed:          everyFrozenPartIndexed(c),
+		TooManyParts:       c.TooManyParts,
 	}
+	if c.TooManyParts {
+		return entry
+	}
+	entry.IsIndexed = everyFrozenPartIndexed(c)
 	for _, p := range c.Parts {
 		entry.Parts = append(entry.Parts, p.Name)
 		entry.Size += p.Info.Size()
@@ -81,16 +91,29 @@ func listingEntry(c Candidate) rxtypes.ChainEntry {
 	return entry
 }
 
+// peekPartIndex looks at a part's stored line index without counting
+// it as a use (index.PeekForSource). A test replaces it to count the
+// indexes a listing looks at.
+var peekPartIndex = index.PeekForSource
+
 // everyFrozenPartIndexed reports whether every part but the active one
 // has a current line index. A peek, not a lookup: listing a directory
 // does not use its indexes, so it does not move the index cache
 // metrics.
+//
+// SECURITY: an index is found and validated by the part's path, while
+// the part is the file the listing pinned (Part.File). DescribesPinned
+// holds the index to the inode and device that pin recorded, as
+// index.LoadForPinned does for a read: when another file took the
+// part's name after the listing (a rotation renamed it there), that
+// file's index does not make the listed part indexed.
 func everyFrozenPartIndexed(c Candidate) bool {
 	for _, p := range c.Parts {
 		if p.IsActive {
 			continue
 		}
-		if idx, err := index.PeekForSource(p.Path); err != nil || idx == nil {
+		idx, err := peekPartIndex(p.Path)
+		if err != nil || idx == nil || !index.DescribesPinned(idx, p.File) {
 			return false
 		}
 	}

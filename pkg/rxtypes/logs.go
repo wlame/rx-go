@@ -14,11 +14,11 @@ type ChainEntry struct {
 	// Name is the active file's name.
 	Name string `json:"name" doc:"The chain's name: the name of its active file (the one without a number or date), such as syslog or app.log."`
 	// Parts are the file names in the provisional order, oldest first.
-	Parts []string `json:"parts" nullable:"false" doc:"The names of the chain's files in the directory, in the provisional order, oldest first: by the number or date in each name in its rotation scheme's direction, then by modification time; the active file last. One file in several encodings is listed once, as the encoding rx reads."`
+	Parts []string `json:"parts" nullable:"false" doc:"The names of the chain's files in the directory, in the provisional order, oldest first: by the number or date in each name in its rotation scheme's direction, then by modification time; the active file last. One file in several encodings is listed once, as the encoding rx reads. Empty for a chain of more than 10,000 parts (too_many_parts)."`
 	// HasActive says whether the active file exists.
 	HasActive bool `json:"has_active" doc:"Whether the active file (the one named like the chain) exists and is a part."`
 	// Missing names the absent numbers of a numbered chain.
-	Missing []string `json:"missing" nullable:"false" doc:"The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, lowest first, without a compression suffix; at most 100 of them (missing_count gives how many are missing). Named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing."`
+	Missing []string `json:"missing" nullable:"false" doc:"The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, lowest first, without a compression suffix; at most 100 of them (missing_count gives how many are missing). Named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing. Empty for a chain of more than 10,000 parts."`
 	// MissingCount is how many numbered parts are missing.
 	MissingCount int `json:"missing_count" doc:"How many numbered parts are missing, whether missing names them all or stops at 100; 0 when missing names none."`
 	// Size is the sum of the parts' file sizes.
@@ -26,7 +26,10 @@ type ChainEntry struct {
 	// CompressionFormats are the distinct formats among the parts.
 	CompressionFormats []string `json:"compression_formats" nullable:"false" doc:"The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included). A plain part adds none."`
 	// IsIndexed says whether every frozen part has a current line index.
-	IsIndexed bool `json:"is_indexed" doc:"Whether every part but the active file has a current line index, as is_indexed of /v1/tree tells for one file."`
+	IsIndexed bool `json:"is_indexed" doc:"Whether every part but the active file has a current line index built from the file the listing found (the same inode and device), as is_indexed of /v1/tree tells for one file. False for a chain of more than 10,000 parts, whose indexes are not looked at."`
+	// TooManyParts says whether the chain has more parts than are read
+	// as one text.
+	TooManyParts bool `json:"too_many_parts" doc:"Whether the chain has more than 10,000 parts. Such a chain is not read as one text: parts and missing are empty, missing_count is 0, is_indexed is false, and GET /v1/logs/chain answers it invalid with the reason too_many_parts."`
 }
 
 // ChainsResponse is the body of GET /v1/logs/chains and of each
@@ -84,7 +87,7 @@ type ChainResponse struct {
 	State           string             `json:"state" enum:"pending,ready,invalid" doc:"pending: some frozen part has no current line index, or the active file's first timestamp is not known yet; each part can be read on its own, and global line numbers and times wait. ready: every part is known and every check passed; the chain reads as one text. invalid: a check failed, and reasons says which."`
 	Reasons         []ChainReason      `json:"reasons" nullable:"false" doc:"Why the chain is invalid, one entry per failed check; empty unless state is invalid."`
 	Fingerprint     string             `json:"fingerprint" doc:"16 hex digits that change when the chain's files change: a frozen part renamed, compressed, deleted, added or written to, or the active file replaced. The active file growing does not change it. Send it back as fingerprint to learn, by a 409, that the files changed."`
-	Parts           []ChainPart        `json:"parts" nullable:"false" doc:"The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads."`
+	Parts           []ChainPart        `json:"parts" nullable:"false" doc:"The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads. Empty for a chain of more than 10,000 parts, which is invalid with the reason too_many_parts."`
 	Missing         []string           `json:"missing" nullable:"false" doc:"The names absent numbered parts would have, as GET /v1/logs/chains gives them: at most 100, lowest first."`
 	MissingCount    int                `json:"missing_count" doc:"How many numbered parts are missing, as GET /v1/logs/chains counts them."`
 	Gaps            []ChainGap         `json:"gaps" nullable:"false" doc:"The stretches of time no part covers, in order, in a ready chain of four parts with lines or more: where the time from a part's highest timestamp to the next part's first is more than 1.5 times the median distance between the first timestamps of neighboring parts. Empty otherwise."`
