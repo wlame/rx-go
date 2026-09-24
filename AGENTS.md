@@ -270,6 +270,9 @@ Data flow for `rx trace "pattern" big.log`:
    identity (`internal/webapi/samples_index.go`); a request with
    `Prefer: respond-async` waits up to `RX_SAMPLES_WAIT_SECONDS` and
    answers `202` with the task after that, any other waits for the build.
+   At most `RX_MAX_INDEX_BUILDS` of these builds run at once; later ones
+   wait as `queued` tasks in a queue of at most 256, with no goroutine
+   until a slot frees. `POST /v1/index` builds are outside the limit.
    Every new file-reading path gets a budget test that uses
    `counting.InjectOpen` and asserts the byte count.
 4. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.

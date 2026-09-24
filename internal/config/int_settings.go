@@ -120,7 +120,22 @@ var (
 	// accepted: the lookup never answers early. Its maximum, 4 GiB,
 	// bounds what one early answer may read.
 	SamplesHeadMBSetting = IntSetting{Name: "RX_SAMPLES_HEAD_MB", Default: DefaultSamplesHeadMB, Min: 0, Max: 4096}
+
+	// MaxIndexBuildsSetting is RX_MAX_INDEX_BUILDS: how many line-index
+	// builds that GET /v1/samples starts run at once in `rx serve`.
+	// Each reads a whole file, so the limit bounds the disk and CPU
+	// that lookups across a tree of large files can set going; a build
+	// past it waits in a queue. Its maximum bounds them whatever the
+	// environment asks for.
+	MaxIndexBuildsSetting = IntSetting{Name: "RX_MAX_INDEX_BUILDS", Default: DefaultMaxIndexBuilds, Min: 1, Max: 64}
 )
+
+// DefaultMaxIndexBuilds is the default of RX_MAX_INDEX_BUILDS.
+const DefaultMaxIndexBuilds = 2
+
+// MaxIndexBuilds returns RX_MAX_INDEX_BUILDS, from 1 to 64, or
+// DefaultMaxIndexBuilds.
+func MaxIndexBuilds() int { return MaxIndexBuildsSetting.Value() }
 
 // DefaultSamplesHeadMB is the default of RX_SAMPLES_HEAD_MB: 64 MiB,
 // several hundred thousand lines of a typical log, which a plain file
@@ -163,6 +178,7 @@ var IntSettings = []IntSetting{
 	SamplesMaxLinesSetting,
 	SamplesMaxBytesSetting,
 	SamplesHeadMBSetting,
+	MaxIndexBuildsSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

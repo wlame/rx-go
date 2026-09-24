@@ -440,6 +440,20 @@ func (m *Manager) Done(taskID string) (<-chan struct{}, bool) {
 	return task.done, true
 }
 
+// Holder returns the unfinished task that holds path, and false when
+// none does. It creates nothing: a caller that must not start a task
+// uses it to join the one already there.
+func (m *Manager) Holder(path string) (*Task, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	holder := m.runningHolderLocked(path)
+	if holder == nil {
+		return nil, false
+	}
+	clone := *holder
+	return &clone, true
+}
+
 // ReportProgress gives a task the function its status reads progress
 // from. The worker calls it once, when it starts; every status request
 // after that calls fn. Returns false when no such task exists.

@@ -105,16 +105,53 @@ type samplesIndexBuilder func(path string, progress *index.Progress) (*rxtypes.U
 // refused for this one. The task manager will not start a second build
 // for the path while the first runs, so such a request answers from the
 // file without an index, which gives the same lines, only slower.
+//
+// # A limit on the builds running at once
+//
+// At most maxRunning builds run at a time (RX_MAX_INDEX_BUILDS). A
+// build started past that waits in queue, in the order it was started,
+// as a task whose status stays queued; it is a task from the start, so
+// a lookup can name it and wait for it like a running one. A queued
+// build is an entry in a slice, not a goroutine: its build goroutine is
+// started only when a running build ends and frees its slot (finish).
+// The queue holds at most maxQueued builds. Past that a lookup starts
+// no build: an answer from the head names none, and a lookup that needs
+// the index reads the file without one, as when a compression holds
+// the file. POST /v1/index starts its builds outside this limit.
 type samplesIndexBuilds struct {
 	tasks  *tasks.Manager
 	logger *slog.Logger
 	build  samplesIndexBuilder
 
-	// mu guards running. It is taken before the task manager's own
-	// lock (join calls Create while holding it), never the other way
-	// round, so the two cannot deadlock.
+	// maxRunning is how many builds run at once, maxQueued how many
+	// wait for a slot.
+	maxRunning int
+	maxQueued  int
+
+	// mu guards running, active and queue. It is taken before the task
+	// manager's own lock (join calls Create while holding it), never the
+	// other way round, so the two cannot deadlock.
 	mu      sync.Mutex
 	running map[string]runningIndexBuild
+	// active is how many builds hold a slot: their goroutine has been
+	// started and has not finished.
+	active int
+	// queue lists the builds waiting for a slot, the oldest first.
+	queue []queuedIndexBuild
+}
+
+// maxQueuedIndexBuilds is how many samples index builds may wait for a
+// slot at once: as many as the task table keeps, so a tree's worth of
+// large files can each get its build while the queue stays a bounded
+// list.
+const maxQueuedIndexBuilds = tasks.DefaultMaxTasks
+
+// queuedIndexBuild is a build whose task exists and whose goroutine
+// has not been started yet.
+type queuedIndexBuild struct {
+	taskID string
+	path   string
+	size   int64
 }
 
 // runningIndexBuild is one build this registry started and that has not
@@ -129,12 +166,16 @@ type runningIndexBuild struct {
 	reach *samples.HeadReach
 }
 
-func newSamplesIndexBuilds(manager *tasks.Manager, logger *slog.Logger, build samplesIndexBuilder) *samplesIndexBuilds {
+// newSamplesIndexBuilds returns a registry that runs at most
+// maxRunning builds at once.
+func newSamplesIndexBuilds(manager *tasks.Manager, logger *slog.Logger, build samplesIndexBuilder, maxRunning int) *samplesIndexBuilds {
 	return &samplesIndexBuilds{
-		tasks:   manager,
-		logger:  logger,
-		build:   build,
-		running: map[string]runningIndexBuild{},
+		tasks:      manager,
+		logger:     logger,
+		build:      build,
+		maxRunning: max(1, maxRunning),
+		maxQueued:  maxQueuedIndexBuilds,
+		running:    map[string]runningIndexBuild{},
 	}
 }
 
@@ -268,9 +309,11 @@ func taskResponseOf(task *tasks.Task, path, message string) rxtypes.TaskResponse
 }
 
 // join returns the task building path's index for the file identity
-// describes, starting one when nothing holds the path, and false when no
-// task will give that file an index: a compress task holds the path, or
-// a build of ours for an earlier version of the file does.
+// describes, starting one when nothing holds the path (or queueing it,
+// past the limit on running builds), and false when no task will give
+// that file an index: a compress task holds the path, a build of ours
+// for an earlier version of the file does, or the queue is full and
+// nothing holds the path.
 //
 // An index task started by POST /v1/index is joined as well: it builds
 // the same line index, with an analysis on top when it was asked for
@@ -283,27 +326,49 @@ func (b *samplesIndexBuilds) join(path string, identity index.SourceIdentity, si
 		return build.taskID, build.identity.Equal(identity)
 	}
 
+	if b.active >= b.maxRunning && len(b.queue) >= b.maxQueued {
+		// No room for another build. A task already holding the path is
+		// still joined; none is created.
+		holder, held := b.tasks.Holder(path)
+		if !held {
+			return "", false
+		}
+		return holder.TaskID, holder.Operation == indexOperation
+	}
+
 	task, isNew := b.tasks.Create(path, indexOperation)
 	if !isNew {
 		return task.TaskID, task.Operation == indexOperation
 	}
 	b.running[path] = runningIndexBuild{taskID: task.TaskID, identity: identity}
+	build := queuedIndexBuild{taskID: task.TaskID, path: path, size: size}
+	if b.active < b.maxRunning {
+		b.startLocked(build)
+	} else {
+		b.queue = append(b.queue, build)
+	}
+	return task.TaskID, true
+}
 
+// startLocked takes a slot for build and starts its goroutine. The
+// caller holds b.mu.
+func (b *samplesIndexBuilds) startLocked(build queuedIndexBuild) {
+	b.active++
 	// The build goroutine. runDetached turns a panic inside it into a
 	// failed task instead of a crashed server, and its task ending
 	// closes the done channel every waiter selects on.
-	taskID := task.TaskID
-	go runDetached(b.tasks, taskID, indexOperation, b.logger, func() {
-		b.run(taskID, path, size)
+	go runDetached(b.tasks, build.taskID, indexOperation, b.logger, func() {
+		b.run(build.taskID, build.path, build.size)
 	})
-	return taskID, true
 }
 
 // run is the body of the build goroutine for path's task.
 func (b *samplesIndexBuilds) run(taskID, path string, size int64) {
 	// Deferred so that it also runs when the build panics: deferred
 	// calls run while a panic unwinds, before runDetached recovers it.
-	defer b.forget(path, taskID)
+	// The slot is freed whatever happened, so a failed build never
+	// holds back the queue.
+	defer b.finish(path, taskID)
 
 	b.tasks.MarkRunning(taskID)
 	progress := &index.Progress{}
@@ -317,13 +382,24 @@ func (b *samplesIndexBuilds) run(taskID, path string, size int64) {
 	b.tasks.Complete(taskID, indexTaskResultFrom(idx, cachePath, path, samplesIndexRequest(path, size)))
 }
 
-// forget drops path's entry once its build has returned, unless a newer
-// build has taken its place.
-func (b *samplesIndexBuilds) forget(path, taskID string) {
+// finish runs once taskID's build of path has returned: it drops the
+// path's entry, unless a newer build has taken its place, frees the
+// build's slot, and starts the oldest queued builds while slots are
+// free.
+func (b *samplesIndexBuilds) finish(path, taskID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.running[path].taskID == taskID {
 		delete(b.running, path)
+	}
+	b.active--
+	for b.active < b.maxRunning && len(b.queue) > 0 {
+		next := b.queue[0]
+		// Clear the slot before reslicing, so the backing array does
+		// not keep the started build's path alive.
+		b.queue[0] = queuedIndexBuild{}
+		b.queue = b.queue[1:]
+		b.startLocked(next)
 	}
 }
 

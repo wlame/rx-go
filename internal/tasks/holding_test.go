@@ -80,3 +80,25 @@ func TestManager_CreateHolding_SamePathTwiceIsHeldOnce(t *testing.T) {
 		t.Errorf("ActivePathLockCount = %d after the task ended, want 0", got)
 	}
 }
+
+// Holder names the unfinished task that holds a path, and creates
+// nothing: a path that is free, or whose task has ended, has none.
+func TestManager_Holder_NamesTheRunningTaskOnly(t *testing.T) {
+	m := New(Config{Logger: silentLogger()})
+	task, _, _ := m.CreateHolding("compress", "/logs/app.log", "/logs/app.log.zst")
+	for _, path := range []string{"/logs/app.log", "/logs/app.log.zst"} {
+		if holder, ok := m.Holder(path); !ok || holder.TaskID != task.TaskID {
+			t.Errorf("Holder(%s) = %v, %v; want task %s", path, holder, ok, task.TaskID)
+		}
+	}
+	if holder, ok := m.Holder("/logs/other.log"); ok {
+		t.Errorf("Holder of a free path = %s, want none", holder.TaskID)
+	}
+	m.Complete(task.TaskID, nil)
+	if holder, ok := m.Holder("/logs/app.log"); ok {
+		t.Errorf("Holder after the task ended = %s, want none", holder.TaskID)
+	}
+	if size := m.Size(); size != 1 {
+		t.Errorf("Size = %d, want 1: Holder creates nothing", size)
+	}
+}

@@ -706,7 +706,11 @@ happens at all.
   simultaneously launch N traces and exhaust CPU. Each line costs a
   bounded amount of memory, but an uncapped trace still holds every
   match it returns. Use a reverse proxy or a process supervisor that
-  caps concurrent requests, and `max_results`.
+  caps concurrent requests, and `max_results`. The line-index builds
+  that `GET /v1/samples` starts in the background are the exception:
+  at most `RX_MAX_INDEX_BUILDS` run at once and at most 256 wait, so
+  lookups across a tree of large files cannot set a build going on
+  every file at once.
 - **Exposure to an untrusted network** — there is no TLS, and the
   optional token travels in clear text. This is the scope decision at
   the top of the page, not a bug. Put `rx` behind a perimeter.

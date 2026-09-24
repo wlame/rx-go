@@ -65,6 +65,11 @@ type Config struct {
 	// (config.SamplesIndexWait).
 	SamplesIndexWait time.Duration
 
+	// MaxIndexBuilds is how many line-index builds that GET /v1/samples
+	// starts run at once; later ones wait in a queue. Zero takes
+	// RX_MAX_INDEX_BUILDS, or 2 (config.MaxIndexBuilds).
+	MaxIndexBuilds int
+
 	// buildSamplesIndex builds and stores the index a samples lookup
 	// waits for; samples.BuildIndex unless a test replaces it. Set here,
 	// before the server starts, so no handler goroutine can read it
@@ -125,7 +130,7 @@ func NewServer(cfg Config) *Server {
 		cfg:          cfg,
 		router:       router,
 		api:          api,
-		samplesIndex: newSamplesIndexBuilds(cfg.TaskManager, cfg.Logger, cfg.buildSamplesIndex),
+		samplesIndex: newSamplesIndexBuilds(cfg.TaskManager, cfg.Logger, cfg.buildSamplesIndex, cfg.MaxIndexBuilds),
 	}
 
 	// Schemas huma cannot reflect from the Go types; they must be in
@@ -192,6 +197,9 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if cfg.SamplesIndexWait == 0 {
 		cfg.SamplesIndexWait = config.SamplesIndexWait()
+	}
+	if cfg.MaxIndexBuilds <= 0 {
+		cfg.MaxIndexBuilds = config.MaxIndexBuilds()
 	}
 	if cfg.buildSamplesIndex == nil {
 		cfg.buildSamplesIndex = samples.BuildIndex
