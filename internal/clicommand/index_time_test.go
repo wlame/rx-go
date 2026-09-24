@@ -166,8 +166,8 @@ func TestIndex_RebuildsAnIndexOfThePreviousVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load rebuilt index: %v", err)
 	}
-	if rebuilt.Version != index.Version || rebuilt.TimeIndex == nil {
-		t.Errorf("stored index has version %d, time section present %v; want %d and true",
-			rebuilt.Version, rebuilt.TimeIndex != nil, index.Version)
+	if rebuilt.Version != index.Version || rebuilt.TimeIndex == nil || rebuilt.TimeIndex.Max == nil {
+		t.Errorf("stored index has version %d, time section %+v; want %d with max",
+			rebuilt.Version, rebuilt.TimeIndex, index.Version)
 	}
 }

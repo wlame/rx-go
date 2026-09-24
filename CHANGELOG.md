@@ -89,15 +89,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside it is still answered from the head. A time is placed only by
   reading, so a time past the head still reads the head each time.
 
-- Line index format 9: the time section records `zone_offsets`, where
+- Line index format 10: the time section records `zone_offsets`, where
   the zone offset the lines write changes, as `[line, minutes]` pairs
   from the first timestamped line on (`[[first, 0]]` for a file whose
   timestamps carry no zone; a line that writes no zone counts as 0;
-  `null` when 1,024 entries cannot hold them). `rx index --json` shows it. A stored
-  index whose list is out of order, names a line outside the
+  `null` when 1,024 entries cannot hold them), and `max`, the line with
+  the highest timestamp of the file (`{ms, line, offset}` like `first`
+  and `last`; the first of them when several lines share the highest
+  value; `null` when no line has a timestamp). `max` is not `last` when
+  the lines go back in time, and it covers the lines after the last
+  checkpoint, which `max_before` does not. `rx index --json` shows both.
+  A stored index whose list is out of order, names a line outside the
   timestamped lines, repeats the offset in force or holds an offset
-  beyond 18 hours is treated as damaged. Every index stored by an
-  earlier version is rebuilt once.
+  beyond 18 hours, or whose `max` is missing, names a line outside the
+  timestamped lines or is below `first`, `last` or a `max_before`
+  entry, is treated as damaged. Every index stored by an earlier
+  version is rebuilt once.
 
 ### Fixed
 

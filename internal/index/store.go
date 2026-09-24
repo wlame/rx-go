@@ -70,12 +70,19 @@ import (
 // another zone shifts its query by each segment's offset and keeps the
 // index's search, instead of reading the file from its first line.
 //
+// Version 10: the time section records the highest timestamp of the
+// file (max) with its line and offset, the first line that holds it.
+// last is not the highest when the lines go back, and max_before says
+// nothing about the lines after the last checkpoint, so max is the one
+// field that gives the latest time of a file without reading it. A
+// version 9 index has no max and is treated as absent.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 9
+const Version = 10
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp

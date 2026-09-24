@@ -9,13 +9,13 @@ checkpoint, whatever the file size.
 ## The file format
 
 An index is stored as a JSON document with the full `UnifiedFileIndex`
-schema, format version 9. The critical field is `line_index`. The
+schema, format version 10. The critical field is `line_index`. The
 start of the index `rx samples` built for a 465 MB log (most of the
 other members trimmed; `rx index --info --json` prints all of them):
 
 ```json
 {
-  "version": 9,
+  "version": 10,
   "source_path": "/var/log/app.log-2025121008",
   "source_modified_at": "2025-12-27T17:30:57.775888",
   "source_size_bytes": 487561499,
@@ -41,6 +41,7 @@ other members trimmed; `rx index --info --json` prints all of them):
     "timestamped_lines": 1387928,
     "first": {"ms": 1765350004574, "line": 1, "offset": 0},
     "last": {"ms": 1765353604390, "line": 1436842, "offset": 487561376},
+    "max": {"ms": 1765353604390, "line": 1436841, "offset": 487561120},
     "first_zone_offset_minutes": null,
     "backward_steps": 0,
     "max_backward_ms": 0,
@@ -138,6 +139,7 @@ values do not depend on the environment of the process that built it.
 | `year_from_mtime` | `true` for a format without a year (syslog): each timestamp takes the year of the file's modification time, `source_mtime_ns`, or the latest earlier year that puts it no more than a day after the mtime (up to 8 years back, for a February 29). A December line in a file last written in January is read in the previous year, and a rebuild of the same file reads the same years |
 | `timestamped_lines` | How many lines carry a timestamp |
 | `first`, `last` | The first and the last timestamped line: `{ms, line, offset}`, its value, its line number and the byte where it starts; `null` when no line has one |
+| `max` | The line with the highest timestamp of the file, `{ms, line, offset}` like `first` and `last`; when several lines share the highest value, the first of them (in the example, line 1,436,841 and the last line hold the same millisecond). It is not `last` when the lines go back in time, and it covers the lines after the last checkpoint, which `max_before` does not; `null` when no line has a timestamp |
 | `first_zone_offset_minutes` | The zone offset, in minutes east of UTC, of the first timestamp of a file whose timestamps carry zones; `null` otherwise |
 | `backward_steps`, `max_backward_ms` | How many lines carry a timestamp more than one second earlier than the latest timestamp before them, and the largest such step. Several programs writing one file disagree by a second or so; a large count says the file is mixed |
 | `first_text` | The first timestamp as its line writes it, such as `2025-12-10 07:00:04.574` or `Dec 10 07:00:12.156`: printable ASCII, any other byte written as `\xHH`, at most 64 bytes; `null` when no line has a timestamp. [`rx time-range`](../cli/time-range.md) and `GET /v1/time-range` give it as `example`, so a client can show the file's times in the layout of its lines |

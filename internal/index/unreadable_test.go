@@ -57,7 +57,7 @@ func rewriteTimeIndex(t *testing.T, cachePath string, edit func(ti map[string]an
 	checkpoints := len(doc["line_index"].([]any))
 	ti := map[string]any{
 		"format": "iso", "anchored": true, "day_first": nil, "has_zone": false,
-		"year_from_mtime": false, "timestamped_lines": 0, "first": nil, "last": nil,
+		"year_from_mtime": false, "timestamped_lines": 0, "first": nil, "last": nil, "max": nil,
 		"first_zone_offset_minutes": nil, "backward_steps": 0, "max_backward_ms": 0,
 		"max_before": make([]any, checkpoints), "first_text": nil, "zone_offsets": []any{},
 	}
@@ -108,6 +108,9 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 		}},
 		{"time section whose maximum decreases", func(t *testing.T, cachePath string) {
 			rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["max"] = map[string]any{"ms": 2_000_000, "line": 100, "offset": 0}
 				values := make([]any, checkpoints)
 				for i := range values {
 					values[i] = 1_000_000 - i
@@ -138,6 +141,7 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				ti["timestamped_lines"] = 3
 				ti["first"] = map[string]any{"ms": 1, "line": 0, "offset": 0}
 				ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+				ti["max"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
 			})
 		}},
 		{"time section whose last line is past the last line", func(t *testing.T, cachePath string) {
@@ -145,6 +149,7 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				ti["timestamped_lines"] = 3
 				ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
 				ti["last"] = map[string]any{"ms": 2, "line": 201, "offset": 0}
+				ti["max"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
 			})
 		}},
 		// The text of the first timestamp is shown to a client as it is:
@@ -185,6 +190,63 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				setFirstAndLast(ti)
 				ti["first_text"] = "2025-12-10 07:00:04.574"
 				ti["last"] = map[string]any{"ms": int64(-62135596800001), "line": 200, "offset": 0}
+			})
+		}},
+		// max is the highest value of the file, which a search by time
+		// across several files trusts to pass over a file whose lines all
+		// come before the time it looks for.
+		{"time section without max for its timestamped lines", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["max"] = nil
+			})
+		}},
+		{"time section with max and no timestamped lines", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				ti["max"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+			})
+		}},
+		{"time section whose max is before its first line", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setZonedSpan(ti, []any{[]any{10, 120}})
+				ti["max"] = map[string]any{"ms": 2, "line": 9, "offset": 0}
+			})
+		}},
+		{"time section whose max is after its last line", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setZonedSpan(ti, []any{[]any{10, 120}})
+				ti["max"] = map[string]any{"ms": 2, "line": 151, "offset": 0}
+			})
+		}},
+		{"time section whose max is below its last value", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["max"] = map[string]any{"ms": 1, "line": 100, "offset": 0}
+			})
+		}},
+		{"time section whose max is below its first value", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["first"] = map[string]any{"ms": 3, "line": 1, "offset": 0}
+			})
+		}},
+		{"time section whose max is below a max_before entry", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				values := make([]any, checkpoints)
+				values[checkpoints-1] = 3
+				ti["max_before"] = values
+			})
+		}},
+		{"time section whose max is after the year 9999", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["max"] = map[string]any{"ms": int64(253402300800000), "line": 200, "offset": 0}
 			})
 		}},
 		{"time section whose max_before is after the year 9999", func(t *testing.T, cachePath string) {
@@ -312,6 +374,7 @@ func TestLoadFromPath_RefusesZoneOffsetsPastTheLimit(t *testing.T) {
 			setZonedSpan(ti, points)
 			ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
 			ti["last"] = map[string]any{"ms": 2, "line": entries, "offset": 0}
+			ti["max"] = map[string]any{"ms": 2, "line": entries, "offset": 0}
 			ti["timestamped_lines"] = entries
 			ti["first_zone_offset_minutes"] = 60
 		})
@@ -323,33 +386,38 @@ func TestLoadFromPath_RefusesZoneOffsetsPastTheLimit(t *testing.T) {
 }
 
 // setFirstAndLast gives a time section three timestamped lines, with
-// a first and a last line the fixture has, and the one zone offset of a
-// file whose timestamps carry no zone.
+// a first and a last line the fixture has, the highest value on the last
+// line, and the one zone offset of a file whose timestamps carry no zone.
 func setFirstAndLast(ti map[string]any) {
 	ti["timestamped_lines"] = 3
 	ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
 	ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+	ti["max"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
 	ti["zone_offsets"] = []any{[]any{1, 0}}
 }
 
 // setZonedSpan gives a time section of a file whose timestamps carry
-// zones: first on line 10, last on line 150, the first written at
-// +02:00, the text of the first present, and zone_offsets as given.
+// zones: first on line 10, last on line 150 with the highest value, the
+// first written at +02:00, the text of the first present, and
+// zone_offsets as given.
 func setZonedSpan(ti map[string]any, zoneOffsets any) {
 	setFirstAndLast(ti)
 	ti["has_zone"] = true
 	ti["first"] = map[string]any{"ms": 1, "line": 10, "offset": 0}
 	ti["last"] = map[string]any{"ms": 2, "line": 150, "offset": 0}
+	ti["max"] = map[string]any{"ms": 2, "line": 150, "offset": 0}
 	ti["first_zone_offset_minutes"] = 120
 	ti["first_text"] = "2025-10-26T02:00:00.000+02:00"
 	ti["zone_offsets"] = zoneOffsets
 }
 
 // A time section at the edges of what the checks accept still loads:
-// first on line 1, last on the file's last line, a zone 18 hours west,
-// a first text of the longest length, zone offset changes up to 18
-// hours either way and on the last timestamped line, and values at the
-// first and last millisecond of the years 1 to 9999.
+// first on line 1, last on the file's last line, max equal to last's
+// value and to a max_before entry (on line 2, the first line to hold
+// it), a zone 18 hours west, a first text of the longest length, zone
+// offset changes up to 18 hours either way and on the last timestamped
+// line, and values at the first and last millisecond of the years 1 to
+// 9999.
 func TestLoadFromPath_TimeSectionAtTheEdgesLoads(t *testing.T) {
 	_, cachePath := storedIndexFixture(t)
 	rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
@@ -357,6 +425,7 @@ func TestLoadFromPath_TimeSectionAtTheEdgesLoads(t *testing.T) {
 		ti["timestamped_lines"] = 200
 		ti["first"] = map[string]any{"ms": int64(-62135596800000), "line": 1, "offset": 0}
 		ti["last"] = map[string]any{"ms": int64(253402300799999), "line": 200, "offset": 0}
+		ti["max"] = map[string]any{"ms": int64(253402300799999), "line": 2, "offset": 13}
 		values := make([]any, checkpoints)
 		values[checkpoints-1] = int64(253402300799999)
 		ti["max_before"] = values

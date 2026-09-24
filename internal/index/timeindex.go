@@ -74,10 +74,15 @@ type timeIndexer struct {
 	// must not.
 	hasZone bool
 
-	// hasMax and maxMs are the running maximum of the own timestamps
-	// observed so far.
+	// hasMax and maxAt are the running maximum of the own timestamps
+	// observed so far: maxAt.Ms is its value, and maxAt the first line
+	// that holds it. Once the walk has read every line, maxAt is the
+	// time section's max.
+	//
+	// maxAt is a struct held by value (three int64s), so moving it to a
+	// new line copies 24 bytes and allocates nothing.
 	hasMax bool
-	maxMs  int64
+	maxAt  rxtypes.TimePoint
 
 	lines       int64
 	first, last rxtypes.TimePoint
@@ -144,7 +149,7 @@ func (t *timeIndexer) markBefore(line int64) {
 	if n := len(t.marks); n > 0 && t.marks[n-1].line == line {
 		return
 	}
-	t.marks = append(t.marks, maxMark{line: line, max: t.maxMs, known: t.hasMax})
+	t.marks = append(t.marks, maxMark{line: line, max: t.maxAt.Ms, known: t.hasMax})
 }
 
 // observe reads the own timestamp of one line: number is its 1-based
@@ -156,6 +161,11 @@ func (t *timeIndexer) markBefore(line int64) {
 // returns a struct by value) and does a few comparisons beside the
 // parse. markBefore appends to a slice, but only for a checkpoint's
 // line, which is one line in many thousands.
+//
+// The running maximum moves to this line only when its timestamp is
+// strictly higher, so of several lines that share the highest value the
+// first one stays: max names the earliest line at which the file reaches
+// its highest time.
 func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 	if t.frames != nil {
 		t.frames.markLine(t, number, start, end)
@@ -176,14 +186,38 @@ func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 	t.last = point
 	t.observeZone(number, stamp)
 	if !t.hasMax {
-		t.hasMax, t.maxMs = true, stamp.Ms
+		t.hasMax, t.maxAt = true, point
 		return
 	}
-	if behind := t.maxMs - stamp.Ms; behind > backwardStepMs {
+	if behind := t.maxAt.Ms - stamp.Ms; behind > backwardStepMs {
 		t.backwardSteps++
 		t.maxBackwardMs = max(t.maxBackwardMs, behind)
 	}
-	t.maxMs = max(t.maxMs, stamp.Ms)
+	t.maxAt = higherPoint(t.maxAt, point)
+}
+
+// higherPoint returns next when its value is strictly higher than
+// current's, and current otherwise, so of two lines with the same value
+// the earlier one stays.
+//
+// It is written as a choice between two values, with no store inside
+// the if, so that the compiler emits conditional moves (CSEL on arm64,
+// CMOV on amd64) rather than a branch. That matters on the per-line
+// path: in a log that many threads write, such as app.log, about
+// 40% of the lines set a new highest millisecond and most of the rest
+// repeat it, in an order a branch predictor cannot learn. Written as a
+// branch around a store to t.maxAt, the comparison measured about 3% of
+// the whole index build of that file.
+//
+// Go note: TimePoint is three int64s, so it is passed and returned in
+// registers and the call is inlined into observe; nothing here touches
+// memory beyond the struct observe already holds.
+func higherPoint(current, next rxtypes.TimePoint) rxtypes.TimePoint {
+	chosen := current
+	if next.Ms > current.Ms {
+		chosen = next
+	}
+	return chosen
 }
 
 // observeZone records a change point when the timestamped line number
@@ -256,9 +290,12 @@ func (t *timeIndexer) result(checkpoints []rxtypes.LineIndexEntry) (*rxtypes.Tim
 		MaxBefore:        maxBefore,
 		ZoneOffsets:      t.zoneOffsets(),
 	}
+	// First, Last, Max and FirstText are set together, from the first
+	// timestamped line on, so all four are null exactly when no line has
+	// an own timestamp (validTimeSpan holds a stored index to the same).
 	if t.lines > 0 {
-		first, last, text := t.first, t.last, t.firstText
-		out.First, out.Last, out.FirstText = &first, &last, &text
+		first, last, highest, text := t.first, t.last, t.maxAt, t.firstText
+		out.First, out.Last, out.Max, out.FirstText = &first, &last, &highest, &text
 		if format.HasZone {
 			offset := t.firstOffset
 			out.FirstZoneOffsetMinutes = &offset
@@ -351,10 +388,11 @@ const maxZoneOffsetMinutes = 18 * 60
 
 // validTimeIndex reports why a stored time section cannot be used, or
 // nil when it can: its format must be one this build can parse, its
-// first and last lines must be lines of the file, its zone offset a
+// first, last and max lines must be lines of the file, its zone offset a
 // real one, and max_before must have one entry per checkpoint, never
-// decrease and hold values in the years 1 to 9999. A time search trusts all of these, so an index that breaks
-// one is treated as damaged.
+// decrease, hold values in the years 1 to 9999 and none above max. A
+// time search trusts all of these, so an index that breaks one is
+// treated as damaged.
 func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	ti := idx.TimeIndex
 	if ti == nil {
@@ -394,9 +432,29 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 		if v != nil && !timestamps.InValueRange(*v) {
 			return fmt.Errorf("time_index: max_before entry %d holds %d ms, outside the years 1 to 9999", i, *v)
 		}
+		if err := maxBeforeWithinMax(i, v, ti.Max); err != nil {
+			return fmt.Errorf("time_index: %w", err)
+		}
 		if v != nil {
 			previous = v
 		}
+	}
+	return nil
+}
+
+// maxBeforeWithinMax checks max_before entry i, v, against the file's
+// max: an entry is the highest value of some lines of the file, so it is
+// never above the highest value of all of them, and a file without max
+// (no timestamped line) has no value to put in an entry.
+func maxBeforeWithinMax(i int, v *int64, highest *rxtypes.TimePoint) error {
+	if v == nil {
+		return nil
+	}
+	if highest == nil {
+		return fmt.Errorf("max_before entry %d holds %d ms in a file without timestamped lines", i, *v)
+	}
+	if *v > highest.Ms {
+		return fmt.Errorf("max_before entry %d holds %d ms, above max %d ms", i, *v, highest.Ms)
 	}
 	return nil
 }
@@ -486,20 +544,21 @@ func validFirstText(ti *rxtypes.TimeIndex) error {
 	return nil
 }
 
-// validTimeSpan checks the count of timestamped lines and the first and
-// last of them against lineCount, the index's count of lines: a
-// negative count is refused, first and last are present exactly when
-// the count is above zero, and both name lines between 1 and lineCount,
-// first no later than last, with values in the years 1 to 9999 (a search
-// adds a zone offset of up to 18 hours to them, which must stay far from
-// the ends of int64).
+// validTimeSpan checks the count of timestamped lines and the first,
+// last and highest of them against lineCount, the index's count of
+// lines: a negative count is refused, first, last and max are present
+// exactly when the count is above zero, and all three name lines between
+// 1 and lineCount, first no later than last, with values in the years 1
+// to 9999 (a search adds a zone offset of up to 18 hours to them, which
+// must stay far from the ends of int64). validMax then places max
+// between them.
 func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	if ti.TimestampedLines < 0 {
 		return fmt.Errorf("timestamped_lines is %d", ti.TimestampedLines)
 	}
 	hasLines := ti.TimestampedLines > 0
-	if (ti.First != nil) != hasLines || (ti.Last != nil) != hasLines {
-		return fmt.Errorf("first and last do not match %d timestamped lines", ti.TimestampedLines)
+	if (ti.First != nil) != hasLines || (ti.Last != nil) != hasLines || (ti.Max != nil) != hasLines {
+		return fmt.Errorf("first, last and max do not match %d timestamped lines", ti.TimestampedLines)
 	}
 	if !hasLines {
 		return nil
@@ -508,7 +567,7 @@ func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	if lineCount != nil {
 		lines = *lineCount
 	}
-	for name, point := range map[string]*rxtypes.TimePoint{"first": ti.First, "last": ti.Last} {
+	for name, point := range map[string]*rxtypes.TimePoint{"first": ti.First, "last": ti.Last, "max": ti.Max} {
 		if point.Line < 1 || point.Line > lines {
 			return fmt.Errorf("%s names line %d of a file of %d lines", name, point.Line, lines)
 		}
@@ -518,6 +577,25 @@ func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	}
 	if ti.First.Line > ti.Last.Line {
 		return fmt.Errorf("first names line %d, after last's line %d", ti.First.Line, ti.Last.Line)
+	}
+	return validMax(ti)
+}
+
+// validMax checks max against first and last, which validTimeSpan has
+// accepted: max is one of the timestamped lines, so it lies between the
+// first and the last of them, and it holds the highest value, so neither
+// first's nor last's value is above it. A search by time across several
+// files passes over a file whose max comes before the time it looks for,
+// so a max below a value of the file would skip lines it should find.
+func validMax(ti *rxtypes.TimeIndex) error {
+	highest := ti.Max
+	if highest.Line < ti.First.Line || highest.Line > ti.Last.Line {
+		return fmt.Errorf("max names line %d, outside the timestamped lines %d to %d",
+			highest.Line, ti.First.Line, ti.Last.Line)
+	}
+	if highest.Ms < ti.First.Ms || highest.Ms < ti.Last.Ms {
+		return fmt.Errorf("max holds %d ms, below first's %d ms or last's %d ms",
+			highest.Ms, ti.First.Ms, ti.Last.Ms)
 	}
 	return nil
 }

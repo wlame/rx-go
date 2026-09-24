@@ -180,6 +180,13 @@ type TimeIndex struct {
 	// timestamp, in file order; null when no line has one.
 	First *TimePoint `json:"first"`
 	Last  *TimePoint `json:"last"`
+	// Max is the line with the highest own timestamp in the whole file,
+	// in the same frame as First and Last; when several lines share the
+	// highest value, the first of them. It is null exactly when First
+	// is. Last is not the highest when the lines go back in time, and
+	// MaxBefore says nothing about the lines after the last checkpoint,
+	// so a reader that needs the highest time of a file reads it here.
+	Max *TimePoint `json:"max"`
 	// FirstZoneOffsetMinutes is the zone offset, east of UTC, written
 	// with the first timestamp of a file whose timestamps carry zones
 	// (0 for `Z`, `UTC` and a line that carries no zone); null when
