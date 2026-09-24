@@ -3,6 +3,7 @@ package logchain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -439,5 +440,48 @@ func TestDescribe_AScanOfAnotherFileIsAChangedPart(t *testing.T) {
 	buildPartIndex = func(string) (*rxtypes.UnifiedFileIndex, error) { return build(filepath.Join(other, "other.log")) }
 	if _, err := Describe(context.Background(), c, Options{Scan: true}); !errors.Is(err, ErrPartChanged) {
 		t.Fatalf("describe = %v, want ErrPartChanged", err)
+	}
+}
+
+// DescribeHandle lists and describes the chain again when a part changes
+// between the listing and the read, and says that it changed; when every
+// attempt meets a change it gives up with ErrPartChanged.
+func TestDescribeHandle_ListsAgainWhenAPartChanges(t *testing.T) {
+	paths.Reset()
+	dir := t.TempDir()
+	writeChainFiles(t, dir, []chainFile{
+		{name: "x.log.1", text: timedLines(chainBase, time.Second, 1, 5, "1")},
+		{name: "x.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 6, 5, "active")},
+	})
+	handle := filepath.Join(dir, "x.log")
+	build := buildPartIndex
+	t.Cleanup(func() { buildPartIndex = build })
+	calls, failures := 0, 0
+	// The seam stands for a rotation that renames the part between the
+	// listing and the read, failures times in a row.
+	buildPartIndex = func(path string) (*rxtypes.UnifiedFileIndex, error) {
+		calls++
+		if calls <= failures {
+			return nil, fmt.Errorf("open %s: %w", path, paths.ErrFileChanged)
+		}
+		return build(path)
+	}
+
+	d, changed, err := DescribeHandle(context.Background(), handle, Options{Scan: true})
+	if err != nil || changed || d.Response.State != rxtypes.ChainStateReady {
+		t.Fatalf("no change: %v %v %+v", err, changed, d)
+	}
+	calls, failures = 0, 1
+	d, changed, err = DescribeHandle(context.Background(), handle, Options{Scan: true})
+	if err != nil || !changed || d.Response.State != rxtypes.ChainStateReady {
+		t.Fatalf("one change: %v %v %+v", err, changed, d)
+	}
+	calls, failures = 0, 1000
+	d, changed, err = DescribeHandle(context.Background(), handle, Options{Scan: true})
+	if !errors.Is(err, ErrPartChanged) || !changed || d != nil || calls != maxDescribeAttempts {
+		t.Fatalf("changes every time: %v %v %v after %d builds", err, changed, d, calls)
+	}
+	if _, _, err := DescribeHandle(context.Background(), filepath.Join(dir, "none.log"), Options{}); !errors.Is(err, ErrNotAChain) {
+		t.Fatalf("no chain: %v", err)
 	}
 }

@@ -127,7 +127,7 @@ tells a client whether it can read this server at all.
 | `line_timestamps` | `line_timestamps` in every `GET /v1/samples` answer |
 | `time_range` | [`GET /v1/time-range`](time-range.md): a file's timestamp format and first and last timestamp |
 | `file_tz` | `file_tz` on [`GET /v1/samples`](samples.md) and [`GET /v1/time-range`](time-range.md): a file's timestamps read as wall clock in a chosen zone |
-| `log_chains` | [`GET /v1/logs/chains`](logs-chains.md): the log chains of a directory, the files of each rotated log found by their names |
+| `log_chains` | [`GET /v1/logs/chains`](logs-chains.md): the log chains of a directory, the files of each rotated log found by their names; [`GET /v1/logs/chain`](logs-chain.md): one chain described, its parts in time order |
 
 rx-python reports no `features`.
 

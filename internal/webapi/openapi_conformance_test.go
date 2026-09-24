@@ -394,6 +394,14 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("log chains of a missing path", "/v1/logs/chains", q("path", at("nope")), http.StatusNotFound)
 	get("log chains without a path", "/v1/logs/chains", nil, http.StatusUnprocessableEntity)
 
+	get("log chain", "/v1/logs/chain", q("path", at("rotated/app.log")), http.StatusOK)
+	get("log chain with an old fingerprint", "/v1/logs/chain",
+		q("path", at("rotated/app.log"), "fingerprint", "0000000000000000"), http.StatusConflict)
+	get("log chain of a lone file", "/v1/logs/chain", q("path", at("app.log")), http.StatusNotFound)
+	get("log chain without a name", "/v1/logs/chain", q("path", root+"/"), http.StatusBadRequest)
+	get("log chain outside the root", "/v1/logs/chain", q("path", "/etc/syslog"), http.StatusForbidden)
+	get("log chain without a path", "/v1/logs/chain", nil, http.StatusUnprocessableEntity)
+
 	get("trace plain", "/v1/trace", q("path", at("app.log"), "regexp", "ERROR"), http.StatusOK)
 	get("trace capped, two files, two patterns", "/v1/trace",
 		q("path", at("app.log"), "path", at("app.log.gz"), "regexp", "ERROR", "regexp", "WARN", "max_results", "5"), http.StatusOK)

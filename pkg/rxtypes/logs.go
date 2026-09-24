@@ -131,3 +131,17 @@ type ChainGap struct {
 	FromMs int64  `json:"from_ms" doc:"Where the gap starts: the highest timestamp of the part before it, as a UTC instant in ms."`
 	ToMs   int64  `json:"to_ms" doc:"Where the gap ends: the first timestamp of the part after it, as a UTC instant in ms."`
 }
+
+// ChainTimeRange is the time range of one log chain, as
+// `rx logs time-range --json` prints it: the chain's first and last
+// timestamp, and how its first part with timestamps writes them.
+type ChainTimeRange struct {
+	Path        string  `json:"path" doc:"The chain's handle."`
+	Name        string  `json:"name" doc:"The chain's name."`
+	State       string  `json:"state" enum:"pending,ready,invalid" doc:"The chain's state, as its description gives it."`
+	Format      *string `json:"format" doc:"The timestamp format of the chain's first part with timestamps; null when no part has one."`
+	FirstMs     *int64  `json:"first_ms" doc:"The chain's first timestamp as a UTC instant in ms; null unless the chain is ready."`
+	LastMs      *int64  `json:"last_ms" doc:"The chain's last timestamp as a UTC instant in ms; null unless the chain is ready, and when it is not known."`
+	DisplayZone string  `json:"display_zone" doc:"The zone the times are shown in: the file zone when one is given, else the zone the first part with timestamps is read in (RX_LOG_TZ for timestamps without a zone, UTC for timestamps with one)."`
+	CLICommand  string  `json:"cli_command" doc:"The rx command that gives this answer."`
+}

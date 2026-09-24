@@ -97,7 +97,8 @@ no 6 or 7.
   The timestamp format and the first and last timestamp of each file.
 
 - **[`rx logs`](logs.md)**  
-  Rotated logs read as one log chain: `rx logs list` finds them.
+  Rotated logs read as one log chain: `rx logs list` finds them,
+  `rx logs show` describes one, `rx logs time-range` gives its times.
 
 - **[`rx compress`](compress.md)**  
   Encode files as seekable zstd for random-access decompression.

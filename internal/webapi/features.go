@@ -34,7 +34,8 @@ var featureTable = []string{
 	// which reads a file's timestamps in a chosen zone.
 	"file_tz",
 	// log_chains: GET /v1/logs/chains lists the log chains of a
-	// directory (rotated logs found by their file names).
+	// directory (rotated logs found by their file names), and
+	// GET /v1/logs/chain describes one.
 	"log_chains",
 }
 

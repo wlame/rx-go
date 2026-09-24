@@ -154,7 +154,8 @@ func TestCLICommand_ParserRejectsAnUnknownFlagAndABadValue(t *testing.T) {
 func TestCLICommand_TableMatchesTheCommandTree(t *testing.T) {
 	root := newRootCmd()
 	for name, op := range webapi.CLICommandOperations() {
-		sub, _, err := root.Find([]string{op.Subcommand})
+		// A subcommand of a group (`logs show`) is several words.
+		sub, _, err := root.Find(strings.Fields(op.Subcommand))
 		if err != nil || sub == root {
 			t.Errorf("%s: no subcommand %q", name, op.Subcommand)
 			continue
@@ -195,6 +196,32 @@ func TestCLICommand_TableMatchesTheCommandTree(t *testing.T) {
 			if sub.Flags().Lookup(strings.TrimPrefix(word, "--")) == nil {
 				t.Errorf("%s: rx %s has no %s", name, op.Subcommand, word)
 			}
+		}
+	}
+}
+
+// The commands a chain's answers carry name a subcommand of `rx logs`,
+// two words, and parse with the real command tree, with a handle that
+// needs quoting.
+func TestCLICommand_LogChainCommandsParse(t *testing.T) {
+	cases := []struct {
+		operation string
+		params    map[string]any
+		want      string
+	}{
+		{"log_chain", map[string]any{"path": "/var/log/syslog"}, "rx logs show /var/log/syslog"},
+		{"log_chain", map[string]any{"path": "/var/log/my app (1).log", "file_tz": "Asia/Tokyo", "fingerprint": "0123456789abcdef"},
+			"rx logs show '/var/log/my app (1).log' --file-tz=Asia/Tokyo --fingerprint=0123456789abcdef"},
+		{"logs_time_range", map[string]any{"path": "/var/log/syslog", "file_tz": "+02:00"},
+			"rx logs time-range /var/log/syslog --file-tz=+02:00"},
+	}
+	for _, tc := range cases {
+		rendered := webapi.BuildCLICommand(tc.operation, tc.params)
+		if rendered != tc.want {
+			t.Errorf("%s: %q, want %q", tc.operation, rendered, tc.want)
+		}
+		if words := requireRunnableCommand(t, rendered); words[0] != "logs" {
+			t.Errorf("%s: words %q", tc.operation, words)
 		}
 	}
 }
