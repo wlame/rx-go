@@ -159,8 +159,7 @@ func wantedLinesOf(req Request, source lineSource, resp *collected) ([]*wantedLi
 				line = max(1, totalLines+line+1)
 			}
 			w.key, w.target = strconv.FormatInt(line, 10), line
-			w.first = max(1, line-int64(req.BeforeContext))
-			w.last = addWithin(line, int64(req.AfterContext))
+			w.first, w.last = contextWindow(line, req)
 			resp.Samples[w.key] = nil
 		}
 		resp.Lines[w.key] = -1
@@ -181,6 +180,13 @@ func wantedLinesOf(req Request, source lineSource, resp *collected) ([]*wantedLi
 		wants = append(wants, w)
 	}
 	return wants, nil
+}
+
+// contextWindow returns the first and last line of the window req's
+// context puts around line: last is before first when the context
+// leaves no line in it.
+func contextWindow(line int64, req Request) (first, last int64) {
+	return max(1, line-int64(req.BeforeContext)), addWithin(line, int64(req.AfterContext))
 }
 
 // addWithin returns a+b, or the largest int64 when the sum would
@@ -526,15 +532,21 @@ type contextReader struct {
 // starts at the text's first byte.
 func withContext(ctx context.Context, r io.Reader) io.Reader {
 	reader := contextReader{ctx: ctx, r: r}
-	limit, ok := headLimitOf(ctx)
-	if !ok {
+	scope := headScopeOf(ctx)
+	if scope == nil {
 		return reader
 	}
 	var start int64
 	if cursor, isCursor := r.(*textCursor); isCursor {
 		start = cursor.offset
 	}
-	return &headReader{r: reader, left: limit - start}
+	head := &headReader{r: reader, left: scope.limit - start}
+	if start == 0 {
+		// Only a reader from the first byte can number the lines it
+		// gives, so only it measures the head's reach.
+		head.scope = scope
+	}
+	return head
 }
 
 // Read implements io.Reader.

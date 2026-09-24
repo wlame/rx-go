@@ -11,6 +11,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -121,6 +122,11 @@ type samplesIndexBuilds struct {
 type runningIndexBuild struct {
 	taskID   string
 	identity index.SourceIdentity
+	// reach is how far the head of the file reaches, once a lookup the
+	// head could not answer has measured it (samples.HeadReach); nil
+	// until then. It lives as long as the build: once the build has
+	// stored the index, lookups no longer read the head.
+	reach *samples.HeadReach
 }
 
 func newSamplesIndexBuilds(manager *tasks.Manager, logger *slog.Logger, build samplesIndexBuilder) *samplesIndexBuilds {
@@ -135,7 +141,9 @@ func newSamplesIndexBuilds(manager *tasks.Manager, logger *slog.Logger, build sa
 // await waits for the line index of path, as info saw the file, to be
 // built, starting the build when none is running, until deadline
 // delivers a value. A nil deadline never does: the wait lasts as long
-// as the build.
+// as the build. reach, when not nil, is how far the head of the file
+// reaches, as the lookup's attempt to answer from the head measured it;
+// the build keeps it for the next lookup (reachOf).
 //
 // It returns (nil, nil) when the lookup should go ahead and read the
 // file: the build ended in time (whether it succeeded or not: an index
@@ -146,6 +154,7 @@ func (b *samplesIndexBuilds) await(
 	ctx context.Context,
 	path string,
 	info os.FileInfo,
+	reach *samples.HeadReach,
 	deadline <-chan time.Time,
 ) (*rxtypes.TaskResponse, error) {
 	identity := index.IdentityFromInfo(path, info)
@@ -153,6 +162,7 @@ func (b *samplesIndexBuilds) await(
 	if !found {
 		return nil, nil
 	}
+	b.keepReach(path, taskID, identity, reach)
 	done, known := b.tasks.Done(taskID)
 	if !known {
 		// The task has already ended and been dropped from the table.
@@ -207,6 +217,40 @@ func (b *samplesIndexBuilds) start(path string, info os.FileInfo) *rxtypes.Sampl
 		TaskID: named.TaskID, Status: named.Status, Message: named.Message,
 		Path: named.Path, StartedAt: named.StartedAt,
 	}
+}
+
+// reachOf returns how far the head of path reaches, as kept by the
+// running build of the file identity describes, and nil when no build
+// of that identity keeps one. The answer is a copy, safe to use after
+// the lock is released.
+func (b *samplesIndexBuilds) reachOf(path string, identity index.SourceIdentity) *samples.HeadReach {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	build, ok := b.running[path]
+	if !ok || build.reach == nil || !build.identity.Equal(identity) {
+		return nil
+	}
+	reach := *build.reach
+	return &reach
+}
+
+// keepReach records reach, measured for the file identity describes,
+// on taskID's build of path, when that build is still running for the
+// same identity. A build that has ended, or one of another identity,
+// keeps nothing: its reach would describe another text.
+func (b *samplesIndexBuilds) keepReach(path, taskID string, identity index.SourceIdentity, reach *samples.HeadReach) {
+	if reach == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	build, ok := b.running[path]
+	if !ok || build.taskID != taskID || !build.identity.Equal(identity) {
+		return
+	}
+	kept := *reach
+	build.reach = &kept
+	b.running[path] = build
 }
 
 // taskResponseOf is the body that names task, a build of path's line

@@ -304,7 +304,7 @@ func TestSamples_ACanceledWaitLeavesTheBuildRunning(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	waited := make(chan error, 1)
 	go func() {
-		_, err := f.server.samplesIndex.await(ctx, f.gzPath, info, nil)
+		_, err := f.server.samplesIndex.await(ctx, f.gzPath, info, nil, nil)
 		waited <- err
 	}()
 	f.gate.awaitStart(t)

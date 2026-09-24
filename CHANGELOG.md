@@ -72,7 +72,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its task in `index_build`. A refusal the head can give (an answer over
   the limits, a time named wrongly) is answered at once and starts no
   build. On a 6.7 GB log with no index, the first `lines=1-1000` took
-  3.2 s waiting for the build; it now takes 0.01 s.
+  3.2 s waiting for the build; it now takes 0.01 s. Once a lookup has
+  read the head and found its lines past it, the server keeps how far
+  the head of that version of the file reaches for as long as the build
+  runs: a later lookup of a line or an offset past that waits for the
+  build (or answers `202`) without reading the head again, and one
+  inside it is still answered from the head. A time is placed only by
+  reading, so a time past the head still reads the head each time.
 
 - Line index format 9: the time section records `zone_offsets`, where
   the zone offset the lines write changes, as `[line, minutes]` pairs
