@@ -87,6 +87,85 @@
         ],
         "type": "object"
       },
+      "ChainEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "compression_formats": {
+            "description": "The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included). A plain part adds none.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "has_active": {
+            "description": "Whether the active file (the one named like the chain) exists and is a part.",
+            "type": "boolean"
+          },
+          "is_indexed": {
+            "description": "Whether every part but the active file has a current line index, as is_indexed of /v1/tree tells for one file.",
+            "type": "boolean"
+          },
+          "missing": {
+            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix. Empty for a chain whose parts are all dated.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "The chain's name: the name of its active file (the one without a number or date), such as syslog or app.log.",
+            "type": "string"
+          },
+          "parts": {
+            "description": "The names of the chain's files in the directory, in the provisional order, oldest first: by the number or date in each name in its rotation scheme's direction, then by modification time; the active file last. One file in several encodings is listed once, as the encoding rx reads.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "The chain's handle: its directory joined with its name, which is the active file's path whether that file exists or not. The other /v1/logs routes take it as path.",
+            "type": "string"
+          },
+          "size": {
+            "description": "The sum of the sizes in bytes of the files listed in parts, as stored (compressed for a compressed part).",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "parts",
+          "has_active",
+          "missing",
+          "size",
+          "compression_formats",
+          "is_indexed"
+        ],
+        "type": "object"
+      },
+      "ChainsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "chains": {
+            "description": "The directory's log chains, sorted by name, case-insensitive. Empty when it has none.",
+            "items": {
+              "$ref": "#/components/schemas/ChainEntry"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "The listed directory, as an absolute path.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "chains"
+        ],
+        "type": "object"
+      },
       "CompressRequest": {
         "additionalProperties": false,
         "properties": {
@@ -2200,6 +2279,117 @@
         ]
       }
     },
+    "/v1/logs/chains": {
+      "get": {
+        "description": "The log chains of one directory: the files of each rotated log (syslog, syslog.1, syslog.2.gz, …), found from their names alone, with each chain's parts in the provisional order (by the number or date in the names, oldest first), the numbers missing between them, their total size, compression formats, and whether every part but the active file has a line index. A file of one generation in several encodings is one part. Directories, hidden entries, .tmp files and files that are not text are no parts. Errors as GET /v1/tree for the same path.",
+        "operationId": "log_chains",
+        "parameters": [
+          {
+            "description": "The directory whose log chains to list.",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "The directory whose log chains to list.",
+              "examples": [
+                "/var/log"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "List the log chains of a directory",
+        "tags": [
+          "Logs"
+        ]
+      }
+    },
     "/v1/samples": {
       "get": {
         "description": "Use this endpoint to view actual content around matches from /v1/trace.",
@@ -3137,6 +3327,10 @@
     {
       "description": "Anomaly detection",
       "name": "Analysis"
+    },
+    {
+      "description": "Log chains: the files of a rotated log read as one",
+      "name": "Logs"
     }
   ]
 }

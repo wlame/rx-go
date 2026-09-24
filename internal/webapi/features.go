@@ -33,6 +33,9 @@ var featureTable = []string{
 	// file_tz: GET /v1/samples and GET /v1/time-range take `file_tz`,
 	// which reads a file's timestamps in a chosen zone.
 	"file_tz",
+	// log_chains: GET /v1/logs/chains lists the log chains of a
+	// directory (rotated logs found by their file names).
+	"log_chains",
 }
 
 // Features returns the names of featureTable, sorted.

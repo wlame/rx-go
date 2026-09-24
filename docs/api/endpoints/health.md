@@ -29,10 +29,11 @@ on an Apple-silicon Mac:
   "status": "ok",
   "ripgrep_available": true,
   "app_version": "dev",
-  "contract_version": "1.6",
+  "contract_version": "1.7",
   "features": [
     "file_tz",
     "line_timestamps",
+    "log_chains",
     "samples_index_build",
     "samples_timestamps",
     "time_range",
@@ -126,6 +127,7 @@ tells a client whether it can read this server at all.
 | `line_timestamps` | `line_timestamps` in every `GET /v1/samples` answer |
 | `time_range` | [`GET /v1/time-range`](time-range.md): a file's timestamp format and first and last timestamp |
 | `file_tz` | `file_tz` on [`GET /v1/samples`](samples.md) and [`GET /v1/time-range`](time-range.md): a file's timestamps read as wall clock in a chosen zone |
+| `log_chains` | [`GET /v1/logs/chains`](logs-chains.md): the log chains of a directory, the files of each rotated log found by their names |
 
 rx-python reports no `features`.
 
