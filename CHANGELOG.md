@@ -38,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are missing than numbered parts are present. One generation in several encodings is
   one part (plain, seekable zstd, zstd, gzip, bzip2, xz, by the bytes);
   directories, hidden entries, `.tmp` files and files that are not text
-  are no parts, so `wtmp` and `wtmp.1` form no chain; a chain needs two
+  are no parts, so `wtmp` and `wtmp.1` form no chain; a file that cannot
+  be opened stays a part and is named in `unreadable`; a chain needs two
   parts and may have 10,000. A larger chain is listed with
   `too_many_parts` and no parts, and its files are checked only until
   that is known. Errors as `GET /v1/tree` for the same path.

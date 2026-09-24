@@ -174,13 +174,18 @@ func writeChainTable(out io.Writer, resp *rxtypes.ChainsResponse) {
 }
 
 // partsCell is the PARTS cell of a row: how many parts the chain has,
-// or ">10000" for a chain of more than logchain.MaxParts parts, whose
-// answer lists none.
+// and how many of them cannot be read ("8 (1 unreadable)"), or ">10000"
+// for a chain of more than logchain.MaxParts parts, whose answer lists
+// none.
 func partsCell(c rxtypes.ChainEntry) string {
 	if c.TooManyParts {
 		return ">" + strconv.Itoa(logchain.MaxParts)
 	}
-	return strconv.Itoa(len(c.Parts))
+	cell := strconv.Itoa(len(c.Parts))
+	if len(c.Unreadable) > 0 {
+		cell += fmt.Sprintf(" (%d unreadable)", len(c.Unreadable))
+	}
+	return cell
 }
 
 // chainCount words how many chains a directory holds.

@@ -56,8 +56,11 @@ when it exists.
 Left out of every chain: directories, hidden entries (unless the server
 runs with `--hidden`), names ending in `.tmp`, and files that are not
 text by the rule every route applies (a NUL byte in the first 8 KiB of
-the text, so `wtmp` and `wtmp.1` are no chain) or cannot be read. An
-empty file is text, so a chain of empty files is a chain.
+the text, so `wtmp` and `wtmp.1` are no chain). An empty file is text,
+so a chain of empty files is a chain. A file whose name makes it a part
+but which cannot be opened (its permissions, an I/O error) stays a part
+and is named in `unreadable`: the chain cannot be read as one text until
+it can, and [`GET /v1/logs/chain`](logs-chain.md) says so.
 
 One generation in several encodings (`app.log-2025121008`, its `.gz` and
 its `.zst`) is one part. The part is the encoding found first in this
@@ -81,6 +84,7 @@ listed in `parts`.
       "size": 20147,
       "compression_formats": ["gzip"],
       "is_indexed": false,
+      "unreadable": [],
       "too_many_parts": false
     }
   ]
@@ -105,6 +109,7 @@ listed in `parts`.
 | `size` | int64 | The sum of the parts' file sizes in bytes, as stored |
 | `compression_formats` | string[] | The distinct compression formats of the parts, sorted: `gzip`, `bz2`, `xz`, `zstd` (a seekable zstd file is `zstd`). A plain part adds none |
 | `is_indexed` | bool | Whether every part but the active file has a current line index, built from the file the listing found: an index of another file that took a part's name since (a rotation renamed it there) does not count |
+| `unreadable` | string[] | The parts that cannot be opened (their permissions, an I/O error), in the order of `parts`; empty when every part can. A part is named here, not dropped, so the chain does not look complete or name it as missing |
 | `too_many_parts` | bool | Whether the chain has more than 10,000 parts |
 
 A chain may have at most 10,000 parts. A larger one is still listed,

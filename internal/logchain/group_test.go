@@ -1,6 +1,7 @@
 package logchain
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -198,17 +199,31 @@ func TestGroup_ClassifiesOnlyNamesThatCanFormAChain(t *testing.T) {
 	}
 }
 
-// A file the classifier cannot read is left out, like a binary file.
-func TestGroup_UnreadableFilesAreLeftOut(t *testing.T) {
+// A file the text check cannot read stays a part, with the error, so
+// a description can say why the chain cannot be read. It loses to a
+// readable encoding of its generation, and an unreadable active file is
+// still the chain's active part (whose numbered-ext parts then count).
+func TestGroup_UnreadableFilesStayParts(t *testing.T) {
+	unreadable := map[string]bool{"syslog.2": true, "syslog.3": true, "app.log": true}
 	classify := func(e Entry) (filekind.Kind, error) {
-		if e.Name == "syslog.2" {
+		if unreadable[e.Name] {
 			return filekind.Kind{}, os.ErrPermission
 		}
 		return filekind.Kind{}, nil
 	}
-	got := chainsByName(Group(testDir, fakeEntries("syslog", "syslog.1", "syslog.2"), classify))
-	if !slices.Equal(got["syslog"], []string{"syslog.1", "syslog"}) {
-		t.Fatalf("chains %v", got)
+	got := Group(testDir, fakeEntries("syslog", "syslog.1", "syslog.2", "syslog.3", "syslog.3.gz", "app.log", "app.1.log"), classify)
+	chains := chainsByName(got)
+	if !slices.Equal(chains["syslog"], []string{"syslog.3.gz", "syslog.2", "syslog.1", "syslog"}) ||
+		!slices.Equal(chains["app.log"], []string{"app.1.log", "app.log"}) {
+		t.Fatalf("chains %v", chains)
+	}
+	app, sys := got[0], got[1]
+	if !app.HasActive() || !errors.Is(app.Parts[1].ReadError, os.ErrPermission) || app.Parts[0].ReadError != nil {
+		t.Fatalf("app.log parts %+v", app.Parts)
+	}
+	if !errors.Is(sys.Parts[1].ReadError, os.ErrPermission) || sys.Parts[0].ReadError != nil ||
+		!slices.Equal(sys.Parts[0].Duplicates, []string{"syslog.3"}) || sys.Parts[2].ReadError != nil {
+		t.Fatalf("syslog parts %+v", sys.Parts)
 	}
 }
 

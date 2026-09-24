@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -502,5 +503,65 @@ func TestDescribe_MissingPartsAsTheListingGivesThem(t *testing.T) {
 	d := describe(t, dir, "x.log", Options{Scan: true})
 	if !slices.Equal(d.Response.Missing, []string{"x.log.2"}) || d.Response.MissingCount != 1 {
 		t.Fatalf("missing %v, count %d", d.Response.Missing, d.Response.MissingCount)
+	}
+}
+
+// A part the listing could not read stays in the chain, which is
+// invalid with the reason unreadable naming it, and the part is not
+// read again. An unreadable active file is named the same way.
+func TestDescribe_APartTheListingCouldNotRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its permissions")
+	}
+	for _, locked := range []string{"x.log.2", "x.log"} {
+		dir := t.TempDir()
+		writeChainFiles(t, dir, []chainFile{
+			{name: "x.log.2", text: timedLines(chainBase, time.Second, 1, 5, "2")},
+			{name: "x.log.1", text: timedLines(chainBase.Add(time.Hour), time.Second, 6, 5, "1")},
+			{name: "x.log", text: timedLines(chainBase.Add(2*time.Hour), time.Second, 11, 5, "active")},
+		})
+		path := filepath.Join(dir, locked)
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+		c := resolveIn(t, dir, "x.log")
+		if len(c.Parts) != 3 {
+			t.Fatalf("%s locked: parts %v", locked, partNames(c))
+		}
+		counts := countReads(t)
+		for _, opts := range []Options{{Scan: true}, {}} {
+			counts.reset()
+			d, err := Describe(context.Background(), c, opts)
+			if err != nil {
+				t.Fatalf("%s locked, scan %v: %v", locked, opts.Scan, err)
+			}
+			if d.Response.State != rxtypes.ChainStateInvalid ||
+				!slices.Equal(reasonCodes(d), []string{rxtypes.ChainReasonUnreadable}) ||
+				!slices.Equal(d.Response.Reasons[0].Parts, []string{locked}) {
+				t.Fatalf("%s locked, scan %v: state %s, reasons %+v", locked, opts.Scan, d.Response.State, d.Response.Reasons)
+			}
+			if n := counts.indexLoads[locked] + counts.opens[locked] + counts.builds[locked] + counts.timeRanges[locked]; n != 0 {
+				t.Fatalf("%s locked, scan %v: read %d times", locked, opts.Scan, n)
+			}
+		}
+	}
+}
+
+// A part whose name led to another file, or to none, by the time the
+// listing classified it is a changed part: the chain is listed again,
+// not called unreadable.
+func TestDescribe_APartThatChangedWhileListedIsAChange(t *testing.T) {
+	dir := t.TempDir()
+	writeChainFiles(t, dir, []chainFile{
+		{name: "x.log.1", text: timedLines(chainBase, time.Second, 1, 5, "1")},
+		{name: "x.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 6, 5, "active")},
+	})
+	for _, cause := range []error{paths.ErrFileChanged, fs.ErrNotExist} {
+		c := resolveIn(t, dir, "x.log")
+		c.Parts[0].ReadError = fmt.Errorf("open %s: %w", c.Parts[0].Path, cause)
+		if _, err := Describe(context.Background(), c, Options{}); !errors.Is(err, ErrPartChanged) || !errors.Is(err, cause) {
+			t.Fatalf("%v: %v, want a changed part", cause, err)
+		}
 	}
 }

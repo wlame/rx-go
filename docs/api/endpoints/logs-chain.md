@@ -52,7 +52,8 @@ A chain is valid when:
    the next part's first by more than `RX_CHAIN_OVERLAP_SECONDS`
    (default 60; `overlap`, with the overlap in `overlap_ms`);
 3. the active file, when it has lines, comes last (`active_not_last`);
-4. every part can be opened and read (`unreadable`);
+4. every part can be opened and read (`unreadable`; a part the listing
+   could not open is named without another read);
 5. it has at most 10,000 parts (`too_many_parts`; no part is read, and
    `parts` is empty: the reason gives how many parts the files' names
    give).

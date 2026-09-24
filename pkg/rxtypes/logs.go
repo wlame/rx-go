@@ -27,6 +27,8 @@ type ChainEntry struct {
 	CompressionFormats []string `json:"compression_formats" nullable:"false" doc:"The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included). A plain part adds none."`
 	// IsIndexed says whether every frozen part has a current line index.
 	IsIndexed bool `json:"is_indexed" doc:"Whether every part but the active file has a current line index built from the file the listing found (the same inode and device), as is_indexed of /v1/tree tells for one file. False for a chain of more than 10,000 parts, whose indexes are not looked at."`
+	// Unreadable names the parts that cannot be read.
+	Unreadable []string `json:"unreadable" nullable:"false" doc:"The names of the parts whose text check could not open the file (its permissions, an I/O error), in the order of parts. They are parts all the same: GET /v1/logs/chain answers the chain invalid with the reason unreadable for each until they can be read. Empty when every part can."`
 	// TooManyParts says whether the chain has more parts than are read
 	// as one text.
 	TooManyParts bool `json:"too_many_parts" doc:"Whether the chain has more than 10,000 parts. Such a chain is not read as one text: parts and missing are empty, missing_count is 0, is_indexed is false, and GET /v1/logs/chain answers it invalid with the reason too_many_parts."`
