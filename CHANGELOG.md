@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rx logs`, a command group for log chains (rotated logs read as one
+  text), with `rx logs list [DIR...]` (default: the current directory):
+  per directory, a line with its path and number of chains, then a
+  table of name, parts, size, `idx` and missing parts; `--json` prints
+  the `GET /v1/logs/chains` body, one object for one directory and an
+  array for several. Exit 3 for a directory that does not exist, 4 for
+  one outside `--search-root`, hidden or unreadable, 2 for a file; with
+  several directories the others are still listed. Exit codes 6 (the
+  chain is invalid) and 7 (the chain's files changed since a given
+  fingerprint) join the table for the `rx logs` commands that read one
+  chain.
 - `GET /v1/logs/chains?path=DIR` lists the log chains of a directory:
   the files of each rotated log (`syslog`, `syslog.1`, `syslog.2.gz`,
   `syslog-20261001-1790812801.gz`, `app.1.log.gz`,

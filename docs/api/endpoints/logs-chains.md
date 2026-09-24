@@ -9,7 +9,8 @@ Rotation tools split one log into many files: `syslog`, `syslog.1`,
 `syslog.2.gz`, or `syslog-20261001-1790812801.gz`. A **log chain** is
 those files, read as one text. This route finds the chains of a
 directory so a client can show one entry per chain in place of its
-files.
+files. [`rx logs list`](../../cli/logs.md) gives the same answer from a
+terminal.
 
 ## Request
 
@@ -136,4 +137,5 @@ it is.
 
 ## See also
 
+- [`rx logs`](../../cli/logs.md) — the same from a terminal
 - [`GET /v1/tree`](tree.md) — the directory's files
