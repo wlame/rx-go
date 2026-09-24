@@ -107,6 +107,15 @@ without one looks back for it:
 | `RX_QUERY_TZ` | unset | The zone a time query is read in when it carries none. Unset reads such a query in the file's own frame: as the file's wall clock, or at the offset of the first timestamp of a file whose timestamps carry zones, so a time copied from a line finds that line. `local` reads it in the zone of the rx process. |
 | `RX_TIMESTAMP_LOOKBACK_KB` | `64` | How far back, in KiB, a line without a timestamp of its own looks for the line whose timestamp it carries in `line_timestamps`: the nearest earlier line with one, when that line starts at most this far before it. `0` gives such a line none; at most `1024`. |
 
+## Log chains
+
+A log chain is the files of one rotated log, read as one text
+([`rx logs`](cli/logs.md)). Its parts must follow each other in time:
+
+| Variable | Default | Description |
+|---|---|---|
+| `RX_CHAIN_OVERLAP_SECONDS` | `60` | How far, in seconds, the highest timestamp of a part may be after the first timestamp of the next part before the chain is invalid (reason `overlap`). It covers a program that writes to a rotated file for a moment after the rotation. From 0 to 86400; `0` allows no overlap at all. |
+
 ## Search-root sandbox
 
 | Variable | Default | Description |
@@ -256,14 +265,16 @@ range:
 | `RX_SAMPLES_MAX_BYTES` | 268435456 | 1048576 | 17179869184 | bytes (1 MiB to 16 GiB) |
 | `RX_SAMPLES_HEAD_MB` | 64 | 0 | 4096 | MiB of text |
 | `RX_MAX_INDEX_BUILDS` | 2 | 1 | 64 | index builds running at once |
+| `RX_CHAIN_OVERLAP_SECONDS` | 60 | 0 | 86400 | seconds |
 
 One rule applies to all of them:
 
 - Unset or empty: the default.
 - Not a whole decimal number (`abc`, `1.5`, ` 2`, `2MB`), or below the
   minimum (`0` and negative numbers for every variable except
-  `RX_SAMPLES_WAIT_SECONDS`, `RX_TIMESTAMP_LOOKBACK_KB` and
-  `RX_SAMPLES_HEAD_MB`, which take `0`): the default.
+  `RX_SAMPLES_WAIT_SECONDS`, `RX_TIMESTAMP_LOOKBACK_KB`,
+  `RX_SAMPLES_HEAD_MB` and `RX_CHAIN_OVERLAP_SECONDS`, which take `0`):
+  the default.
 - Above the maximum: the maximum.
 
 A value that is not used as it is logs one `invalid_setting` warning

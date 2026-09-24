@@ -61,6 +61,15 @@ type statIdentity struct {
 	changed time.Time
 }
 
+// InodeAndDevice returns the inode and device numbers info records, the
+// pair that names one file on one machine, as every identity rx records
+// reads them (the device widened the same way on each platform). ok is
+// false on a platform whose stat gives neither; both numbers are then 0.
+func InodeAndDevice(info os.FileInfo) (inode, device uint64, ok bool) {
+	st, ok := sourceIdentity(info)
+	return st.inode, st.device, ok
+}
+
 // IdentityFromInfo describes the file at path as the stat result info
 // saw it. The fingerprint is read from path now, so a caller that wants
 // the identity of a file at one moment stats it once and passes that
