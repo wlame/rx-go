@@ -145,11 +145,12 @@ test-repeat pkg='./...':
 bench *args:
     ./scripts/test-isolated-home.sh go test -run='^$' -bench=. -benchmem {{args}} ./...
 
-# Tests with the coverage floor
+# Tests with the coverage floor. No -race here: `just ci` runs the race tests,
+# and race plus atomic coverage pushes slow tests past their own time limits.
 cover:
     #!/usr/bin/env bash
     set -euo pipefail
-    ./scripts/test-isolated-home.sh go test -race -timeout={{test_timeout}} -coverprofile=cover.out -covermode=atomic ./...
+    ./scripts/test-isolated-home.sh go test -timeout={{test_timeout}} -coverprofile=cover.out -covermode=atomic ./...
     total=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
     echo "total coverage: ${total}%  (floor: {{coverage_min}}%)"
     awk -v t="$total" -v m="{{coverage_min}}" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' \
