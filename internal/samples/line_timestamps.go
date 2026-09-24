@@ -247,6 +247,12 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 				if ctxErr := req.context().Err(); ctxErr != nil {
 					return nil, ctxErr
 				}
+				if errors.Is(err, errPastHead) {
+					// Under a head limit a read past the head is not a
+					// damaged frame: the answer cannot be given from
+					// the head, so the attempt ends (ResolveFromHead).
+					return nil, err
+				}
 				if failures++; firstFail == nil {
 					firstFail = fmt.Errorf("read back from line start %d: %w", start, err)
 				}

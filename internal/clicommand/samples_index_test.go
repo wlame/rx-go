@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // A second lookup in a multi-gigabyte file is the case an index exists
@@ -27,6 +28,9 @@ func samplesIndexFixture(t *testing.T, lines int) (path string, cache string) {
 	// A 1 MB threshold makes a modest fixture count as large, so the
 	// test does not have to write a 50 MB file to exercise the rule.
 	t.Setenv("RX_LARGE_FILE_MB", "1")
+	// No early answer from the head of the file: every lookup takes the
+	// path that builds the index first. The tests of the head set it.
+	t.Setenv("RX_SAMPLES_HEAD_MB", "0")
 
 	path = filepath.Join(dir, "big.log")
 	var body bytes.Buffer
@@ -111,4 +115,91 @@ func TestSamples_TheIndexDoesNotChangeTheAnswer(t *testing.T) {
 	if cold != warm || warm != reread {
 		t.Errorf("the answer changed\n no index: %s\n first:    %s\n indexed:  %s", cold, warm, reread)
 	}
+}
+
+// runSamplesSpec runs `rx samples --json` for one --lines value with a
+// context of 1 and returns the output.
+func runSamplesSpec(t *testing.T, path, lines string, noIndex bool) string {
+	t.Helper()
+	var buf bytes.Buffer
+	err := runSamples(&buf, samplesParams{
+		path: path, lines: []string{lines}, ctxLines: 1, jsonOutput: true, noIndex: noIndex,
+	})
+	if err != nil {
+		t.Fatalf("runSamples --lines=%s: %v", lines, err)
+	}
+	return buf.String()
+}
+
+// filesUnder returns the regular files under dir, which may not exist.
+func filesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.Type().IsRegular() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	return files
+}
+
+// A lookup whose lines lie in the head of a large file is answered from
+// the head, with the answer an index would give, and builds no index: a
+// command cannot finish one in the background, so it leaves the index to
+// `rx index` or a later lookup that needs one.
+func TestSamples_AnswersFromTheHeadWithoutBuildingAnIndex(t *testing.T) {
+	path, cache := samplesIndexFixture(t, 60000)
+	t.Setenv("RX_SAMPLES_HEAD_MB", "1")
+
+	early := runSamplesSpec(t, path, "1-10", false)
+
+	if files := filesUnder(t, cache); len(files) != 0 {
+		t.Fatalf("an answer from the head wrote to the cache: %v", files)
+	}
+	cold := runSamplesSpec(t, path, "1-10", true)
+	if early != cold {
+		t.Errorf("the answer from the head differs from the lookup without an index\n head: %s\n cold: %s", early, cold)
+	}
+	if _, err := index.Save(buildIndexForTest(t, path)); err != nil {
+		t.Fatalf("store the index: %v", err)
+	}
+	if indexed := runSamplesSpec(t, path, "1-10", false); early != indexed {
+		t.Errorf("the answer from the head differs from the indexed one\n head:    %s\n indexed: %s", early, indexed)
+	}
+}
+
+// A lookup the head cannot answer builds the index first, as before.
+func TestSamples_PastTheHeadBuildsTheIndex(t *testing.T) {
+	for _, lines := range []string{"-1", "59000"} {
+		t.Run(lines, func(t *testing.T) {
+			path, _ := samplesIndexFixture(t, 60000)
+			t.Setenv("RX_SAMPLES_HEAD_MB", "1")
+
+			runSamplesSpec(t, path, lines, false)
+
+			if idx, err := index.LoadForSource(path); err != nil || idx == nil {
+				t.Fatalf("--lines=%s past the head built no index: %v", lines, err)
+			}
+		})
+	}
+}
+
+// buildIndexForTest builds the line index of path or fails the test.
+func buildIndexForTest(t *testing.T, path string) *rxtypes.UnifiedFileIndex {
+	t.Helper()
+	idx, err := index.Build(path, index.BuildOptions{})
+	if err != nil {
+		t.Fatalf("build the index of %s: %v", path, err)
+	}
+	return idx
 }

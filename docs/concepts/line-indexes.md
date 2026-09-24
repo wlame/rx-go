@@ -237,6 +237,8 @@ The builder:
 
 A lookup in a large or compressed file builds an index if none is cached,
 so the *second* lookup is fast — which is the case an index exists for.
+A lookup that the head of the file answers builds none (see
+[the first lookup of a large file](#the-first-lookup-of-a-large-file)).
 The build runs without `--analyze`: anomaly detection is a separate
 feature, nothing on the lookup path reads its output, and a full pass to
 answer one line is work nobody asked for.
@@ -311,11 +313,36 @@ rx trace "error" /var/log/audit-2026-03.log --no-index
 
 ## Implications
 
+### The first lookup of a large file
+
+A lookup whose lines lie near the start of the file does not need an
+index: lines counted from the first byte are exact. So a lookup in a
+file that wants an index and has none first tries the head of the file,
+the first `RX_SAMPLES_HEAD_MB` MiB of its text (64 by default; the
+decompressed text for a compressed file). When every line the answer
+holds lies in the head, it is answered from the head at once, with the
+answer the index would give, and `rx samples` builds no index: a
+command cannot finish a build in the background. These lookups fit in
+the head:
+
+- positive line numbers and ranges (`--lines=1-1000`), context
+  included, that end in the head;
+- byte offsets below the head whose lines end in it;
+- a time whose line and context lie in the head, and a time range whose
+  end does.
+
+Any other lookup builds the index first, as before: a position counted
+back from the end (`--lines=-1`) needs the line count of the whole
+file; a time range open to the end (`T..`) reads to the end; a time of
+day without a date (`14:33`) needs the file's last timestamp. A lookup
+that reaches past the head reads the head and then builds. With
+`RX_SAMPLES_HEAD_MB=0` every lookup builds first.
+
 ### Latency on the first query
 
-The first line lookup in a large file pays the build cost — one full
-read of the file. Every subsequent query starts at a checkpoint. Script
-this in deployment pipelines:
+The first line lookup past the head of a large file pays the build cost
+— one full read of the file. Every subsequent query starts at a
+checkpoint. Script this in deployment pipelines:
 
 ```bash
 # At deploy time, pre-warm the cache.

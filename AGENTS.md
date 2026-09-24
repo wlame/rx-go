@@ -254,7 +254,13 @@ Data flow for `rx trace "pattern" big.log`:
    `../tickets/PARITY-DEBT.md` row.
 3. **Bounded reads.** No code path reads more bytes than the request needs,
    except an index build (`rx index`, and the index a samples lookup
-   builds first), `rx trace` without `--max-results`, and `rx compress`.
+   builds first when the head of the file cannot answer it), `rx trace`
+   without `--max-results`, and `rx compress`. A samples lookup on a file
+   that wants an index and has none first tries the head
+   (`samples.ResolveFromHead`): at most `RX_SAMPLES_HEAD_MB` of text per
+   pass, every reader of the text stopped at the head, and the answer
+   is the one without an index. `rx samples` answered that way builds
+   no index.
    An HTTP request never builds an index inside itself: `GET /v1/samples`
    starts or joins a background `index` task, one per file and file
    identity (`internal/webapi/samples_index.go`); a request with

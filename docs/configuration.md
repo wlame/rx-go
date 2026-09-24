@@ -143,6 +143,7 @@ See [concepts/security](concepts/security.md) and
 |---|---|---|
 | `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them, from 1 minute to one week (10080). At most 256 tasks are kept; past that, the oldest finished ones go first. |
 | `RX_SAMPLES_WAIT_SECONDS` | `5` | How long a `GET /v1/samples` request that sends `Prefer: respond-async` waits for the line index it needs to be built (a background `index` task, one per file) before it answers `202` with the task instead of the lines; a request without the header waits for the build. From 0 to 3600; `0` answers `202` at once whenever a build is needed. `rx samples` ignores it and waits for the build. See [`GET /v1/samples`](api/endpoints/samples.md#response-202-accepted). |
+| `RX_SAMPLES_HEAD_MB` | `64` | How many MiB of a file's text, from its first byte, `rx samples` may read to answer without a line index when the file wants one (any compressed file, a plain file of `RX_LARGE_FILE_MB` or more) and has none. A request whose lines all lie in that head (positive line numbers and ranges, offsets below it, a time whose line and context lie in it) is answered at once, with the same answer the index would give, and no index is built. A position counted back from the end (`-1`), anything past the head, a time range open to the end and a time of day without a date build the index first as before. The head is the decompressed text for a compressed file. From 0 to 4096; `0` never answers early. See [line indexes](concepts/line-indexes.md#the-first-lookup-of-a-large-file). |
 | `RX_SAMPLES_MAX_LINES` | `100000` | The most lines one `GET /v1/samples` answer may hold, summed over all its samples (a line in two samples counts twice). A request whose answer would hold more is refused with `400`, naming the setting and the count reached; the lines are counted as they are read, so the refused request stops reading there. From 1000 to 10000000. `rx samples` has no limit: it runs as the user's own process. See [`GET /v1/samples`](api/endpoints/samples.md). |
 | `RX_SAMPLES_MAX_BYTES` | `268435456` (256 MiB) | The most bytes of line text one `GET /v1/samples` answer may hold, summed over all its samples like `RX_SAMPLES_MAX_LINES` (line breaks not counted). Samples are whole lines and a log's line can be megabytes long, so the line count alone does not bound an answer's memory. Past it the request is refused with `400` naming this setting; a line longer than the limit is never held whole. From 1048576 (1 MiB) to 17179869184 (16 GiB). `rx samples` has no limit. |
 
@@ -252,14 +253,15 @@ range:
 | `RX_TIMESTAMP_LOOKBACK_KB` | 64 | 0 | 1024 | KiB |
 | `RX_SAMPLES_MAX_LINES` | 100000 | 1000 | 10000000 | lines |
 | `RX_SAMPLES_MAX_BYTES` | 268435456 | 1048576 | 17179869184 | bytes (1 MiB to 16 GiB) |
+| `RX_SAMPLES_HEAD_MB` | 64 | 0 | 4096 | MiB of text |
 
 One rule applies to all of them:
 
 - Unset or empty: the default.
 - Not a whole decimal number (`abc`, `1.5`, ` 2`, `2MB`), or below the
   minimum (`0` and negative numbers for every variable except
-  `RX_SAMPLES_WAIT_SECONDS` and `RX_TIMESTAMP_LOOKBACK_KB`, which take
-  `0`): the default.
+  `RX_SAMPLES_WAIT_SECONDS`, `RX_TIMESTAMP_LOOKBACK_KB` and
+  `RX_SAMPLES_HEAD_MB`, which take `0`): the default.
 - Above the maximum: the maximum.
 
 A value that is not used as it is logs one `invalid_setting` warning

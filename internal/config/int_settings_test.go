@@ -129,6 +129,7 @@ func TestIntSettings_GettersReadTheirSetting(t *testing.T) {
 		{TimestampLookbackKBSetting, func() int { return int(TimestampLookbackBytes() / 1024) }},
 		{SamplesMaxLinesSetting, SamplesMaxLines},
 		{SamplesMaxBytesSetting, func() int { return int(SamplesMaxBytes()) }},
+		{SamplesHeadMBSetting, func() int { return int(SamplesHeadBytes() >> 20) }},
 	}
 	if len(cases) != len(IntSettings) {
 		t.Fatalf("%d getters tested, %d settings declared", len(cases), len(IntSettings))
@@ -159,7 +160,7 @@ func TestIntSettings_RangesFitTheirArithmetic(t *testing.T) {
 			t.Errorf("%s: default %d outside %d to %d", s.Name, s.Default, s.Min, s.Max)
 		}
 	}
-	for _, s := range []IntSetting{MinChunkSizeMBSetting, LargeFileMBSetting} {
+	for _, s := range []IntSetting{MinChunkSizeMBSetting, LargeFileMBSetting, SamplesHeadMBSetting} {
 		if bytes := int64(s.Max) << 20; bytes>>20 != int64(s.Max) {
 			t.Errorf("%s: %d MB overflows int64 bytes", s.Name, s.Max)
 		}

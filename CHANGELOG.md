@@ -45,8 +45,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)`, or `Viewer: none
   (/ redirects to /docs)`. A failed download or check prints one
   warning line that ends with the same text.
+- `RX_SAMPLES_HEAD_MB` (default 64, 0 to 4096; 0 switches it off): how
+  many MiB of a file's text, from its first byte, a samples lookup may
+  read to answer without a line index when the file wants one and has
+  none.
 
 ### Changed
+
+- `rx samples` on a file that wants a line index and has none (any
+  compressed file, a plain file of `RX_LARGE_FILE_MB` or more) answers a
+  lookup whose lines all lie in the first `RX_SAMPLES_HEAD_MB` MiB of
+  its text (decompressed for a compressed file) from that head, at once,
+  and builds no index; the answer is the one the index gives. It used to
+  build the index first, reading the whole file. A position counted back
+  from the end (`--lines=-1`), anything past the head, a time range
+  open to the end and a time of day without a date build the index first
+  as before. `rx index` builds it on its own.
 
 - Line index format 9: the time section records `zone_offsets`, where
   the zone offset the lines write changes, as `[line, minutes]` pairs

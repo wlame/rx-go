@@ -518,8 +518,23 @@ type contextReader struct {
 // first checks ctx and returns its error once it is canceled. The
 // passes read through a buffer of kilobytes, so the check costs nothing
 // next to the read, and a canceled request stops at the next buffer.
+//
+// When ctx carries a head limit (ResolveFromHead), the reader also
+// stops at the head: it gives the text up to the limit and answers
+// errPastHead to a read past it (headReader). r is a pass's
+// *textCursor, which says where in the text it starts, or a reader that
+// starts at the text's first byte.
 func withContext(ctx context.Context, r io.Reader) io.Reader {
-	return contextReader{ctx: ctx, r: r}
+	reader := contextReader{ctx: ctx, r: r}
+	limit, ok := headLimitOf(ctx)
+	if !ok {
+		return reader
+	}
+	var start int64
+	if cursor, isCursor := r.(*textCursor); isCursor {
+		start = cursor.offset
+	}
+	return &headReader{r: reader, left: limit - start}
 }
 
 // Read implements io.Reader.

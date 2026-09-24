@@ -110,7 +110,28 @@ var (
 	// of an answer. Its maximum, 16 GiB, needs a 64-bit int, which
 	// every platform rx is built for has.
 	SamplesMaxBytesSetting = IntSetting{Name: "RX_SAMPLES_MAX_BYTES", Default: DefaultSamplesMaxBytes, Min: 1 << 20, Max: 16 << 30}
+
+	// SamplesHeadMBSetting is RX_SAMPLES_HEAD_MB: how many MiB of a
+	// file's text, from its first byte, a samples lookup reads to answer
+	// without a line index when the file wants one and has none. A
+	// lookup whose lines lie in that head is answered at once, and the
+	// index is built in the background (`rx serve`) or not at all
+	// (`rx samples`); any other waits for the build as before. 0 is
+	// accepted: the lookup never answers early. Its maximum, 4 GiB,
+	// bounds what one early answer may read.
+	SamplesHeadMBSetting = IntSetting{Name: "RX_SAMPLES_HEAD_MB", Default: DefaultSamplesHeadMB, Min: 0, Max: 4096}
 )
+
+// DefaultSamplesHeadMB is the default of RX_SAMPLES_HEAD_MB: 64 MiB,
+// several hundred thousand lines of a typical log, which a plain file
+// gives in tens of milliseconds and a compressed one in a few tenths of
+// a second.
+const DefaultSamplesHeadMB = 64
+
+// SamplesHeadBytes returns RX_SAMPLES_HEAD_MB, from 0 to 4096 MiB, in
+// bytes, or DefaultSamplesHeadMB in bytes. 0 means a samples lookup
+// never answers from the head.
+func SamplesHeadBytes() int64 { return int64(SamplesHeadMBSetting.Value()) << 20 }
 
 // DefaultSamplesMaxLines is the default of RX_SAMPLES_MAX_LINES.
 const DefaultSamplesMaxLines = 100_000
@@ -141,6 +162,7 @@ var IntSettings = []IntSetting{
 	TimestampLookbackKBSetting,
 	SamplesMaxLinesSetting,
 	SamplesMaxBytesSetting,
+	SamplesHeadMBSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

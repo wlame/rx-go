@@ -964,21 +964,23 @@ var errDecodeLimit = errors.New("the frames this read needs decode to more text 
 // file, as a reader by position, and the text's length. For a seekable
 // file, the reader decodes at most decodeLimit bytes of frames over its
 // life, or any number with noDecodeLimit; a read that needs more fails
-// with errDecodeLimit.
+// with errDecodeLimit. Under a head limit in ctx (ResolveFromHead), a
+// read that ends past the head fails with errPastHead (limitToHead).
 func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind, decodeLimit int64) (io.ReaderAt, int64, error) {
 	if !kind.IsCompressed() {
 		info, err := file.Stat()
 		if err != nil {
 			return nil, 0, err
 		}
-		return file, info.Size(), nil
+		return limitToHead(ctx, file, info.Size()), info.Size(), nil
 	}
 	frames := kind.Table.Frames
 	size := int64(0)
 	if len(frames) > 0 {
 		size = frames[len(frames)-1].DecompressedEnd()
 	}
-	return &seekableTextAt{ctx: ctx, file: file, table: kind.Table, decoder: seekable.NewDecoder(), decodeLimit: decodeLimit}, size, nil
+	text := &seekableTextAt{ctx: ctx, file: file, table: kind.Table, decoder: seekable.NewDecoder(), decodeLimit: decodeLimit}
+	return limitToHead(ctx, text, size), size, nil
 }
 
 // seekableTextAt reads a seekable zstd file's text by position. It
