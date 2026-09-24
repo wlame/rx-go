@@ -129,8 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A stored index whose list is out of order, names a line outside the
   timestamped lines, repeats the offset in force or holds an offset
   beyond 18 hours, or whose `max` is missing, names a line outside the
-  timestamped lines or is below `first`, `last` or a `max_before`
-  entry, is treated as damaged. Every index stored by an earlier
+  timestamped lines, is below `first` or `last`, has an offset out of
+  the order of the lines of `first`, `max` and `last` (equal offsets
+  exactly for equal lines), or disagrees with `max_before` (each entry
+  after `max`'s line must be `max`'s value, each one up to it null or
+  below it), is treated as damaged. Every index stored by an earlier
   version is rebuilt once.
 
 ### Fixed
