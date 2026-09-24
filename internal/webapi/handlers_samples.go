@@ -224,17 +224,20 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 
 		// A second lookup in a multi-gigabyte file is the case an index
 		// exists for, so one is built when the file is worth it and none
-		// is cached — the same rule `rx samples` follows, so the two
-		// surfaces leave the same state on disk. RX_NO_INDEX opts out;
-		// there is no query parameter for it, because the decision
+		// is cached — the rule `rx samples` follows. RX_NO_INDEX opts
+		// out; there is no query parameter for it, because the decision
 		// belongs to whoever runs the server rather than to a caller.
 		//
 		// The build runs as a background task shared by every request
-		// for the file. A request that prefers respond-async waits for
-		// it up to the server's wait and answers 202 with the task when
-		// the build takes longer, so the first look at a 50 GB file does
-		// not hold its HTTP request open while all of it is read. Any
-		// other request waits for the build and answers the lines.
+		// for the file. A request whose lines lie in the head of the
+		// file is answered from the head at once and starts the build
+		// without waiting for it (`rx samples` builds nothing then: a
+		// command cannot finish a build in the background). Any other
+		// request that prefers respond-async waits for the build up to
+		// the server's wait and answers 202 with the task when the build
+		// takes longer, so the first look at a 50 GB file does not hold
+		// its HTTP request open while all of it is read; any other
+		// request waits for the build and answers the lines.
 		//
 		// When the cache cannot store the index, no task is started:
 		// it would read the whole file for an index nobody keeps, once
@@ -257,33 +260,18 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			return nil, ErrFileAccess(validated, err)
 		}
 
-		noIndex := config.GetBoolEnv("RX_NO_INDEX", false)
-		if !noIndex && samples.ShouldBuildIndex(validated, kind, stat.Size()) {
-			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
-			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
-			stopDeadline()
-			if waitErr != nil {
-				return nil, waitErr
-			}
-			if pending != nil {
-				return &samplesOutput{
-					Status: http.StatusAccepted, PreferenceApplied: respondAsync, Body: *pending,
-				}, nil
-			}
-		}
-
 		// One resolver for both file kinds and both entry points: it
 		// reads a plain file by offset or by line, and streams a
 		// compressed one through its decompressor. A missing, stale or
 		// damaged index is an absent one, never a 500; under
 		// RX_NO_INDEX no index file is read at all, as `rx samples
 		// --no-index` reads none.
+		noIndex := config.GetBoolEnv("RX_NO_INDEX", false)
 		loader := samples.StoredIndex
 		if noIndex {
 			loader = samples.NoIndex
 		}
-		// ctx ends when the client disconnects, which stops the read.
-		resp, err := samples.Resolve(ctx, samples.Request{
+		req := samples.Request{
 			Path:          validated,
 			Source:        source,
 			Kind:          &kind,
@@ -300,7 +288,46 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			// of it a thousand times.
 			MaxLines: config.SamplesMaxLines(),
 			MaxBytes: config.SamplesMaxBytes(),
-		})
+		}
+
+		var (
+			resp       *rxtypes.SamplesResponse
+			indexBuild *rxtypes.SamplesIndexBuild
+			answered   bool
+		)
+		wantsBuild := !noIndex && samples.ShouldBuildIndex(validated, kind, stat.Size())
+		if wantsBuild {
+			// A lookup whose lines lie in the head of the file
+			// (RX_SAMPLES_HEAD_MB) needs no index: it is answered from
+			// the head now, with the answer the index would give, and
+			// the build is started (or joined) in the background for the
+			// lookups that will need it. index_build names it, so a
+			// client can follow it. A refusal the head gives (an answer
+			// over the limits, a time named wrongly) is the answer too:
+			// building the index would not change it. ctx ends the head
+			// read when the client disconnects.
+			resp, answered, err = samples.ResolveFromHead(ctx, req, config.SamplesHeadBytes())
+			if answered && err == nil {
+				indexBuild = s.samplesIndex.start(validated, stat)
+			}
+		}
+		if wantsBuild && !answered {
+			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
+			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
+			stopDeadline()
+			if waitErr != nil {
+				return nil, waitErr
+			}
+			if pending != nil {
+				return &samplesOutput{
+					Status: http.StatusAccepted, PreferenceApplied: respondAsync, Body: *pending,
+				}, nil
+			}
+		}
+		if !answered {
+			// ctx ends when the client disconnects, which stops the read.
+			resp, err = samples.Resolve(ctx, req)
+		}
 		if setting := answerLimitSetting(err); setting != "" {
 			return nil, ErrBadRequest(fmt.Sprintf(
 				"%s; %s sets the limit: ask for fewer positions, shorter ranges or less context", err.Error(), setting))
@@ -333,6 +360,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			"after_context":  nilIfNegative(in.AfterContext),
 		})
 		resp.CLICommand = &cli
+		resp.IndexBuild = indexBuild
 
 		observeSamplesResult(start, len(parsedOffsets)+len(parsedLines)+len(in.Timestamps), before, after)
 		return &samplesOutput{Status: http.StatusOK, Body: *resp}, nil

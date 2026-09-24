@@ -928,6 +928,45 @@
         ],
         "type": "object"
       },
+      "SamplesIndexBuild": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "description": "What the task does, in words.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The file whose index is built.",
+            "type": "string"
+          },
+          "started_at": {
+            "description": "When the task started, RFC 3339 in UTC.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "description": "The task's status when the answer was made: queued, running, completed or failed.",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "The build's task: follow it at GET /v1/tasks/{task_id}.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "status",
+          "message",
+          "path",
+          "started_at"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
       "SamplesResponse": {
         "additionalProperties": false,
         "properties": {
@@ -950,6 +989,10 @@
               "string",
               "null"
             ]
+          },
+          "index_build": {
+            "$ref": "#/components/schemas/SamplesIndexBuild",
+            "description": "The background build of the file's line index that this answer started or joined, to follow at GET /v1/tasks/{task_id}: set when the answer came from the head of a file that wants an index and has none (RX_SAMPLES_HEAD_MB), and null otherwise: no build runs, the index already exists, or the request waited for the build. It says how the answer was produced; the lines are the same with an index and without."
           },
           "is_compressed": {
             "type": "boolean"
@@ -1028,7 +1071,8 @@
           "cli_command",
           "timestamps",
           "time_format",
-          "line_timestamps"
+          "line_timestamps",
+          "index_build"
         ],
         "type": "object"
       },

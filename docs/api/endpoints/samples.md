@@ -11,8 +11,15 @@ and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
 
 ### What a request reads
 
-- **First lookup in a large or compressed file:** when no index is
-  cached, one is built and stored first — for any compressed file, and
+- **First lookup in a large or compressed file, in the head:** when no
+  index is cached and every line the answer holds lies in the first
+  `RX_SAMPLES_HEAD_MB` MiB of the text (64 by default; decompressed for
+  a compressed file), the request is answered from that head at once,
+  with the answer the index would give, and the index build starts as a
+  background `index` task named in [`index_build`](#answered-from-the-head).
+  `lines=1-1000` on a 7 GB log answers without reading the rest of it.
+- **First lookup in a large or compressed file, past the head:** when no
+  index is cached, one is built and stored first — for any compressed file, and
   for a plain file of `RX_LARGE_FILE_MB` (50 MB) or more. The build runs
   as a background `index` task, and the request waits for it. With
   `Prefer: respond-async` it waits up to `RX_SAMPLES_WAIT_SECONDS` (5 s
@@ -130,7 +137,8 @@ curl -sG 'http://127.0.0.1:7777/v1/samples' --data-urlencode 'path=/var/log/app.
   "line_timestamps": {
     "12:34:56..12:34:57": [1765370096123, 1765370096123, 1765370097000],
     "2025-12-10 12:34:56,123": [1765370095000, 1765370096123, 1765370096123]
-  }
+  },
+  "index_build": null
 }
 ```
 
@@ -198,7 +206,8 @@ For a 30-line file whose every line reads `LINE <n> payload`,
   "cli_command": "rx samples /var/log/lines.log --lines=1,30,99",
   "timestamps": {},
   "time_format": null,
-  "line_timestamps": null
+  "line_timestamps": null,
+  "index_build": null
 }
 ```
 
@@ -206,9 +215,52 @@ and `offsets=20,30-50,9999&context=0` on the same file answers
 `"offsets": {"20": 2, "30-50": 3, "9999": -1}` with
 `"samples": {"20": ["LINE 2 payload"], "30-50": ["LINE 3 payload", "LINE 4 payload"], "9999": null}`.
 
+### Answered from the head
+
+A file that wants a line index (any compressed file, a plain file of
+`RX_LARGE_FILE_MB` or more) and has none is first read from its head,
+the first `RX_SAMPLES_HEAD_MB` MiB of its text. When every line of the
+answer lies there, the request answers `200` at once and starts the
+index build in the background, or joins the one running, and names its
+task in `index_build`:
+
+```json
+"index_build": {
+  "task_id": "1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
+  "status": "running",
+  "message": "Building the line index of /var/log/core.log in the background; follow GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
+  "path": "/var/log/core.log",
+  "started_at": "2026-10-03T18:12:04.512330Z"
+}
+```
+
+Follow the task at [`GET /v1/tasks/{task_id}`](tasks.md) to know when a
+lookup past the head, a line counted from the end, or a time of day
+becomes fast. The lines are the ones the index gives: an answer from the
+head and an answer from the index differ only in `index_build` (and
+`cli_command` never differs).
+
+These fit in the head: positive line numbers and ranges whose last line,
+context included, lies in it; byte offsets below it whose lines end in
+it; a time whose line and context lie in it, and a time range whose end
+does. These do not, and take the path below: a position counted back
+from the end (`lines=-1`, `offsets=-10`), anything past the head, a time
+range open to the end (`T..`), a time of day without a date. A refusal
+the head can give (an answer over `RX_SAMPLES_MAX_LINES`, a time named
+wrongly) is answered at once as a `400`, and starts no build.
+
+`index_build` is `null` when the answer did not come from the head: the
+file has an index, needs none (a plain file below `RX_LARGE_FILE_MB`),
+`RX_NO_INDEX` is set, the cache cannot store an index, or the request
+waited for the build, which is then over. It is also `null` when a
+`POST /v1/compress` task holds the file, or a build for an earlier
+version of the file runs. `RX_SAMPLES_HEAD_MB=0` turns the answer from
+the head off.
+
 ## Response — 202 Accepted
 
-When the request sends `Prefer: respond-async` and the file's line index
+When the request sends `Prefer: respond-async`, the head of the file
+cannot answer it, and the file's line index
 is still being built after `RX_SAMPLES_WAIT_SECONDS`, the answer names
 the build's task instead of the lines, with the header
 `Preference-Applied: respond-async`:
@@ -262,6 +314,7 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 | `cli_command` | string | Equivalent CLI invocation |
 | `timestamps` | `{query: lineNumber}` | Time mode: key is the query, value is the line it found (a range's first line); `-1` when no line is at the time, or the range holds none. `{}` in the other modes |
 | `time_format` | `{format, has_zone, assumed_zone} \| null` | The file's timestamp format, in every mode: the family (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted`, `epoch`), whether most timestamps carry a zone, and the zone a timestamp without one is read in (`RX_LOG_TZ` for a zone-less file, `UTC` otherwise). `null` when no format is recognized in the first mebibyte of the text. Costs no read with an index, at most a mebibyte without |
+| `index_build` | `{task_id, status, message, path, started_at} \| null` | The background build of the file's line index that this answer started or joined, set when the answer came [from the head](#answered-from-the-head) of a file that wants an index and has none; `null` otherwise. Follow it at [`GET /v1/tasks/{task_id}`](tasks.md). It says how the answer was produced: the other fields are the same with an index and without |
 | `line_timestamps` | `{key: (ms \| null)[] \| null} \| null` | The effective timestamp of each sample line, in every mode, keyed and ordered as `samples`: milliseconds since the Unix epoch as a UTC instant (a zone-less file's wall clock read in `RX_LOG_TZ`). A line without a timestamp of its own carries that of the nearest earlier line with one, when that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB (64) before it; otherwise `null`, and `null` too when the text before the sample cannot be read back (a damaged frame the sample itself does not need; the server logs `line_timestamps_read_back_failed`). A key whose sample is `null` maps to `null`; the whole field is `null` when `time_format` is. See [effective timestamps](../../concepts/timestamps.md#effective-timestamps) |
 
 ### Map ordering
@@ -276,7 +329,7 @@ client-side and iterate accordingly.
 | Code | When |
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
-| `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
+| `202 Accepted` | Only with `Prefer: respond-async`: the head of the file cannot answer the request, the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
 | `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; the file needs more than 128 MiB at once to decompress; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) or more bytes of line text than `RX_SAMPLES_MAX_BYTES` (256 MiB by default) allows; a `file_tz` that names no zone |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |

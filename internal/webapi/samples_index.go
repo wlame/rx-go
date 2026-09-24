@@ -178,15 +178,49 @@ func (b *samplesIndexBuilds) await(
 	if !known || task.IsTerminal() {
 		return nil, nil
 	}
+	pending := taskResponseOf(task, path,
+		"Building the line index of %s; poll GET /v1/tasks/%s and ask again when it completes")
+	return &pending, nil
+}
+
+// start starts the build of path's line index for the file info
+// describes, or joins the one running, without waiting for it, and
+// returns the build's task for a samples answer's index_build. It
+// returns nil when no task will give this file an index (join), or when
+// the task has already ended and been dropped from the table.
+//
+// It is what a lookup answered from the head of the file calls: the
+// lines are in hand, and the build goes on in the background (the
+// build goroutine of join) so that the next lookup, one the head cannot
+// answer, finds the index.
+func (b *samplesIndexBuilds) start(path string, info os.FileInfo) *rxtypes.SamplesIndexBuild {
+	taskID, found := b.join(path, index.IdentityFromInfo(path, info), info.Size())
+	if !found {
+		return nil
+	}
+	task, known := b.tasks.Get(taskID)
+	if !known {
+		return nil
+	}
+	named := taskResponseOf(task, path, "Building the line index of %s in the background; follow GET /v1/tasks/%s")
+	return &rxtypes.SamplesIndexBuild{
+		TaskID: named.TaskID, Status: named.Status, Message: named.Message,
+		Path: named.Path, StartedAt: named.StartedAt,
+	}
+}
+
+// taskResponseOf is the body that names task, a build of path's line
+// index, with message, a format whose two verbs take the path and the
+// task's ID.
+func taskResponseOf(task *tasks.Task, path, message string) rxtypes.TaskResponse {
 	started := formatTaskTime(task.StartedAt)
-	return &rxtypes.TaskResponse{
-		TaskID: task.TaskID,
-		Status: string(task.Status),
-		Message: fmt.Sprintf("Building the line index of %s; poll GET /v1/tasks/%s and ask again when it completes",
-			path, task.TaskID),
+	return rxtypes.TaskResponse{
+		TaskID:    task.TaskID,
+		Status:    string(task.Status),
+		Message:   fmt.Sprintf(message, path, task.TaskID),
 		Path:      path,
 		StartedAt: &started,
-	}, nil
+	}
 }
 
 // join returns the task building path's index for the file identity

@@ -321,9 +321,11 @@ file that wants an index and has none first tries the head of the file,
 the first `RX_SAMPLES_HEAD_MB` MiB of its text (64 by default; the
 decompressed text for a compressed file). When every line the answer
 holds lies in the head, it is answered from the head at once, with the
-answer the index would give, and `rx samples` builds no index: a
-command cannot finish a build in the background. These lookups fit in
-the head:
+answer the index would give. `GET /v1/samples` then starts the build in
+the background, or joins the one running, and names its task in
+`index_build` so a client can follow it; `rx samples` builds no index,
+since a command cannot finish a build in the background. These lookups
+fit in the head:
 
 - positive line numbers and ranges (`--lines=1-1000`), context
   included, that end in the head;

@@ -125,6 +125,10 @@ every request for the file, and answers a request that sends
 `Prefer: respond-async` with `202` and the task when the build outlasts
 `RX_SAMPLES_WAIT_SECONDS`; see
 [`GET /v1/samples`](../api/endpoints/samples.md#response-202-accepted).
+A request the head answers is answered at once there too, and starts the
+build in the background, naming its task in `index_build`. `--json`
+carries `index_build: null` always: the CLI builds nothing in the
+background.
 
 ### Context at the ends of the file
 
@@ -335,7 +339,8 @@ payload`, `--lines=1,30,99 --json`:
   "cli_command": null,
   "timestamps": {},
   "time_format": null,
-  "line_timestamps": null
+  "line_timestamps": null,
+  "index_build": null
 }
 ```
 
