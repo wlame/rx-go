@@ -1340,7 +1340,7 @@
         "parameters": [
           {
             "description": "File or directory path(s) to search",
-            "explode": false,
+            "explode": true,
             "in": "query",
             "name": "path",
             "required": true,
@@ -1362,7 +1362,7 @@
           },
           {
             "description": "Regex pattern(s) to search for",
-            "explode": false,
+            "explode": true,
             "in": "query",
             "name": "regexp",
             "required": true,

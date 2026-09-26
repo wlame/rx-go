@@ -22,7 +22,13 @@ import (
 // traceInput is the query-string shape for GET /v1/trace.
 //
 // Notes on huma tag semantics:
-//   - query:"path" with a []string type ⇒ repeatable param: ?path=a&path=b
+//   - query:"path,explode" with a []string type ⇒ repeatable param:
+//     ?path=a&path=b, one value per repetition, a comma kept inside its
+//     value. Without the explode option huma splits a single value at
+//     commas and ignores repetitions, which breaks a counted repetition
+//     such as a{2,5} and any path that contains a comma. Every slice
+//     query field carries it; TestOpenAPI_EveryArrayQueryParameterIsExploded
+//     checks the published spec for that.
 //   - required:"true" makes huma emit a 422 when the param is missing
 //   - example:"..." surfaces in the generated OpenAPI and Swagger UI
 //   - doc:"..." is the human description
@@ -30,10 +36,10 @@ import (
 // Field names use exact Python spellings to keep the OpenAPI shape
 // identical for frontend consumption.
 type traceInput struct {
-	Path []string `query:"path" required:"true" example:"/var/log/app.log" doc:"File or directory path(s) to search"`
+	Path []string `query:"path,explode" required:"true" example:"/var/log/app.log" doc:"File or directory path(s) to search"`
 	// Regexp uses the Python-compatible name (singular); the engine
 	// accepts multiple via repeated ?regexp=... params.
-	Regexp []string `query:"regexp" required:"true" example:"error" doc:"Regex pattern(s) to search for"`
+	Regexp []string `query:"regexp,explode" required:"true" example:"error" doc:"Regex pattern(s) to search for"`
 	// MaxResults: 0 sentinel means "not set" (huma doesn't allow pointer
 	// query params). Valid user values start at 1.
 	MaxResults     int    `query:"max_results" minimum:"0" example:"100" doc:"Maximum results to return. 0 = unlimited."`
