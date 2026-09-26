@@ -71,8 +71,8 @@ invocations use a no-op metrics sink and never allocate counters.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `rx_hook_calls_total` | counter | `kind`, `status` | Webhook POSTs by kind and `success`/`failure` |
-| `rx_hook_call_duration_seconds` | histogram | `kind` | Webhook POST latency |
+| `rx_hook_calls_total` | counter | `kind`, `status` | Webhook calls by kind and `success`/`failure`/`dropped` |
+| `rx_hook_call_duration_seconds` | histogram | `kind` | Webhook call latency |
 
 ### Shape & distribution
 

@@ -407,6 +407,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scanned_files`, which is filled only when a directory was walked, so
   a trace of named files reported `0`.
 
+- The webhook docs describe the protocol the code uses: one `GET` per
+  event with the payload as query parameters, the event names
+  `file_scanned`, `match_found` and `trace_complete`, the real parameter
+  names, the precedence between a request's URL and `RX_HOOK_ON_*_URL`,
+  and the `dropped` status of `rx_hook_calls_total`. They described a
+  `POST` with a JSON body and fields that do not exist, and called DNS
+  rebinding unmitigated although the dialer checks the address it
+  connects to. The `hook_on_*` descriptions in the OpenAPI document no
+  longer say "URL to POST"; the contract is unchanged.
+
 - A `--max-results` search of a seekable `.zst` keeps the first matches
   in the file. The frame-parallel scan ordered its matches by a line
   number that restarts in every frame before applying the cap, so it
