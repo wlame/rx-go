@@ -29,19 +29,42 @@ type TaskStatusResponse struct {
 
 // CompressRequest is the body for POST /v1/compress (background task).
 //
-// FrameSize is a human-readable size string (e.g. "4M", "16MB") parsed
-// by internal/clicommand. CompressionLevel is 1..22 per zstd convention.
+// Only InputPath is required. Every other field may be left out, and
+// then takes the default of the matching `rx compress` flag, so a task
+// started over HTTP compresses exactly the way the CLI does without the
+// flag:
 //
-// schema fields never omit. Python's
-// CompressRequest emits output_path as null and force as false on default
-// input, so Go preserves both keys in the JSON output.
+//	frame_size        --frame-size   "4M"
+//	compression_level --level        3
+//	build_index       --build-index  true
+//	force             --force        false
+//	output_path       --output       null, meaning input_path + ".zst"
+//
+// The defaults are written as `default:"..."` struct tags because that
+// is where huma reads them: it fills an absent field with the tag's
+// value before the handler runs, and publishes the value in the OpenAPI
+// schema. `required:"false"` is what marks the field optional in that
+// schema; without it huma treats every field that has no omitempty as
+// required. A test in internal/clicommand compares these tags with the
+// cobra flag defaults, so the two cannot drift apart.
+//
+// The optional fields whose Go zero value means "not set" carry
+// omitempty, the convention IndexRequest documents for request bodies:
+// a Go caller that leaves FrameSize or CompressionLevel at zero sends no
+// key and gets the default, rather than an explicit 0 that the level
+// range refuses. BuildIndex has no omitempty on purpose: its default is
+// true, so dropping an explicit false would turn it into true.
+//
+// FrameSize is a human-readable size string (e.g. "4M", "16MB"), parsed
+// by the handler. CompressionLevel is the zstd level, 1..22; huma
+// refuses a value outside that range with 422 before the handler runs.
 type CompressRequest struct {
 	InputPath        string  `json:"input_path" doc:"Path to the input file. Must be inside a configured --search-root."`
-	OutputPath       *string `json:"output_path" doc:"Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root."`
-	FrameSize        string  `json:"frame_size"`
-	CompressionLevel int     `json:"compression_level"`
-	BuildIndex       bool    `json:"build_index"`
-	Force            bool    `json:"force"`
+	OutputPath       *string `json:"output_path,omitempty" required:"false" doc:"Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root."`
+	FrameSize        string  `json:"frame_size,omitempty" required:"false" default:"4M" doc:"Target frame size: bytes, or a number with B, K, KB, M, MB, G or GB."`
+	CompressionLevel int     `json:"compression_level,omitempty" required:"false" default:"3" minimum:"1" maximum:"22" doc:"zstd compression level."`
+	BuildIndex       bool    `json:"build_index" required:"false" default:"true" doc:"Build the line index of the compressed file after compressing it."`
+	Force            bool    `json:"force,omitempty" required:"false" default:"false" doc:"Overwrite the output file if it exists."`
 }
 
 // CompressResponse is the terminal payload of POST /v1/compress tasks.

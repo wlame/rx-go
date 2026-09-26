@@ -390,6 +390,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `POST /v1/compress` needs only `input_path`. It required all six body
+  fields, so every example in its docs got a `422`. A field left out
+  takes the default of the matching `rx compress` flag, which rx-python
+  uses too: `frame_size` `"4M"`, `compression_level` `3`, `build_index`
+  `true` (the docs said `false`), `force` `false`, and `output_path`
+  `null`, meaning `<input_path>.zst`. The OpenAPI document publishes
+  the defaults and the level range 1-22; a level outside it, an explicit
+  `0` included, is now a `422` validation error rather than a `400`, as
+  in rx-python. A test compares the HTTP defaults with the CLI flag
+  defaults, and another posts every example body in the docs. Additive;
+  the contract stays 1.3.
+
 - `GET /v1/trace` reads `path` and `regexp` as repeated parameters, one
   value per repetition, as the docs always said. It used to split one
   value at commas and ignore the repetitions: `regexp=a{2,5}` was

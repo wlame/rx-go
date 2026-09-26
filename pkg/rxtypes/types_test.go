@@ -471,30 +471,39 @@ func TestHealthResponse_MissingPythonPackages(t *testing.T) {
 	}
 }
 
-func TestCompressRequest_Defaults(t *testing.T) {
+// TestCompressRequest_UnsetFieldsAreLeftOut pins how a Go caller's
+// request reaches POST /v1/compress: an optional field left at its zero
+// value sends no key, so the server applies the `rx compress` default
+// instead of receiving an explicit 0 or "". build_index is always sent,
+// because its default is true and an explicit false must survive.
+func TestCompressRequest_UnsetFieldsAreLeftOut(t *testing.T) {
 	t.Parallel()
-	// Verify the JSON shape — important for POST /v1/compress.
-	// documented schema fields must emit explicit
-	// null when unset. Python emits output_path as null and force as
-	// false always, so Go must match.
-	r := CompressRequest{
-		InputPath:        "/tmp/big.log",
-		FrameSize:        "4M",
-		CompressionLevel: 3,
-		BuildIndex:       true,
+	data, err := json.Marshal(CompressRequest{InputPath: "/tmp/big.log"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
-	data, _ := json.Marshal(r)
-	s := string(data)
+	if got, want := string(data), `{"input_path":"/tmp/big.log","build_index":false}`; got != want {
+		t.Errorf("zero-value request: got %s, want %s", got, want)
+	}
+
+	out := "/tmp/big.zst"
+	data, err = json.Marshal(CompressRequest{
+		InputPath:        "/tmp/big.log",
+		OutputPath:       &out,
+		FrameSize:        "1M",
+		CompressionLevel: 9,
+		BuildIndex:       true,
+		Force:            true,
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	for _, frag := range []string{
-		`"input_path":"/tmp/big.log"`,
-		`"frame_size":"4M"`,
-		`"compression_level":3`,
-		`"build_index":true`,
-		`"output_path":null`,
-		`"force":false`,
+		`"output_path":"/tmp/big.zst"`, `"frame_size":"1M"`, `"compression_level":9`,
+		`"build_index":true`, `"force":true`,
 	} {
-		if !strings.Contains(s, frag) {
-			t.Errorf("expected %s in %s", frag, s)
+		if !strings.Contains(string(data), frag) {
+			t.Errorf("expected %s in %s", frag, data)
 		}
 	}
 }
