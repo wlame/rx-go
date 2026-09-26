@@ -1,6 +1,7 @@
 // Package tasks implements the background-task manager that backs
-// POST /v1/index, POST /v1/compress and the index builds GET
-// /v1/samples waits for — long-running operations that the HTTP layer
+// POST /v1/index, POST /v1/compress, the index builds GET /v1/samples
+// waits for and the index task of a log chain — long-running
+// operations that the HTTP layer
 // wants to run asynchronously and have the client poll via
 // GET /v1/tasks/{id}.
 //
@@ -11,7 +12,9 @@
 //     task can start for that path, whatever its operation; a duplicate
 //     submission returns the SAME task ID (idempotent POST). A task can
 //     hold more than one path (CreateHolding): a compression holds its
-//     input and its output.
+//     input and its output. A task can also hold a key that is not its
+//     path (CreateKeyed): a log chain's index task holds
+//     `chain:<handle>`.
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
 //   - A cap on the table (DefaultMaxTasks): past it, creating a task
@@ -112,9 +115,10 @@ type Task struct {
 	// ReportProgress. Shared by the clones too.
 	progress ProgressFunc
 
-	// held lists every path the task holds in the manager's path locks,
-	// Path first, each once. Set at creation and never changed, so the
-	// clones may share it.
+	// held lists every key the task holds in the manager's path locks,
+	// each once: its paths, Path first (CreateHolding), or the one key
+	// of a keyed task (CreateKeyed), which need not be Path. Set at
+	// creation and never changed, so the clones may share it.
 	held []string
 }
 
@@ -280,17 +284,38 @@ func (m *Manager) Create(path, operation string) (*Task, bool) {
 func (m *Manager) CreateHolding(operation string, held ...string) (*Task, string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
 	held = uniquePaths(held)
-	for _, path := range held {
-		if running := m.runningHolderLocked(path); running != nil {
-			return running, path, false
+	return m.createLocked(operation, held[0], held)
+}
+
+// CreateKeyed registers a new task for operation that holds key in the
+// path locks and shows path as its Path. When a running task already
+// holds key it returns that task and false, as Create does.
+//
+// It is for a task whose work is not one file's: the index task of a log
+// chain holds `chain:<handle>`, so it never collides with a task on the
+// chain's active file, whose path equals the handle, while GET
+// /v1/tasks/{id} still shows the handle.
+func (m *Manager) CreateKeyed(operation, path, key string) (*Task, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, _, isNew := m.createLocked(operation, path, []string{key})
+	return task, isNew
+}
+
+// createLocked is CreateHolding with the shown path given apart from the
+// held keys, which must be unique and at least one. The caller holds
+// m.mu.
+func (m *Manager) createLocked(operation, path string, held []string) (*Task, string, bool) {
+	for _, key := range held {
+		if running := m.runningHolderLocked(key); running != nil {
+			return running, key, false
 		}
 	}
 
 	task := &Task{
 		TaskID:    uuid.NewString(),
-		Path:      held[0],
+		Path:      path,
 		Operation: operation,
 		Status:    StatusQueued,
 		StartedAt: time.Now().UTC(),
@@ -298,8 +323,8 @@ func (m *Manager) CreateHolding(operation string, held ...string) (*Task, string
 		held:      held,
 	}
 	m.tasks[task.TaskID] = task
-	for _, path := range held {
-		m.pathLocks[path] = task.TaskID
+	for _, key := range held {
+		m.pathLocks[key] = task.TaskID
 	}
 	m.dropOldestFinishedLocked(len(m.tasks) - m.maxTasks)
 	return task, "", true
