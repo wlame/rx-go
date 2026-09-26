@@ -58,7 +58,8 @@ func registerIndexHandlers(s *Server, api huma.API) {
 		Summary:     "Get cached index data for a file",
 		Description: "Returns the cached UnifiedFileIndex, or 404 if no index exists yet.",
 		Tags:        []string{"Indexing"},
-		Responses:   sandboxResponses(api),
+		Responses: errorResponses(api, http.StatusForbidden, http.StatusNotFound,
+			http.StatusUnprocessableEntity),
 	}, func(_ context.Context, in *getIndexInput) (*getIndexOutput, error) {
 		validated, err := paths.ValidatePathWithinRoots(in.Path)
 		if err != nil {
@@ -88,7 +89,8 @@ func registerIndexHandlers(s *Server, api huma.API) {
 		Summary:     "Build line index for file (background task)",
 		Description: "Creates a background task that indexes the file. Poll /v1/tasks/{id} for progress.",
 		Tags:        []string{"Operations"},
-		Responses:   sandboxResponses(api),
+		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
+			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity),
 	}, func(_ context.Context, in *postIndexInput) (*postIndexOutput, error) {
 		return createIndexTask(s, in.Body)
 	})

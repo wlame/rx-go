@@ -121,6 +121,7 @@ func registerDetectorsHandlers(_ *Server, api huma.API) {
 		Summary:     "List all available anomaly detectors",
 		Description: "Returns metadata about every registered detector, plus the severity-scale legend.",
 		Tags:        []string{"Analysis"},
+		Responses:   errorResponses(api),
 	}, func(_ context.Context, _ *struct{}) (*detectorsOutput, error) {
 		return &detectorsOutput{Body: buildDetectorsResponse()}, nil
 	})

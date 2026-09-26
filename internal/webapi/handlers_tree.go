@@ -49,7 +49,8 @@ func registerTreeHandlers(_ *Server, api huma.API) {
 		Summary:     "List directory contents",
 		Description: "Lists files and directories within --search-root, with size/type/index metadata.",
 		Tags:        []string{"FileTree"},
-		Responses:   sandboxResponses(api),
+		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
+			http.StatusNotFound),
 	}, func(_ context.Context, in *treeInput) (*treeOutput, error) {
 		// Empty path = "list search roots".
 		if in.Path == "" {
