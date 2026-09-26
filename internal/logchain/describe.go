@@ -85,10 +85,11 @@ const wireTimestampLayout = "2006-01-02T15:04:05.000000Z"
 //     from an index built in memory.
 //
 // The frozen parts' data of a chain whose frozen parts all have a
-// current index is kept in memory (see descriptionCache), keyed by the
-// handle, the fingerprint and the zones the times are read in; a
-// second describe then reads no index of a frozen part. The active part
-// is read on every call: it grows without changing the fingerprint.
+// current index (or are empty) is kept in memory (see
+// descriptionCache), keyed by the handle, a digest of every part's stat
+// and the zones the times are read in; a second describe then reads no
+// index of a frozen part, only stats each one's index file. The active
+// part is read on every call: it grows without changing the key.
 //
 // The error is ErrPartChanged (a part's name led to another file, or to
 // none, by the time it was read: describe the chain again from a new
@@ -112,7 +113,7 @@ func Describe(ctx context.Context, c Candidate, opts Options) (*Description, err
 		})
 		return d, nil
 	}
-	facts, err := readFacts(ctx, c, fingerprint, opts)
+	facts, err := readFacts(ctx, c, opts)
 	if err != nil {
 		return nil, err
 	}
