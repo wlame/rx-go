@@ -105,6 +105,12 @@ type Candidate struct {
 	// parts found, in the order of the directory listing (by name), the
 	// files after them are left out, and Missing is empty.
 	TooManyParts bool
+	// DirInfo is the stat of the chain's directory as Resolve pinned it,
+	// with every symbolic link on the way resolved: its device and inode
+	// name the directory whatever path spelled it, another case on a
+	// case-insensitive disk or a link to it. Nil for a candidate Group
+	// found from a listing alone.
+	DirInfo os.FileInfo
 	// NamedParts is how many parts the names of the chain's files give:
 	// one per generation, the active file included, counted before any
 	// file is read. Files that turn out not to be text make it larger

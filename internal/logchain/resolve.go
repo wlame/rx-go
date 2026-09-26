@@ -33,7 +33,8 @@ var ErrNotADirectory = errors.New("not a directory")
 // (*paths.ErrHiddenPath). Without search roots, as for the CLI without
 // --search-root, every directory is allowed. The directory is then
 // pinned and listed once (paths.ListDir), and only the entries that can
-// belong to the named chain are classified.
+// belong to the named chain are classified. The candidate keeps the
+// pinned directory's stat (Candidate.DirInfo).
 //
 // The errors are those above, the pin's or the listing's (a directory
 // that does not exist wraps fs.ErrNotExist, one the process may not
@@ -76,6 +77,7 @@ func resolveWith(handle string, classify Classify) (Candidate, error) {
 	}
 	for _, c := range groupNamed(dir, EntriesOf(listed), classify, name) {
 		if c.Name == name {
+			c.DirInfo = pinned.Info()
 			return c, nil
 		}
 	}

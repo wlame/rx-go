@@ -141,3 +141,29 @@ func TestResolve_ClassifiesOnlyTheNamedChain(t *testing.T) {
 		t.Fatalf("chain %q, classified %v, %v", c.Name, classified, err)
 	}
 }
+
+// Resolve keeps the stat of the directory it pinned: a handle through a
+// symbolic link to the directory gives the directory's own stat, so a
+// caller can tell that two handles name one chain.
+func TestResolve_KeepsTheDirectorysStat(t *testing.T) {
+	root, logs := sandbox(t)
+	writeFiles(t, logs, map[string][]byte{"app.log": textLines("active"), "app.log.1": textLines("1")})
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(logs, link); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, handle := range []string{filepath.Join(logs, "app.log"), filepath.Join(link, "app.log")} {
+		c, err := Resolve(handle)
+		if err != nil {
+			t.Fatalf("%s: %v", handle, err)
+		}
+		if c.DirInfo == nil || !os.SameFile(c.DirInfo, want) || !c.DirInfo.IsDir() {
+			t.Fatalf("%s: DirInfo %v, want the stat of %s", handle, c.DirInfo, logs)
+		}
+	}
+}

@@ -106,8 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose build fails, naming the part, as the build itself reports it
   (whether or not the table still holds the build's task); its result
   (`ChainIndexTaskResult`) lists the parts it built and gives
-  `rx logs index HANDLE` as `cli_command`. One task per chain: it holds
-  the key `chain:<handle>`, so a task on the active file runs beside it.
+  `rx logs index HANDLE` as `cli_command`. One task per chain: it is
+  keyed by the chain directory's device and inode and the chain's name,
+  so handles that reach one directory by different paths (a symbolic
+  link, another case on a case-insensitive disk) share it, and a task
+  on the active file runs beside it.
   The task `GET /v1/logs/chain` starts for a pending chain is the same
   task, for the parts the chain waits for; it is not started again on
   describe while the last one failed for the same files. 409 with the
