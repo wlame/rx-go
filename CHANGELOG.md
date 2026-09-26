@@ -84,9 +84,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then a table of its parts in order (name, compression, lines, global
   lines, first time, highest time, `idx`), its gaps and missing parts;
   `--json` prints the `GET /v1/logs/chain` body. It never waits: a part
-  without a line index is indexed in memory. `rx logs time-range
+  without a line index is indexed in memory. A chain of more than
+  10,000 parts says `too many parts (N)`. `rx logs time-range
   CHAIN... [--json] [--file-tz=ZONE]` prints each chain's first and last
-  time in the layout of `rx time-range`. Exit 3 when a handle names no
+  time in the layout of `rx time-range`. Both write times in the layout
+  the parts write them (`Sep 29 00:00:00`, `2025-12-10 07:00:30`) when
+  every part with lines writes them one way, as `rx time-range` writes
+  one file's, and to the millisecond otherwise. Exit 3 when a handle names no
   chain, 6 when a chain is invalid, 7 when `--fingerprint=` differs
   (each after printing), 2 for a malformed fingerprint or one given
   with several chains.

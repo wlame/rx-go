@@ -53,6 +53,9 @@ type logsIndexAnswer struct {
 	Path string `json:"path"`
 	indexBuildResult
 	Chain *rxtypes.ChainResponse `json:"chain"`
+	// namedParts is how many parts the names of the chain's files give,
+	// for its human head (shownChain).
+	namedParts int
 }
 
 // runLogsIndex indexes every chain in order and prints each. A handle
@@ -121,7 +124,7 @@ func indexChain(handle string, force bool) (*logsIndexAnswer, *ExitError) {
 	if failure != nil {
 		return answer, failure
 	}
-	answer.Chain = after.Response
+	answer.Chain, answer.namedParts = after.Response, after.Candidate.NamedParts
 	answer.Chain.CLICommand = webapi.BuildCLICommand("log_chain", map[string]any{"path": answer.Chain.Path})
 	return answer, nil
 }
@@ -148,7 +151,7 @@ func writeLogsIndex(out io.Writer, answers []logsIndexAnswer, oneChain, jsonOutp
 		}
 		writeIndexBuildHuman(out, answer.indexBuildResult, false)
 		if answer.Chain != nil {
-			writeChainDescription(out, answer.Chain, loc)
+			writeChainDescription(out, shownChain{resp: answer.Chain, namedParts: answer.namedParts}, loc)
 		}
 	}
 	return nil
