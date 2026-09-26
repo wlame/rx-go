@@ -20,12 +20,25 @@ pattern+='|Stage-[0-9]|user[- ]instructions|user design|\.go-rewriter'
 # Welford's "M2" (the running sum of squared deviations in
 # internal/index/linestats.go) is never preceded by these words.
 pattern+="|(at|At|in|for|until|of) M[0-9]\\b|M[0-9]'s"
+# Work items live in a tracker outside this repository: "(ticket 28)".
+ticket='[Tt]icket [0-9]+'
+pattern+="|$ticket"
 
 if hits=$(grep -rnE "$pattern" --include='*.go' internal/ cmd/ pkg/); then
     echo "build-process citations found in comments:" >&2
     echo "$hits" >&2
     echo >&2
     echo "Describe what the code guarantees instead. See AGENTS.md." >&2
+    exit 1
+fi
+
+# The changelog, the docs and the test data ship too. Only the ticket
+# pattern applies to them: the others match ordinary prose ("§", "Stage").
+if hits=$(grep -rnE "$ticket" CHANGELOG.md docs/ testdata/); then
+    echo "ticket numbers found in shipped files:" >&2
+    echo "$hits" >&2
+    echo >&2
+    echo "Say what changed and why; the tracker is not part of the repository." >&2
     exit 1
 fi
 
