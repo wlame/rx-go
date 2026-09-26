@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A `409` from `POST /v1/index` or `POST /v1/compress` names the task
+  already running for the path in a `task_id` member beside `detail`,
+  so a client can poll that task without reading the ID out of the
+  sentence; the sentence is unchanged. The OpenAPI document declares
+  the body as `TaskConflictError`. Additive; the contract stays 1.3.
+
 - `GET /v1/trace` takes ripgrep's matching flags as five boolean query
   parameters: `ignore_case`, `word_regexp`, `line_regexp`,
   `fixed_strings` and `pcre2`. An answer is the one `rx trace` gives

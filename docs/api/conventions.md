@@ -77,7 +77,9 @@ The [OpenAPI document](openapi.md) declares, on every operation, each of
 these statuses that the operation can answer, with its body schema:
 `ApiError` (the `detail` envelope) for all of them, except `403`, which
 is `oneOf` `SandboxError` (the extended body above) and `ApiError` (a
-hidden or unreadable path). Its `default` response, also `ApiError`,
+hidden or unreadable path), and `409`, which is `TaskConflictError`: the
+`detail` envelope plus `task_id`, the ID of the task already running for
+the path. Its `default` response, also `ApiError`,
 covers anything rarer, such as `413` for an oversized body, `415` for a
 body sent without `Content-Type: application/json`, or a `500` from a
 recovered panic.

@@ -525,6 +525,24 @@
         ],
         "type": "object"
       },
+      "TaskConflictError": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "description": "Human-readable explanation naming the path and the running task.",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "ID of the task already running for the path; poll GET /v1/tasks/{task_id}.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "task_id"
+        ],
+        "type": "object"
+      },
       "TaskResponse": {
         "additionalProperties": false,
         "properties": {
@@ -989,11 +1007,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/TaskConflictError"
                 }
               }
             },
-            "description": "A task for the same path is already running"
+            "description": "A task for the same path is already running; task_id names it"
           },
           "422": {
             "content": {
@@ -1252,11 +1270,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiError"
+                  "$ref": "#/components/schemas/TaskConflictError"
                 }
               }
             },
-            "description": "A task for the same path is already running"
+            "description": "A task for the same path is already running; task_id names it"
           },
           "422": {
             "content": {

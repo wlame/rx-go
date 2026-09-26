@@ -163,12 +163,13 @@ globally with `RX_LARGE_FILE_MB`.
 
 ```json
 {
-  "detail": "Indexing already in progress for /var/log/audit-2026-03.log (task: abc-123-def)"
+  "detail":  "Indexing already in progress for /var/log/audit-2026-03.log (task: 0b6c1d9e-1f4a-4c2e-9d55-7a3e8f20c4b1)",
+  "task_id": "0b6c1d9e-1f4a-4c2e-9d55-7a3e8f20c4b1"
 }
 ```
 
-Status: `409`. Poll the existing task — duplicate POSTs don't start
-multiple builds.
+Status: `409`. Poll the running task, `GET /v1/tasks/{task_id}` with the
+`task_id` of the body — duplicate POSTs don't start multiple builds.
 
 ### Example — build and poll
 
