@@ -154,7 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read to answer without a line index when the file wants one and has
   none.
 - `RX_MAX_INDEX_BUILDS` (default 2, 1 to 64): how many line-index
-  builds that `GET /v1/samples` starts run at once in `rx serve`. A
+  builds that `GET /v1/samples` and the index tasks of log chains start
+  run at once in `rx serve`. A
   build past it waits in a queue, in order, as a task whose status stays
   `queued` until a running build ends; lookups name it and wait for it
   as before, and a lookup in the head of its file is still answered at
