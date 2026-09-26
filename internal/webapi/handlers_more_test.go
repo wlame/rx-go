@@ -3,6 +3,7 @@ package webapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -222,7 +223,10 @@ func TestCompress_Conflict409(t *testing.T) {
 	}
 }
 
-// TestCompress_InvalidLevel covers the level-validation branch.
+// TestCompress_InvalidLevel asserts that a compression level outside
+// 1..22 is refused as a validation error (422), the range the schema
+// publishes. An explicit 0 in the body is out of range too: leaving the
+// field out is how a caller asks for the default.
 func TestCompress_InvalidLevel(t *testing.T) {
 	root := t.TempDir()
 	f := filepath.Join(root, "a.log")
@@ -233,19 +237,16 @@ func TestCompress_InvalidLevel(t *testing.T) {
 	t.Cleanup(paths.Reset)
 
 	ts := newTestServer(t)
-	req := rxtypes.CompressRequest{
-		InputPath:        f,
-		FrameSize:        "4K",
-		CompressionLevel: 99,
-	}
-	body, _ := json.Marshal(req)
-	resp, err := http.Post(ts.URL+"/v1/compress", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", resp.StatusCode)
+	for _, level := range []int{0, 23, 99} {
+		body := fmt.Sprintf(`{"input_path": %q, "frame_size": "4K", "compression_level": %d}`, f, level)
+		resp, err := http.Post(ts.URL+"/v1/compress", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("post: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("level %d: status got %d, want 422", level, resp.StatusCode)
+		}
 	}
 }
 

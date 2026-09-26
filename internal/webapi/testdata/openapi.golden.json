@@ -46,16 +46,26 @@
         "additionalProperties": false,
         "properties": {
           "build_index": {
+            "default": true,
+            "description": "Build the line index of the compressed file after compressing it.",
             "type": "boolean"
           },
           "compression_level": {
+            "default": 3,
+            "description": "zstd compression level.",
             "format": "int64",
+            "maximum": 22,
+            "minimum": 1,
             "type": "integer"
           },
           "force": {
+            "default": false,
+            "description": "Overwrite the output file if it exists.",
             "type": "boolean"
           },
           "frame_size": {
+            "default": "4M",
+            "description": "Target frame size: bytes, or a number with B, K, KB, M, MB, G or GB.",
             "type": "string"
           },
           "input_path": {
@@ -64,19 +74,11 @@
           },
           "output_path": {
             "description": "Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root.",
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string"
           }
         },
         "required": [
-          "input_path",
-          "output_path",
-          "frame_size",
-          "compression_level",
-          "build_index",
-          "force"
+          "input_path"
         ],
         "type": "object"
       },

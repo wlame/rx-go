@@ -81,20 +81,12 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		}
 	}
 
-	// Validate compression level.
+	// The fields the caller left out already hold the defaults of
+	// `rx compress` here (huma fills them from the struct tags of
+	// rxtypes.CompressRequest), and huma has refused a compression level
+	// outside 1..22 with 422, so the request is used as it stands.
 	level := req.CompressionLevel
-	if level == 0 {
-		level = 3 // zstd default
-	}
-	if level < 1 || level > 22 {
-		return nil, ErrBadRequest(fmt.Sprintf("compression_level must be 1..22, got %d", level))
-	}
-
-	// Parse frame size.
 	frameSize := req.FrameSize
-	if frameSize == "" {
-		frameSize = "4M"
-	}
 	frameSizeBytes, err := parseFrameSizeHTTP(frameSize)
 	if err != nil {
 		return nil, ErrBadRequest(err.Error())
