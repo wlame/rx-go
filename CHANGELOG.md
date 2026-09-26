@@ -402,6 +402,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still share one queue and one HTTP client, and each receives only its
   own events.
 
+- The `trace_complete` webhook's `total_files_scanned` counts every file
+  the trace searched, as rx-python does. It counted the response's
+  `scanned_files`, which is filled only when a directory was walked, so
+  a trace of named files reported `0`.
+
 - A `--max-results` search of a seekable `.zst` keeps the first matches
   in the file. The frame-parallel scan ordered its matches by a line
   number that restarts in every frame before applying the cap, so it
