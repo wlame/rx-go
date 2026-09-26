@@ -647,3 +647,37 @@ func TestChainIndex_WaitsWhileOtherBuildsFillTheQueue(t *testing.T) {
 		t.Fatalf("task %s %q, built %q", task.Status, task.Error, got)
 	}
 }
+
+// A part whose path another task holds (a compression of it) is waited
+// for: the chain's task goes on once that task ends, and counts the part
+// as not built. The chain is still pending then, so the next describe
+// starts a task that builds it.
+func TestChainIndex_WaitsForATaskThatHoldsAPart(t *testing.T) {
+	f := newChainIndexFixture(t, 2, nil)
+	writeIndexChain(t, f.root, threePartChain, 10, chainStart)
+	handle := filepath.Join(f.root, "app.log")
+	part := filepath.Join(f.root, "app.log.1")
+	held, _, _ := f.manager.CreateHolding("compress", part, part+".zst")
+	heldID := held.TaskID
+
+	first := describeChainAt(t, f.base, handle).IndexBuild.TaskID
+	// A task that gave up on the held part would have ended by now.
+	time.Sleep(100 * time.Millisecond)
+	if task, _ := f.manager.Get(first); task.IsTerminal() {
+		t.Fatalf("the task ended (%s %q) while a compression held a part", task.Status, task.Error)
+	}
+	f.manager.Complete(heldID, nil)
+	task := awaitTaskEnd(t, f.manager, first)
+	if got := chainResult(t, task).Built; task.Status != tasks.StatusCompleted || !slices.Equal(got, []string{"app.log.2.gz"}) {
+		t.Fatalf("task %s %q, built %q; want app.log.2.gz only", task.Status, task.Error, got)
+	}
+
+	again := describeChainAt(t, f.base, handle)
+	if again.State != rxtypes.ChainStatePending || again.IndexBuild == nil || again.IndexBuild.TaskID == first {
+		t.Fatalf("after the held part: state %s, index_build %+v; want pending with a new task", again.State, again.IndexBuild)
+	}
+	awaitTaskEnd(t, f.manager, again.IndexBuild.TaskID)
+	if ready := describeChainAt(t, f.base, handle); ready.State != rxtypes.ChainStateReady {
+		t.Fatalf("state %s after the second task", ready.State)
+	}
+}
