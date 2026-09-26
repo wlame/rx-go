@@ -39,8 +39,15 @@ var ErrNotADirectory = errors.New("not a directory")
 // that does not exist wraps fs.ErrNotExist, one the process may not
 // read fs.ErrPermission), and ErrNotAChain.
 func Resolve(handle string) (Candidate, error) {
-	return resolveWith(handle, ClassifyPinned)
+	return resolveWith(handle, classifyListed)
 }
+
+// classifyListed is the Classify that Resolve checks the listed entries
+// with: ClassifyPinned. A test replaces it to make a listing fail to
+// read one file (an I/O error, too many open files, or a name that led
+// to another file by the time it was opened), which no file on disk can
+// be made to do on demand.
+var classifyListed Classify = ClassifyPinned
 
 // resolveWith is Resolve with the classifier as a parameter, so a test
 // can count which entries are read.

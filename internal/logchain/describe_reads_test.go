@@ -2,15 +2,20 @@ package logchain
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
@@ -291,6 +296,130 @@ func TestDescribe_ACacheHitNoticesAChangedIndex(t *testing.T) {
 		if counts.indexLoads["x.log.3"] == 0 {
 			t.Fatalf("%s: the cache entry was used: index loads %v", step.label, counts.indexLoads)
 		}
+	}
+}
+
+// listingFailsFor is a classifier that cannot open the entry named
+// name, with err as the cause, and classifies every other entry as a
+// listing does: what a listing meets when one open fails with an I/O
+// error, with too many open files, or because the name led to another
+// file by then. None of these changes the file's stat, so the cache key
+// of the chain stays the same.
+func listingFailsFor(name string, err error) Classify {
+	return func(e Entry) (filekind.Kind, error) {
+		if e.Name == name {
+			return filekind.Kind{}, &fs.PathError{Op: "open", Path: e.Path, Err: err}
+		}
+		return ClassifyPinned(e)
+	}
+}
+
+// describeCandidateUncached describes c with an empty cache, and leaves
+// the shared cache as it was: what a cache miss answers for the listing
+// c came from.
+func describeCandidateUncached(c Candidate, opts Options) (*Description, error) {
+	shared := descriptions
+	descriptions = newDescriptionCache(maxCachedDescriptions, maxCachedParts)
+	defer func() { descriptions = shared }()
+	return Describe(context.Background(), c, opts)
+}
+
+// A describe whose listing could not read a frozen part answers what a
+// miss answers, though the cache holds the chain from a listing that
+// read every part: an unreadable part makes the chain invalid, and a
+// part whose name led to another file makes it a changed chain. The
+// part is not read again, and the cache entry is kept, so the next
+// listing that reads every part still uses it.
+func TestDescribe_ACachedChainWithAPartTheListingCouldNotRead(t *testing.T) {
+	cases := []struct {
+		label   string
+		cause   error
+		changed bool
+	}{
+		{"an I/O error", syscall.EIO, false},
+		{"too many open files", syscall.EMFILE, false},
+		{"permission denied", syscall.EACCES, false},
+		{"the name leads to another file", paths.ErrFileChanged, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			dir := indexedChain(t)
+			if first := describe(t, dir, "x.log", Options{}); first.Response.State != rxtypes.ChainStateReady {
+				t.Fatalf("state %s before the failed listing", first.Response.State)
+			}
+			paths.Reset()
+			c, err := resolveWith(filepath.Join(dir, "x.log"), listingFailsFor("x.log.2", tc.cause))
+			if err != nil {
+				t.Fatal(err)
+			}
+			counts := countReads(t)
+			hit, hitErr := Describe(context.Background(), c, Options{})
+			miss, missErr := describeCandidateUncached(c, Options{})
+
+			if tc.changed {
+				if !errors.Is(hitErr, ErrPartChanged) || !errors.Is(hitErr, tc.cause) || !errors.Is(missErr, ErrPartChanged) {
+					t.Fatalf("describe = %v (cached), %v (a miss); want a changed part", hitErr, missErr)
+				}
+			} else {
+				if hitErr != nil || missErr != nil {
+					t.Fatalf("describe: %v (cached), %v (a miss)", hitErr, missErr)
+				}
+				if hit.Response.State != rxtypes.ChainStateInvalid ||
+					!slices.Equal(reasonCodes(hit), []string{rxtypes.ChainReasonUnreadable}) ||
+					!slices.Equal(hit.Response.Reasons[0].Parts, []string{"x.log.2"}) {
+					t.Fatalf("state %s, reasons %+v; want invalid, x.log.2 unreadable", hit.Response.State, hit.Response.Reasons)
+				}
+				if jsonOf(t, hit.Response) != jsonOf(t, miss.Response) {
+					t.Fatalf("the cached answer and a miss differ:\n%s\n%s", jsonOf(t, hit.Response), jsonOf(t, miss.Response))
+				}
+			}
+			if n := counts.indexLoads["x.log.2"] + counts.opens["x.log.2"] + counts.builds["x.log.2"]; n != 0 {
+				t.Fatalf("the part the listing could not read was read %d times", n)
+			}
+
+			// The entry is still there: a listing that reads every part
+			// is a hit again, which loads no frozen part's index.
+			counts.reset()
+			again := describe(t, dir, "x.log", Options{})
+			if again.Response.State != rxtypes.ChainStateReady || !maps.Equal(counts.indexLoads, map[string]int{"x.log": 1}) {
+				t.Fatalf("after the failed listing: state %s, index loads %v", again.Response.State, counts.indexLoads)
+			}
+		})
+	}
+}
+
+// DescribeHandle lists a cached chain again when its listing met a
+// frozen part whose name led to another file, and says that the chain
+// changed (GET /v1/logs/chain answers 409): the cache does not hide the
+// change. The listing after it reads every part and uses the cache.
+func TestDescribeHandle_ACachedChainWhosePartChangedWhileListed(t *testing.T) {
+	dir := indexedChain(t)
+	if first := describe(t, dir, "x.log", Options{}); first.Response.State != rxtypes.ChainStateReady {
+		t.Fatalf("state %s", first.Response.State)
+	}
+	classify := classifyListed
+	t.Cleanup(func() { classifyListed = classify })
+	listings := 0
+	// The seam stands for a rotation that replaced x.log.2 between the
+	// listing's pin and its text check, once.
+	changedOnce := listingFailsFor("x.log.2", paths.ErrFileChanged)
+	classifyListed = func(e Entry) (filekind.Kind, error) {
+		if e.Name != "x.log.2" {
+			return classify(e)
+		}
+		listings++
+		if listings == 1 {
+			return changedOnce(e)
+		}
+		return classify(e)
+	}
+	counts := countReads(t)
+	d, changed, err := DescribeHandle(context.Background(), filepath.Join(dir, "x.log"), Options{})
+	if err != nil || !changed || d.Response.State != rxtypes.ChainStateReady || listings != 2 {
+		t.Fatalf("describe: %v, changed %v, %d listings of x.log.2; want a change seen and a second listing", err, changed, listings)
+	}
+	if counts.indexLoads["x.log.2"] != 0 {
+		t.Fatalf("the second listing did not use the cache: index loads %v", counts.indexLoads)
 	}
 }
 

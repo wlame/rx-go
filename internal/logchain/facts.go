@@ -103,6 +103,21 @@ func (s *indexStamp) holds(part Part) bool {
 	return s.source == nil || s.source.MatchesInfo(part.Info)
 }
 
+// everyFrozenPartListed reports whether the listing read every frozen
+// part of c: none has a Part.ReadError. A part the listing could not
+// read is read by no one else (frozenFacts makes the error its facts),
+// so facts cached from an earlier listing must not stand in for it.
+// The loop is bounded by the parts of a chain that is read as one text
+// (at most MaxParts; Describe refuses a larger one before it gets here).
+func everyFrozenPartListed(c Candidate) bool {
+	for _, part := range c.Parts {
+		if !part.IsActive && part.ReadError != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // stampsHold reports whether the stamp of every frozen part's cached
 // facts still holds.
 func stampsHold(c Candidate, facts []partFacts) bool {
@@ -143,11 +158,25 @@ var (
 )
 
 // readFacts reads the facts of every part of c, in the candidate's
-// order: the frozen parts' from the memory cache when it holds them and
-// their stamps still hold, the active part's always.
+// order: the frozen parts' from the memory cache when the listing read
+// every frozen part, the cache holds them and their stamps still hold;
+// the active part's always.
 func readFacts(ctx context.Context, c Candidate, opts Options) ([]partFacts, error) {
 	key := cacheKey(c, opts.FileZone)
-	facts, cached := descriptions.get(key, len(c.Parts))
+	var facts []partFacts
+	cached := false
+	// INVARIANT: a listing that could not read a frozen part never uses
+	// the cache. The key comes from the listing's stat of each part, and
+	// a failed open does not change that stat: an I/O error, too many
+	// open files, or a name that led to another file between the pin
+	// and the text check (the pin keeps the stat of the file it found).
+	// A hit would then answer ready where a miss answers invalid
+	// (unreadable) or a changed part. The entry is not dropped either:
+	// the failure may last a moment (too many open files), and the
+	// facts kept describe the files the next listing will likely see.
+	if everyFrozenPartListed(c) {
+		facts, cached = descriptions.get(key, len(c.Parts))
+	}
 	if cached && !stampsHold(c, facts) {
 		// An index the facts came from was removed, rebuilt, or no
 		// longer describes its part: the entry is dropped and the parts

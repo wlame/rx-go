@@ -66,8 +66,12 @@ SHA-256 of every part's name and stat (a frozen part's size,
 modification time and ctime included) and the zones, so a change to any
 frozen part is a new key. The next request reads no index of a frozen
 part: it stats each one's index file, and drops the kept data when an
-index was removed, rebuilt or no longer describes its part. The active
-file is read on every request.
+index was removed, rebuilt or no longer describes its part. A request
+whose listing could not open a frozen part (an I/O error, too many open
+files, or a name that led to another file by then) does not use the
+kept data, and keeps it: that request answers as if nothing were kept
+(`unreadable`, or 409), and the next one that opens every part uses it
+again. The active file is read on every request.
 
 ## The checks and the states
 
