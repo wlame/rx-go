@@ -9,10 +9,10 @@
 //     by max_results)
 //   - on_complete — fired once per full trace request
 //
-// the Go port is
-// FIRE-AND-FORGET. No retry, no backoff, no acknowledgement: a single
-// HTTP POST per event with a 3 s timeout. If the POST fails, log a
-// warning and move on. Implementation uses a buffered channel +
+// Delivery is FIRE-AND-FORGET. No retry, no backoff, no
+// acknowledgement: a single HTTP GET per event, with the payload as
+// query parameters and a 3 s timeout. If the call fails, log a warning
+// and move on. Implementation uses a buffered channel +
 // goroutine pool so the trace engine never blocks on a hook call.
 //
 // Security:
@@ -30,7 +30,7 @@
 //     URLs are rejected wholesale — operators must supply IP
 //     literals. This is the strongest defense against DNS
 //     rebinding attacks (where DNS flips to an internal address
-//     AFTER validation but BEFORE the POST).
+//     AFTER validation but BEFORE the call).
 package hooks
 
 import (
@@ -237,7 +237,7 @@ func defaultResolveHost(ctx context.Context, host string) ([]net.IP, error) {
 // Option Z (R2M5): when RX_HOOK_STRICT_IP_ONLY=true, hostname URLs
 // are rejected UNCONDITIONALLY. Operators must supply IP literals.
 // This is the strongest defense against DNS rebinding (where DNS
-// flips AFTER validation, between validation and POST-time). Opt-in
+// flips AFTER validation, between validation and call time). Opt-in
 // because it forces operators to maintain IP allowlists.
 //
 // Operators who need to hit internal endpoints (e.g. a sidecar
@@ -306,7 +306,7 @@ func ValidateURL(raw string) error {
 			// Soft-accept on resolution failure: better to let a
 			// DNS blip through than false-positive-reject every
 			// validation during a transient outage. The runtime
-			// POST path will fail naturally if the host is truly
+			// webhook call will fail naturally if the host is truly
 			// unreachable. Operators who want hard-fail semantics
 			// can enable strict-IP mode.
 			return nil
@@ -429,14 +429,14 @@ func ValidateConfig(c HookConfig) error {
 // Tunables
 // ============================================================================
 
-// DefaultTimeout is the HTTP client timeout for every hook POST. Matches
+// DefaultTimeout is the HTTP client timeout for every webhook call. Matches
 // Python's HOOK_TIMEOUT_SECONDS. Not adjustable — making this an env var
 // would let operators accidentally block the scan pipeline.
 const DefaultTimeout = 3 * time.Second
 
 // DefaultQueueDepth is the buffered-channel size for the dispatcher.
 // 512 is generous: on a 1000-file / 100-match-per-file trace, we'd
-// push 1000 + 100000 events; at 3 s per failed POST, a smaller buffer
+// push 1000 + 100000 events; at 3 s per failed call, a smaller buffer
 // would quickly block. 512 trims memory while keeping the normal
 // case (live hook target) non-blocking.
 const DefaultQueueDepth = 512

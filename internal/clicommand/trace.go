@@ -320,19 +320,18 @@ func runTrace(out io.Writer, p traceParams) error {
 	// from being lost when the process exits.
 	var firer trace.HookFirer = trace.NoopHookFirer{}
 	if hookConfig.HasAny() {
-		dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{
-			Env:              hooks.HookEnvFromEnv(),
-			RequestOverrides: hookOverrides,
-			RequestID:        requestID,
-		})
+		dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{})
 		defer func() {
 			dispatcher.Close()
 			dispatcher.Wait()
 		}()
-		firer = dispatcher
+		// The same per-request view the HTTP handler uses: the URLs
+		// resolved above, and this run's request_id in every payload.
+		reqHooks := dispatcher.ForRequest(hookConfig, requestID)
+		firer = reqHooks
 		defer func() {
 			if resp != nil {
-				dispatcher.OnComplete(resp)
+				reqHooks.OnComplete(resp)
 			}
 		}()
 	}
