@@ -54,15 +54,24 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
   task submits at most that many of its parts at a time and the next one
   as one of them ends, so a chain of thousands of parts never fills the
   queue of 256 builds that wait for a slot.
+- **Part builds leave other tasks alone.** Each part build the task
+  starts is a task of its own (operation `index`, its `path` the
+  part's), shown at `GET /v1/tasks/{id}` like any other. Finished part
+  builds are kept apart from the other tasks: at most 256 of them, the
+  oldest dropped first, so a chain of thousands of parts never drops a
+  task another client follows (`POST /v1/index`, `POST /v1/compress`,
+  a samples lookup's build) from the table.
 - **Progress** is the share of the task's parts done, a part whose
   build runs counted by that build's own progress.
 - **Failure.** The first part whose build fails fails the task, with
   `error` naming the part and the build's error
   (`app.log.1: build index: …`); no further part is submitted, and the
-  builds already running go on as tasks of their own. A part whose path
-  a compression holds is waited for and left as it is. When other
-  files' builds fill the queue, the task waits until a build ends and
-  submits the part then.
+  builds already running go on as tasks of their own. The task learns
+  how each part's build ended from the build itself, so a failure
+  counts even when the table no longer holds that build's task. A part
+  whose path a compression holds is waited for and left as it is. When
+  other files' builds fill the queue, the task waits until a build ends
+  and submits the part then.
 
 ### Task result
 

@@ -68,7 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request whose listing could not open a frozen part.
   A pending chain starts its index task in the background (or joins the
   running one) and names it in `index_build`; otherwise `index_build`
-  names the chain's last index task while the server keeps it.
+  names the chain's last index task. How that task ended is kept with
+  the chain for `RX_TASK_TTL_MINUTES` after its end while the chain's
+  files keep their fingerprint, even once the task table has dropped
+  the task; a failed task's `message` names the part and the error.
   Year-less timestamps take their year from their own part. 409 with
   the current description when `fingerprint` differs or a part is
   replaced while the request reads it; 404 when the handle names fewer
@@ -92,9 +95,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (with `force=true`, of every part), whatever a part's size, through
   the same background builds a samples lookup starts: at most
   `RX_MAX_INDEX_BUILDS` at a time, the next part submitted as one ends,
-  so a chain of thousands of parts never fills the build queue. Its
+  so a chain of thousands of parts never fills the build queue. Each
+  part build is a task of its own; finished part builds are kept apart
+  from other tasks (at most 256 of them), so a large chain never drops
+  another client's task from the task table. Its
   `progress` is the share of parts done; it fails with the first part
-  whose build fails, naming the part; its result
+  whose build fails, naming the part, as the build itself reports it
+  (whether or not the table still holds the build's task); its result
   (`ChainIndexTaskResult`) lists the parts it built and gives
   `rx logs index HANDLE` as `cli_command`. One task per chain: it holds
   the key `chain:<handle>`, so a task on the active file runs beside it.
