@@ -92,14 +92,15 @@ const (
 type Task struct {
 	TaskID      string
 	Path        string
-	Operation   string // "index" | "compress"
+	Operation   string // "index" | "compress" | "chain_index"
 	Status      Status
 	StartedAt   time.Time
 	CompletedAt *time.Time
 	Error       string
 	// Result is the value the worker completed the task with (an
-	// rxtypes.IndexTaskResult or rxtypes.CompressTaskResult); nil until
-	// then. The manager stores it without looking inside.
+	// rxtypes.IndexTaskResult, rxtypes.CompressTaskResult or
+	// rxtypes.ChainIndexTaskResult); nil until then. The manager stores
+	// it without looking inside.
 	Result any
 
 	// done is closed when the task first reaches a terminal status.

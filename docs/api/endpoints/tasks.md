@@ -110,13 +110,13 @@ GET /v1/tasks/{task_id}
 |---|---|---|
 | `task_id` | string | UUID v4 of the task |
 | `status` | string | `"queued"`, `"running"`, `"completed"`, or `"failed"` |
-| `path` | string | The validated absolute path the task operates on |
-| `operation` | string | `"index"` or `"compress"` |
+| `path` | string | The validated absolute path the task operates on; for a `chain_index` task, the chain's handle |
+| `operation` | string | `"index"`, `"compress"` or `"chain_index"` (the index task of a log chain) |
 | `started_at` | string | ISO 8601 UTC — when the task was created |
 | `completed_at` | string \| null | Set once the task reaches `completed` or `failed` |
 | `error` | string \| null | Populated only when `status == "failed"` |
-| `progress` | number \| null | Share of an index task's input read so far, from 0 to 1 (a stream-compressed or plain file counts its bytes on disk, a seekable zstd file its decompressed text). `null` for a compress task, for an index task that reused a stored index, and before the build has started |
-| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult` or `CompressTaskResult` by operation |
+| `progress` | number \| null | Share of an index task's input read so far, from 0 to 1 (a stream-compressed or plain file counts its bytes on disk, a seekable zstd file its decompressed text); for a `chain_index` task, the share of its parts done, a part whose build runs counted by that build's progress. `null` for a compress task, for an index task that reused a stored index, and before the build has started |
+| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult`, `CompressTaskResult` or `ChainIndexTaskResult` by operation |
 
 ### Result shape by operation
 
@@ -125,6 +125,8 @@ GET /v1/tasks/{task_id}
   `index_path` string
 - `operation == "compress"`: `CompressTaskResult`, see the
   [compress task result](compress.md#task-result-shape)
+- `operation == "chain_index"`: `ChainIndexTaskResult`, see
+  [`POST /v1/logs/index`](logs-index.md#task-result)
 
 ## Status codes
 

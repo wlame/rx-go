@@ -22,14 +22,47 @@ import (
 // cache so SPA fallback → redirect to /docs.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	manager := tasks.New(tasks.Config{})
 	srv := NewServer(Config{
 		AppVersion:  "unit-test",
 		RipgrepPath: "/usr/bin/rg", // lie: tests that actually need rg provide their own
-		TaskManager: tasks.New(tasks.Config{}),
+		TaskManager: manager,
 	})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	// A describe of a pending log chain starts index builds in the
+	// background; they end before the test's cache directory is removed.
+	t.Cleanup(func() { awaitEveryTask(t, manager) })
 	return ts
+}
+
+// awaitEveryTask waits until every task of manager has ended, the ones
+// a running task starts meanwhile included, for at most a minute.
+func awaitEveryTask(t *testing.T, manager *tasks.Manager) {
+	t.Helper()
+	deadline := time.After(time.Minute)
+	for {
+		var running []*tasks.Task
+		for _, task := range manager.List() {
+			if !task.IsTerminal() {
+				running = append(running, task)
+			}
+		}
+		if len(running) == 0 {
+			return
+		}
+		done, known := manager.Done(running[0].TaskID)
+		if !known {
+			continue
+		}
+		select {
+		case <-done:
+		case <-deadline:
+			t.Errorf("%d tasks still run when the test ends, the first %s of %s (%s)",
+				len(running), running[0].Operation, running[0].Path, running[0].Status)
+			return
+		}
+	}
 }
 
 // TestHealth_AllFieldsPresent asserts the /health response contains

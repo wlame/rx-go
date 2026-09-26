@@ -97,7 +97,7 @@ type ChainResponse struct {
 	LastMs          *int64             `json:"last_ms" doc:"The chain's last timestamp: the last of its last part with lines, as a UTC instant in ms. Null unless the chain is ready, and when that part's last timestamp is not known (an active file whose last timestamped line is more than 16 MiB from its end)."`
 	FrozenLineCount *int64             `json:"frozen_line_count" doc:"The lines of every part but the active file. Null unless the chain is ready."`
 	LineCount       *int64             `json:"line_count" doc:"The chain's lines, the active file's included, when its count is known (from its current line index, or read by rx logs show). Null unless the chain is ready."`
-	IndexBuild      *SamplesIndexBuild `json:"index_build" doc:"The task building the indexes the chain needs, when one runs or has just ended; null otherwise."`
+	IndexBuild      *SamplesIndexBuild `json:"index_build" doc:"The chain's index task (operation chain_index), to follow at GET /v1/tasks/{task_id}: for a pending chain the task that builds the line indexes it waits for, which this request started or joined (not started again while the last task failed for the same files); otherwise the last index task of the chain, running or ended, while the server keeps it (RX_TASK_TTL_MINUTES after its end). Null when there is none. It says how the chain is being made ready; the description is the same with an index task and without."`
 	CLICommand      string             `json:"cli_command" doc:"The rx command that gives this answer."`
 }
 
@@ -138,6 +138,16 @@ type ChainGap struct {
 	Before string `json:"before" doc:"The part after the gap."`
 	FromMs int64  `json:"from_ms" doc:"Where the gap starts: the highest timestamp of the part before it, as a UTC instant in ms."`
 	ToMs   int64  `json:"to_ms" doc:"Where the gap ends: the first timestamp of the part after it, as a UTC instant in ms."`
+}
+
+// ChainIndexTaskResult is the result of a completed chain_index task:
+// the index task of a log chain, which POST /v1/logs/index starts and
+// GET /v1/logs/chain starts for a pending chain. It names the parts
+// whose line index a build completed.
+type ChainIndexTaskResult struct {
+	Path       string   `json:"path" doc:"The chain's handle."`
+	Built      []string `json:"built" nullable:"false" doc:"The names of the parts whose line index a build completed for this task, in the chain's order: a build the task started, or one it joined because a samples lookup or POST /v1/index had started it for the same file. Not listed: a part whose index was current and that the task left as it was (without force), and one a compression held while the task ran."`
+	CLICommand string   `json:"cli_command" doc:"The rx command that indexes the chain in the foreground: rx logs index."`
 }
 
 // ChainTimeRange is the time range of one log chain, as

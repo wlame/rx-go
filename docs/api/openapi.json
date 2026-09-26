@@ -194,6 +194,32 @@
         ],
         "type": "object"
       },
+      "ChainIndexTaskResult": {
+        "additionalProperties": false,
+        "properties": {
+          "built": {
+            "description": "The names of the parts whose line index a build completed for this task, in the chain's order: a build the task started, or one it joined because a samples lookup or POST /v1/index had started it for the same file. Not listed: a part whose index was current and that the task left as it was (without force), and one a compression held while the task ran.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cli_command": {
+            "description": "The rx command that indexes the chain in the foreground: rx logs index.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The chain's handle.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "built",
+          "cli_command"
+        ],
+        "type": "object"
+      },
       "ChainPart": {
         "additionalProperties": false,
         "properties": {
@@ -391,7 +417,7 @@
           },
           "index_build": {
             "$ref": "#/components/schemas/SamplesIndexBuild",
-            "description": "The task building the indexes the chain needs, when one runs or has just ended; null otherwise."
+            "description": "The chain's index task (operation chain_index), to follow at GET /v1/tasks/{task_id}: for a pending chain the task that builds the line indexes it waits for, which this request started or joined (not started again while the last task failed for the same files); otherwise the last index task of the chain, running or ended, while the server keeps it (RX_TASK_TTL_MINUTES after its end). Null when there is none. It says how the chain is being made ready; the description is the same with an index task and without."
           },
           "last_ms": {
             "description": "The chain's last timestamp: the last of its last part with lines, as a UTC instant in ms. Null unless the chain is ready, and when that part's last timestamp is not known (an active file whose last timestamped line is more than 16 MiB from its end).",
@@ -1731,10 +1757,13 @@
                 "$ref": "#/components/schemas/CompressTaskResult"
               },
               {
+                "$ref": "#/components/schemas/ChainIndexTaskResult"
+              },
+              {
                 "type": "null"
               }
             ],
-            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task. Null until then."
+            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task. Null until then."
           },
           "started_at": {
             "type": [
@@ -2608,7 +2637,7 @@
     },
     "/v1/logs/chain": {
       "get": {
-        "description": "The description of one log chain: its parts in time order with their line counts, first and highest timestamps and global starts, the checks that make it valid (every part with lines has timestamps, neighboring parts overlap by at most RX_CHAIN_OVERLAP_SECONDS, the active file comes last, every part can be read, at most 10,000 parts), its state (pending until every frozen part has a line index, ready, or invalid with the reasons), the time gaps and missing parts, and a fingerprint of its files. From the parts' line indexes and the head and tail of the active file only. 409 with the current description when fingerprint differs or a part changed while it was read; 404 when the handle names fewer than two parts.",
+        "description": "The description of one log chain: its parts in time order with their line counts, first and highest timestamps and global starts, the checks that make it valid (every part with lines has timestamps, neighboring parts overlap by at most RX_CHAIN_OVERLAP_SECONDS, the active file comes last, every part can be read, at most 10,000 parts), its state (pending until every frozen part has a line index, ready, or invalid with the reasons), the time gaps and missing parts, and a fingerprint of its files. From the parts' line indexes and the head and tail of the active file only. A pending chain starts its index task in the background (or joins the running one), named in index_build. 409 with the current description when fingerprint differs or a part changed while it was read; 404 when the handle names fewer than two parts.",
         "operationId": "log_chain",
         "parameters": [
           {
@@ -2870,6 +2899,161 @@
           {}
         ],
         "summary": "List the log chains of a directory",
+        "tags": [
+          "Logs"
+        ]
+      }
+    },
+    "/v1/logs/index": {
+      "post": {
+        "description": "Starts the index task of one log chain (operation chain_index), or joins the one running for it: it builds and stores the line index of every part without a current one, the active file too (with force=true, of every part), whatever a part's size, at most RX_MAX_INDEX_BUILDS at a time. Poll GET /v1/tasks/{task_id}: its progress is the share of parts done. 409 with the current description, and no task, when fingerprint differs or a part changed while it was read; 404 when the handle names fewer than two parts.",
+        "operationId": "log_index",
+        "parameters": [
+          {
+            "description": "The chain's handle: its directory joined with its name, as GET /v1/logs/chains gives it in path.",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "The chain's handle: its directory joined with its name, as GET /v1/logs/chains gives it in path.",
+              "examples": [
+                "/var/log/syslog"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Build the index of every part again, current ones too. A request that joins the chain's running task does not change what that task builds.",
+            "explode": false,
+            "in": "query",
+            "name": "force",
+            "schema": {
+              "description": "Build the index of every part again, current ones too. A request that joins the chain's running task does not change what that task builds.",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "The fingerprint of a description the client holds. When the chain's files changed since (the fingerprint differs), the answer is 409 with the current description, and no task starts.",
+            "explode": false,
+            "in": "query",
+            "name": "fingerprint",
+            "schema": {
+              "description": "The fingerprint of a description the client holds. When the chain's files changed since (the fingerprint differs), the answer is 409 with the current description, and no task starts.",
+              "examples": [
+                "3fa2c4d5e6f70812"
+              ],
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "The chain's index task: started, or the one already running for the chain, joined. Follow it at GET /v1/tasks/{task_id}."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainResponse"
+                }
+              }
+            },
+            "description": "The chain's files changed: the fingerprint the request sent differs from the current one, or a part was renamed or replaced while the request read it. The body is the current description; no task started."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Index every part of one log chain (background task)",
         "tags": [
           "Logs"
         ]

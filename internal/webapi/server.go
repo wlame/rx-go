@@ -66,8 +66,9 @@ type Config struct {
 	SamplesIndexWait time.Duration
 
 	// MaxIndexBuilds is how many line-index builds that GET /v1/samples
-	// starts run at once; later ones wait in a queue. Zero takes
-	// RX_MAX_INDEX_BUILDS, or 2 (config.MaxIndexBuilds).
+	// and the index tasks of log chains start run at once; later ones
+	// wait in a queue. Zero takes RX_MAX_INDEX_BUILDS, or 2
+	// (config.MaxIndexBuilds).
 	MaxIndexBuilds int
 
 	// buildSamplesIndex builds and stores the index a samples lookup
@@ -90,6 +91,10 @@ type Server struct {
 	// samplesIndex runs the index builds GET /v1/samples waits for,
 	// one per file at a time.
 	samplesIndex *samplesIndexBuilds
+
+	// chainIndex runs the index task of each log chain, whose part
+	// builds go through samplesIndex.
+	chainIndex *chainIndexTasks
 
 	// Exported for handler helpers (e.g. integration tests that need
 	// to fire a direct http.Handler call).
@@ -132,6 +137,7 @@ func NewServer(cfg Config) *Server {
 		api:          api,
 		samplesIndex: newSamplesIndexBuilds(cfg.TaskManager, cfg.Logger, cfg.buildSamplesIndex, cfg.MaxIndexBuilds),
 	}
+	s.chainIndex = newChainIndexTasks(cfg.TaskManager, cfg.Logger, s.samplesIndex)
 
 	// Schemas huma cannot reflect from the Go types; they must be in
 	// place before the first operation that uses them is registered.

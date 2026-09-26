@@ -350,6 +350,27 @@ func (b *samplesIndexBuilds) join(path string, identity index.SourceIdentity, si
 	return task.TaskID, true
 }
 
+// slotHolder returns the task of a build that holds a slot now, and
+// false when none does. A chain's index task that finds the queue full
+// waits for that task to end before it submits a part again.
+func (b *samplesIndexBuilds) slotHolder() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	queued := make(map[string]bool, len(b.queue))
+	for _, build := range b.queue {
+		queued[build.taskID] = true
+	}
+	// Go note: running holds the queued builds too; the first entry not
+	// in the queue holds a slot. Map order is random, which does not
+	// matter: any build that holds a slot frees one when it ends.
+	for _, build := range b.running {
+		if !queued[build.taskID] {
+			return build.taskID, true
+		}
+	}
+	return "", false
+}
+
 // startLocked takes a slot for build and starts its goroutine. The
 // caller holds b.mu.
 func (b *samplesIndexBuilds) startLocked(build queuedIndexBuild) {

@@ -13,7 +13,7 @@ type TaskResponse struct {
 
 // TaskStatusResponse is returned by GET /v1/tasks/{task_id}.
 //
-// Operation is "compress" or "index". Status transitions:
+// Operation is "compress", "index" or "chain_index". Status transitions:
 // "queued" → "running" → ("completed" | "failed"). Result is nil until
 // Status == "completed"; Error is nil unless Status == "failed".
 // Progress is nil for a task that does not report it.
@@ -30,8 +30,9 @@ type TaskStatusResponse struct {
 }
 
 // TaskResult is the result of a background task: an IndexTaskResult
-// for an "index" task, a CompressTaskResult for a "compress" task, and
-// nil (JSON null) until the task completes.
+// for an "index" task, a CompressTaskResult for a "compress" task, a
+// ChainIndexTaskResult for a "chain_index" task, and nil (JSON null)
+// until the task completes.
 //
 // It is a defined type over `any` rather than `any` itself so that the
 // OpenAPI generator can tell this field apart from every other `any` in
