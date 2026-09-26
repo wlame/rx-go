@@ -390,6 +390,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace answer's `context_lines` and `file_chunks` are `{}` when they
+  have nothing in them, over HTTP and in `rx trace --json`. They were
+  `null` — `context_lines` on every search without context lines,
+  `file_chunks` when the paths held no file to scan — where the OpenAPI
+  document declares both as non-null objects, so a client generated
+  from it rejected the answer. rx-python answers `{}` for `file_chunks`
+  too, and `null` for `context_lines`.
+
 - `POST /v1/compress` needs only `input_path`. It required all six body
   fields, so every example in its docs got a `422`. A field left out
   takes the default of the matching `rx compress` flag, which rx-python
