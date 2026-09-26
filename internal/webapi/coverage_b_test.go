@@ -79,7 +79,7 @@ func TestSandboxError_Error(t *testing.T) {
 	}
 }
 
-// TestErrHelpers covers the ErrBadRequest / ErrForbidden / ErrConflict
+// TestErrHelpers covers the ErrBadRequest / ErrForbidden / ErrTaskConflict
 // / ErrInternal constructors so they're present in coverage. Each just
 // wraps a huma.Error* call but the factories themselves had 0% coverage.
 func TestErrHelpers(t *testing.T) {
@@ -87,7 +87,7 @@ func TestErrHelpers(t *testing.T) {
 		"bad_request":         func(s string) error { return ErrBadRequest(s) },
 		"forbidden":           func(s string) error { return ErrForbidden(s) },
 		"not_found":           func(s string) error { return ErrNotFound(s) },
-		"conflict":            func(s string) error { return ErrConflict(s) },
+		"conflict":            func(s string) error { return ErrTaskConflict(s, "task-1") },
 		"internal":            func(s string) error { return ErrInternal(s) },
 		"service_unavailable": func(s string) error { return ErrServiceUnavailable(s) },
 	} {

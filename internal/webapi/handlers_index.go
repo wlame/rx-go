@@ -156,10 +156,10 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 
 	task, isNew := s.cfg.TaskManager.Create(validated, "index")
 	if !isNew {
-		return nil, ErrConflict(fmt.Sprintf(
+		return nil, ErrTaskConflict(fmt.Sprintf(
 			"Indexing already in progress for %s (task: %s)",
 			req.Path, task.TaskID,
-		))
+		), task.TaskID)
 	}
 
 	// Snapshot task state BEFORE launching the goroutine. Once the

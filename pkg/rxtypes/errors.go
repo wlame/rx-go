@@ -35,6 +35,18 @@ type SandboxError struct {
 	Roots     []string `json:"roots" doc:"The configured search roots, sorted."`
 }
 
+// TaskConflictError is the body of HTTP 409 from POST /v1/index and
+// POST /v1/compress when a task for the same path is already running.
+//
+// It is the {"detail": ...} envelope plus the running task's ID, so a
+// client can poll GET /v1/tasks/{task_id} for that task instead of
+// reading the ID out of the sentence. The sentence keeps naming the task
+// too, for a client that only shows detail.
+type TaskConflictError struct {
+	Detail string `json:"detail" doc:"Human-readable explanation naming the path and the running task."`
+	TaskID string `json:"task_id" doc:"ID of the task already running for the path; poll GET /v1/tasks/{task_id}."`
+}
+
 // SandboxErrorCode is the value of SandboxError.ErrorCode and
 // SandboxError.Detail. Clients branch on it.
 const SandboxErrorCode = "path_outside_search_root"

@@ -237,7 +237,7 @@ func TestErrorHelpers(t *testing.T) {
 		{"not-found", func(d string) error { return ErrNotFound(d) }, http.StatusNotFound},
 		{"bad-request", func(d string) error { return ErrBadRequest(d) }, http.StatusBadRequest},
 		{"forbidden", func(d string) error { return ErrForbidden(d) }, http.StatusForbidden},
-		{"conflict", func(d string) error { return ErrConflict(d) }, http.StatusConflict},
+		{"conflict", func(d string) error { return ErrTaskConflict(d, "task-1") }, http.StatusConflict},
 		{"unavailable", func(d string) error { return ErrServiceUnavailable(d) }, http.StatusServiceUnavailable},
 		{"internal", func(d string) error { return ErrInternal(d) }, http.StatusInternalServerError},
 	}

@@ -112,10 +112,25 @@ func ErrForbidden(detail string) huma.StatusError {
 	return &apiError{Status: http.StatusForbidden, Detail: detail}
 }
 
-// ErrConflict returns a 409 apiError with the given detail.
-func ErrConflict(detail string) huma.StatusError {
-	return &apiError{Status: http.StatusConflict, Detail: detail}
+// ErrTaskConflict returns the 409 for a path whose task is already
+// running: the detail sentence plus the running task's ID as task_id.
+func ErrTaskConflict(detail, taskID string) huma.StatusError {
+	return &taskConflictError{rxtypes.TaskConflictError{Detail: detail, TaskID: taskID}}
 }
+
+// taskConflictError carries the published TaskConflictError body. Like
+// sandboxError below, it embeds the rxtypes struct so the schema in the
+// OpenAPI document and the bytes on the wire cannot drift apart; the
+// methods make it a huma.StatusError, which is what a handler returns.
+type taskConflictError struct {
+	rxtypes.TaskConflictError
+}
+
+// Error implements the error interface.
+func (e *taskConflictError) Error() string { return e.Detail }
+
+// GetStatus implements huma.StatusError.
+func (e *taskConflictError) GetStatus() int { return http.StatusConflict }
 
 // ErrServiceUnavailable returns a 503 apiError with the given detail.
 func ErrServiceUnavailable(detail string) huma.StatusError {
@@ -205,7 +220,7 @@ var errorStatusDescriptions = map[int]string{
 	http.StatusForbidden: "Refused: the path is outside every configured --search-root " +
 		"(SandboxError body), or it is hidden or cannot be read (ApiError body)",
 	http.StatusNotFound: "The file, directory, index or task does not exist",
-	http.StatusConflict: "A task for the same path is already running",
+	http.StatusConflict: "A task for the same path is already running; task_id names it",
 	http.StatusUnprocessableEntity: "The request does not match the schema: a required " +
 		"parameter or field is missing, or a value has the wrong type or is out of range",
 	http.StatusInternalServerError: "rx failed while serving the request",
@@ -227,6 +242,7 @@ const defaultErrorDescription = "Any other error"
 //     ApiError for any other refusal, so it is declared as oneOf the
 //     two. The two shapes cannot be confused: each forbids properties
 //     the other requires.
+//   - 409 is TaskConflictError, the envelope plus the running task's ID.
 //
 // Registering the schemas through the API's own registry means the
 // document names each once and the operations $ref it. Call it once per
@@ -246,6 +262,7 @@ func errorResponses(api huma.API, statuses ...int) map[string]*huma.Response {
 			registry.Schema(reflect.TypeOf(rxtypes.SandboxError{}), true, "SandboxError"),
 			envelope,
 		}},
+		http.StatusConflict: registry.Schema(reflect.TypeOf(rxtypes.TaskConflictError{}), true, "TaskConflictError"),
 	}
 
 	responses := map[string]*huma.Response{
