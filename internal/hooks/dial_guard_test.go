@@ -78,15 +78,15 @@ func TestDispatcher_DoesNotReachALoopbackTargetAtRequestTime(t *testing.T) {
 	srv := newLocalServer(t, &hits)
 
 	d := NewDispatcher(DispatcherConfig{
-		// Set the URL directly, bypassing ValidateURL, to stand in for a
-		// hostname that passed validation and then changed its answer.
-		Env:        HookEnv{OnFileURL: srv.URL},
 		Workers:    1,
 		QueueDepth: 4,
 		Timeout:    2 * time.Second,
 		Logger:     newSilentLogger(),
 	})
-	d.OnFile(context.Background(), "/x", trace.FileInfo{})
+	// Pass the URL directly, bypassing ValidateURL, to stand in for a
+	// hostname that passed validation and then changed its answer.
+	d.ForRequest(HookConfig{OnFileURL: srv.URL}, "req-dial").
+		OnFile(context.Background(), "/x", trace.FileInfo{})
 	d.Close()
 	d.Wait()
 

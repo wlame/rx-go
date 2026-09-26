@@ -25,12 +25,10 @@ func TestDispatcher_OnMatch_BuildsCorrectPayload(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:       HookEnv{OnMatchURL: srv.URL},
-		RequestID: "rid-7",
-		Workers:   1,
-		Logger:    newSilentLogger(),
+		Workers: 1,
+		Logger:  newSilentLogger(),
 	})
-	d.OnMatch(context.Background(), "/var/log/x.log", trace.MatchInfo{
+	d.ForRequest(HookConfig{OnMatchURL: srv.URL}, "rid-7").OnMatch(context.Background(), "/var/log/x.log", trace.MatchInfo{
 		Pattern:    "error",
 		Offset:     1234,
 		LineNumber: 42,
@@ -64,12 +62,10 @@ func TestDispatcher_OnComplete_BuildsCorrectPayload(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	d := NewDispatcher(DispatcherConfig{
-		Env:       HookEnv{OnCompleteURL: srv.URL},
-		RequestID: "req-complete",
-		Workers:   1,
-		Logger:    newSilentLogger(),
+		Workers: 1,
+		Logger:  newSilentLogger(),
 	})
-	d.OnComplete(&rxtypes.TraceResponse{
+	d.ForRequest(HookConfig{OnCompleteURL: srv.URL}, "req-complete").OnComplete(&rxtypes.TraceResponse{
 		Path:         []string{"/var/log/a.log", "/var/log/b.log"},
 		Patterns:     map[string]string{"p1": "foo", "p2": "bar"},
 		Matches:      []rxtypes.Match{{}, {}, {}},
@@ -107,11 +103,8 @@ func TestDispatcher_OnComplete_NilResponseNoOp(t *testing.T) {
 		atomic.AddInt32(&hit, 1)
 	}))
 	t.Cleanup(srv.Close)
-	d := NewDispatcher(DispatcherConfig{
-		Env:    HookEnv{OnCompleteURL: srv.URL},
-		Logger: newSilentLogger(),
-	})
-	d.OnComplete(nil)
+	d := NewDispatcher(DispatcherConfig{Logger: newSilentLogger()})
+	d.ForRequest(HookConfig{OnCompleteURL: srv.URL}, "req-nil").OnComplete(nil)
 	d.Close()
 	d.Wait()
 	if atomic.LoadInt32(&hit) != 0 {

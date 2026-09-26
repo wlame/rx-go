@@ -17,7 +17,6 @@ import (
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/tasks"
-	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -304,30 +303,34 @@ func TestServer_RouterAndAPIExposed(t *testing.T) {
 	}
 }
 
-// TestRequestHookFirer verifies the per-request wrapper dispatches
-// events only when configured.
-func TestRequestHookFirer(t *testing.T) {
+// TestRequestHooks_NilWithoutAHookOrADispatcher pins when a request gets
+// a view of the dispatcher: only when it has a hook URL and the server
+// has a dispatcher. A nil view is what keeps the engine on its no-hook
+// fast path.
+func TestRequestHooks_NilWithoutAHookOrADispatcher(t *testing.T) {
 	disp := hooks.NewDispatcher(hooks.DispatcherConfig{})
-	defer disp.Close()
+	t.Cleanup(func() {
+		disp.Close()
+		disp.Wait()
+	})
+	withHook := hooks.HookConfig{OnCompleteURL: "https://example.com/hook"}
 
-	// No URLs configured → no dispatch.
-	firer := &requestHookFirer{
-		dispatcher: disp,
-		cfg:        hooks.HookConfig{}, // empty
-		requestID:  "test-req",
+	cases := []struct {
+		name     string
+		server   *Server
+		cfg      hooks.HookConfig
+		wantView bool
+	}{
+		{"no hook URL", &Server{cfg: Config{Hooks: disp}}, hooks.HookConfig{}, false},
+		{"no dispatcher", &Server{cfg: Config{}}, withHook, false},
+		{"hook URL and dispatcher", &Server{cfg: Config{Hooks: disp}}, withHook, true},
 	}
-	firer.OnFile(context.Background(), "/tmp/a", trace.FileInfo{})
-	firer.OnMatch(context.Background(), "/tmp/a", trace.MatchInfo{})
-
-	// With OnFile URL but no target, dispatcher would try to POST but
-	// we're not asserting on network — just that no panic / block.
-	firer2 := &requestHookFirer{
-		dispatcher: disp,
-		cfg:        hooks.HookConfig{OnFileURL: "http://127.0.0.1:99999/bogus"},
-		requestID:  "test-req-2",
+	for _, tc := range cases {
+		got := requestHooks(tc.server, tc.cfg, "req-1")
+		if (got != nil) != tc.wantView {
+			t.Errorf("%s: view present = %v, want %v", tc.name, got != nil, tc.wantView)
+		}
 	}
-	firer2.OnFile(context.Background(), "/tmp/a", trace.FileInfo{})
-	// Let the queued worker attempt and fail quickly; not load-bearing.
 }
 
 // ============================================================================
