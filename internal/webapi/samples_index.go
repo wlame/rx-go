@@ -118,6 +118,17 @@ type samplesIndexBuilder func(path string, progress *index.Progress) (*rxtypes.U
 // no build: an answer from the head names none, and a lookup that needs
 // the index reads the file without one, as when a compression holds
 // the file. POST /v1/index starts its builds outside this limit.
+//
+// # Half the queue for the parts of log chains
+//
+// The index tasks of log chains submit their parts' builds here too
+// (joinChainPart). Each chain keeps only a few of its parts in flight,
+// but many chains at once could still take every place in the queue,
+// and a lookup in a large file would then read it without an index. So
+// the builds joinChainPart creates, queued or running, are counted in
+// chainParts, and while they number half the queue (maxChainParts) a
+// chain starts no other: its task waits for a build to end, as when the
+// queue is full. The other half is always left to lookups.
 type samplesIndexBuilds struct {
 	tasks  *tasks.Manager
 	logger *slog.Logger
@@ -138,6 +149,10 @@ type samplesIndexBuilds struct {
 	active int
 	// queue lists the builds waiting for a slot, the oldest first.
 	queue []queuedIndexBuild
+	// chainParts is how many builds that joinChainPart created are
+	// queued or running: counted up when one is created, down when it
+	// finishes (finish).
+	chainParts int
 }
 
 // maxQueuedIndexBuilds is how many samples index builds may wait for a
@@ -152,6 +167,9 @@ type queuedIndexBuild struct {
 	taskID string
 	path   string
 	size   int64
+	// chainPart says that a log chain's index task created the build
+	// (joinChainPart): it counts in chainParts until it finishes.
+	chainPart bool
 }
 
 // runningIndexBuild is one build this registry started and that has not
@@ -362,8 +380,9 @@ func chainPartOf(manager *tasks.Manager, taskID string, givesIndex bool) chainPa
 // joinChainPart is join for one part of a log chain's index task: it
 // returns the task that builds path's index for the file identity
 // describes, or that holds the path, and false when the part is to be
-// submitted again once a build ends (the queue is full and nothing holds
-// the path).
+// submitted again once a build ends: nothing holds the path, and the
+// queue is full or the chains' builds already take their half of it
+// (maxChainParts).
 //
 // A build it starts is a subtask (tasks.Manager.CreateSubtask): once
 // finished it counts toward the cap of the subtasks, so the parts of a
@@ -378,7 +397,7 @@ func (b *samplesIndexBuilds) joinChainPart(path string, identity index.SourceIde
 	if build, ok := b.running[path]; ok {
 		return chainPartOf(b.tasks, build.taskID, build.identity.Equal(identity)), true
 	}
-	if b.queueFullLocked() {
+	if b.queueFullLocked() || b.chainParts >= b.maxChainParts() {
 		taskID, givesIndex := b.holderLocked(path)
 		if taskID == "" {
 			return chainPartBuild{}, false
@@ -392,8 +411,20 @@ func (b *samplesIndexBuilds) joinChainPart(path string, identity index.SourceIde
 	// The watch is taken before the build goroutine exists, so the task
 	// cannot have ended, let alone left the table.
 	part := chainPartOf(b.tasks, task.TaskID, true)
-	b.addLocked(queuedIndexBuild{taskID: task.TaskID, path: path, size: size}, identity)
+	b.chainParts++
+	b.addLocked(queuedIndexBuild{taskID: task.TaskID, path: path, size: size, chainPart: true}, identity)
 	return part, true
+}
+
+// maxChainParts is how many builds the index tasks of log chains may
+// have queued or running at once, all chains together: half the queue,
+// and at least one.
+//
+// SECURITY: however many chains clients describe, their part builds
+// take at most this many places, so a lookup in another file always
+// finds the other half of the queue free of them.
+func (b *samplesIndexBuilds) maxChainParts() int {
+	return max(1, b.maxQueued/2)
 }
 
 // queueFullLocked reports whether there is no room for another build:
@@ -456,18 +487,19 @@ func (b *samplesIndexBuilds) startLocked(build queuedIndexBuild) {
 	// failed task instead of a crashed server, and its task ending
 	// closes the done channel every waiter selects on.
 	go runDetached(b.tasks, build.taskID, indexOperation, b.logger, func() {
-		b.run(build.taskID, build.path, build.size)
+		b.run(build)
 	})
 }
 
-// run is the body of the build goroutine for path's task.
-func (b *samplesIndexBuilds) run(taskID, path string, size int64) {
+// run is the body of the build goroutine for build's task.
+func (b *samplesIndexBuilds) run(build queuedIndexBuild) {
 	// Deferred so that it also runs when the build panics: deferred
 	// calls run while a panic unwinds, before runDetached recovers it.
 	// The slot is freed whatever happened, so a failed build never
 	// holds back the queue.
-	defer b.finish(path, taskID)
+	defer b.finish(build)
 
+	taskID, path := build.taskID, build.path
 	b.tasks.MarkRunning(taskID)
 	progress := &index.Progress{}
 	b.tasks.ReportProgress(taskID, progress.Fraction)
@@ -477,18 +509,21 @@ func (b *samplesIndexBuilds) run(taskID, path string, size int64) {
 		b.tasks.Fail(taskID, fmt.Sprintf("build index: %v", err))
 		return
 	}
-	b.tasks.Complete(taskID, indexTaskResultFrom(idx, cachePath, path, samplesIndexRequest(path, size)))
+	b.tasks.Complete(taskID, indexTaskResultFrom(idx, cachePath, path, samplesIndexRequest(path, build.size)))
 }
 
-// finish runs once taskID's build of path has returned: it drops the
-// path's entry, unless a newer build has taken its place, frees the
-// build's slot, and starts the oldest queued builds while slots are
-// free.
-func (b *samplesIndexBuilds) finish(path, taskID string) {
+// finish runs once build has returned: it drops the path's entry,
+// unless a newer build has taken its place, frees the build's slot and,
+// for a chain's part, its place in chainParts, and starts the oldest
+// queued builds while slots are free.
+func (b *samplesIndexBuilds) finish(build queuedIndexBuild) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.running[path].taskID == taskID {
-		delete(b.running, path)
+	if b.running[build.path].taskID == build.taskID {
+		delete(b.running, build.path)
+	}
+	if build.chainPart {
+		b.chainParts--
 	}
 	b.active--
 	for b.active < b.maxRunning && len(b.queue) > 0 {
