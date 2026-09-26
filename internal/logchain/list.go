@@ -23,8 +23,9 @@ import (
 // filekind.OfPinned, as /v1/tree reads every file; in a chain of more
 // than MaxParts parts only until that is known), and the stored line
 // index of each frozen part for is_indexed (index.PeekForSource, as
-// /v1/tree does, stopping at the first part without one; none for a
-// chain of more than MaxParts parts). Nothing is written.
+// /v1/tree does, stopping at the first part without one; none of an
+// empty part, and none for a chain of more than MaxParts parts).
+// Nothing is written.
 //
 // The errors are validateDir's (*paths.ErrPathOutsideRoots,
 // *paths.ErrHiddenPath), the pin's or the listing's (wrapping
@@ -105,6 +106,12 @@ var peekPartIndex = index.PeekForSource
 // does not use its indexes, so it does not move the index cache
 // metrics.
 //
+// An empty frozen part (0 bytes) counts as indexed without a peek: it
+// holds no line, so a description needs no index of it to be ready,
+// and the index task a description starts never builds one. The rule
+// is the one the description cache applies (cacheable), so `idx` in a
+// listing follows the state `ready` of the chain's description.
+//
 // SECURITY: an index is found and validated by the part's path, while
 // the part is the file the listing pinned (Part.File). DescribesPinned
 // holds the index to the inode and device that pin recorded, as
@@ -120,6 +127,9 @@ func everyFrozenPartIndexed(c Candidate) bool {
 		// trust: validating one reads the part's head and tail.
 		if p.ReadError != nil {
 			return false
+		}
+		if p.Info.Size() == 0 {
+			continue
 		}
 		idx, err := peekPartIndex(p.Path)
 		if err != nil || idx == nil || !index.DescribesPinned(idx, p.File) {

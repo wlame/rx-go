@@ -102,7 +102,7 @@
             "type": "boolean"
           },
           "is_indexed": {
-            "description": "Whether every part but the active file has a current line index built from the file the listing found (the same inode and device), as is_indexed of /v1/tree tells for one file. False for a chain of more than 10,000 parts, whose indexes are not looked at.",
+            "description": "Whether every part but the active file has a current line index built from the file the listing found (the same inode and device), as is_indexed of /v1/tree tells for one file. An empty part (0 bytes) needs none: it holds no line. False for a chain of more than 10,000 parts, whose indexes are not looked at.",
             "type": "boolean"
           },
           "missing": {
