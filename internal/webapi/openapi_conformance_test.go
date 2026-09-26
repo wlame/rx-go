@@ -333,6 +333,9 @@ func conformanceFixtures(t *testing.T) string {
 	write("rotated/app.log", []byte("2025-12-10 07:00:03.000 LINE 3\n"))
 	write("rotated/app.log.1", []byte("2025-12-10 07:00:02.000 LINE 2\n"))
 	write("rotated/app.log.3.gz", gzipped(t, []byte("2025-12-10 07:00:01.000 LINE 1\n")))
+	// A chain whose frozen part has no timestamps: an invalid chain.
+	write("broken/x.log", []byte("2025-12-10 07:00:03.000 LINE 2\n"))
+	write("broken/x.log.1", []byte("no time here\n"))
 	return root
 }
 
@@ -415,6 +418,19 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	postQuery("index a chain outside the root", "/v1/logs/index", q("path", "/etc/syslog"), http.StatusForbidden)
 	postQuery("index a chain without a path", "/v1/logs/index", nil, http.StatusUnprocessableEntity)
 	get("log chain after its index task", "/v1/logs/chain", q("path", at("rotated/app.log")), http.StatusOK)
+
+	get("log samples by line", "/v1/logs/samples", q("path", at("rotated/app.log"), "lines", "1-3,2,99", "context", "1"), http.StatusOK)
+	get("log samples by time", "/v1/logs/samples",
+		q("path", at("rotated/app.log"), "timestamps", "2025-12-10 07:00:02", "timestamps", "2025-12-10 07:00:01..2025-12-10 07:00:02"),
+		http.StatusOK)
+	get("log samples of a part", "/v1/logs/samples", q("path", at("rotated/app.log"), "part", "app.log.1", "lines", "1"), http.StatusOK)
+	get("log samples with an old fingerprint", "/v1/logs/samples",
+		q("path", at("rotated/app.log"), "lines", "1", "fingerprint", "0000000000000000"), http.StatusConflict)
+	get("log samples of an invalid chain", "/v1/logs/samples", q("path", at("broken/x.log"), "lines", "1"), http.StatusUnprocessableEntity)
+	get("log samples of a lone file", "/v1/logs/samples", q("path", at("app.log"), "lines", "1"), http.StatusNotFound)
+	get("log samples outside the root", "/v1/logs/samples", q("path", "/etc/syslog", "lines", "1"), http.StatusForbidden)
+	get("log samples without lines or times", "/v1/logs/samples", q("path", at("rotated/app.log")), http.StatusBadRequest)
+	get("log samples without a path", "/v1/logs/samples", q("lines", "1"), http.StatusUnprocessableEntity)
 
 	get("trace plain", "/v1/trace", q("path", at("app.log"), "regexp", "ERROR"), http.StatusOK)
 	get("trace capped, two files, two patterns", "/v1/trace",
@@ -588,6 +604,39 @@ func TestOpenAPIConformance_SamplesWhileTheIndexBuildsAnswersAsDeclared(t *testi
 	}
 	run.check(apiCall{label: "the build's task while it runs", method: http.MethodGet, template: "/v1/tasks/{task_id}",
 		path: "/v1/tasks/" + task.TaskID, want: http.StatusOK})
+}
+
+// A request by global line on a log chain whose index task waits (a
+// task holds one of its parts) answers 202 with the chain's task under
+// Prefer: respond-async, as declared.
+func TestOpenAPIConformance_ChainSamplesWhileTheChainIndexesAnswersAsDeclared(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	root := conformanceFixtures(t)
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	manager := tasks.New(tasks.Config{})
+	ts := httptest.NewServer(NewServer(Config{
+		AppVersion: "conformance-test", TaskManager: manager, SamplesIndexWait: 10 * time.Millisecond,
+	}))
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { awaitEveryTask(t, manager) })
+	run := &conformanceRun{t: t, base: ts.URL, contract: loadContract(t), answered: map[string][]int{}}
+
+	part, err := paths.ValidatePathWithinRoots(filepath.Join(root, "rotated", "app.log.1"))
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	held, _ := manager.Create(part, "compress")
+	pending := run.check(apiCall{label: "log samples while the chain indexes", method: http.MethodGet,
+		template: "/v1/logs/samples", path: "/v1/logs/samples",
+		query:  url.Values{"path": {filepath.Join(root, "rotated", "app.log")}, "lines": {"2"}},
+		header: http.Header{"Prefer": {"respond-async"}}, want: http.StatusAccepted})
+	if task, _ := manager.Get(fmt.Sprint(pending["task_id"])); task == nil || task.Operation != chainIndexOperation {
+		t.Fatalf("202 names %v, want the chain's index task", pending["task_id"])
+	}
+	manager.Fail(held.TaskID, "released by the test")
 }
 
 func TestContractMismatch_FindsEachKindOfDeparture(t *testing.T) {

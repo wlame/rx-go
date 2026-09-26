@@ -15,7 +15,6 @@ import (
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
-	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
@@ -291,52 +290,17 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			MaxBytes: config.SamplesMaxBytes(),
 		}
 
-		var (
-			resp       *rxtypes.SamplesResponse
-			indexBuild *rxtypes.SamplesIndexBuild
-			answered   bool
-			reach      *samples.HeadReach
-		)
-		wantsBuild := !noIndex && samples.ShouldBuildIndex(validated, kind, stat.Size())
-		if wantsBuild {
-			// A lookup whose lines lie in the head of the file
-			// (RX_SAMPLES_HEAD_MB) needs no index: it is answered from
-			// the head now, with the answer the index would give, and
-			// the build is started (or joined) in the background for the
-			// lookups that will need it. index_build names it, so a
-			// client can follow it. A refusal the head gives (an answer
-			// over the limits, a time named wrongly) is the answer too:
-			// building the index would not change it. ctx ends the head
-			// read when the client disconnects.
-			//
-			// The running build keeps how far the head reaches once a
-			// lookup has run past it, so a lookup the head is known not
-			// to hold, a client asking again and again for a line deep
-			// in the file while the build runs, reads nothing before it
-			// waits (samples.ResolveFromHeadWithReach).
-			known := s.samplesIndex.reachOf(validated, index.IdentityFromInfo(validated, stat))
-			resp, answered, reach, err = samples.ResolveFromHeadWithReach(ctx, req, config.SamplesHeadBytes(), known)
-			if answered && err == nil {
-				indexBuild = s.samplesIndex.start(validated, stat)
-			}
+		// The file is read the way every samples lookup reads one file
+		// (readFileSamples): from its head while its index builds in the
+		// background, after a wait for the build otherwise, which a
+		// client that prefers respond-async ends with a 202.
+		read, err := s.readFileSamples(ctx, req, stat, noIndex, func() (<-chan time.Time, func()) {
+			return samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
+		})
+		if err == nil && read.pending != nil {
+			return &samplesOutput{Status: http.StatusAccepted, PreferenceApplied: respondAsync, Body: *read.pending}, nil
 		}
-		if wantsBuild && !answered {
-			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
-			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, reach, deadline)
-			stopDeadline()
-			if waitErr != nil {
-				return nil, waitErr
-			}
-			if pending != nil {
-				return &samplesOutput{
-					Status: http.StatusAccepted, PreferenceApplied: respondAsync, Body: *pending,
-				}, nil
-			}
-		}
-		if !answered {
-			// ctx ends when the client disconnects, which stops the read.
-			resp, err = samples.Resolve(ctx, req)
-		}
+		resp, indexBuild := read.resp, read.indexBuild
 		if setting := answerLimitSetting(err); setting != "" {
 			return nil, ErrBadRequest(fmt.Sprintf(
 				"%s; %s sets the limit: ask for fewer positions, shorter ranges or less context", err.Error(), setting))

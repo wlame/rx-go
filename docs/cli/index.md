@@ -99,7 +99,8 @@ no 6 or 7.
 - **[`rx logs`](logs.md)**  
   Rotated logs read as one log chain: `rx logs list` finds them,
   `rx logs show` describes one, `rx logs time-range` gives its times,
-  `rx logs index` stores the line index of each of its parts.
+  `rx logs samples` gives its lines by global line, by part and line or
+  by time, `rx logs index` stores the line index of each of its parts.
 
 - **[`rx compress`](compress.md)**  
   Encode files as seekable zstd for random-access decompression.

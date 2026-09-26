@@ -60,6 +60,7 @@ func registerLogsHandlers(s *Server, api huma.API) {
 	})
 	registerLogChainHandler(s, api)
 	registerLogIndexHandler(s, api)
+	registerLogSamplesHandler(s, api)
 }
 
 // logChainsError is the answer to a directory GET /v1/logs/chains
