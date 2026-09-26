@@ -214,6 +214,9 @@ func TestCLICommand_LogChainCommandsParse(t *testing.T) {
 			"rx logs show '/var/log/my app (1).log' --file-tz=Asia/Tokyo --fingerprint=0123456789abcdef"},
 		{"logs_time_range", map[string]any{"path": "/var/log/syslog", "file_tz": "+02:00"},
 			"rx logs time-range /var/log/syslog --file-tz=+02:00"},
+		{"logs_index", map[string]any{"path": "/var/log/syslog", "force": false}, "rx logs index /var/log/syslog"},
+		{"logs_index", map[string]any{"path": "/var/log/my app (1).log", "force": true},
+			"rx logs index '/var/log/my app (1).log' --force"},
 	}
 	for _, tc := range cases {
 		rendered := webapi.BuildCLICommand(tc.operation, tc.params)

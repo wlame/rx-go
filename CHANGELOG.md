@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain, 6 when a chain is invalid, 7 when `--fingerprint=` differs
   (each after printing), 2 for a malformed fingerprint or one given
   with several chains.
+- `rx logs index CHAIN... [--json] [--force]` builds and stores the line
+  index of every part of each chain, the active file too, in the
+  foreground in the chain's order, whatever a part's size
+  (`RX_LARGE_FILE_MB` does not apply), keeping a current index unless
+  `--force`; it reports each part as `rx index` reports a file, then
+  prints the chain as `rx logs show` does. `--json` prints per chain
+  `{path, indexed, skipped, skip_reasons, errors, total_time, chain}`.
+  Exit codes as `rx index`, and 3 when a handle names no chain.
 - `RX_CHAIN_OVERLAP_SECONDS` (default 60, 0 to 86400): how far a part
   of a log chain may reach past the first timestamp of the next part
   before the chain is invalid.
