@@ -132,6 +132,9 @@ func (e *Engine) RunWithOptions(
 			SkippedFiles: emptyIfNilStrings(skipped),
 			MaxResults:   opts.MaxResults,
 			Time:         time.Since(start).Seconds(),
+			// Empty objects rather than null, as on the main path.
+			FileChunks:   map[string]int{},
+			ContextLines: map[string][]rxtypes.ContextLine{},
 		}, nil
 	}
 
@@ -562,12 +565,11 @@ func (e *Engine) RunWithOptions(
 		SkippedFiles: emptyIfNilStrings(dedupStrings(skipped)),
 		MaxResults:   opts.MaxResults,
 		Time:         elapsed.Seconds(),
-	}
-	if len(fileChunkCounts) > 0 {
-		resp.FileChunks = fileChunkCounts
-	}
-	if len(contextDict) > 0 {
-		resp.ContextLines = contextDict
+		// Both maps are built with make, so an empty one marshals as
+		// `{}`: the schema declares them as non-null objects, and a
+		// client generated from it rejects a `null`.
+		FileChunks:   fileChunkCounts,
+		ContextLines: contextDict,
 	}
 	if opts.ContextBefore > 0 {
 		b := opts.ContextBefore
