@@ -390,6 +390,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The OpenAPI document declares every error status each operation can
+  answer: `400`, `404`, `409`, `422`, `500` and `503` where the handler
+  or huma's validation produces them, besides the `401` and `403` it
+  declared before. Seven of nine operations declared only `200`, `401`
+  and `403`, so a client generated from the document could not see the
+  other errors. Each body is `ApiError` (`{"detail": ...}`); `403` is
+  `oneOf` `SandboxError` and `ApiError`, since a hidden or unreadable
+  path is refused with the plain envelope; and a `default` response
+  covers the rarer ones. One table holds each status's description,
+  and a test walks every handler's source to the error constructors it
+  reaches and fails when a status it can return is not declared.
+  Additive; the contract stays 1.3.
+
 - A trace answer's `context_lines` and `file_chunks` are `{}` when they
   have nothing in them, over HTTP and in `rx trace --json`. They were
   `null` — `context_lines` on every search without context lines,

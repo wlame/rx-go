@@ -904,7 +904,7 @@
                 }
               }
             },
-            "description": "Error"
+            "description": "Any other error"
           }
         },
         "summary": "Health check and system introspection",
@@ -938,6 +938,16 @@
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -952,11 +962,58 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Path outside every configured --search-root"
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A task for the same path is already running"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1004,7 +1061,7 @@
                 }
               }
             },
-            "description": "Error"
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1065,11 +1122,48 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Path outside every configured --search-root"
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1107,6 +1201,16 @@
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -1121,11 +1225,58 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Path outside every configured --search-root"
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A task for the same path is already running"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1239,6 +1390,16 @@
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -1253,11 +1414,68 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Path outside every configured --search-root"
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "ripgrep is not available on this system"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1312,6 +1530,16 @@
             },
             "description": "The server requires an API token and the request did not carry it"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
           "default": {
             "content": {
               "application/json": {
@@ -1320,7 +1548,7 @@
                 }
               }
             },
-            "description": "Error"
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1504,6 +1732,16 @@
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -1518,11 +1756,68 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Path outside every configured --search-root"
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "ripgrep is not available on this system"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
           }
         },
         "security": [
@@ -1567,6 +1862,16 @@
             },
             "description": "OK"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -1581,11 +1886,38 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SandboxError"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
                 }
               }
             },
-            "description": "Path outside every configured --search-root"
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
           }
         },
         "security": [
