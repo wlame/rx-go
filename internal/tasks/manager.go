@@ -18,7 +18,11 @@
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
 //   - A cap on the table (DefaultMaxTasks): past it, creating a task
-//     drops the oldest finished ones.
+//     drops the oldest finished ones. Subtasks (CreateSubtask), the
+//     part builds of a log chain's index task, are capped apart, so a
+//     task that makes thousands of them never drops another one.
+//   - A watch (Watch) that keeps how a task ended, for a caller that
+//     reads it after the cap or the sweeper may have dropped the task.
 //
 // Task store backing: Python uses an asyncio.Lock with dict mutation.
 // This package uses one sync.Mutex guarding a map[string]*Task for the
@@ -50,13 +54,15 @@ import (
 // Override via RX_TASK_TTL_MINUTES.
 const DefaultTTL = 60 * time.Minute
 
-// DefaultMaxTasks is how many tasks the manager keeps at most. A
+// DefaultMaxTasks is how many tasks of one class the manager keeps at
+// most: tasks a client asked for, and subtasks (CreateSubtask). A
 // finished task keeps its whole result, the line index included, until
 // the sweeper removes it after the TTL; without a cap, a burst of
 // requests inside one TTL would grow the table without bound. Past the
-// cap, Create drops the oldest finished tasks. Running and queued tasks
-// are never dropped, so the table can exceed the cap only while more
-// than this many tasks are unfinished at once.
+// cap, creating a task drops the oldest finished tasks of its own
+// class. Running and queued tasks are never dropped, so a class can
+// exceed the cap only while more than this many of its tasks are
+// unfinished at once.
 const DefaultMaxTasks = 256
 
 // DefaultSweepInterval is how often the sweeper goroutine wakes up.
@@ -121,7 +127,50 @@ type Task struct {
 	// of a keyed task (CreateKeyed), which need not be Path. Set at
 	// creation and never changed, so the clones may share it.
 	held []string
+
+	// subtask says the task does part of another task's work
+	// (CreateSubtask): it counts toward the cap of the subtasks, not of
+	// the tasks a client asked for. Set at creation and never changed.
+	subtask bool
+
+	// end is how the task first ended, written under the manager's lock
+	// just before done is closed and never after. Shared by the clones
+	// and by every Watch of the task, which read it once done is closed:
+	// a watcher learns the end even after the task left the table.
+	end *End
 }
+
+// End is how a task ended: its terminal status and its error, as they
+// stood when it first reached a terminal status.
+type End struct {
+	Status Status
+	Error  string
+}
+
+// Watch follows one task to its end. It holds the task's done channel
+// and its end, not the task's place in the table, so it still says how
+// the task ended after the cap or the sweeper has dropped the task.
+//
+// Go note: the zero Watch has a nil done channel, and a receive from a
+// nil channel blocks for ever; take a Watch only from Manager.Watch.
+type Watch struct {
+	done <-chan struct{}
+	end  *End
+}
+
+// Done returns a channel that is closed when the task ends, completed
+// or failed; Manager.Done gives the same channel.
+func (w Watch) Done() <-chan struct{} { return w.done }
+
+// End returns how the task ended. Call it only once Done's channel is
+// closed: before that the end is not written yet, and reading it while
+// the manager writes it would be a data race.
+//
+// Go note: the end is written before the channel is closed, and the Go
+// memory model orders a channel's close before every receive that
+// returns because of it, so a reader that has received from Done sees
+// the whole end without taking a lock.
+func (w Watch) End() End { return *w.end }
 
 // ProgressFunc reports how far a task's work has got, as a fraction
 // from 0 to 1, and false while that is not known. It is called from the
@@ -286,7 +335,23 @@ func (m *Manager) CreateHolding(operation string, held ...string) (*Task, string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held = uniquePaths(held)
-	return m.createLocked(operation, held[0], held)
+	return m.createLocked(newTask{operation: operation, path: held[0], held: held})
+}
+
+// CreateSubtask is Create for a task that does part of another task's
+// work: the build of one part's line index for a log chain's index
+// task. It holds path like any task, and a running task that holds path
+// is returned with false, as Create does.
+//
+// A subtask counts toward a cap of its own (DefaultMaxTasks finished
+// subtasks), so a chain of thousands of parts, each built as a subtask,
+// drops only older finished subtasks from the table, never a task a
+// client asked for and may still be polling.
+func (m *Manager) CreateSubtask(path, operation string) (*Task, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, _, isNew := m.createLocked(newTask{operation: operation, path: path, held: []string{path}, subtask: true})
+	return task, isNew
 }
 
 // CreateKeyed registers a new task for operation that holds key in the
@@ -300,15 +365,25 @@ func (m *Manager) CreateHolding(operation string, held ...string) (*Task, string
 func (m *Manager) CreateKeyed(operation, path, key string) (*Task, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	task, _, isNew := m.createLocked(operation, path, []string{key})
+	task, _, isNew := m.createLocked(newTask{operation: operation, path: path, held: []string{key}})
 	return task, isNew
 }
 
-// createLocked is CreateHolding with the shown path given apart from the
-// held keys, which must be unique and at least one. The caller holds
+// newTask is what creating a task takes: its operation, the path it
+// shows, the keys it holds in the path locks (unique, at least one) and
+// its class.
+type newTask struct {
+	operation string
+	path      string
+	held      []string
+	subtask   bool
+}
+
+// createLocked creates the task spec describes, or returns the running
+// task that holds one of its keys, that key and false. The caller holds
 // m.mu.
-func (m *Manager) createLocked(operation, path string, held []string) (*Task, string, bool) {
-	for _, key := range held {
+func (m *Manager) createLocked(spec newTask) (*Task, string, bool) {
+	for _, key := range spec.held {
 		if running := m.runningHolderLocked(key); running != nil {
 			return running, key, false
 		}
@@ -316,18 +391,20 @@ func (m *Manager) createLocked(operation, path string, held []string) (*Task, st
 
 	task := &Task{
 		TaskID:    uuid.NewString(),
-		Path:      path,
-		Operation: operation,
+		Path:      spec.path,
+		Operation: spec.operation,
 		Status:    StatusQueued,
 		StartedAt: time.Now().UTC(),
 		done:      make(chan struct{}),
-		held:      held,
+		held:      spec.held,
+		subtask:   spec.subtask,
+		end:       &End{},
 	}
 	m.tasks[task.TaskID] = task
-	for _, key := range held {
+	for _, key := range spec.held {
 		m.pathLocks[key] = task.TaskID
 	}
-	m.dropOldestFinishedLocked(len(m.tasks) - m.maxTasks)
+	m.dropOldestFinishedLocked(spec.subtask)
 	return task, "", true
 }
 
@@ -370,18 +447,27 @@ func uniquePaths(paths []string) []string {
 	return unique
 }
 
-// dropOldestFinishedLocked removes up to n finished tasks, oldest
-// completion first. Unfinished tasks are left alone: their workers still
-// report to them. The caller holds m.mu.
-func (m *Manager) dropOldestFinishedLocked(n int) {
-	if n <= 0 {
-		return
-	}
+// dropOldestFinishedLocked brings the tasks of one class (subtasks, or
+// the tasks a client asked for) back to the cap: it removes as many of
+// that class's finished tasks as the class holds past m.maxTasks,
+// oldest completion first. The other class is not touched, and neither
+// are unfinished tasks: their workers still report to them. The caller
+// holds m.mu.
+func (m *Manager) dropOldestFinishedLocked(subtask bool) {
 	finished := make([]*Task, 0, len(m.tasks))
+	inClass := 0
 	for _, task := range m.tasks {
+		if task.subtask != subtask {
+			continue
+		}
+		inClass++
 		if task.IsTerminal() && task.CompletedAt != nil {
 			finished = append(finished, task)
 		}
+	}
+	n := inClass - m.maxTasks
+	if n <= 0 {
+		return
 	}
 	sort.Slice(finished, func(i, j int) bool {
 		return finished[i].CompletedAt.Before(*finished[j].CompletedAt)
@@ -421,6 +507,9 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 		task.Result = result
 	}
 	if task.IsTerminal() && !wasTerminal {
+		// The end is written before done closes, so every watcher woken
+		// by the close reads it complete (see Watch.End).
+		*task.end = End{Status: task.Status, Error: task.Error}
 		close(task.done)
 	}
 	if task.IsTerminal() {
@@ -465,6 +554,29 @@ func (m *Manager) Done(taskID string) (<-chan struct{}, bool) {
 	}
 	return task.done, true
 }
+
+// Watch returns a watch of the task taskID, and false when no such task
+// is in the table. The watch says when the task ends and how, and keeps
+// saying it after the task has left the table.
+//
+// A caller that must learn how a task ended takes the watch while the
+// task is known to be in the table (it has just been created, or it is
+// running: neither the cap nor the sweeper drops an unfinished task),
+// and reads the end once the watch's done channel is closed.
+func (m *Manager) Watch(taskID string) (Watch, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return Watch{}, false
+	}
+	return Watch{done: task.done, end: task.end}, true
+}
+
+// TTL returns how long a finished task stays in the table before the
+// sweeper removes it (RX_TASK_TTL_MINUTES, or Config.TTL). A caller that
+// keeps a task's outcome beside the table keeps it as long.
+func (m *Manager) TTL() time.Duration { return m.ttl }
 
 // Holder returns the unfinished task that holds path, and false when
 // none does. It creates nothing: a caller that must not start a task
