@@ -153,17 +153,18 @@ Either:
 
 ### Symptom
 
-A configured webhook URL doesn't receive POST requests, with no
-obvious error on the client side.
+A configured webhook URL receives no calls. rx calls it with `GET`
+and the payload in the query string, so a target that only accepts
+`POST` answers `405`, which rx logs as `hook_failed`.
 
 ### Cause 1: SSRF rejection
 
-The URL is in a blocked address range.
-
-Check the server logs:
+The URL is in a blocked address range. A `hook_on_*` query parameter
+is refused with `400` and the body names the reason; an
+`RX_HOOK_ON_*_URL` stops `rx serve` from starting:
 
 ```text
-ERROR hook_validation_failed url=http://10.0.0.5/webhook reason="points at a private-network address"
+invalid hook URL: http://10.0.0.5/webhook (points at a private-network address — set RX_ALLOW_INTERNAL_HOOKS=true to allow)
 ```
 
 ### Fix
@@ -198,7 +199,7 @@ slow, events can be dropped.
 Check:
 
 ```promql
-rate(rx_hook_calls_total{status="failure"}[5m])
+rate(rx_hook_calls_total{status="dropped"}[5m])
 ```
 
 ### Fix
