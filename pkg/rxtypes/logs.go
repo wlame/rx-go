@@ -120,7 +120,46 @@ type ChainPart struct {
 	MaxIsBound        bool               `json:"max_is_bound" doc:"Whether max_ms is an upper bound of the part's highest timestamp rather than the timestamp: under file_tz, in a part whose lines write several zone offsets, where the line with the latest wall clock is not known from the index."`
 	GlobalStart       *int64             `json:"global_start" doc:"The global line number of the part's first line: 1 plus the lines of the parts before it, so line L of the part is global line global_start + L - 1. An empty part's is the next part's. Null unless the chain is ready."`
 	TimeFormat        *SamplesTimeFormat `json:"time_format" doc:"The part's timestamp format, as GET /v1/samples gives it; null when not known or when the part has none."`
+	DayFirst          *bool              `json:"day_first" doc:"For the slash format, whether the day comes before the month, as GET /v1/time-range gives it; null for every other format, and when not known."`
+	Example           *string            `json:"example" doc:"The part's first timestamp as its line writes it, as GET /v1/time-range gives it (printable ASCII, any other byte written as \\xHH, at most 64 bytes), from which a client shows times in the part's own layout; null when not known or when the part has none."`
 	Duplicates        []string           `json:"duplicates" nullable:"false" doc:"The names of the part's other encodings (the same generation compressed another way), which rx does not read."`
+}
+
+// ChainSamplesResponse is the body of GET /v1/logs/samples and of
+// `rx logs samples --json`: lines of a log chain asked for by global
+// line, by a part and its own line, or by time, each key's lines given
+// as pieces, one per part the key's window touches.
+//
+// Line numbers in it are global (the chain's), except in a piece's
+// first_local_line and cli_command, which number the part as
+// `rx samples PART` does. A global number is -1 before the chain is
+// ready, when only a part's own numbers are known.
+type ChainSamplesResponse struct {
+	Path          string                  `json:"path" doc:"The chain's handle: its directory joined with its name."`
+	Name          string                  `json:"name" doc:"The chain's name: the name of its active file."`
+	State         string                  `json:"state" enum:"pending,ready,invalid" doc:"The chain's state, as GET /v1/logs/chain describes it: ready, or pending for an answer addressed to one part (part and lines), which reads that part alone."`
+	Fingerprint   string                  `json:"fingerprint" doc:"The chain's fingerprint, as GET /v1/logs/chain gives it. Send it back as fingerprint to learn, by a 409, that the files changed."`
+	Parts         []ChainPart             `json:"parts" nullable:"false" doc:"The chain's parts in its order, as GET /v1/logs/chain gives them; each piece names one of them."`
+	BeforeContext int                     `json:"before_context" doc:"Lines of context before each single line or time asked for."`
+	AfterContext  int                     `json:"after_context" doc:"Lines of context after each single line or time asked for."`
+	Lines         map[string]int64        `json:"lines" doc:"Each line or range of a lines request, as asked, mapped to the global line it names: the line itself (a line counted back from the end, -N, is keyed by the line it names), or a range's first line; -1 when the chain has no such line, and before the chain is ready. Empty for a timestamps request."`
+	Timestamps    map[string]int64        `json:"timestamps" doc:"Each time query of a timestamps request mapped to the global line it found: the first line whose own timestamp is at or after the time, or a range's first line; -1 when there is none. Empty for a lines request."`
+	Samples       map[string][]ChainPiece `json:"samples" doc:"Each key of lines or timestamps mapped to its lines, as pieces in the chain's order, one per part its window touches: the line with its context for a single line or time, or a range's lines. Null when the chain has no line of it."`
+	IndexBuild    *SamplesIndexBuild      `json:"index_build" doc:"The background index build this answer started or joined, to follow at GET /v1/tasks/{task_id}: for a pending chain, its index task (operation chain_index), as GET /v1/logs/chain starts it; for a ready chain, the build of a part whose piece came from the head of its text (the active file, as GET /v1/samples starts one). Null when there is none. It says how the answer was produced; the lines are the same without it."`
+	CLICommand    string                  `json:"cli_command" doc:"The rx command that gives this answer: rx logs samples."`
+}
+
+// ChainPiece is the lines one part gives to one key of a chain samples
+// answer: an element of ChainSamplesResponse.Samples.
+type ChainPiece struct {
+	Part            string   `json:"part" doc:"The name of the part the lines come from, as in parts."`
+	FirstLocalLine  int64    `json:"first_local_line" doc:"The part's own number of the piece's first line, as rx samples numbers the part."`
+	FirstGlobalLine int64    `json:"first_global_line" doc:"The global number of the piece's first line: the part's global_start plus first_local_line minus 1; -1 before the chain is ready."`
+	Lines           []string `json:"lines" nullable:"false" doc:"The piece's lines, in order, without their line breaks."`
+	LineTimestamps  []*int64 `json:"line_timestamps" nullable:"true" doc:"The effective timestamp of each line of lines, in order, as GET /v1/samples gives line_timestamps: a UTC instant in ms, or null for a line without one. In a ready chain the look back for a line without a timestamp of its own continues into the parts before this one, so a piece answers as the chain's parts read as one file do. Null when the part has no timestamp format."`
+	PartStart       bool     `json:"part_start" doc:"Whether the piece begins at the part's first line. Before the chain is ready, a window that reaches before it stops there."`
+	PartEnd         bool     `json:"part_end" doc:"Whether the piece ends at the part's last line: its line count when known, or else the end of the part's text, which the read reached before the window's end. Before the chain is ready, a window that reaches past it stops there."`
+	CLICommand      string   `json:"cli_command" doc:"The rx samples command that gives exactly the piece's lines from the part: rx samples PART --lines=A-B."`
 }
 
 // ChainReason is one reason a chain is invalid: an element of

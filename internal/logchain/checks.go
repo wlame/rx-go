@@ -163,6 +163,7 @@ func partEntry(p Part, f partFacts) rxtypes.ChainPart {
 		LineCount:  f.lines,
 		FirstMs:    f.firstMs, LastMs: f.lastMs, MaxMs: f.maxMs, MaxIsBound: f.maxIsBound,
 		TimeFormat: f.format,
+		DayFirst:   f.dayFirst, Example: f.example,
 		Duplicates: p.Duplicates,
 	}
 	if !p.IsActive {
