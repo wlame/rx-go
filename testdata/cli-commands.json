@@ -10,7 +10,7 @@
     "value that needs shell quoting is quoted after the `=`.",
     "",
     "The `complexity` endpoint is absent because rx-go has no `rx check`",
-    "subcommand to render (ticket 28)."
+    "subcommand to render."
   ],
   "cases": [
     {

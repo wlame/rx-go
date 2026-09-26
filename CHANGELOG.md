@@ -341,8 +341,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decompressor, so the line numbers, offsets and statistics describe the
   text inside it, and the index records the compression format and the
   decompressed size. Both backends now report the same line count for
-  the same file. A seekable `.zst` still gets byte-step checkpoints
-  rather than rx-python's frame table (ticket 23).
+  the same file.
 - `--max-results` waited for a whole chunk to finish before it counted,
   so a cap could not stop a scan any earlier than the first chunk's
   completion: `--max-results=1` took 7.8 seconds on an 8.2 GB log and
