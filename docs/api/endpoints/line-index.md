@@ -239,6 +239,12 @@ The OpenAPI document names it `IndexTaskResult`.
 }
 ```
 
+Its `cli_command` is the `rx index` command for the request: `force`
+and `analyze` become `--force` and `--analyze`, a given `threshold` is
+always written, `0` included (`--threshold=0`; without the flag, `rx
+index` uses `RX_LARGE_FILE_MB`), and a non-zero `analyze_window_lines`
+becomes `--analyze-window-lines=N`.
+
 See [tasks](tasks.md) for the task polling contract.
 
 ## Performance notes
