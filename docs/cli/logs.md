@@ -355,7 +355,9 @@ reads `FILE:LINE: TEXT`. With several patterns each row names its
 pattern in square brackets before the text. Context (`--samples`,
 `--context=`) is shown per file, as `rx trace` shows it, and never
 crosses a part's edge. Another encoding of a part (`syslog.3` beside
-`syslog.3.gz`) is listed under `Files skipped:` as `duplicate_part`. An
+`syslog.3.gz`) is listed under `Files skipped:` as `duplicate_part`,
+also when it is named on its own beside its chain, and is never
+searched, so each of its lines is printed once, in the chain. An
 invalid chain is still searched and is named on stderr. What the paths
 reach more than once (a path given twice, a directory and a chain or a
 part in it, a link to a directory) is searched once, each match printed

@@ -55,8 +55,12 @@ entry in `chains` (a chain is the same when its directory, by device and
 inode, and its name are), each file is searched once under one file id
 (a file is the same when its path with every link resolved is), and so
 each match comes once. A part's own path named beside its chain's handle
-or directory is a part of that chain, whichever comes first. `path` in
-the answer lists the paths as the request gave them.
+or directory is a part of that chain, whichever comes first. Another
+encoding of a part named beside its chain (`syslog.3.gz` beside the
+handle `syslog`, whose chain reads `syslog.3`) is skipped with
+`duplicate_part` and never searched, whichever comes first, so each of
+its lines comes once, from the part the chain reads. `path` in the
+answer lists the paths as the request gave them.
 
 ## The order of the search
 
