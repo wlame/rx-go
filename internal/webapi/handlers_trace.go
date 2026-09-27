@@ -14,7 +14,6 @@ import (
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
-	"github.com/wlame/rx-go/internal/requeststore"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -97,10 +96,9 @@ type traceOutput struct {
 //  4. Validate hook_on_match ⇒ max_results constraint (400 if violated).
 //  5. Verify every path exists (404 otherwise).
 //  6. Generate / accept a request ID.
-//  7. Record RequestInfo in the request store.
-//  8. Call trace.Engine.RunWithOptions with this request's view of the
+//  7. Call trace.Engine.RunWithOptions with this request's view of the
 //     shared hook dispatcher.
-//  9. Build response, fire on_complete hook, record metrics, return.
+//  8. Build response, fire on_complete hook, record metrics, return.
 func registerTraceHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "trace",
@@ -189,20 +187,12 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			}
 		}
 
-		// Store request metadata (start time, paths, patterns).
+		// 0 is huma's "not set" sentinel; the engine wants nil for that.
 		var maxResultsPtr *int
 		if in.MaxResults > 0 {
 			m := in.MaxResults
 			maxResultsPtr = &m
 		}
-		info := &requeststore.RequestInfo{
-			RequestID:  reqID,
-			Paths:      append([]string(nil), validatedPaths...),
-			Patterns:   append([]string(nil), in.Regexp...),
-			MaxResults: maxResultsPtr,
-			StartedAt:  time.Now(),
-		}
-		s.cfg.RequestStore.Add(info)
 
 		// This request's view of the shared hook dispatcher: its own URLs
 		// and its own request_id. The engine keeps its no-hook fast path
@@ -234,17 +224,6 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		resp.RequestID = reqID
 
 		observeTraceDuration(validatedPaths, start)
-
-		// Update request-store bookkeeping.
-		dur := time.Since(start)
-		s.cfg.RequestStore.Update(reqID, func(r *requeststore.RequestInfo) {
-			completed := time.Now()
-			r.CompletedAt = &completed
-			r.TotalMatches = int64(len(resp.Matches))
-			r.TotalFilesScanned = int64(len(resp.Files))
-			r.TotalFilesSkipped = int64(len(resp.SkippedFiles))
-			r.TotalTimeMS = dur.Milliseconds()
-		})
 
 		// Fire on_complete hook if configured. resp.RequestID is set
 		// above, so the payload and the response carry the same ID.
