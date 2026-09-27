@@ -52,8 +52,8 @@ the `2K+1`-line window around N.
 | `-b`, `--offsets` | `string` | — | Comma-separated byte offsets / ranges |
 | `-l`, `--lines` | `string` | — | Comma-separated 1-based line numbers / ranges |
 | `-c`, `--context` | `int` | `3` | Lines before AND after each target |
-| `-B`, `--before` | `int` | `0` | Lines before (overrides `--context`) |
-| `-A`, `--after` | `int` | `0` | Lines after (overrides `--context`) |
+| `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context` |
+| `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context` |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |

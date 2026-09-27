@@ -418,6 +418,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   know, so the pasted command exited 2. A test now parses every
   rendered command with the real command tree.
 
+- `rx samples --before=0` and `--after=0` ask for no context lines on
+  that side, as `before_context=0` does over HTTP. The CLI read a zero
+  as "not given", so `--context=2 --before=0` answered
+  `before_context: 2`, and the documented
+  `--lines=5000-5100 --before=0 --after=0` printed three lines of
+  context on each side.
+
 - The OpenAPI document allows `null` for the `result` of
   `GET /v1/tasks/{task_id}`, which is what every poll before the task
   completes answers; it declared a non-null object. rx-python declares
