@@ -213,6 +213,11 @@ Data flow for `rx trace "pattern" big.log`:
    filesystem whose ctime does not move. Catching that needs a
    whole-file hash, which costs more than rebuilding the index.
 
+   The trace cache is held to the same rule through the same check,
+   `index.SourceIdentity`. Its identity is taken before the scan's
+   chunks are planned, never after the scan, so a log that grows during
+   a trace is never cached as larger than the part that was read.
+
    Bump `index.Version` whenever the on-disk shape or the meaning of a
    field changes. rx-python shares the cache directory and treats an index
    of another version as absent, so the bump also gets a
