@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -89,6 +91,13 @@ func (e *SearchPathError) Unwrap() error { return e.Err }
 // read as one text: its files are searched as files of their own, and
 // its entry in the answer has no parts.
 //
+// Whatever reaches them twice — a path given twice, however spelled, a
+// directory and a handle or a file in it, a link to a directory — each
+// path is resolved once, each chain is described once and has one
+// entry, and each file is searched once, under one file id, so each
+// match comes once. A part named on its own as well as through its
+// chain is a part of the chain, whichever comes first.
+//
 // The patterns are checked before any path is walked. The errors are
 // *SearchPathError, ErrPartChanged (a part was renamed or replaced
 // between the listing and its description), trace.ErrInvalidPattern,
@@ -124,16 +133,38 @@ type searchResolver struct {
 	// handles in one directory list it once, and each name a handle
 	// names there is grouped once.
 	dirs map[string]*listedDir
+	// resolved holds each path already resolved, cleaned and made
+	// absolute (absPath), so a path given twice is walked, described
+	// and searched once.
+	resolved map[string]bool
+	// chainKeys holds the key (chainKey) of each chain added, so a chain
+	// reached twice — through a directory and its handle, or through a
+	// link to its directory — is described once and has one entry.
+	chainKeys map[string]bool
+	// planned holds what addFile made of each file met so far, by the
+	// path it leads to with every link resolved (fileKey), so a file
+	// reached twice is searched once, under one file id.
+	planned map[string]plannedFile
 }
 
 // newSearchResolver is the resolver of one search, with its maps made.
 func newSearchResolver(req SearchRequest) *searchResolver {
 	return &searchResolver{
-		req:    req,
-		partOf: map[string]partPlace{},
-		files:  map[string]classified{},
-		dirs:   map[string]*listedDir{},
+		req:       req,
+		partOf:    map[string]partPlace{},
+		files:     map[string]classified{},
+		dirs:      map[string]*listedDir{},
+		resolved:  map[string]bool{},
+		chainKeys: map[string]bool{},
+		planned:   map[string]plannedFile{},
 	}
+}
+
+// plannedFile is what addFile made of a file: the file id it is
+// searched under, or ok false when it was skipped.
+type plannedFile struct {
+	id string
+	ok bool
 }
 
 // classified is what a file is, as trace.ClassifyForSearch tells it, or
@@ -174,7 +205,11 @@ type listedDir struct {
 	// chains holds what each name a handle named gives, so each name is
 	// grouped once per search, a name that names no chain too.
 	chains map[string]namedChain
-	err    error
+	// info is the directory's stat as its pin found it, every link on
+	// the way resolved; each chain found here carries it
+	// (Candidate.DirInfo) for its key (chainKey).
+	info os.FileInfo
+	err  error
 }
 
 // namedChain is the chain a name gives in its directory; found is false
@@ -188,11 +223,18 @@ type namedChain struct {
 // and returns the plan. The engine calls it once, after the patterns
 // are checked.
 func (r *searchResolver) resolve(ctx context.Context) (*trace.SearchPlan, error) {
+	// The answer's path lists the paths as the request gave them, a
+	// repeated one too; the plan holds what they lead to once.
 	r.plan.Paths = r.req.Paths
 	for _, p := range r.req.Paths {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		key := absPath(p)
+		if r.resolved[key] {
+			continue
+		}
+		r.resolved[key] = true
 		if err := r.addPath(ctx, p); err != nil {
 			return nil, err
 		}
@@ -272,6 +314,7 @@ func (r *searchResolver) chainNamed(dir string, listed *listedDir, name string) 
 	var named namedChain
 	for _, candidate := range groupNamed(dir, listed.chainEntries(name), r.classify, name) {
 		if candidate.Name == name {
+			candidate.DirInfo = listed.info
 			named = namedChain{candidate: candidate, found: true}
 		}
 	}
@@ -329,6 +372,7 @@ func (r *searchResolver) listDir(dir string) *listedDir {
 		listed.err = err
 		return listed
 	}
+	listed.info = pinned.Info()
 	listed.entries = EntriesOf(entries)
 	listed.names = pathsByName(listed.entries)
 	listed.place = make(map[string]int, len(listed.entries))
@@ -381,7 +425,13 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 	owner := map[string]*walkChain{}
 	for dir, entries := range byDir {
 		names := pathsByName(entries)
-		for _, c := range Group(dir, entries, r.classify) {
+		chains := Group(dir, entries, r.classify)
+		if len(chains) == 0 {
+			continue
+		}
+		dirInfo := directoryInfo(dir)
+		for _, c := range chains {
+			c.DirInfo = dirInfo
 			wc := &walkChain{candidate: c, names: names}
 			for _, part := range c.Parts {
 				owner[part.Path] = wc
@@ -432,15 +482,62 @@ func pathsByName(entries []Entry) map[string]string {
 	return names
 }
 
+// directoryInfo is the stat of the directory dir as a pin finds it,
+// every link on the way resolved, for the key of the chains a walk
+// found in it (chainKey); nil when it cannot be pinned, and those
+// chains are keyed by their handles.
+//
+// SECURITY: dir is a directory the walk listed, so the pin checks
+// again what the walk checked (the search roots, hidden entries); it
+// states the directory and reads nothing in it. It runs once per
+// directory that holds a chain.
+func directoryInfo(dir string) os.FileInfo {
+	pinned, err := paths.Pin(dir)
+	if err != nil || !pinned.Info().IsDir() {
+		return nil
+	}
+	return pinned.Info()
+}
+
+// chainKey names a chain by the device and inode of its directory and
+// by its name, as the index tasks of chains are keyed, so every path
+// that leads to one directory — the same path spelled twice, a handle
+// and a walk, a link to the directory — gives one key. Without the
+// directory's stat (Candidate.DirInfo) or an inode the key is the
+// handle, made absolute.
+func chainKey(c Candidate) string {
+	if c.DirInfo != nil {
+		if inode, device, ok := index.InodeAndDevice(c.DirInfo); ok {
+			return strconv.FormatUint(device, 10) + ":" + strconv.FormatUint(inode, 10) + "/" + c.Name
+		}
+	}
+	return "path:" + absPath(c.Handle())
+}
+
+// absPath is p cleaned and made absolute, or only cleaned when the
+// working directory cannot be read.
+func absPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return filepath.Clean(p)
+}
+
 // addChain describes a chain, names it in the answer, and adds its
 // parts to the search in the chain's order. A part the listing could
 // not read is not searched; it is skipped with its read error. Another
 // encoding of a part is skipped with ReasonDuplicatePart. A chain of
 // more than MaxParts parts gets its entry and adds no part: its caller
-// searches its files on their own.
+// searches its files on their own. A chain added already (chainKey)
+// adds nothing: it keeps its one entry, and its parts their places.
 //
 // The error is Describe's: ErrPartChanged, or the context's.
 func (r *searchResolver) addChain(ctx context.Context, c Candidate, names map[string]string) error {
+	key := chainKey(c)
+	if r.chainKeys[key] {
+		return nil
+	}
+	r.chainKeys[key] = true
 	d, err := Describe(ctx, c, Options{Scan: r.req.Scan})
 	if err != nil {
 		return err
@@ -451,7 +548,14 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, names map[st
 	for order, part := range d.Parts() {
 		if part.ReadError != nil {
 			r.skip(part.Path, trace.SkipReason(part.ReadError))
-		} else if id, ok := r.addFile(part.File); ok {
+			continue
+		}
+		id, ok := r.addFile(part.File)
+		// INVARIANT: a file is a part of one chain at most, the first to
+		// claim it, so each of its matches is placed once. A file
+		// planned on its own before (a part's own path named first) is
+		// claimed by its chain, under the file id it already has.
+		if _, claimed := r.partOf[id]; ok && !claimed {
 			ch.files = append(ch.files, id)
 			r.partOf[id] = partPlace{chain: index, order: order}
 		}
@@ -483,8 +587,33 @@ func (r *searchResolver) addNamedFile(p string, pinned paths.Pinned) error {
 
 // addFile adds a file to the search, in the order called, and returns
 // its file id; ok is false for a file that is skipped instead: one that
-// cannot be read or is not text, named with the reason a trace gives.
+// cannot be read or is not text, named with the reason a trace gives. A
+// file met before, under any spelling (fileKey), is not added again: the
+// answer is the one it got then.
 func (r *searchResolver) addFile(src paths.Pinned) (id string, ok bool) {
+	key := fileKey(src)
+	if planned, seen := r.planned[key]; seen {
+		return planned.id, planned.ok
+	}
+	id, ok = r.planFile(src)
+	r.planned[key] = plannedFile{id: id, ok: ok}
+	return id, ok
+}
+
+// fileKey names the file a pin leads to by its path with every link
+// resolved (paths.Pinned.Canonical): the same for every spelling of one
+// path and through a link to its directory, and different for two hard
+// links, which are two names a person can mean apart.
+func fileKey(src paths.Pinned) string {
+	if canonical := src.Canonical(); canonical != "" {
+		return canonical
+	}
+	return absPath(src.Path())
+}
+
+// planFile classifies a file and adds it to the plan, or skips it with
+// its reason; see addFile.
+func (r *searchResolver) planFile(src paths.Pinned) (id string, ok bool) {
 	c := r.classified(src)
 	switch {
 	case c.err != nil:

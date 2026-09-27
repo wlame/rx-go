@@ -179,7 +179,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /v1/logs/chains` groups them), a chain's handle (even without an
   active file), or a file (a part's own path is a file); a handle or a
   file opens only the files that can belong to the chain of its name,
-  never the rest of its directory. The parts of
+  never the rest of its directory. What a request reaches more than
+  once (a path given twice, a directory and a handle or a part in it, a
+  link to a directory) is searched once: one entry per chain, one file
+  id per file, each match once and in its chain. The parts of
   each chain are searched in the chain's order (by time once it is
   ready, by name before) by the trace engine, where the walk met the
   chain's first file, so the file ids, the order of the matches and the
