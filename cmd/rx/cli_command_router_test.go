@@ -264,26 +264,23 @@ func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 		output := filepath.Join(f.root, "archive.zst")
 		result := f.runTask(t, "/v1/compress", map[string]any{
 			"input_path": f.logPath, "output_path": output, "frame_size": "4M",
-			"compression_level": 3,
+			"compression_level": 3, "build_index": false, "force": true,
 		})
 		rendered, _ := result["cli_command"].(string)
-		want := "rx compress " + f.logPath + " --output=" + output
+		want := "rx compress " + f.logPath + " --output=" + output + " --build-index=false --force"
 		if rendered != want {
 			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
 		}
-		// The command reproduces the request on a disk without its
-		// output, as the task found it.
-		if err := os.Remove(output); err != nil {
-			t.Fatalf("remove output: %v", err)
-		}
+		// The task has written the output, so only --force lets the
+		// command run again; without an index, it builds none.
 		cli := f.runRenderedJSON(t, requireRunnableCommand(t, rendered))
 		files, _ := cli["files"].([]any)
 		if len(files) != 1 {
 			t.Fatalf("rx compress answered %v", cli)
 		}
 		file := files[0].(map[string]any)
-		if file["success"] != true {
-			t.Errorf("rx compress did not succeed: %v", file)
+		if file["success"] != true || file["index"] != nil {
+			t.Errorf("rx compress: success=%v index=%v, want true and none", file["success"], file["index"])
 		}
 	})
 }

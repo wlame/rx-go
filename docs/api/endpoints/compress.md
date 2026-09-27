@@ -187,7 +187,7 @@ When the task completes, its `result` field contains a
 | `index_built` | bool | Whether the line index was built and saved |
 | `index_error` | string \| null | Why building the index failed; `null` when it was built or not asked for. The compressed file is usable either way, and `POST /v1/index` can build the index later |
 | `time_seconds` | number | Wall-clock encode time |
-| `cli_command` | string | Equivalent CLI invocation; a value equal to the `rx compress` default is left out (see [conventions](../conventions.md#the-equivalent-cli-command)) |
+| `cli_command` | string | Equivalent CLI invocation. `--output` appears when the request named an output, `--build-index=false` when it turned the index off, `--force` when it asked to overwrite; a value equal to the `rx compress` default is left out (see [conventions](../conventions.md#the-equivalent-cli-command)) |
 
 ## Error examples
 
