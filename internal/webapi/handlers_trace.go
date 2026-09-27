@@ -255,11 +255,19 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		// Attach CLI command equivalent. CLICommand is *string because a
 		// schema-documented field must emit null rather than vanish, so
 		// &cli converts the builder's string into a pointer.
+		// The request ID and the hook URLs are the ones the request
+		// gave, not the generated ID or the RX_HOOK_* fallbacks: the
+		// command run elsewhere reads its own environment, as this
+		// server did.
 		cli := BuildCLICommand("trace", map[string]any{
-			"path":           validatedPaths,
-			"regexp":         in.Regexp,
-			"matching_flags": selectedFlagNames(matchingFlags),
-			"max_results":    maxResultsPtr,
+			"path":             validatedPaths,
+			"regexp":           in.Regexp,
+			"matching_flags":   selectedFlagNames(matchingFlags),
+			"max_results":      maxResultsPtr,
+			"request_id":       in.RequestID,
+			"hook_on_file":     in.HookOnFile,
+			"hook_on_match":    in.HookOnMatch,
+			"hook_on_complete": in.HookOnComplete,
 		})
 		resp.CLICommand = &cli
 
