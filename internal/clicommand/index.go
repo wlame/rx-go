@@ -302,7 +302,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			return err
 		}
 	} else {
-		writeIndexBuildHuman(out, result, p.analyze)
+		writeIndexBuildHuman(out, result, p.analyze, indexUnitFiles)
 	}
 	return multiPathFailure(result.failureCodes(), "one or more files failed to index")
 }
@@ -624,47 +624,52 @@ func nilableInt64(p *int64) any {
 	return *p
 }
 
-// writeIndexBuildHuman — plain-text summary for --json=false mode.
-// Matches Python's _output_human_readable shape (one line per indexed
-// file, summary counters).
+// The words the summary of an index build counts its inputs in: rx
+// index counts files, rx logs index the parts of a chain.
+const (
+	indexUnitFiles = "files"
+	indexUnitParts = "parts"
+)
+
 // writeIndexBuildHuman renders the same block rx-python prints
 // (`cli/index.py`): one line per file, plus the analysis statistics and
 // the anomaly summary when --analyze was used. The two must stay
-// identical, except for the skipped files: rx-python prints only their
-// count, this lists each one with its reason.
-func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
+// identical for rx index (unit indexUnitFiles), except for the skipped
+// files: rx-python prints only their count, this lists each one with its
+// reason. unit is the word the counts are given in.
+func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool, unit string) {
 	// Nothing indexed: say so, then still report why files were passed
 	// over.
 	if len(r.Indexed) == 0 {
-		_, _ = fmt.Fprintln(out, "No files indexed.")
-		writeSkippedHuman(out, r.SkipReasons)
+		_, _ = fmt.Fprintf(out, "No %s indexed.\n", unit)
+		writeSkippedHuman(out, r.SkipReasons, unit)
 		for _, e := range r.Errors {
 			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", output.Printable(e.Path), output.Printable(e.Error))
 		}
 		return
 	}
 	if analyze {
-		_, _ = fmt.Fprintf(out, "Indexed and analyzed %d files in %.1fs\n", len(r.Indexed), r.TotalTime)
+		_, _ = fmt.Fprintf(out, "Indexed and analyzed %d %s in %.1fs\n", len(r.Indexed), unit, r.TotalTime)
 	} else {
-		_, _ = fmt.Fprintf(out, "Indexed %d files in %.1fs\n", len(r.Indexed), r.TotalTime)
+		_, _ = fmt.Fprintf(out, "Indexed %d %s in %.1fs\n", len(r.Indexed), unit, r.TotalTime)
 	}
 	for _, idx := range r.builtIndexes {
 		writeIndexEntryHuman(out, idx)
 	}
-	writeSkippedHuman(out, r.SkipReasons)
+	writeSkippedHuman(out, r.SkipReasons, unit)
 	for _, e := range r.Errors {
 		_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", output.Printable(e.Path), output.Printable(e.Error))
 	}
 }
 
-// writeSkippedHuman prints the count of skipped files and, under it, one
-// line per file with the reason it was skipped. Nothing when no file was
-// skipped.
-func writeSkippedHuman(out io.Writer, skipped []rxtypes.SkippedFile) {
+// writeSkippedHuman prints the count of skipped files, in unit, and,
+// under it, one line per file with the reason it was skipped. Nothing
+// when no file was skipped.
+func writeSkippedHuman(out io.Writer, skipped []rxtypes.SkippedFile, unit string) {
 	if len(skipped) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(out, "Skipped %d files:\n", len(skipped))
+	_, _ = fmt.Fprintf(out, "Skipped %d %s:\n", len(skipped), unit)
 	for _, item := range skipped {
 		_, _ = fmt.Fprintf(out, "  %s: %s\n", output.Printable(item.Path), output.Printable(item.Reason))
 	}

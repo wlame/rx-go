@@ -67,3 +67,38 @@ func TestWriteChainDescription_TooManyParts(t *testing.T) {
 		t.Fatalf("first line %q", first)
 	}
 }
+
+// rx logs index counts what it built in parts, the word the chain
+// commands use, where rx index counts files: the summary, the line for
+// nothing built and the skipped list.
+func TestWriteLogsIndex_CountsParts(t *testing.T) {
+	cases := []struct {
+		label  string
+		result indexBuildResult
+		want   string
+	}{
+		{
+			label:  "built",
+			result: indexBuildResult{Indexed: []map[string]any{{}, {}}, TotalTime: 0.04},
+			want:   "Indexed 2 parts in 0.0s\n",
+		},
+		{
+			label: "nothing built",
+			result: indexBuildResult{SkipReasons: []rxtypes.SkippedFile{
+				{Path: "/var/log/app.log.1", Reason: "not text"},
+			}},
+			want: "No parts indexed.\nSkipped 1 parts:\n  /var/log/app.log.1: not text\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			var out strings.Builder
+			if err := writeLogsIndex(&out, []logsIndexAnswer{{indexBuildResult: tc.result}}, true, false); err != nil {
+				t.Fatal(err)
+			}
+			if out.String() != tc.want {
+				t.Errorf("output\n%q\nwant\n%q", out.String(), tc.want)
+			}
+		})
+	}
+}

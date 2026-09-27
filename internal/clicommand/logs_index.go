@@ -131,7 +131,8 @@ func indexChain(handle string, force bool) (*logsIndexAnswer, *ExitError) {
 
 // writeLogsIndex prints the answers: as JSON, one object when one chain
 // was given and an array otherwise; or per chain the lines `rx index`
-// prints for its parts, then the chain as `rx logs show` prints it.
+// prints for its parts, counted as parts, then the chain as
+// `rx logs show` prints it.
 func writeLogsIndex(out io.Writer, answers []logsIndexAnswer, oneChain, jsonOutput bool) error {
 	if jsonOutput {
 		enc := json.NewEncoder(out)
@@ -149,7 +150,7 @@ func writeLogsIndex(out io.Writer, answers []logsIndexAnswer, oneChain, jsonOutp
 		if i > 0 {
 			_, _ = fmt.Fprintln(out)
 		}
-		writeIndexBuildHuman(out, answer.indexBuildResult, false)
+		writeIndexBuildHuman(out, answer.indexBuildResult, false, indexUnitParts)
 		if answer.Chain != nil {
 			writeChainDescription(out, shownChain{resp: answer.Chain, namedParts: answer.namedParts}, loc)
 		}

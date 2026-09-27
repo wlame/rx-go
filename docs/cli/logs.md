@@ -267,15 +267,16 @@ Exactly one of `--lines` and `--timestamps` is given.
 Builds and stores the line index of every part of each chain, the
 active file too, in the foreground, one part after the other in the
 chain's order. A part's index is what [`rx index`](line-index.md) stores
-for the file, and each part is reported as `rx index` reports a file;
-then the chain is printed as `rx logs show` prints it, every part `idx`.
+for the file, and each part is reported as `rx index` reports a file,
+counted as parts (`Indexed 4 parts`, `No parts indexed.`); then the
+chain is printed as `rx logs show` prints it, every part `idx`.
 
 ```bash
 rx logs index /var/log/kern.log
 ```
 
 ```text
-Indexed 4 files in 0.0s
+Indexed 4 parts in 0.0s
   /var/log/kern.log-20260929-1790640000.gz: 12 lines, 268.00 B
   /var/log/kern.log-20261003-1790985601.gz: 178 lines, 1.42 KB
   /var/log/kern.log-20261004-1791072001.gz: 12 lines, 168.00 B
