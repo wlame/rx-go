@@ -574,8 +574,16 @@ func TestIndex_PostAnalyzeIgnoresThreshold(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status: got %d, want 200", resp.StatusCode)
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
 	}
+	// The task writes its index into RX_CACHE_DIR in the background;
+	// waiting for it keeps that write from racing the removal of the
+	// temporary cache directory when the test ends.
+	var created rxtypes.TaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	waitForTaskCompletion(t, ts.URL, created.TaskID)
 }
 
 // TestErrorEnvelope_Format checks that handler-returned errors come out
