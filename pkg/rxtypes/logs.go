@@ -203,3 +203,84 @@ type ChainTimeRange struct {
 	DisplayZone string  `json:"display_zone" doc:"The zone the times are shown in: the file zone when one is given, else the zone the first part with timestamps is read in (RX_LOG_TZ for timestamps without a zone, UTC for timestamps with one)."`
 	CLICommand  string  `json:"cli_command" doc:"The rx command that gives this answer."`
 }
+
+// ChainTraceResponse is the body of GET /v1/logs/trace and of
+// `rx logs trace --json`: a trace of log chains, directories and files,
+// in which the parts of each chain are searched in the chain's order.
+//
+// It holds every field of TraceResponse, listed here rather than
+// embedded, so the schema of GET /v1/trace stays its own: its matches
+// are ChainMatch, and chains names the chains found. Files keep their
+// real paths, and a match's line numbers are its part's own; chain and
+// chain_line place it in its chain.
+type ChainTraceResponse struct {
+	RequestID     string                   `json:"request_id"`
+	Path          []string                 `json:"path" nullable:"false"`
+	Time          float64                  `json:"time"`
+	Patterns      map[string]string        `json:"patterns"`
+	Files         map[string]string        `json:"files"`
+	Matches       []ChainMatch             `json:"matches" nullable:"false"`
+	ScannedFiles  []string                 `json:"scanned_files" nullable:"false"`
+	SkippedFiles  []string                 `json:"skipped_files" nullable:"false"`
+	SkipReasons   []SkippedFile            `json:"skip_reasons" nullable:"false" doc:"Why each path of skipped_files was passed over or not searched in full, one entry per path in the same order. Besides a trace's reasons: duplicate_part for another encoding of a part that is searched, and a part's read error for a part of a chain that cannot be read."`
+	MaxResults    *int                     `json:"max_results"`
+	FileChunks    map[string]int           `json:"file_chunks"`
+	ContextLines  map[string][]ContextLine `json:"context_lines"`
+	BeforeContext *int                     `json:"before_context"`
+	AfterContext  *int                     `json:"after_context"`
+	CLICommand    *string                  `json:"cli_command"`
+	Chains        map[string]ChainRef      `json:"chains" doc:"The log chains found, by id (c1, c2, … in the order they were found): a path that is a chain's handle, or the chains among the files of a directory searched. Empty when there is none."`
+}
+
+// ChainMatch is one match of a chain search: an element of
+// ChainTraceResponse.Matches. It holds every field of Match, with the
+// same meaning (offsets and line numbers are those of the file the
+// match is in, a part's own), and places a part's match in its chain.
+type ChainMatch struct {
+	Pattern             string     `json:"pattern"`
+	File                string     `json:"file"`
+	Offset              int64      `json:"offset"`
+	RelativeLineNumber  *int       `json:"relative_line_number"`
+	AbsoluteLineNumber  int        `json:"absolute_line_number"`
+	LineText            *string    `json:"line_text"`
+	Submatches          []Submatch `json:"submatches"`
+	LineTextTruncated   bool       `json:"line_text_truncated" doc:"True when line_text holds only the first RX_MAX_LINE_TEXT_BYTES bytes of a longer line."`
+	SubmatchesTruncated bool       `json:"submatches_truncated" doc:"True when submatches may leave some of the line's submatches out: the line had more than RX_MAX_SUBMATCHES_PER_LINE, or line_text is cut and the list covers only the text it holds."`
+	Chain               *string    `json:"chain" doc:"The id of the chain (a key of chains) whose part the match is in; null for a file searched on its own."`
+	ChainLine           int64      `json:"chain_line" doc:"The match's global line in its chain: the part's global_start plus absolute_line_number minus 1, the line rx logs samples gives for that number. -1 when it is not known: for a file searched on its own, before the chain is ready (pending), in an invalid chain, and where absolute_line_number is -1."`
+}
+
+// ChainMatchOf is m placed in its chain: chain is the chain's id, or nil
+// for a file searched on its own, and chainLine its global line, -1 when
+// not known.
+func ChainMatchOf(m Match, chain *string, chainLine int64) ChainMatch {
+	return ChainMatch{
+		Pattern: m.Pattern, File: m.File, Offset: m.Offset,
+		RelativeLineNumber: m.RelativeLineNumber, AbsoluteLineNumber: m.AbsoluteLineNumber,
+		LineText: m.LineText, Submatches: m.Submatches,
+		LineTextTruncated: m.LineTextTruncated, SubmatchesTruncated: m.SubmatchesTruncated,
+		Chain: chain, ChainLine: chainLine,
+	}
+}
+
+// Match is the match without its place in a chain, as a trace answers
+// it.
+func (m ChainMatch) Match() Match {
+	return Match{
+		Pattern: m.Pattern, File: m.File, Offset: m.Offset,
+		RelativeLineNumber: m.RelativeLineNumber, AbsoluteLineNumber: m.AbsoluteLineNumber,
+		LineText: m.LineText, Submatches: m.Submatches,
+		LineTextTruncated: m.LineTextTruncated, SubmatchesTruncated: m.SubmatchesTruncated,
+	}
+}
+
+// ChainRef is one log chain a chain search found: an element of
+// ChainTraceResponse.Chains.
+type ChainRef struct {
+	Path        string        `json:"path" doc:"The chain's handle: its directory joined with its name. GET /v1/logs/chain takes it."`
+	Name        string        `json:"name" doc:"The chain's name: the name of its active file."`
+	Parts       []string      `json:"parts" nullable:"false" doc:"The file ids (keys of files) of the chain's parts searched, in the chain's order: by time once the chain is ready (or invalid), in the provisional order of their names before. A part that cannot be read is not searched and has no id. Empty for a chain of more than 10,000 parts, whose files are searched as files of their own."`
+	Fingerprint string        `json:"fingerprint" doc:"The chain's fingerprint, as GET /v1/logs/chain gives it."`
+	State       string        `json:"state" enum:"pending,ready,invalid" doc:"The chain's state, as GET /v1/logs/chain gives it. Only a ready chain gives its matches a chain_line."`
+	Reasons     []ChainReason `json:"reasons" nullable:"false" doc:"Why the chain is invalid, as GET /v1/logs/chain gives them (too_many_parts for a chain of more than 10,000 parts); empty unless state is invalid."`
+}
