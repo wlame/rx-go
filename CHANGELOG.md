@@ -412,6 +412,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `cli_command` of `GET /v1/samples` names the context flags `rx
+  samples` has, `--before=N` and `--after=N`. It rendered
+  `--before-context=N` and `--after-context=N`, which the CLI does not
+  know, so the pasted command exited 2. A test now parses every
+  rendered command with the real command tree.
+
 - The OpenAPI document allows `null` for the `result` of
   `GET /v1/tasks/{task_id}`, which is what every poll before the task
   completes answers; it declared a non-null object. rx-python declares
