@@ -125,6 +125,8 @@ func ProcessSeekable(
 		}
 		batches = append(batches, idxs)
 	}
+	// Each batch is one ripgrep run; gated helper, no-op in CLI mode.
+	prometheus.RecordParallelTasks(len(batches))
 
 	batchMatches := make([][]MatchRaw, len(batches))
 	batchContexts := make([][]ContextRaw, len(batches))

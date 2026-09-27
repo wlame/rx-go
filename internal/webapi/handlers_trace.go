@@ -224,6 +224,7 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		resp.RequestID = reqID
 
 		observeTraceDuration(validatedPaths, start)
+		observeTraceResult(resp)
 
 		// Fire on_complete hook if configured. resp.RequestID is set
 		// above, so the payload and the response carry the same ID.

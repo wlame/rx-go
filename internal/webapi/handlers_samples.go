@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -72,6 +73,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			http.StatusNotFound, http.StatusUnprocessableEntity,
 			http.StatusInternalServerError, http.StatusServiceUnavailable),
 	}, func(_ context.Context, in *samplesInput) (out *samplesOutput, err error) {
+		start := time.Now()
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.
 		defer func() { recordEndpoint(prometheus.RecordSamplesRequest, err) }()
@@ -215,6 +217,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		})
 		resp.CLICommand = &cli
 
+		observeSamplesResult(start, len(parsedOffsets)+len(parsedLines), before, after)
 		return &samplesOutput{Body: *resp}, nil
 	})
 }

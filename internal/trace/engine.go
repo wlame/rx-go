@@ -174,7 +174,9 @@ func (e *Engine) RunWithOptions(
 		// info is the stat taken when the file was classified, nil when
 		// the stat failed. A plain file's chunks are planned from it and
 		// its trace cache is stamped with it, so the cache describes the
-		// bytes the scan covered and nothing the file gained later.
+		// bytes the scan covered and nothing the file gained later. For
+		// every kind, a nil info keeps the file out of the per-file
+		// metrics, which have no size to report for it.
 		info        os.FileInfo
 		cachedMatch []rxtypes.TraceCacheMatch
 		cacheInfo   *CompressedCacheInfo // only for cached-seekable
@@ -196,7 +198,7 @@ func (e *Engine) RunWithOptions(
 			if !opts.NoCache {
 				if info, cerr := GetCompressedCacheInfo(fp, patterns, opts.RgExtraArgs); cerr == nil {
 					buckets = append(buckets, fileBucket{
-						kind: "cached-seekable", path: fp, size: sz, cacheInfo: info,
+						kind: "cached-seekable", path: fp, size: sz, info: fi, cacheInfo: info,
 					})
 					fileChunkCounts[filePathToID[fp]] = info.ChunkCount
 					continue
@@ -213,7 +215,7 @@ func (e *Engine) RunWithOptions(
 			continue
 		}
 		if compression.IsCompressed(fp) {
-			buckets = append(buckets, fileBucket{kind: "compressed", path: fp, size: sz})
+			buckets = append(buckets, fileBucket{kind: "compressed", path: fp, size: sz, info: fi})
 			fileChunkCounts[filePathToID[fp]] = 1
 			continue
 		}
@@ -221,7 +223,7 @@ func (e *Engine) RunWithOptions(
 		if !opts.NoCache && sz >= largeFileThresholdBytes() {
 			if cached, cerr := GetCachedScan(fp, patterns, opts.RgExtraArgs); cerr == nil {
 				buckets = append(buckets, fileBucket{
-					kind: "cached-regular", path: fp, size: sz, cachedMatch: cached.Matches,
+					kind: "cached-regular", path: fp, size: sz, info: fi, cachedMatch: cached.Matches,
 				})
 				// The chunk count of the scan that wrote the cache, so a
 				// cache hit answers exactly what that scan answered.
@@ -254,6 +256,10 @@ func (e *Engine) RunWithOptions(
 		}
 		fileID := filePathToID[b.path]
 		fileStart := time.Now()
+		if b.info != nil {
+			// gated helper — no-op in CLI mode.
+			prometheus.RecordFileScanned(b.size)
+		}
 
 		switch b.kind {
 		case "regular":
@@ -273,6 +279,7 @@ func (e *Engine) RunWithOptions(
 				cacheEntry.Chunks = len(tasks)
 			}
 			fileChunkCounts[fileID] = len(tasks)
+			prometheus.RecordParallelTasks(len(tasks))
 			// Pass the REMAINING cap (opts.MaxResults minus already-collected
 			// matches) so ProcessAllChunks can cooperatively cancel as
 			// soon as this file alone contributes enough to close the
@@ -505,6 +512,7 @@ func (e *Engine) RunWithOptions(
 				}
 				cachedMatches = b.cacheInfo.Matches
 			}
+			reconstructStart := time.Now()
 			reMatches, reContexts, rerr := ReconstructFromCache(ReconstructRequest{
 				SourcePath:    b.path,
 				Cached:        cachedMatches,
@@ -519,6 +527,7 @@ func (e *Engine) RunWithOptions(
 				skipped = append(skipped, b.path)
 				continue
 			}
+			prometheus.RecordTraceCacheReconstruction(time.Since(reconstructStart))
 			allMatches = append(allMatches, reMatches...)
 			for _, cl := range reContexts {
 				allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
@@ -961,7 +970,13 @@ var _ = config.DebugMode
 // seekable-zstd one, whose lower threshold ShouldCache applies.
 func scanToCache(opts Options, path string, info os.FileInfo, compressionFormat string) *ScannedFile {
 	compressed := compressionFormat != ""
-	if opts.NoCache || !ShouldCache(info.Size(), opts.MaxResults, true, compressed) {
+	if opts.NoCache {
+		return nil
+	}
+	if !ShouldCache(info.Size(), opts.MaxResults, true, compressed) {
+		// The cache is on but this scan does not qualify: too small for
+		// its kind, or capped.
+		prometheus.RecordTraceCacheSkip()
 		return nil
 	}
 	return &ScannedFile{
