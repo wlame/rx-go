@@ -40,9 +40,9 @@ func (s *skipList) add(path, reason string) {
 }
 
 // addErr records that path was skipped because of err, with the reason
-// skipReason words for it.
+// SkipReason words for it.
 func (s *skipList) addErr(path string, err error) {
-	s.add(path, skipReason(err))
+	s.add(path, SkipReason(err))
 }
 
 // addAll records every item of other, in its order.
@@ -93,13 +93,13 @@ var skipReasons = []struct {
 	{errLineMatchesNoPattern, "a matched line matches none of the patterns alone, so which pattern it belongs to cannot be told"},
 }
 
-// skipReason is the reason the answer gives for a file skipped because
+// SkipReason is the reason the answer gives for a file skipped because
 // of err: the wording skipReasons holds for it, or the fixed wording
 // sandbox.FailureReason gives a failure to reach a file ("permission
 // denied", "cannot be read", …). An error that gets the catch-all
 // "cannot be read" is logged whole, so the operator still has the
 // detail the answer leaves out.
-func skipReason(err error) string {
+func SkipReason(err error) string {
 	for _, known := range skipReasons {
 		if !errors.Is(err, known.err) {
 			continue
