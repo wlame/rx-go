@@ -74,7 +74,28 @@ The OpenAPI document names this shape `IndexResponse`.
 | `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line |
 | `compression_format` | string \| null | For compressed inputs only |
 | `anomalies` | array \| null | Anomaly detector output — populated when `analyze=true`, `null` otherwise. See [analyzers](../../concepts/analyzers.md) for the shipped catalog |
-| `cli_command` | string | Equivalent CLI command |
+| `cli_command` | string | Equivalent CLI command; see below |
+
+### The equivalent CLI command
+
+`cli_command` is `rx index PATH --info --json`: the command that reads
+the same stored index without building one. It prints the whole stored
+index (`UnifiedFileIndex`, 39 members), of which this answer is a
+projection:
+
+- `path` and `size_bytes` are `source_path` and `source_size_bytes`
+  there.
+- `line_length` and `longest_line` group the flat `line_length_*`
+  members there.
+- `index_entries` and `anomaly_count` are counted here; the CLI prints
+  the `line_index` and `anomalies` arrays they count.
+- Other members appear only in the CLI output: `version`, the identity
+  members the cache checks (`source_modified_at`, `source_inode`,
+  `source_changed_at`, `source_fingerprint`), `is_text`, `permissions`,
+  `owner`, `index_step_bytes`, the seekable-zstd `frame_count`,
+  `frame_size_target` and `frames`, and the `prefix_*` members.
+
+The other members have the same name and value in both.
 
 ### Status codes
 
