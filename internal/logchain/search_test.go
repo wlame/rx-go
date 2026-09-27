@@ -497,10 +497,7 @@ func TestSearch_AChainOfTooManyPartsIsSearchedAsFiles(t *testing.T) {
 
 	for _, p := range []string{dir, filepath.Join(dir, "x.log")} {
 		paths.Reset()
-		r := &searchResolver{
-			req:    SearchRequest{Paths: []string{p}, Scan: true},
-			partOf: map[string]partPlace{}, files: map[string]classified{}, dirs: map[string]*listedDir{},
-		}
+		r := newSearchResolver(SearchRequest{Paths: []string{p}, Scan: true})
 		plan, err := r.resolve(context.Background())
 		if err != nil {
 			t.Fatalf("%s: resolve: %v", p, err)
@@ -577,5 +574,41 @@ func TestSearch_ARelativeDirectoryKeepsItsSpelling(t *testing.T) {
 	}
 	if ref.Path != filepath.Join("logs", "x.log") || ref.State != rxtypes.ChainStateReady || len(answer.Matches) != 4 {
 		t.Fatalf("chain %+v, %d matches", ref, len(answer.Matches))
+	}
+}
+
+// A file or a handle classifies only the files that can belong to the
+// chain it names, never the rest of its directory: a file beside
+// thousands of another chain's parts opens itself alone, and a handle
+// opens its own chain's files.
+func TestSearch_AFileOrAHandleClassifiesOnlyItsOwnChain(t *testing.T) {
+	dir := t.TempDir()
+	for n := 1; n <= 3000; n++ {
+		if err := os.WriteFile(filepath.Join(dir, "big.log."+strconv.Itoa(n)), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFiles(t, dir, map[string][]byte{"plain.txt": []byte("hit\n"), "app.log": []byte("a\n"), "app.log.1": []byte("b\n")})
+	for _, tc := range []struct {
+		name       string
+		classified []string
+	}{
+		{"plain.txt", []string{"plain.txt"}},
+		{"app.log", []string{"app.log", "app.log.1"}},
+	} {
+		paths.Reset()
+		r := newSearchResolver(SearchRequest{Paths: []string{filepath.Join(dir, tc.name)}})
+		plan, err := r.resolve(context.Background())
+		if err != nil {
+			t.Fatalf("%s: resolve: %v", tc.name, err)
+		}
+		var classified []string
+		for path := range r.files {
+			classified = append(classified, filepath.Base(path))
+		}
+		slices.Sort(classified)
+		if !slices.Equal(classified, tc.classified) || len(plan.Files) != len(tc.classified) {
+			t.Fatalf("%s: %d files planned, %d classified, want %v", tc.name, len(plan.Files), len(classified), tc.classified)
+		}
 	}
 }

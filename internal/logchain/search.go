@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/filekind"
@@ -93,12 +94,7 @@ func (e *SearchPathError) Unwrap() error { return e.Err }
 // between the listing and its description), trace.ErrInvalidPattern,
 // and the context's error.
 func Search(ctx context.Context, engine *trace.Engine, req SearchRequest) (*SearchResult, error) {
-	r := &searchResolver{
-		req:    req,
-		partOf: map[string]partPlace{},
-		files:  map[string]classified{},
-		dirs:   map[string]*listedDir{},
-	}
+	r := newSearchResolver(req)
 	resp, err := engine.RunResolved(ctx, r.resolve, req.Patterns, req.Options)
 	if err != nil {
 		return nil, err
@@ -125,8 +121,19 @@ type searchResolver struct {
 	// the parts' kinds, and the engine reads the same files.
 	files map[string]classified
 	// dirs holds the listing of each directory a handle named, so many
-	// handles in one directory list it and group its chains once.
+	// handles in one directory list it once, and each name a handle
+	// names there is grouped once.
 	dirs map[string]*listedDir
+}
+
+// newSearchResolver is the resolver of one search, with its maps made.
+func newSearchResolver(req SearchRequest) *searchResolver {
+	return &searchResolver{
+		req:    req,
+		partOf: map[string]partPlace{},
+		files:  map[string]classified{},
+		dirs:   map[string]*listedDir{},
+	}
 }
 
 // classified is what a file is, as trace.ClassifyForSearch tells it, or
@@ -151,13 +158,30 @@ type searchChain struct {
 }
 
 // listedDir is the listing of one directory a handle named, and the
-// chains among its entries by name; err when it could not be listed.
+// chain each name a handle named there gives; err when it could not be
+// listed.
 type listedDir struct {
 	entries []Entry
 	// names maps each entry's name to its path as listed.
-	names  map[string]string
-	chains map[string]Candidate
+	names map[string]string
+	// place maps each entry's name to its place in entries.
+	place map[string]int
+	// members maps a chain name to the places in entries, in the
+	// listing's order, of the files whose names a template reads as
+	// parts of that chain. One pass of the templates over the listing
+	// fills it, so a handle's chain is grouped from its own files.
+	members map[string][]int
+	// chains holds what each name a handle named gives, so each name is
+	// grouped once per search, a name that names no chain too.
+	chains map[string]namedChain
 	err    error
+}
+
+// namedChain is the chain a name gives in its directory; found is false
+// when the directory holds no chain of that name.
+type namedChain struct {
+	candidate Candidate
+	found     bool
 }
 
 // resolve is the trace.Resolver of the search: it resolves every path
@@ -200,10 +224,13 @@ func (r *searchResolver) addPath(ctx context.Context, p string) error {
 }
 
 // addHandle searches the chain the handle p names, when it names one:
-// its directory, listed and grouped once per search, holds a chain of
-// that name. found is false, with no error, for a path that names no
-// chain: one that is not a bare name in a directory, a directory that
-// cannot be listed or holds no such chain. The error is Describe's.
+// its directory, listed once per search, holds a chain of that name,
+// grouped from that name's files alone (chainNamed). found is false,
+// with no error, for a path that names no chain: one that is not a bare
+// name in a directory, a directory that cannot be listed or holds no
+// such chain. A file named on its own takes this path first, so naming
+// a file classifies nothing but the files of a chain of its name. The
+// error is Describe's.
 func (r *searchResolver) addHandle(ctx context.Context, p string) (found bool, err error) {
 	dir, name, err := splitHandle(p)
 	if err != nil {
@@ -213,7 +240,7 @@ func (r *searchResolver) addHandle(ctx context.Context, p string) (found bool, e
 	if listed.err != nil {
 		return false, nil
 	}
-	c, ok := listed.chains[name]
+	c, ok := r.chainNamed(dir, listed, name)
 	if !ok {
 		return false, nil
 	}
@@ -223,8 +250,8 @@ func (r *searchResolver) addHandle(ctx context.Context, p string) (found bool, e
 	if c.TooManyParts {
 		// Not read as one text: each file of the chain's name is
 		// searched as a file of its own, in the listing's order.
-		for _, e := range listed.entries {
-			if isCandidateFile(e) && namesChain(e.Name, c.Name) {
+		for _, e := range listed.chainEntries(c.Name) {
+			if isCandidateFile(e) {
 				r.addFile(e.File)
 			}
 		}
@@ -232,20 +259,48 @@ func (r *searchResolver) addHandle(ctx context.Context, p string) (found bool, e
 	return true, nil
 }
 
-// namesChain reports whether a file name belongs to the chain named
-// chain by its name alone: the active file's name, or a name a template
-// reads as a part of it.
-func namesChain(name, chain string) bool {
-	if name == chain {
-		return true
+// chainNamed is the chain named name in the listed directory dir, or
+// found false when it holds none. It is grouped as Resolve groups a
+// handle's chain (groupNamed), from the files that can belong to it
+// alone: only they are classified, never the rest of the directory, so
+// a file named beside thousands of another chain's parts costs one
+// classification, its own. Each name is grouped once per search.
+func (r *searchResolver) chainNamed(dir string, listed *listedDir, name string) (c Candidate, found bool) {
+	if named, ok := listed.chains[name]; ok {
+		return named.candidate, named.found
 	}
-	m, ok := matchName(name)
-	return ok && m.chain == chain
+	var named namedChain
+	for _, candidate := range groupNamed(dir, listed.chainEntries(name), r.classify, name) {
+		if candidate.Name == name {
+			named = namedChain{candidate: candidate, found: true}
+		}
+	}
+	listed.chains[name] = named
+	return named.candidate, named.found
+}
+
+// chainEntries are the entries of the listing that can belong to the
+// chain named name, in the listing's order: the file named like the
+// chain (its active file) and the files a template reads as its parts.
+// The work is a map look-up and the chain's own files, whatever the
+// size of the directory.
+func (l *listedDir) chainEntries(name string) []Entry {
+	places := slices.Clone(l.members[name])
+	if i, ok := l.place[name]; ok {
+		places = append(places, i)
+		slices.Sort(places)
+	}
+	entries := make([]Entry, 0, len(places))
+	for _, i := range places {
+		entries = append(entries, l.entries[i])
+	}
+	return entries
 }
 
 // listDir lists the directory dir once per search, through its pin, and
-// groups its entries into chains (Group), classifying them as the
-// search reads them.
+// reads the names of its entries once with the templates (matchName),
+// to know which files can belong to which chain. No entry is opened:
+// chainNamed classifies a chain's files when a handle names it.
 //
 // SECURITY: dir is checked against the search roots and pinned before
 // it is listed, as Resolve does; the listing refuses a link that leads
@@ -255,7 +310,7 @@ func (r *searchResolver) listDir(dir string) *listedDir {
 	if listed, ok := r.dirs[dir]; ok {
 		return listed
 	}
-	listed := &listedDir{chains: map[string]Candidate{}}
+	listed := &listedDir{chains: map[string]namedChain{}}
 	r.dirs[dir] = listed
 	if _, err := validateDir(dir); err != nil {
 		listed.err = err
@@ -276,8 +331,16 @@ func (r *searchResolver) listDir(dir string) *listedDir {
 	}
 	listed.entries = EntriesOf(entries)
 	listed.names = pathsByName(listed.entries)
-	for _, c := range Group(dir, listed.entries, r.classify) {
-		listed.chains[c.Name] = c
+	listed.place = make(map[string]int, len(listed.entries))
+	listed.members = map[string][]int{}
+	for i, e := range listed.entries {
+		listed.place[e.Name] = i
+		if !isCandidateFile(e) {
+			continue
+		}
+		if m, ok := matchName(e.Name); ok {
+			listed.members[m.chain] = append(listed.members[m.chain], i)
+		}
 	}
 	return listed
 }
