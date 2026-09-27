@@ -51,16 +51,20 @@ cannot be opened is `403`, as on `GET /v1/trace`.
 Whatever the request reaches more than once is searched once: a `path`
 given twice (however it is spelled), a directory and a handle or a file
 in it, a link to a directory. Each chain is described once and has one
-entry in `chains` (a chain is the same when its directory, by device and
-inode, and its name are), each file is searched once under one file id
-(a file is the same when its path with every link resolved is), and so
-each match comes once. A part's own path named beside its chain's handle
+entry in `chains` (a chain is the same when its directory, by the device
+and inode it had when it was listed, and its name are; on a filesystem
+that gives every directory inode 0, by its handle), each file is
+searched once under one file id (a file is the same when its path with
+every link resolved is), and so each match comes once. A part's own path named beside its chain's handle
 or directory is a part of that chain, whichever comes first. Another
 encoding of a part named beside its chain (`syslog.3.gz` beside the
 handle `syslog`, whose chain reads `syslog.3`) is skipped with
 `duplicate_part` and never searched, whichever comes first, so each of
-its lines comes once, from the part the chain reads. `path` in the
-answer lists the paths as the request gave them.
+its lines comes once, from the part the chain reads. Two chains that
+still give one identity (an inode reused while the request runs) are
+both searched: the first as its chain, the second's parts as files of
+their own, with `chain` null. `path` in the answer lists the paths as
+the request gave them.
 
 ## The order of the search
 

@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/filekind"
-	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -105,7 +104,13 @@ func (e *SearchPathError) Unwrap() error { return e.Err }
 // path is resolved once, each chain is described once and has one
 // entry, and each file is searched once, under one file id, so each
 // match comes once. A part named on its own as well as through its
-// chain is a part of the chain, whichever comes first.
+// chain is a part of the chain, whichever comes first. A chain is known
+// again by its directory's device and inode, from the stat the listing
+// or the walk checked the directory with, and by its name (chainKey); a
+// directory without an inode (inode 0, as some filesystems give every
+// one) by its path. Two chains that give one key all the same (an inode
+// reused within one request) lose nothing: the second's parts are
+// searched as files of their own.
 //
 // The patterns are checked before any path is walked. The errors are
 // *SearchPathError, ErrPartChanged (a part was renamed or replaced
@@ -454,7 +459,7 @@ func (r *searchResolver) listDir(dir string) *listedDir {
 // place.
 func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned paths.Pinned) error {
 	r.plan.ScannedDirs = append(r.plan.ScannedDirs, p)
-	walked, err := paths.WalkPinned(pinned, !r.req.Options.NoRecursive)
+	walked, err := walkSearchedDirectory(pinned, !r.req.Options.NoRecursive)
 	if err != nil {
 		// The directory itself cannot be listed: named, as a trace
 		// names it, rather than answered as empty.
@@ -463,6 +468,10 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 	}
 	var files []Entry
 	byDir := map[string][]Entry{}
+	// dirInfo holds, for each directory the walk listed, the stat the
+	// walk checked its listing against (WalkEntry.Dir): the identity
+	// its chains are keyed by.
+	dirInfo := map[string]os.FileInfo{}
 	for _, we := range walked {
 		switch {
 		case we.ReadErr != nil:
@@ -474,6 +483,8 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 			files = append(files, e)
 			dir := filepath.Dir(we.Path)
 			byDir[dir] = append(byDir[dir], e)
+			// Every file of one listing carries the same directory pin.
+			dirInfo[dir] = we.Dir.Info()
 		}
 	}
 
@@ -487,9 +498,12 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 		if len(chains) == 0 {
 			continue
 		}
-		dirInfo := directoryInfo(dir)
 		for _, c := range chains {
-			c.DirInfo = dirInfo
+			// SECURITY: the key comes from the pin the walk listed the
+			// directory through, never from pinning its path again: by
+			// then the path may lead to another directory (swapped for a
+			// link to another chain's), whose key would hide this chain.
+			c.DirInfo = dirInfo[dir]
 			wc := &walkChain{candidate: c, byName: byName}
 			for _, part := range c.Parts {
 				owner[part.Path] = wc
@@ -521,6 +535,12 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 	return nil
 }
 
+// walkSearchedDirectory is the walk addDirectory searches a directory
+// with: paths.WalkPinned. A test replaces it to change the tree right
+// after the walk has listed it (a directory swapped for a link), which
+// no tree on disk can be made to do on demand.
+var walkSearchedDirectory = paths.WalkPinned
+
 // walkChain is a chain a directory walk found, and whether the walk has
 // met its first file yet.
 type walkChain struct {
@@ -540,34 +560,20 @@ func entriesByName(entries []Entry) map[string]Entry {
 	return byName
 }
 
-// directoryInfo is the stat of the directory dir as a pin finds it,
-// every link on the way resolved, for the key of the chains a walk
-// found in it (chainKey); nil when it cannot be pinned, and those
-// chains are keyed by their handles.
-//
-// SECURITY: dir is a directory the walk listed, so the pin checks
-// again what the walk checked (the search roots, hidden entries); it
-// states the directory and reads nothing in it. It runs once per
-// directory that holds a chain.
-func directoryInfo(dir string) os.FileInfo {
-	pinned, err := paths.Pin(dir)
-	if err != nil || !pinned.Info().IsDir() {
-		return nil
-	}
-	return pinned.Info()
-}
-
 // chainKey names a chain by the device and inode of its directory and
 // by its name, as the index tasks of chains are keyed, so every path
 // that leads to one directory — the same path spelled twice, a handle
-// and a walk, a link to the directory — gives one key. Without the
-// directory's stat (Candidate.DirInfo) or an inode the key is the
-// handle, made absolute.
+// and a walk, a link to the directory — gives one key. Without an
+// identity of the directory (DirectoryIdentity: no stat, a platform
+// without inodes, or inode 0) the key is the handle, made absolute.
+//
+// Two chains can still give one key (an inode reused within one
+// request); addChain then searches the second's parts as files of their
+// own, so a clash costs the chain fields of those matches, never the
+// matches.
 func chainKey(c Candidate) string {
-	if c.DirInfo != nil {
-		if inode, device, ok := index.InodeAndDevice(c.DirInfo); ok {
-			return strconv.FormatUint(device, 10) + ":" + strconv.FormatUint(inode, 10) + "/" + c.Name
-		}
+	if device, inode, ok := DirectoryIdentity(c.DirInfo); ok {
+		return strconv.FormatUint(device, 10) + ":" + strconv.FormatUint(inode, 10) + "/" + c.Name
 	}
 	return "path:" + absPath(c.Handle())
 }
@@ -587,8 +593,14 @@ func absPath(p string) string {
 // encoding of a part is skipped with ReasonDuplicatePart
 // (skipOtherEncoding). A chain of more than MaxParts parts gets its
 // entry and adds no part: its caller searches its files on their own.
-// A chain added already (chainKey) adds nothing: it keeps its one
-// entry, and its parts their places.
+//
+// A chain whose key (chainKey) a chain added before holds is not
+// described again and gets no entry; its parts are passed to addFile as
+// files of their own (addPartsAsFiles). For the same chain reached a
+// second way that adds nothing: every part is planned already, under
+// its file id and in its chain. For another chain that gives the same
+// key it searches that chain's parts with no chain, rather than losing
+// them.
 //
 // byName holds the entries the chain was grouped from, by name: the
 // other encodings of its parts are looked up there.
@@ -597,6 +609,7 @@ func absPath(p string) string {
 func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[string]Entry) error {
 	key := chainKey(c)
 	if r.chainKeys[key] {
+		r.addPartsAsFiles(c, byName)
 		return nil
 	}
 	r.chainKeys[key] = true
@@ -630,6 +643,25 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[s
 		}
 	}
 	return nil
+}
+
+// addPartsAsFiles adds the parts of the chain c to the search as files
+// of their own, in its provisional order, and skips their other
+// encodings as addChain does; see addChain for when. A file planned or
+// skipped already keeps what it got (addFile, skipOtherEncoding), so
+// for a chain added already this plans and names nothing new. A chain
+// of more than MaxParts parts adds nothing here: its caller searches
+// every file of its name.
+func (r *searchResolver) addPartsAsFiles(c Candidate, byName map[string]Entry) {
+	if c.TooManyParts {
+		return
+	}
+	for _, part := range c.Parts {
+		r.addFile(part.File)
+		for _, name := range part.Duplicates {
+			r.skipOtherEncoding(byName[name].File, part.Name)
+		}
+	}
 }
 
 // skipOtherEncoding keeps another encoding of the part named part out of

@@ -268,3 +268,64 @@ func TestWalkDir_DirectoryReachedDirectlyAndThroughALinkIsSearchedOnce(t *testin
 		t.Errorf("%s refused with %q, want a reason containing %q", link, entry.Refused, wantReason)
 	}
 }
+
+// Each file a walk reports carries the directory it was listed from, as
+// the walk pinned that directory: the walked one, a subdirectory, or
+// the target of a link to a directory, under the walk's spelling and
+// with the stat its listing was checked against. A caller keys what it
+// found in a directory by that stat, never by pinning the directory's
+// path again after the walk.
+func TestWalkDir_ReportsTheDirectoryEachFileWasListedFrom(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	for _, dir := range []string{"logs/sub", "elsewhere"} {
+		if err := os.MkdirAll(filepath.Join(base, dir), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	for _, name := range []string{"logs/top.log", "logs/sub/deep.log", "elsewhere/far.log"} {
+		if err := os.WriteFile(filepath.Join(base, name), []byte("x\n"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "elsewhere"), filepath.Join(base, "logs", "linked")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := SetSearchRoots([]string{base}); err != nil {
+		t.Fatalf("SetSearchRoots: %v", err)
+	}
+	t.Cleanup(Reset)
+
+	entries := walkWithBudget(t, filepath.Join(base, "logs"), 10*time.Second)
+
+	// The walk's spelling of each file, and the real directory it lies in.
+	want := map[string]string{
+		filepath.Join(base, "logs", "top.log"):           "logs",
+		filepath.Join(base, "logs", "sub", "deep.log"):   "logs/sub",
+		filepath.Join(base, "logs", "linked", "far.log"): "elsewhere",
+	}
+	for _, entry := range entries {
+		realDir, ok := want[entry.Path]
+		if !ok {
+			t.Errorf("unexpected entry %+v", entry)
+			continue
+		}
+		delete(want, entry.Path)
+		if entry.Dir.IsZero() || filepath.Clean(entry.Dir.Path()) != filepath.Dir(entry.Path) {
+			t.Errorf("%s: directory %q, want the walk's spelling %q", entry.Path, entry.Dir.Path(), filepath.Dir(entry.Path))
+			continue
+		}
+		info, err := os.Stat(filepath.Join(base, realDir))
+		if err != nil {
+			t.Fatalf("stat: %v", err)
+		}
+		if !os.SameFile(entry.Dir.Info(), info) {
+			t.Errorf("%s: the directory's stat is not %s's", entry.Path, realDir)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("files not reported: %v", want)
+	}
+}

@@ -156,15 +156,16 @@ type chainTaskStart struct {
 // handles then share one task instead of building the same parts twice
 // at once.
 //
-// A description without the directory's stat, or on a platform that
-// gives no inode, keys the chain by its handle (chainTaskKey). The key
-// starts with "chain:", which no absolute path does, so it never
-// collides with a file's lock.
+// A description without an identity of the directory
+// (logchain.DirectoryIdentity: no stat, a platform that gives no inode,
+// or inode 0, which a filesystem that numbers no file gives every
+// directory) keys the chain by its handle (chainTaskKey), so two
+// directories of such a filesystem never share one task. The key starts
+// with "chain:", which no absolute path does, so it never collides with
+// a file's lock.
 func chainKeyOf(d *logchain.Description) string {
-	if dir := d.Candidate.DirInfo; dir != nil {
-		if inode, device, ok := index.InodeAndDevice(dir); ok {
-			return fmt.Sprintf("chain:%d:%d/%s", device, inode, d.Candidate.Name)
-		}
+	if device, inode, ok := logchain.DirectoryIdentity(d.Candidate.DirInfo); ok {
+		return fmt.Sprintf("chain:%d:%d/%s", device, inode, d.Candidate.Name)
 	}
 	return chainTaskKey(d.Response.Path)
 }
