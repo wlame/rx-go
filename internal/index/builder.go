@@ -172,24 +172,21 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	}
 
 	// Build the final index.
-	// Inode and ctime are what let a later run tell this exact file
-	// from one that was rewritten with the same size and mtime.
-	inode, changedAt := SourceIdentityFields(info)
-	// A fingerprint we cannot compute is left out rather than treated as
-	// a build failure; validation then falls back to size and mtime.
-	var fingerprint *string
-	if fp, fpErr := SourceFingerprint(sourcePath); fpErr == nil {
-		fingerprint = &fp
-	}
+	// Inode, ctime and the fingerprint are what let a later run tell
+	// this exact file from one that was rewritten with the same size
+	// and mtime. A fingerprint we cannot compute is left out rather
+	// than treated as a build failure; validation then falls back to
+	// the other fields.
+	identity := IdentityFromInfo(sourcePath, info)
 	permissions, owner := FileOwnership(info)
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
 		SourcePath:        sourcePath,
-		SourceModifiedAt:  formatMtime(info.ModTime()),
-		SourceSizeBytes:   info.Size(),
-		SourceInode:       inode,
-		SourceChangedAt:   changedAt,
-		SourceFingerprint: fingerprint,
+		SourceModifiedAt:  identity.ModifiedAt,
+		SourceSizeBytes:   identity.SizeBytes,
+		SourceInode:       identity.Inode,
+		SourceChangedAt:   identity.ChangedAt,
+		SourceFingerprint: identity.Fingerprint,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds:  time.Since(started).Seconds(),
 		FileType:          rxtypes.FileTypeText,
@@ -590,11 +587,7 @@ func buildSeekable(sourcePath string, info os.FileInfo, started time.Time) (*rxt
 		return nil, err
 	}
 
-	inode, changedAt := SourceIdentityFields(info)
-	var fingerprint *string
-	if fp, fpErr := SourceFingerprint(sourcePath); fpErr == nil {
-		fingerprint = &fp
-	}
+	identity := IdentityFromInfo(sourcePath, info)
 
 	format := "zstd"
 	frameList := frames.Frames
@@ -602,11 +595,11 @@ func buildSeekable(sourcePath string, info os.FileInfo, started time.Time) (*rxt
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
 		SourcePath:        sourcePath,
-		SourceModifiedAt:  formatMtime(info.ModTime()),
-		SourceSizeBytes:   info.Size(),
-		SourceInode:       inode,
-		SourceChangedAt:   changedAt,
-		SourceFingerprint: fingerprint,
+		SourceModifiedAt:  identity.ModifiedAt,
+		SourceSizeBytes:   identity.SizeBytes,
+		SourceInode:       identity.Inode,
+		SourceChangedAt:   identity.ChangedAt,
+		SourceFingerprint: identity.Fingerprint,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds:  time.Since(started).Seconds(),
 		FileType:          rxtypes.FileTypeSeekableZstd,
