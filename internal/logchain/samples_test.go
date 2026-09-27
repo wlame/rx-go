@@ -163,6 +163,59 @@ func TestSamples_PartNumbersUpToTheLargest(t *testing.T) {
 	}
 }
 
+// SECURITY: a part is read for its line count at most once per request,
+// however many positions count back from its end. An active part without
+// an index has no known count; 100 positions -1 to -100, by the chain's
+// numbers or by the part's own, read it once for the count and once for
+// the lines, and answer as the chain's numbers do.
+func TestSamples_APartIsCountedOncePerRequest(t *testing.T) {
+	c := buildChain(t, "app.log", []chainFile{
+		{name: "app.log.1", text: timedLines(chainBase, time.Second, 1, 10, "app.log.1")},
+		{name: "app.log", text: timedLines(chainBase.Add(time.Minute), time.Second, 11, 200, "app.log")},
+	})
+	storeIndexes(t, c.dir, "app.log.1")
+	d := describe(t, c.dir, c.name, Options{})
+	if d.Response.State != rxtypes.ChainStateReady || d.Response.Parts[1].LineCount != nil {
+		t.Fatalf("want a ready chain whose active part has no known count: %s", jsonOf(t, d.Response))
+	}
+	var positions []string
+	for i := 1; i <= 100; i++ {
+		positions = append(positions, fmt.Sprintf("-%d", i))
+	}
+	spec := strings.Join(positions, ",")
+	for _, part := range []string{"", "app.log"} {
+		var counts, reads int
+		reader := func(ctx context.Context, p Part, req samples.Request) (*rxtypes.SamplesResponse, error) {
+			if p.Name == "app.log" {
+				reads++
+				if len(req.Lines) == 1 && req.Lines[0].Start == -1 && !req.Lines[0].IsRange() {
+					counts++
+				}
+			}
+			return samples.Resolve(ctx, req)
+		}
+		resp, err := Samples(context.Background(), d, SamplesRequest{Part: part, Lines: lines(t, spec), IndexLoader: samples.StoredIndex}, reader)
+		if err != nil {
+			t.Fatalf("part %q: %v", part, err)
+		}
+		if counts != 1 || reads != 2 {
+			t.Fatalf("part %q: the active part read %d times, %d of them for its count; want 2 and 1", part, reads, counts)
+		}
+		// The last line is 210 in the chain's numbers and 200 in the
+		// part's: -1 is keyed by it.
+		key := "210"
+		if part != "" {
+			key = "200"
+		}
+		if got, _ := flatten(resp.Samples[key]); len(got) != 1 || got[0] != globalLine(c, 210) || resp.Lines[key] != 210 {
+			t.Fatalf("part %q: -1 gives %q with target %d, want the chain's line 210", part, got, resp.Lines[key])
+		}
+		if len(resp.Samples) != 100 {
+			t.Fatalf("part %q: %d keys, want 100", part, len(resp.Samples))
+		}
+	}
+}
+
 // Before the chain is ready, a part answers on its own: its context
 // stops at its edges and the pieces say so, global numbers are -1, and a
 // request by global line is refused until the chain is ready.

@@ -90,7 +90,7 @@ func Samples(ctx context.Context, d *Description, req SamplesRequest, read PartR
 	if err := req.check(d); err != nil {
 		return nil, err
 	}
-	s := &sampler{d: d, req: req, read: read, kinds: map[int]filekind.Kind{}}
+	s := &sampler{d: d, req: req, read: read, kinds: map[int]filekind.Kind{}, counts: map[int]int64{}}
 	resp := &rxtypes.ChainSamplesResponse{
 		Path: d.Response.Path, Name: d.Response.Name, State: d.Response.State,
 		Fingerprint: d.Response.Fingerprint, Parts: d.Response.Parts,
@@ -164,6 +164,15 @@ type sampler struct {
 	// kinds holds each part's kind (samples.Classify), decided once per
 	// call through its pin, keyed by its index in Response.Parts.
 	kinds map[int]filekind.Kind
+	// counts holds the line count of each part that was read for it
+	// (countOf), keyed by its index in Response.Parts.
+	//
+	// SECURITY: a part whose count the description does not know (the
+	// active part without a current index) is read for it at most once
+	// per call, however many positions count back from its end: without
+	// the memo, each -N of a part-addressed request read the whole part
+	// again.
+	counts map[int]int64
 	// lines and bytes are what the answer holds so far, summed over its
 	// keys and pieces, against MaxLines and MaxBytes.
 	lines int
@@ -289,7 +298,6 @@ func (s *sampler) knownCount(k int) int64 {
 // range as asked.
 func (s *sampler) lineWindows(ctx context.Context, space lineSpace, positions []samples.OffsetOrRange) ([]window, error) {
 	windows := make([]window, 0, len(positions))
-	total := int64(-1)
 	for _, v := range positions {
 		if v.IsRange() {
 			windows = append(windows, window{key: v.Key(), first: v.Start, last: *v.End, isRange: true, emptyList: *v.End == 0})
@@ -297,12 +305,11 @@ func (s *sampler) lineWindows(ctx context.Context, space lineSpace, positions []
 		}
 		line := v.Start
 		if line < 0 {
-			if total < 0 {
-				n, err := s.spaceEnd(ctx, space)
-				if err != nil {
-					return nil, err
-				}
-				total = n
+			// spaceEnd reads the last part's count at most once per call
+			// (countOf), however many positions count back.
+			total, err := s.spaceEnd(ctx, space)
+			if err != nil {
+				return nil, err
 			}
 			// As one file resolves -N (samples.wantedLinesOf): the line
 			// it names, at least line 1.
@@ -351,11 +358,26 @@ func (s *sampler) spaceEnd(ctx context.Context, space lineSpace) (int64, error) 
 
 // countOf is the line count of Response.Parts[k]: the description's,
 // the active part's from its index when one is current, or else what
-// reading its line -1 gives.
+// reading its line -1 gives (readCount), read once per call and kept in
+// s.counts.
 func (s *sampler) countOf(ctx context.Context, k int) (int64, error) {
 	if n := s.knownCount(k); n >= 0 {
 		return n, nil
 	}
+	if n, ok := s.counts[k]; ok {
+		return n, nil
+	}
+	n, err := s.readCount(ctx, k)
+	if err != nil {
+		return 0, err
+	}
+	s.counts[k] = n
+	return n, nil
+}
+
+// readCount reads the line count of Response.Parts[k] through the
+// request's reader: the line its -1 names, which one file's -1 counts.
+func (s *sampler) readCount(ctx context.Context, k int) (int64, error) {
 	req, err := s.partRequest(k)
 	if err != nil {
 		return 0, err
