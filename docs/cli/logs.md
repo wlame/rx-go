@@ -36,20 +36,20 @@ rx logs list /var/log
 ```
 
 ```text
-/var/log: 7 chains
-NAME               PARTS  SIZE       IDX  MISSING
-alternatives.log   7      5.81 KB    -    -
-auth.log           8      70.55 KB   -    -
-dmesg              4      114.28 KB  -    -
-dpkg.log           12     26.71 KB   -    -
-edge-agent.log  8      0.00 B     -    -
-kern.log           4      1.84 KB    -    -
-syslog             8      23.85 KB   -    -
+/var/log: 5 chains
+NAME      PARTS  SIZE       IDX  MISSING
+auth.log  4      43.04 KB   -    -
+dmesg     2      165.00 B   -    -
+dpkg.log  4      1.99 KB    -    dpkg.log.3
+kern.log  3      4.03 KB    -    -
+syslog    5      554.77 KB  -    -
 ```
 
 On that host `wtmp` and `wtmp.1` are no chain (they are binary),
-`lastlog` and `fontconfig.log` have no rotated parts, and the eight
-empty `edge-agent.log` files are one chain.
+`lastlog` and `notes.txt` have no rotated parts, and `dpkg.log.3` is
+missing between `dpkg.log.4.gz` and `dpkg.log.2.gz`. `dmesg` and
+`dmesg.0` form a chain by their names; [`rx logs show`](#rx-logs-show)
+finds it invalid, as its lines carry no timestamp.
 
 One block per directory: a line with the directory and how many
 chains it holds, then one row per chain, sorted by name:
@@ -106,12 +106,13 @@ rx logs show /var/log/syslog
 ```
 
 ```text
-/var/log/syslog: ready, 8 parts, 1269 lines, fingerprint 3173803a68e459cd, times in UTC
-#  NAME                           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME       HIGHEST TIME     IDX
-1  syslog-20260930-1790726400.gz  gzip         109    1-109         Sep 29 00:00:00  Sep 30 00:00:00  -
-2  syslog-20261001-1790812801.gz  gzip         137    110-246       Sep 30 00:00:01  Oct  1 00:00:01  -
-...
-8  syslog                         -            64     1206-1269     Oct  6 00:00:00  Oct  6 22:06:44  -
+/var/log/syslog: ready, 5 parts, 14405 lines, fingerprint ed4c86af991bdd8b, times in UTC
+#  NAME         COMPRESSION  LINES  GLOBAL LINES  FIRST TIME       HIGHEST TIME     IDX
+1  syslog.4.gz  gzip         3120   1-3120        Sep 29 00:00:05  Sep 29 23:23:38  -
+2  syslog.3.gz  gzip         2988   3121-6108     Sep 30 00:00:05  Sep 30 23:14:01  -
+3  syslog.2.gz  gzip         3305   6109-9413     Oct  1 00:00:05  Oct  1 23:51:49  -
+4  syslog.1     -            3012   9414-12425    Oct  2 00:00:05  Oct  2 23:25:13  -
+5  syslog       -            1980   12426-14405   Oct  3 00:00:05  Oct  3 16:29:35  -
 ```
 
 A first line with the handle, the state (`ready`, `pending` or
@@ -184,7 +185,7 @@ rx logs time-range /var/log/syslog
 ```
 
 ```text
-/var/log/syslog  syslog  Sep 29 00:00:00 .. Oct  6 22:06:44  UTC  ready
+/var/log/syslog  syslog  Sep 29 00:00:05 .. Oct  3 16:29:35  UTC  ready
 ```
 
 `--json` prints `{path, name, state, format, first_ms, last_ms,
@@ -202,22 +203,29 @@ the one [`GET /v1/logs/samples`](../api/endpoints/logs-samples.md)
 gives; that page says how each kind of position is answered.
 
 ```bash
-rx logs samples /var/log/syslog --lines=15641 --context=1
+rx logs samples /var/log/syslog --lines=12000 --context=5
 rx logs samples /var/log/syslog --part=syslog.3.gz --lines=500
 rx logs samples /var/log/syslog --timestamps=2026-10-03T14:00..2026-10-03T15:00
 ```
 
+Line 3121 is the first line of `syslog.3.gz`, so its context starts in
+`syslog.4.gz`:
+
+```bash
+rx logs samples /var/log/syslog --lines=3121 --context=1
+```
+
 ```text
-Chain: /var/log/syslog  ready  8 parts  fingerprint e8ed018e0ff41f34
-Times: Sep 29 00:00:01 .. Oct  6 22:11:00  UTC
+Chain: /var/log/syslog  ready  5 parts  fingerprint ed4c86af991bdd8b
+Times: Sep 29 00:00:05 .. Oct  3 16:29:35  UTC
 Context: 1 before, 1 after
 
-=== /var/log/syslog:15641 ===
--- syslog-20260930-1790726400.gz --
-15640  syslog-20260930-1790726400.gz:15640  Sep 30 00:00:00 host systemd[1]: rotate-app.service: Deactivated successfully.
-15641  syslog-20260930-1790726400.gz:15641  Sep 30 00:00:00 host systemd[1]: Finished Rotate the application logs.
--- syslog-20261001-1790812801.gz --
-15642  syslog-20261001-1790812801.gz:1  Sep 30 00:00:00 host systemd[1]: rotate-app.service: Deactivated successfully.
+=== /var/log/syslog:3121 ===
+-- syslog.4.gz --
+3120  syslog.4.gz:3120  Sep 29 23:23:38 web01 systemd[1]: Started session-3280.scope - Session 3280 of User deploy.
+-- syslog.3.gz --
+3121  syslog.3.gz:1  Sep 30 00:00:05 web01 systemd[1]: logrotate.service: Deactivated successfully.
+3122  syslog.3.gz:2  Sep 30 00:00:33 web01 nginx[7838]: connect() failed (111: Connection refused) while connecting to upstream, request 7840
 ```
 
 A head with the handle, the state, the number of parts and the
@@ -279,17 +287,15 @@ rx logs index /var/log/kern.log
 ```
 
 ```text
-Indexed 4 parts in 0.0s
-  /var/log/kern.log-20260929-1790640000.gz: 12 lines, 268.00 B
-  /var/log/kern.log-20261003-1790985601.gz: 178 lines, 1.42 KB
-  /var/log/kern.log-20261004-1791072001.gz: 12 lines, 168.00 B
-  /var/log/kern.log: 0 lines, 0.00 B
-/var/log/kern.log: ready, 4 parts, 202 lines, fingerprint 600c143a06fed4df, times in UTC
-#  NAME                             COMPRESSION  LINES  GLOBAL LINES  FIRST TIME       HIGHEST TIME     IDX
-1  kern.log-20260929-1790640000.gz  gzip         12     1-12          Sep 28 04:10:00  Sep 28 04:10:00  idx
-2  kern.log-20261003-1790985601.gz  gzip         178    13-190        Oct  2 23:58:32  Oct  2 23:58:36  idx
-3  kern.log-20261004-1791072001.gz  gzip         12     191-202       Oct  3 00:00:45  Oct  3 00:00:45  idx
-4  kern.log                         -            0      -             ?                ?                idx
+Indexed 3 parts in 0.0s
+  /var/log/kern.log.2.gz: 12 lines, 211.00 B
+  /var/log/kern.log.1: 31 lines, 3.12 KB
+  /var/log/kern.log: 7 lines, 721.00 B
+/var/log/kern.log: ready, 3 parts, 50 lines, fingerprint 32162d49a340e7f6, times in UTC
+#  NAME           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME       HIGHEST TIME     IDX
+1  kern.log.2.gz  gzip         12     1-12          Sep 26 03:00:00  Sep 26 10:31:00  idx
+2  kern.log.1     -            31     13-43         Sep 30 01:00:00  Sep 30 21:30:00  idx
+3  kern.log       -            7      44-50         Oct  3 02:00:00  Oct  3 06:06:00  idx
 ```
 
 Every part is indexed whatever its size: `RX_LARGE_FILE_MB`, below
@@ -330,21 +336,29 @@ says how each path is read and in which order the parts are searched.
 
 ```bash
 rx logs trace 'Accepted publickey' /var/log
-rx logs trace error /var/log/syslog --max-results=100
+rx logs trace refused /var/log/syslog --max-results=100
 rx logs trace -e timeout -e refused /var/log/syslog /var/log/notes.txt
 ```
 
+Once a chain's parts are indexed, each match gives its line in the
+chain:
+
+```bash
+rx logs index /var/log/syslog
+rx logs trace 'Out of memory' /var/log/syslog
+```
+
 ```text
-Request ID: 0199c8a2-…
+Request ID: 01a11a78-…
 Path: /var/log/syslog
-Pattern: error
-Time: 0.041s
+Pattern: Out of memory
+Time: 0.036s
 Matches: 3
 
 Matches (chain:line (part:line), or file:line):
-  /var/log/syslog:404 (syslog-20261003-1790985601.gz:1): Oct  2 00:00:02 host kernel: … error …
-  /var/log/syslog:1100 (syslog-20261004-1791072001.gz:98): Oct  3 07:12:44 host sshd[812]: error: …
-  /var/log/syslog:1209 (syslog:4): Oct  6 00:01:10 host cron[1]: … error …
+  /var/log/syslog:4620 (syslog.3.gz:1500): Sep 30 11:39:37 web01 kernel: Out of memory: Killed process 30211 (java) total-vm:8123456kB
+  /var/log/syslog:11613 (syslog.1:2200): Oct  2 17:06:17 web01 kernel: Out of memory: Killed process 41877 (java) total-vm:8123456kB
+  /var/log/syslog:13325 (syslog:900): Oct  3 07:29:35 web01 kernel: Out of memory: Killed process 52004 (java) total-vm:8123456kB
 ```
 
 Each `PATH` is a directory (its files are grouped into chains, as
