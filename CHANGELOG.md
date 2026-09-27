@@ -396,6 +396,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The OpenAPI document allows `null` for the `result` of
+  `GET /v1/tasks/{task_id}`, which is what every poll before the task
+  completes answers; it declared a non-null object. rx-python declares
+  it nullable too. Additive; the contract stays 1.3.
+
 - The OpenAPI document declares every error status each operation can
   answer: `400`, `404`, `409`, `422`, `500` and `503` where the handler
   or huma's validation produces them, besides the `401` and `403` it
