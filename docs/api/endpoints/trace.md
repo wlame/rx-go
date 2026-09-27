@@ -127,7 +127,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `scanned_files` | `string[]` | Files actually scanned (vs skipped) |
 | `skipped_files` | `string[]` | Files skipped (binary, size limit, etc.) |
 | `max_results` | `int \| null` | The cap that was applied, or null |
-| `file_chunks` | `{fileId: N}` | How many chunks each file was split into |
+| `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it |
 | `context_lines` | `{matchKey: [...]}` | Context lines when `--samples` mode was used |
 | `before_context`, `after_context` | `int \| null` | Requested context size |
 | `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
