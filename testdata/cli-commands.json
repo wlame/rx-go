@@ -8,6 +8,9 @@
     "The rendering rule: `rx <subcommand> <positionals...> <--long=value...>`.",
     "Long flags take `=`, which is the project's own CLI convention, and a",
     "value that needs shell quoting is quoted after the `=`.",
+    "A flag appears when the request gave a value and that value is not",
+    "what rx uses without the flag; a value equal to the CLI default is",
+    "left out.",
     "",
     "The `complexity` endpoint is absent because rx-go has no `rx check`",
     "subcommand to render."
@@ -76,6 +79,18 @@
       "expected": "rx samples /var/log/app.log --lines=1 --context=0"
     },
     {
+      "name": "samples leaves out a side equal to the context",
+      "endpoint": "samples",
+      "params": {
+        "path": "/var/log/app.log",
+        "lines": "5",
+        "context": 2,
+        "before_context": 2,
+        "after_context": 0
+      },
+      "expected": "rx samples /var/log/app.log --lines=5 --context=2 --after=0"
+    },
+    {
       "name": "index read",
       "endpoint": "index_get",
       "params": { "path": "/var/log/app.log" },
@@ -108,6 +123,16 @@
       "name": "compress with defaults",
       "endpoint": "compress",
       "params": { "input_path": "/var/log/app.log" },
+      "expected": "rx compress /var/log/app.log"
+    },
+    {
+      "name": "compress leaves out the values rx compress uses by default",
+      "endpoint": "compress",
+      "params": {
+        "input_path": "/var/log/app.log",
+        "frame_size": "4M",
+        "compression_level": 3
+      },
       "expected": "rx compress /var/log/app.log"
     }
   ]

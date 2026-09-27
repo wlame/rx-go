@@ -164,6 +164,30 @@ matches most JSON-dump conventions; clients can parse with
 `time.Parse(time.RFC3339Nano, ...)` in Go or `datetime.fromisoformat`
 in Python 3.11+.
 
+## The equivalent CLI command
+
+The answers of `/v1/trace`, `/v1/samples` and `GET /v1/index`, and the
+result of a finished index or compress task, carry `cli_command`: the
+`rx` command that does what the request did, ready to paste into a
+shell.
+
+- The shape is `rx <subcommand> <positionals...> <--long=value...>`.
+  A value that needs shell quoting is quoted after the `=`; a switch
+  that is on is written bare (`--force`), and one turned off from a
+  default of on is written `--name=false`.
+- A flag appears when the request gave a value and that value is not
+  what `rx` uses without the flag. A field the request left out never
+  appears, because every HTTP default is the CLI default; a value equal
+  to the default is left out as well. For example, a compress request
+  with `"compression_level": 3` renders no `--level`, and a samples
+  request with `context=2&before_context=0` renders
+  `--context=2 --before=0`.
+- Paths are the validated, absolute paths the server used.
+
+A test parses every rendered command with the real `rx` command tree,
+and runs the commands of real trace and samples requests to check that
+their `--json` answer equals the HTTP answer.
+
 ## Explicit null vs omitted keys
 
 Every field documented in the response schema is always present —
