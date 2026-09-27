@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `/metrics` reports the standard Go runtime (`go_*`) and process
+  (`process_*`) families beside the `rx_*` ones. They are read when
+  `/metrics` is scraped and cost nothing in between.
+
 - The index answers have named schemas in the OpenAPI document, so a
   client can generate types for them instead of writing its own:
   `IndexResponse` for `GET /v1/index`, `IndexTaskResult` and
@@ -422,6 +426,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human output prints `?` for a line number that stayed unknown.
 
 ### Fixed
+
+- Nineteen of the 37 `rx_*` metric families never moved in `serve`,
+  so a dashboard built on them showed zero whatever happened. They are
+  updated where the event happens: `rx_files_processed_total`,
+  `rx_files_skipped_total`, `rx_bytes_processed_total` and
+  `rx_file_size_bytes` per file a trace covers;
+  `rx_patterns_per_request`, `rx_matches_per_request` and
+  `rx_max_results_limited_total` per answered trace;
+  `rx_parallel_tasks_created` per chunked file or seekable-zstd scan;
+  `rx_trace_cache_skip_total`, `rx_trace_cache_load_duration_seconds`
+  and `rx_trace_cache_reconstruction_seconds` in the trace cache;
+  `rx_index_cache_hits_total`, `rx_index_cache_misses_total` and
+  `rx_index_load_duration_seconds` per index lookup (a `GET /v1/tree`
+  listing is not a lookup); `rx_samples_duration_seconds`,
+  `rx_offsets_per_samples_request`, `rx_context_lines_before` and
+  `rx_context_lines_after` per answered samples request; and
+  `rx_analyze_duration_seconds` per index build with analysis. A trace
+  of a seekable `.zst` now counts its trace cache hits and misses too,
+  and a trace cache hit reads the cache file once instead of twice.
 
 - `serve` no longer keeps a record of every failed `GET /v1/trace` for
   the life of the process. The trace handler kept each request in an

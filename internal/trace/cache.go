@@ -182,12 +182,6 @@ func CachePath(sourcePath string, patterns, rgFlags []string) string {
 // None silently in the same case.
 func LoadCache(cachePath string) (*rxtypes.TraceCacheData, error) {
 	start := time.Now()
-	defer func() {
-		// Cache load latency is interesting to operators; record it
-		// on every invocation, success or failure.
-		_ = time.Since(start) // placeholder until dedicated metric lands
-	}()
-
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -195,6 +189,9 @@ func LoadCache(cachePath string) (*rxtypes.TraceCacheData, error) {
 		}
 		return nil, fmt.Errorf("LoadCache: read %s: %w", cachePath, err)
 	}
+	// A cache file was read, so its read-and-parse time is reported
+	// whatever the parse finds. A missing file is not a load.
+	defer func() { prometheus.RecordTraceCacheLoadDuration(time.Since(start)) }()
 	var out rxtypes.TraceCacheData
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("LoadCache: parse %s: %w", cachePath, err)
@@ -260,19 +257,46 @@ func IsCacheValid(
 	sourcePath string,
 	patterns, rgFlags []string,
 ) bool {
+	return loadValidCache(cachePath, sourcePath, patterns, rgFlags) != nil
+}
+
+// loadValidCache reads the cache at cachePath and returns it when
+// IsCacheValid accepts it, nil otherwise. One read serves both the
+// check and the caller, so a cache hit loads the file once.
+func loadValidCache(
+	cachePath string,
+	sourcePath string,
+	patterns, rgFlags []string,
+) *rxtypes.TraceCacheData {
 	data, err := LoadCache(cachePath)
 	if err != nil {
-		return false
+		return nil
 	}
 	if data.PatternsHash != ComputePatternsHash(patterns, rgFlags) {
-		return false
+		return nil
 	}
 	// Every scan has at least one chunk. A cache without the count
 	// cannot report the scan's file_chunks, so it is not used.
 	if data.ChunkCount < 1 {
-		return false
+		return nil
 	}
-	return recordedSource(data).MatchesFile(sourcePath)
+	if !recordedSource(data).MatchesFile(sourcePath) {
+		return nil
+	}
+	return data
+}
+
+// lookupCache is loadValidCache counted as one trace cache lookup: a
+// hit when it returns a cache, a miss otherwise.
+func lookupCache(sourcePath string, patterns, rgFlags []string) *rxtypes.TraceCacheData {
+	data := loadValidCache(CachePath(sourcePath, patterns, rgFlags), sourcePath, patterns, rgFlags)
+	// gated helpers — no-op in CLI mode.
+	if data == nil {
+		prometheus.IncTraceCacheMisses()
+	} else {
+		prometheus.IncTraceCacheHits()
+	}
+	return data
 }
 
 // recordedSource gathers the identity fields a trace cache carries.
@@ -293,18 +317,10 @@ func GetCachedScan(
 	sourcePath string,
 	patterns, rgFlags []string,
 ) (*rxtypes.TraceCacheData, error) {
-	cp := CachePath(sourcePath, patterns, rgFlags)
-	if !IsCacheValid(cp, sourcePath, patterns, rgFlags) {
-		// gated helper — no-op in CLI mode.
-		prometheus.IncTraceCacheMisses()
+	data := lookupCache(sourcePath, patterns, rgFlags)
+	if data == nil {
 		return nil, ErrCacheMiss
 	}
-	data, err := LoadCache(cp)
-	if err != nil {
-		prometheus.IncTraceCacheMisses()
-		return nil, err
-	}
-	prometheus.IncTraceCacheHits()
 	return data, nil
 }
 
@@ -328,13 +344,9 @@ func GetCompressedCacheInfo(
 	sourcePath string,
 	patterns, rgFlags []string,
 ) (*CompressedCacheInfo, error) {
-	cp := CachePath(sourcePath, patterns, rgFlags)
-	if !IsCacheValid(cp, sourcePath, patterns, rgFlags) {
+	data := lookupCache(sourcePath, patterns, rgFlags)
+	if data == nil {
 		return nil, ErrCacheMiss
-	}
-	data, err := LoadCache(cp)
-	if err != nil {
-		return nil, err
 	}
 	return &CompressedCacheInfo{
 		CompressionFormat: data.CompressionFormat,
