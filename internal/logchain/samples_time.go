@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/wlame/rx-go/internal/samples"
 )
@@ -105,13 +106,15 @@ func (s *sampler) timeWindow(q samples.ResolvedQuery, hasStart, hasAfter bool, l
 //
 // SECURITY: the parts are searched in one forward sweep. Each bound
 // waits at its next candidate span (candidate), in waiting. When the
-// sweep reaches a span, it reads that part once for every bound waiting
-// there (samples searches them in shared passes), and a bound the part
-// does not answer waits at its next candidate after that span, which
-// the sweep reaches later in the same pass. So each part is read at most
-// once, however many bounds pass over it, and each bound's candidate
-// walks together cover each span at most once: at most bounds × spans
-// highest times compared, and no read.
+// sweep reaches a span, it searches that part once for every bound
+// waiting there (samples searches them in shared passes), and a bound
+// the part does not answer waits at its next candidate after that span,
+// which the sweep reaches later in the same pass. So each part is
+// searched once, however many bounds pass over it: in one read, or two
+// when more bounds wait there than samples takes in one request
+// (searchSpan). Each bound's candidate walks together cover each span
+// at most once: at most bounds × spans highest times compared, and no
+// read.
 func (s *sampler) linesAt(ctx context.Context, space lineSpace, bounds []samples.TimeBound) ([]int64, error) {
 	found := make([]int64, len(bounds))
 	// waiting[j] lists the bounds whose next candidate is span j. A bound
@@ -161,13 +164,45 @@ func (s *sampler) candidate(space lineSpace, bound samples.TimeBound, from int) 
 	return -1
 }
 
-// searchSpan searches one part for the bounds listed in which, through
-// one samples request whose time queries carry those bounds already
-// resolved (samples.Request.TimeBounds), and returns each one's line in
-// the part, -1 for none. The request asks for no context: only the
-// line's number is used, and the part is read through read, by the
-// rules that read it for a samples answer.
+// searchSpan searches one part for the bounds listed in which and
+// returns each one's line in the part, in the order of which, -1 for
+// none.
+//
+// SECURITY: samples takes at most samples.MaxTimestampValues time
+// queries in one request, and refuses more. The bounds waiting at one
+// part can number twice that: a request holds at most that many queries
+// (SamplesRequest.check), and a range closed at both ends has two
+// bounds. So the bounds are searched in requests of at most
+// samples.MaxTimestampValues each (searchSpanOnce), one after the
+// other: a part is read at most twice for the bounds of one request,
+// and never with more queries than samples answers.
+//
+// slices.Chunk returns an iterator: a function that the range loop
+// calls, and that hands the loop consecutive pieces of which, in order,
+// each a subslice sharing which's backing array (nothing is copied).
+// The lines of each piece are appended in that order, so lines[i]
+// answers which[i].
 func (s *sampler) searchSpan(ctx context.Context, sp span, bounds []samples.TimeBound, which []int) ([]int64, error) {
+	lines := make([]int64, 0, len(which))
+	for chunk := range slices.Chunk(which, samples.MaxTimestampValues) {
+		found, err := s.searchSpanOnce(ctx, sp, bounds, chunk)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, found...)
+	}
+	return lines, nil
+}
+
+// searchSpanOnce searches one part for the bounds listed in which, at
+// most samples.MaxTimestampValues of them, through one samples request
+// whose time queries carry those bounds already resolved
+// (samples.Request.TimeBounds), and returns each one's line in the
+// part, -1 for none. The request asks for no context: only the line's
+// number is used, and the part is read through read, by the rules that
+// read it for a samples answer. Each call builds its own request, so no
+// key of one call's bounds reaches the next.
+func (s *sampler) searchSpanOnce(ctx context.Context, sp span, bounds []samples.TimeBound, which []int) ([]int64, error) {
 	req, err := s.partRequest(sp.part)
 	if err != nil {
 		return nil, err

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"testing"
 	"time"
 
@@ -181,4 +182,149 @@ func TestSamples_InexactHighestTimeMovesOn(t *testing.T) {
 	requireLikeConcatenation(t, c,
 		SamplesRequest{Timestamps: []string{"2026-10-25T03:00", "2026-10-25T02:30", "2026-10-25T02:41..2026-10-25T03:10"}, BeforeContext: 1, AfterContext: 1},
 	)
+}
+
+// boundReads is what a Samples call asked of each part to search its
+// time bounds: the reads that carry samples.Request.TimeBounds, apart
+// from the reads of the answer's pieces and of a part's line count.
+type boundReads struct {
+	// perPart counts the bound reads of each part, by name.
+	perPart map[string]int
+	// most is the most time queries one bound read carried.
+	most int
+}
+
+// countedTimeSamples answers req on c through a reader that counts its
+// bound reads: cold (described by a scan, no stored index) when scan,
+// else from the stored indexes. It requires the answer to equal the
+// concatenation's, and no bound read to carry more time queries than
+// samples takes in one request (samples.MaxTimestampValues).
+func countedTimeSamples(t *testing.T, c builtChain, req SamplesRequest, scan bool) boundReads {
+	t.Helper()
+	label := fmt.Sprintf("%d times, scan %v", len(req.Timestamps), scan)
+	d := describe(t, c.dir, c.name, Options{Scan: scan, FileZone: c.zone})
+	if d.Response.State != rxtypes.ChainStateReady {
+		t.Fatalf("%s: the chain is %s: %+v", label, d.Response.State, d.Response.Reasons)
+	}
+	counted := boundReads{perPart: map[string]int{}}
+	// The closure writes into counted, which it shares with this
+	// function: Go closures capture the variable, not a copy of it.
+	reader := func(ctx context.Context, p Part, r samples.Request) (*rxtypes.SamplesResponse, error) {
+		if r.TimeBounds != nil {
+			counted.perPart[p.Name]++
+			counted.most = max(counted.most, len(r.Timestamps))
+		}
+		return samples.Resolve(ctx, r)
+	}
+	req.IndexLoader = samples.StoredIndex
+	resp, err := Samples(context.Background(), d, req, reader)
+	if err != nil {
+		t.Fatalf("%s: %v", label, err)
+	}
+	requireAnswerLike(t, label, resp, concatSamples(t, c, req), true)
+	if counted.most > samples.MaxTimestampValues {
+		t.Fatalf("%s: a bound read carried %d time queries, samples takes at most %d", label, counted.most, samples.MaxTimestampValues)
+	}
+	return counted
+}
+
+// requireBoundReads answers req on c cold and then with every part
+// indexed (countedTimeSamples), and requires each part's bound reads to
+// be what want gives it (none for a part want does not name).
+func requireBoundReads(t *testing.T, c builtChain, req SamplesRequest, want map[string]int) {
+	t.Helper()
+	cold := countedTimeSamples(t, c, req, true)
+	storeIndexes(t, c.dir, c.order...)
+	indexed := countedTimeSamples(t, c, req, false)
+	for label, got := range map[string]boundReads{"cold": cold, "indexed": indexed} {
+		if !maps.Equal(got.perPart, want) {
+			t.Fatalf("%s: bound reads %v, want %v", label, got.perPart, want)
+		}
+	}
+}
+
+// isoMillis is the layout of the time queries below.
+const isoMillis = "2006-01-02T15:04:05.000"
+
+// SECURITY: a closed range has two bounds, so the 1,000 time queries a
+// request may hold can give one part 2,000 bounds to search, and samples
+// takes at most 1,000 per request. 501 ranges inside one part (1,002
+// bounds) are searched there in two reads, each within the limit, and
+// answered as the concatenation answers them.
+func TestSamples_ClosedRangesInOnePartAreSearchedInTwoReads(t *testing.T) {
+	c := buildChain(t, "app.log", []chainFile{
+		{name: "app.log.1", text: timedLines(chainBase, time.Second, 1, 600, "app.log.1")},
+		{name: "app.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 601, 10, "app.log")},
+	})
+	var queries []string
+	for i := 0; i < 501; i++ {
+		from := chainBase.Add(time.Duration(i) * time.Second)
+		queries = append(queries, from.Format(isoMillis)+".."+from.Add(2*time.Second).Format(isoMillis))
+	}
+	requireBoundReads(t, c, SamplesRequest{Timestamps: queries}, map[string]int{"app.log.1": 2})
+}
+
+// SECURITY: the forward sweep gathers in one part the bounds that pass
+// over the parts before it. Under file_tz the first part, whose lines
+// write two zone offsets, has a highest time known only as an upper
+// bound, which the 1,000 bounds of 500 ranges reach; none of its lines
+// does, so all of them move on to the third part, where one more time
+// waits already. Its 1,001 bounds are searched in two reads, and the
+// answer equals the concatenation's.
+func TestSamples_BoundsGatheredInOnePartAreSearchedInTwoReads(t *testing.T) {
+	t.Setenv(config.ChainOverlapSecondsSetting.Name, "86400")
+	at := func(seconds int) string { return chainBase.Add(time.Duration(seconds) * time.Second).Format(isoMillis) }
+	var first, second, third, active bytes.Buffer
+	line := 0
+	write := func(buf *bytes.Buffer, part string, seconds int, offset string) {
+		line++
+		fmt.Fprintf(buf, "%s%s LINE %d part=%s\n", at(seconds), offset, line, part)
+	}
+	for s := 0; s <= 10; s++ {
+		offset := "+00:00"
+		if s%2 == 1 {
+			offset = "+00:05"
+		}
+		write(&first, "app.log.3", s, offset)
+	}
+	for s := 20; s <= 30; s++ {
+		write(&second, "app.log.2", s, "+00:00")
+	}
+	for s := 40; s <= 600; s += 5 {
+		write(&third, "app.log.1", s, "+00:00")
+	}
+	for s := 660; s <= 670; s++ {
+		write(&active, "app.log", s, "+00:00")
+	}
+	c := buildChain(t, "app.log", []chainFile{
+		{name: "app.log.3", text: first.Bytes()}, {name: "app.log.2", text: second.Bytes()},
+		{name: "app.log.1", text: third.Bytes()}, {name: "app.log", text: active.Bytes()},
+	})
+	utc, err := config.ParseZone("UTC")
+	if err != nil {
+		t.Fatalf("zone: %v", err)
+	}
+	c.zone = utc
+	var queries []string
+	for i := 0; i < 500; i++ {
+		from := chainBase.Add(35*time.Second + time.Duration(i)*10*time.Millisecond)
+		queries = append(queries, from.Format(isoMillis)+".."+from.Add(20*time.Second).Format(isoMillis))
+	}
+	queries = append(queries, at(8*60))
+	requireBoundReads(t, c, SamplesRequest{Timestamps: queries}, map[string]int{"app.log.3": 1, "app.log.1": 2})
+}
+
+// 1,000 single times inside one part, as many bounds as samples takes
+// in one request, are searched there in one read, and answered as the
+// concatenation answers them.
+func TestSamples_AThousandTimesInOnePartAreSearchedInOneRead(t *testing.T) {
+	c := buildChain(t, "app.log", []chainFile{
+		{name: "app.log.1", text: timedLines(chainBase, time.Second, 1, 1000, "app.log.1")},
+		{name: "app.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 1001, 10, "app.log")},
+	})
+	var queries []string
+	for i := 0; i < samples.MaxTimestampValues; i++ {
+		queries = append(queries, chainBase.Add(time.Duration(i)*time.Second).Format(isoMillis))
+	}
+	requireBoundReads(t, c, SamplesRequest{Timestamps: queries, BeforeContext: 1, AfterContext: 1}, map[string]int{"app.log.1": 1})
 }
