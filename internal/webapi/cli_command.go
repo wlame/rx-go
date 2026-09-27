@@ -132,6 +132,10 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "regexp", Flag: "regexp", Kind: ArgFlag, Absent: defaultValue("[]")},
 			{Field: "matching_flags", Kind: ArgSwitchList},
 			{Field: "max_results", Flag: "max-results", Kind: ArgFlag, Absent: defaultValue("0")},
+			{Field: "request_id", Flag: "request-id", Kind: ArgFlag, Absent: defaultValue("")},
+			{Field: "hook_on_file", Flag: "hook-on-file", Kind: ArgFlag, Absent: defaultValue("")},
+			{Field: "hook_on_match", Flag: "hook-on-match", Kind: ArgFlag, Absent: defaultValue("")},
+			{Field: "hook_on_complete", Flag: "hook-on-complete", Kind: ArgFlag, Absent: defaultValue("")},
 		},
 	},
 	"samples": {
