@@ -141,6 +141,16 @@
       "expected": "rx compress /var/log/app.log --output=/tmp/app.log.zst --frame-size=1M --level=5"
     },
     {
+      "name": "compress without an index over an existing output",
+      "endpoint": "compress",
+      "params": {
+        "input_path": "/var/log/app.log",
+        "build_index": false,
+        "force": true
+      },
+      "expected": "rx compress /var/log/app.log --build-index=false --force"
+    },
+    {
       "name": "compress with defaults",
       "endpoint": "compress",
       "params": { "input_path": "/var/log/app.log" },

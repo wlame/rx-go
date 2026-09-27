@@ -441,6 +441,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It dropped both, so for a request with `"threshold": 0` the pasted
   command skipped the file the task had indexed.
 
+- The `cli_command` of a `POST /v1/compress` task renders
+  `--build-index=false` when the request turned the index off and
+  `--force` when it asked to overwrite. Without them the pasted command
+  built an index the task had not, and failed on the output the task
+  had just written.
+
 - The OpenAPI document allows `null` for the `result` of
   `GET /v1/tasks/{task_id}`, which is what every poll before the task
   completes answers; it declared a non-null object. rx-python declares
