@@ -9,7 +9,8 @@
 
 Caches are content-addressed under `~/.cache/rx/` (or
 `$RX_CACHE_DIR/rx/`, or `$XDG_CACHE_HOME/rx/`). They are invalidated
-by source-file mtime changes, not by TTL.
+when the source file changes (its size, mtime, inode, ctime or
+fingerprint), not by TTL.
 
 ## Cache location
 
@@ -68,14 +69,16 @@ Contents: the full `UnifiedFileIndex` struct. See
 Each trace cache entry is keyed by a hash of:
 
 - Source file path
-- Source file mtime and size
 - Pattern set
-- Max-results value
-- Other flags that affect output
+- The ripgrep flags that change which lines match (`-i`, `-w`, `-x`,
+  `-F`, `-P`)
 
 When `rx trace` is invoked, the engine computes the key and looks for
-an existing cache file. Hit → load and reconstruct the response.
-Miss → run the scan, write the response to cache.
+an existing cache file whose source identity still matches the file
+(see below). Hit → load and reconstruct the response. Miss → run the
+scan, write the response to cache. Only a complete scan of a file at or
+above the large-file threshold (`RX_LARGE_FILE_MB`), without
+`--max-results`, is written.
 
 `--no-cache` bypasses both the read and write steps.
 
@@ -96,18 +99,28 @@ timestamp so subsequent starts can reuse the cached copy. See
 
 ## Cache invalidation
 
-### Source-mtime-based (default)
+### Source identity (default)
 
-An index cache entry is valid iff:
+An index or trace cache entry is valid only while its source file is
+still the file the entry was built from. Each entry records, and each
+load compares:
 
-- The source file's `mtime` matches the cached `source_modified_at`
-- The source file's `size` matches `source_size_bytes`
+- the file size (`source_size_bytes`)
+- the mtime (`source_modified_at`)
+- the inode (`source_inode`)
+- the inode-change time, ctime (`source_changed_at`)
+- a fingerprint: a digest of the size plus the first and last 64 KiB
+  (`source_fingerprint`)
 
-Either changes → the entry is **stale**. On the next load, `rx`
-returns "cache not valid" and the caller rebuilds.
+Any difference → the entry is **stale**, and the caller rebuilds the
+index or scans the file again. The index and the trace cache use the
+same check.
 
-Trace cache entries use the same mtime-and-size check on their source
-file.
+A trace cache entry records the file as it was when the scan was
+planned, not when it finished. A log that grows during a scan is read
+up to the size it had at the start, and the entry says so; if the file
+already changed by the time the scan ends, the entry is not written at
+all. Either way the next trace scans again and finds the new lines.
 
 **There is no TTL.** A cache entry from a year ago is still valid if
 the source file hasn't been touched.
@@ -140,8 +153,12 @@ Per-invocation flags:
 - **Manual mtime changes** (`touch -t ...`) invalidate the cache.
   This is usually what you want.
 - **In-place edits that preserve size and mtime** (rare, but possible
-  with some rsync configurations) are NOT detected. Use `--force` to
-  guarantee a rebuild.
+  with some rsync configurations) are detected by the ctime, which
+  every write moves, and by the fingerprint when the edit touches the
+  first or last 64 KiB. A file replaced by rename has a new inode. The
+  one case left is an edit confined to the middle of a file that keeps
+  its size and mtime, on a filesystem whose ctime does not move; use
+  `--force` (index) or `--no-cache` (trace) there.
 - **Fractional-second mtimes** are preserved at microsecond precision
   in the cache. Most filesystems provide this; a few network mounts
   and FAT32 do not, which means whole-second mtimes may be compared

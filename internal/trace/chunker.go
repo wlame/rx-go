@@ -197,8 +197,15 @@ func CreateFileTasks(path string) ([]FileTask, error) {
 	if fi.IsDir() {
 		return nil, fmt.Errorf("CreateFileTasks: %s is a directory", path)
 	}
-	fileSize := fi.Size()
+	return planFileTasks(path, fi.Size())
+}
 
+// planFileTasks splits the first fileSize bytes of path into FileTasks.
+// The size is the caller's: the engine plans from the stat it records
+// as the file's identity, so the tasks, and therefore the scan, cover
+// exactly the bytes that identity describes even if the file grows
+// while they run.
+func planFileTasks(path string, fileSize int64) ([]FileTask, error) {
 	offsets, err := GetFileOffsets(path, fileSize)
 	if err != nil {
 		return nil, err

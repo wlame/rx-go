@@ -23,12 +23,23 @@ import (
 
 // TraceCacheVersion pins the on-disk schema. Bump when the JSON shape
 // changes in a backward-incompatible way, or when the meaning of a
-// field changes: version 3 is where line_number became the line's
-// number in the file rather than in the chunk that found it, so caches
-// written before it are discarded rather than read back wrong. Must
-// stay in lockstep with
-// rx-python/src/rx/trace_cache.py::TRACE_CACHE_VERSION.
-const TraceCacheVersion = 3
+// field changes. A cache of any other version is treated as absent by
+// LoadCache, so the bump is what keeps an old cache from being read
+// back with today's rules.
+//
+// Version 3: line_number is the line's number in the file rather than
+// in the chunk that found it.
+//
+// Version 4: the cache records the source's inode, ctime and
+// fingerprint, and every identity field describes the file as it was
+// when the scan was planned. Version 3 caches were stamped from a stat
+// taken after the scan, so a log that grew during the scan got a cache
+// claiming its new size with matches only up to the old one; such a
+// cache cannot be told apart from a good one and is discarded.
+//
+// rx-python writes version 3, so each backend treats the other's trace
+// caches as absent.
+const TraceCacheVersion = 4
 
 // matchingFlags are the subset of ripgrep flags that change WHICH
 // lines match. Any flag not in this set doesn't affect cache validity.
@@ -238,9 +249,10 @@ func SaveCache(cachePath string, data *rxtypes.TraceCacheData) error {
 // ============================================================================
 
 // IsCacheValid returns true when the cache file exists, the version
-// matches, and the source file's mtime+size match the cache record.
-//
-// Parity: rx-python/src/rx/trace_cache.py::is_trace_cache_valid.
+// and the patterns hash match, and the source file is still the file
+// the cache was built from: the same size, mtime, inode, ctime and
+// fingerprint, compared by index.SourceIdentity.MatchesFile exactly as
+// the line index compares them.
 func IsCacheValid(
 	cachePath string,
 	sourcePath string,
@@ -253,21 +265,18 @@ func IsCacheValid(
 	if data.PatternsHash != ComputePatternsHash(patterns, rgFlags) {
 		return false
 	}
-	fi, err := os.Stat(sourcePath)
-	if err != nil {
-		return false
+	return recordedSource(data).MatchesFile(sourcePath)
+}
+
+// recordedSource gathers the identity fields a trace cache carries.
+func recordedSource(data *rxtypes.TraceCacheData) index.SourceIdentity {
+	return index.SourceIdentity{
+		SizeBytes:   data.SourceSizeBytes,
+		ModifiedAt:  data.SourceModifiedAt,
+		Inode:       data.SourceInode,
+		ChangedAt:   data.SourceChangedAt,
+		Fingerprint: data.SourceFingerprint,
 	}
-	if data.SourceSizeBytes != fi.Size() {
-		return false
-	}
-	// Python uses datetime.fromtimestamp(st_mtime).isoformat() which is
-	// local-tz. The `index` package's FormatMtime helper already emits
-	// the same string Python would have emitted, so reuse it for
-	// byte-equal comparisons.
-	if data.SourceModifiedAt != index.FormatMtime(fi.ModTime()) {
-		return false
-	}
-	return true
 }
 
 // GetCachedMatches returns the raw cached matches for (source, patterns, flags)
@@ -327,28 +336,35 @@ func GetCompressedCacheInfo(
 // Cache construction
 // ============================================================================
 
-// BuildCache converts the engine's match output into the on-disk cache
-// shape. For seekable-zstd sources, pass compressionFormat="zstd-seekable"
-// and the set of matches that have FrameIndex set — this enables the
-// fast-path reconstruction on subsequent cache hits.
-//
-// matches should ALREADY have pattern_ids resolved down to a single
-// pattern (post-identify) — the cache stores one match per (pattern,
-// offset) combination, not the raw pre-identify records.
-func BuildCache(
-	sourcePath string,
-	patterns, rgFlags []string,
-	matches []rxtypes.Match,
-	frameIndexByOffset map[int64]int, // offset -> frame_index (seekable only; nil OK)
-	compressionFormat string,
-) (*rxtypes.TraceCacheData, error) {
-	abs, err := filepath.Abs(sourcePath)
+// ScannedFile is what one completed scan of a file contributes to its
+// trace cache.
+type ScannedFile struct {
+	// Path is the file as the caller named it.
+	Path string
+	// Source is the file's identity taken before the scan was planned.
+	// The cache is stamped with it, so the cache describes exactly the
+	// bytes the scan covered.
+	Source index.SourceIdentity
+	// Matches are the scan's matches with pattern IDs already resolved
+	// to a single pattern each (post-identify): the cache stores one
+	// match per (pattern, offset) combination.
+	Matches []rxtypes.Match
+	// FrameIndexByOffset maps a match offset to its frame, for a
+	// seekable-zstd source; nil otherwise.
+	FrameIndexByOffset map[int64]int
+	// CompressionFormat is "zstd-seekable" for a seekable-zstd source
+	// and empty for a plain file.
+	CompressionFormat string
+}
+
+// BuildCache converts a scan's output into the on-disk cache shape. For
+// a seekable-zstd source the matches that have a frame index recorded
+// produce frames_with_matches, which enables the fast-path
+// reconstruction on later cache hits.
+func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCacheData {
+	abs, err := filepath.Abs(scan.Path)
 	if err != nil {
-		abs = sourcePath
-	}
-	fi, err := os.Stat(sourcePath)
-	if err != nil {
-		return nil, fmt.Errorf("BuildCache: stat %s: %w", sourcePath, err)
+		abs = scan.Path
 	}
 
 	// Map "p1" -> 0, "p2" -> 1, ...
@@ -369,9 +385,9 @@ func BuildCache(
 		return n - 1
 	}
 
-	cachedMatches := make([]rxtypes.TraceCacheMatch, 0, len(matches))
+	cachedMatches := make([]rxtypes.TraceCacheMatch, 0, len(scan.Matches))
 	framesSet := map[int]struct{}{}
-	for _, m := range matches {
+	for _, m := range scan.Matches {
 		var lineNum int64
 		if m.RelativeLineNumber != nil {
 			lineNum = int64(*m.RelativeLineNumber)
@@ -381,7 +397,7 @@ func BuildCache(
 			Offset:       m.Offset,
 			LineNumber:   lineNum,
 		}
-		if fi, ok := frameIndexByOffset[m.Offset]; ok {
+		if fi, ok := scan.FrameIndexByOffset[m.Offset]; ok {
 			fiCopy := fi
 			cm.FrameIndex = &fiCopy
 			framesSet[fi] = struct{}{}
@@ -399,20 +415,23 @@ func BuildCache(
 	sort.Strings(relevantFlags)
 
 	out := &rxtypes.TraceCacheData{
-		Version:          TraceCacheVersion,
-		SourcePath:       abs,
-		SourceModifiedAt: index.FormatMtime(fi.ModTime()),
-		SourceSizeBytes:  fi.Size(),
-		Patterns:         append([]string(nil), patterns...),
-		PatternsHash:     ComputePatternsHash(patterns, rgFlags),
-		RgFlags:          relevantFlags,
-		CreatedAt:        index.FormatMtime(time.Now()),
-		Matches:          cachedMatches,
+		Version:           TraceCacheVersion,
+		SourcePath:        abs,
+		SourceModifiedAt:  scan.Source.ModifiedAt,
+		SourceSizeBytes:   scan.Source.SizeBytes,
+		SourceInode:       scan.Source.Inode,
+		SourceChangedAt:   scan.Source.ChangedAt,
+		SourceFingerprint: scan.Source.Fingerprint,
+		Patterns:          append([]string(nil), patterns...),
+		PatternsHash:      ComputePatternsHash(patterns, rgFlags),
+		RgFlags:           relevantFlags,
+		CreatedAt:         index.FormatMtime(time.Now()),
+		Matches:           cachedMatches,
 	}
 
-	if compressionFormat != "" {
-		out.CompressionFormat = compressionFormat
-		if compressionFormat == "zstd-seekable" && len(framesSet) > 0 {
+	if scan.CompressionFormat != "" {
+		out.CompressionFormat = scan.CompressionFormat
+		if scan.CompressionFormat == "zstd-seekable" && len(framesSet) > 0 {
 			frames := make([]int, 0, len(framesSet))
 			for fi := range framesSet {
 				frames = append(frames, fi)
@@ -422,7 +441,26 @@ func BuildCache(
 		}
 	}
 
-	return out, nil
+	return out
+}
+
+// SaveScannedFile writes the trace cache for one completed scan, unless
+// the file on disk is no longer the file the scan was planned on.
+//
+// The scan read the bytes that were there when its chunks were planned.
+// If the file changed since (a live log grew, or the file was
+// replaced), a cache written now would describe a file the scan never
+// read, so nothing is written and the next trace scans again. The cache
+// is stamped with the planned identity in any case, so even a change
+// that lands after this check makes the next read see a mismatch.
+//
+// Errors are not returned: a cache that cannot be written only means
+// the next trace scans again.
+func SaveScannedFile(scan ScannedFile, patterns, rgFlags []string) {
+	if !scan.Source.MatchesFile(scan.Path) {
+		return
+	}
+	_ = SaveCache(CachePath(scan.Path, patterns, rgFlags), BuildCache(scan, patterns, rgFlags))
 }
 
 // ============================================================================
