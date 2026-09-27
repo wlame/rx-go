@@ -118,7 +118,7 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		OutputPath:       output,
 		FrameSizeBytes:   frameSizeBytes,
 		CompressionLevel: level,
-		BuildIndex:       req.BuildIndex,
+		BuildIndex:       req.BuildIndex == nil || *req.BuildIndex,
 		CLICommand:       compressCLICommand(validated, output, req),
 	}
 	go runDetached(mgr, taskID, "compress", logger, func() {
