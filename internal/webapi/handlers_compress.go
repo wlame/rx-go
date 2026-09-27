@@ -214,51 +214,53 @@ func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 	frameCount := len(tbl.Frames)
 	elapsed := time.Since(start).Seconds()
 
-	result := map[string]any{
-		"success":           true,
-		"input_path":        job.InputPath,
-		"output_path":       job.OutputPath,
-		"compressed_size":   compressedSize,
-		"decompressed_size": decompressedSize,
-		"compression_ratio": ratio,
-		"frame_count":       frameCount,
-		"total_lines":       nil, // only populated when BuildIndex=true, see below
-		"index_built":       false,
-		"time_seconds":      elapsed,
+	result := rxtypes.CompressTaskResult{
+		Success:          true,
+		InputPath:        job.InputPath,
+		OutputPath:       job.OutputPath,
+		CompressedSize:   compressedSize,
+		DecompressedSize: decompressedSize,
+		CompressionRatio: ratio,
+		FrameCount:       frameCount,
+		TimeSeconds:      elapsed,
+		CLICommand: BuildCLICommand("compress", map[string]any{
+			"input_path":        job.InputPath,
+			"output_path":       job.OutputPath,
+			"frame_size":        job.FrameSizeDisplay,
+			"compression_level": job.CompressionLevel,
+		}),
 	}
 
 	// Index the file just written, so a later `samples --lines=N` on it
 	// decompresses one frame instead of the whole stream. A failure is
 	// reported rather than fatal: the compressed file is correct and
 	// usable, and POST /v1/index can build the index later.
-	//
-	// `index_built` used to be set to true without an index being built,
-	// which told the caller something that was not so.
 	if job.BuildIndex {
-		idx, idxErr := index.Build(job.OutputPath, index.BuildOptions{})
-		switch {
-		case idxErr != nil:
-			result["index_error"] = idxErr.Error()
-		default:
-			if _, saveErr := index.Save(idx); saveErr != nil {
-				result["index_error"] = saveErr.Error()
-				break
-			}
-			result["index_built"] = true
-			if idx.LineCount != nil {
-				result["total_lines"] = *idx.LineCount
-			}
+		lineCount, idxErr := indexCompressedOutput(job.OutputPath)
+		if idxErr != nil {
+			message := idxErr.Error()
+			result.IndexError = &message
+		} else {
+			result.IndexBuilt = true
+			result.TotalLines = lineCount
 		}
 	}
 
-	result["cli_command"] = BuildCLICommand("compress", map[string]any{
-		"input_path":        job.InputPath,
-		"output_path":       job.OutputPath,
-		"frame_size":        job.FrameSizeDisplay,
-		"compression_level": job.CompressionLevel,
-	})
-
 	mgr.Complete(taskID, result)
+}
+
+// indexCompressedOutput builds and saves the line index of a file the
+// compress task just wrote, and returns its line count (nil when the
+// builder did not count lines).
+func indexCompressedOutput(path string) (*int64, error) {
+	idx, err := index.Build(path, index.BuildOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := index.Save(idx); err != nil {
+		return nil, err
+	}
+	return idx.LineCount, nil
 }
 
 // parseFrameSizeHTTP is the HTTP-facing wrapper around the CLI's

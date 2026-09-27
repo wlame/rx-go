@@ -341,6 +341,14 @@ Paste the output. Do not summarize it.
 - Go map iteration is random: sort keys before any output that must be stable.
 - huma v2 forbids `*int` on query params; use sentinels (`0` unset MaxResults,
   `-1` unset Context). huma serves `/openapi.json` as `application/openapi+json`.
+- huma panics on `nullable:"true"` for a field that refers to a named object;
+  make the object itself nullable with a `_ struct{} \`nullable:"true"\``
+  field (`rxtypes.LineLengthStats`). A wire type whose JSON is not what
+  reflection sees (`rxtypes.LineIndexEntry`, `rxtypes.TaskResult`) gets its
+  schema from an alias in `internal/webapi/openapi_schemas.go`, since
+  `pkg/rxtypes` imports the standard library only. Error statuses are
+  declared through `errorResponses`; `error_statuses_test.go` fails when a
+  handler can return one its operation does not declare.
 - rg's `absolute_offset` is relative to rg's stdin; add `chunk.Offset`.
 - `klauspost/compress` zstd encoder levels are coarse (1 to 4); higher values clamp.
 - `sync.Mutex` + map beats `sync.Map` for check-and-insert (see `internal/tasks`).

@@ -17,7 +17,7 @@ import (
 )
 
 // TestIndex_GetAfterManualCache covers the cache-hit branch of
-// GET /v1/index, plus the full unifiedIndexToDict projection.
+// GET /v1/index, plus the full indexResponseFrom projection.
 func TestIndex_GetAfterManualCache(t *testing.T) {
 	root := t.TempDir()
 	srcPath := filepath.Join(root, "payload.log")
@@ -161,8 +161,10 @@ func TestIndex_PostSuccessPath(t *testing.T) {
 		_ = json.NewDecoder(sr.Body).Decode(&st)
 		_ = sr.Body.Close()
 		if st.Status == "completed" {
-			if st.Result["success"] != true {
-				t.Errorf("result.success: got %v", st.Result["success"])
+			// A decoded result is a map; its Operation says which
+			// result type it is.
+			if result, _ := st.Result.(map[string]any); result["success"] != true {
+				t.Errorf("result.success: got %v", st.Result)
 			}
 			return
 		}
