@@ -102,3 +102,12 @@ func TestWriteLogsIndex_CountsParts(t *testing.T) {
 		})
 	}
 }
+
+// The help of rx logs trace names the index command as the hint on
+// stderr prints it, with -- before the handle.
+func TestLogsTraceHelp_NamesTheIndexCommandAsTheHintPrintsIt(t *testing.T) {
+	long := newLogsTraceCommand(nil).Long
+	if !strings.Contains(long, "rx logs index -- CHAIN") {
+		t.Errorf("the help does not name rx logs index -- CHAIN:\n%s", long)
+	}
+}
