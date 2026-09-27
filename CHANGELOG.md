@@ -166,6 +166,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start. Exit 3 when the handle names no chain, 6 when it is invalid, 7
   when `--fingerprint=` differs or a part changed while it was read, 2
   for a part that is not a member and the usage errors of `rx samples`.
+- `GET /v1/logs/trace` takes the parameters of `GET /v1/trace` and
+  searches rotated logs: each `path` is a directory (the files of each
+  directory its walk lists are grouped into log chains, as
+  `GET /v1/logs/chains` groups them), a chain's handle (even without an
+  active file), or a file (a part's own path is a file). The parts of
+  each chain are searched in the chain's order (by time once it is
+  ready, by name before) by the trace engine, where the walk met the
+  chain's first file, so the file ids, the order of the matches and the
+  `max_results` cut follow it; context never crosses a part's edge, and
+  each part keeps its own trace cache entry and line index. The answer
+  is the trace answer plus `chains` (`c1`, `c2`, …: handle, name, the
+  parts' file ids in order, fingerprint, state, reasons), and each match
+  gives `chain` and `chain_line`, its global line (`-1` for a file of
+  its own, a pending or invalid chain, and a match the trace left
+  unnumbered). Another encoding of a part is skipped with the reason
+  `duplicate_part: …`, a part that cannot be read with its read error,
+  and a chain of more than 10,000 parts is searched as files of their
+  own. Chains are described from their parts' indexes, and no index
+  build starts. 409 when a part changed while its chain was described;
+  the other statuses as `GET /v1/trace`. The webhooks fire with the
+  payloads of a trace. `GET /v1/trace` is unchanged.
+- `rx logs trace PATTERN [CHAIN|DIR|FILE ...]` with every flag of
+  `rx trace` gives the same search from a terminal, each chain described
+  as `rx logs show` describes it, so a valid chain is ready: a match in
+  a part prints as `CHAIN:LINE (PART:LINE): TEXT`, one in a file of its
+  own as `FILE:LINE: TEXT`, and `--json` prints the `GET /v1/logs/trace`
+  body. An invalid chain is named on stderr. Exit 3 for a path that is
+  no directory, chain or file, 4 outside the search roots or for a
+  named file that cannot be read, 7 when a part changed while its chain
+  was described, 2 for a pattern that does not compile, `-` and the
+  usage errors of `rx trace`.
 - `RX_CHAIN_OVERLAP_SECONDS` (default 60, 0 to 86400): how far a part
   of a log chain may reach past the first timestamp of the next part
   before the chain is invalid.

@@ -28,6 +28,7 @@ import (
 //	rx logs time-range /var/log/syslog  # its first and last timestamp
 //	rx logs index /var/log/syslog     # build and store every part's line index
 //	rx logs samples /var/log/syslog --lines=123456  # lines by global line, part and line, or time
+//	rx logs trace error /var/log      # search: each chain's parts in its order
 //
 // `rx logs` alone prints its help; an unknown subcommand is a usage
 // error.
@@ -45,7 +46,7 @@ func NewLogsCommand(out io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(newLogsListCommand(out), newLogsShowCommand(out), newLogsTimeRangeCommand(out),
-		newLogsIndexCommand(out), newLogsSamplesCommand(out))
+		newLogsIndexCommand(out), newLogsSamplesCommand(out), newLogsTraceCommand(out))
 	return cmd
 }
 

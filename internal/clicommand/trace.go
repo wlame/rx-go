@@ -32,31 +32,7 @@ import (
 //     ripgrep's own spelling; see trace.MatchingFlags. Any other flag is
 //     a usage error, exit 2.
 func NewTraceCommand(out io.Writer) *cobra.Command {
-	var (
-		inputPaths     []string
-		regexps        []string
-		maxResults     int
-		showSamples    bool
-		ctxLines       int
-		beforeCtx      int
-		afterCtx       int
-		jsonOutput     bool
-		noColor        bool
-		colorFlag      string
-		requestID      string
-		hookOnFile     string
-		hookOnMatch    string
-		hookOnComplete string
-		noCache        bool
-		noIndex        bool
-		// `rx trace <dir>` recurses by
-		// default (Python parity). `--recursive` is a Python-compat
-		// no-op (default already-true). `--no-recursive` flips the
-		// behavior for users who want top-level-only scans.
-		recursive   bool
-		noRecursive bool
-	)
-
+	var flags traceFlags
 	cmd := &cobra.Command{
 		Use:   "trace [PATTERN] [PATH ...]",
 		Short: "Search files and directories for regex patterns",
@@ -65,76 +41,114 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 			"Use '-' as PATH or pipe input to search stdin.\n" +
 			"For multiple patterns, use -e/--regexp multiple times.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// --no-color is the older spelling and wins, so a script
-			// that already passes it keeps working.
-			if noColor {
-				colorFlag = "never"
-			}
-			return runTrace(out, traceParams{
-				args:        args,
-				paths:       inputPaths,
-				regexps:     regexps,
-				maxResults:  maxResults,
-				showSamples: showSamples,
-				ctxLines:    ctxLines,
-				beforeCtx:   beforeCtx,
-				afterCtx:    afterCtx,
-				// A flag that was given as 0 means "no context", which is
-				// not the same as leaving it out; only Changed() can tell
-				// them apart on an int flag.
-				ctxSet:         cmd.Flags().Changed("context"),
-				beforeSet:      cmd.Flags().Changed("before"),
-				afterSet:       cmd.Flags().Changed("after"),
-				jsonOutput:     jsonOutput,
-				colorFlag:      colorFlag,
-				requestID:      requestID,
-				hookOnFile:     hookOnFile,
-				hookOnMatch:    hookOnMatch,
-				hookOnComplete: hookOnComplete,
-				noCache:        noCache,
-				noIndex:        noIndex,
-				// recursive flag is advisory; actual behavior comes
-				// from noRecursive.
-				// We silence the unused warning by passing through.
-				recursive:   recursive,
-				noRecursive: noRecursive,
-				rgFlags:     trace.RipgrepArgs(selectedMatchingFlags(cmd)),
-			})
+			return runTrace(out, flags.params(cmd, args))
 		},
 	}
+	bindTraceFlags(cmd, &flags)
+	return cmd
+}
 
-	cmd.Flags().StringArrayVar(&inputPaths, "path", nil, "File or directory path (repeatable)")
-	cmd.Flags().StringArrayVar(&inputPaths, "file", nil, "Alias of --path")
-	cmd.Flags().StringArrayVarP(&regexps, "regexp", "e", nil, "Regex pattern (repeatable)")
-	cmd.Flags().StringArrayVar(&regexps, "regex", nil, "Alias of --regexp")
-	cmd.Flags().IntVar(&maxResults, "max-results", 0, "Maximum number of results (0 = unlimited)")
-	cmd.Flags().BoolVar(&showSamples, "samples", false, "Show context lines around matches")
-	cmd.Flags().IntVar(&ctxLines, "context", 0, "Number of lines before and after (for --samples)")
-	cmd.Flags().IntVarP(&beforeCtx, "before", "B", 0, "Number of lines before match (for --samples)")
-	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Number of lines after match (for --samples)")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
-	cmd.Flags().StringVar(&colorFlag, "color", "auto",
+// traceFlags holds the values of the flags `rx trace` and
+// `rx logs trace` share; bindTraceFlags declares them.
+type traceFlags struct {
+	inputPaths     []string
+	regexps        []string
+	maxResults     int
+	showSamples    bool
+	ctxLines       int
+	beforeCtx      int
+	afterCtx       int
+	jsonOutput     bool
+	noColor        bool
+	colorFlag      string
+	requestID      string
+	hookOnFile     string
+	hookOnMatch    string
+	hookOnComplete string
+	noCache        bool
+	noIndex        bool
+	// `rx trace <dir>` recurses by
+	// default (Python parity). `--recursive` is a Python-compat
+	// no-op (default already-true). `--no-recursive` flips the
+	// behavior for users who want top-level-only scans.
+	recursive   bool
+	noRecursive bool
+}
+
+// bindTraceFlags declares the flags of `rx trace` on cmd, each bound to
+// its field of f. `rx logs trace` declares the same ones, so a search
+// of log chains takes every flag a trace takes.
+func bindTraceFlags(cmd *cobra.Command, f *traceFlags) {
+	cmd.Flags().StringArrayVar(&f.inputPaths, "path", nil, "File or directory path (repeatable)")
+	cmd.Flags().StringArrayVar(&f.inputPaths, "file", nil, "Alias of --path")
+	cmd.Flags().StringArrayVarP(&f.regexps, "regexp", "e", nil, "Regex pattern (repeatable)")
+	cmd.Flags().StringArrayVar(&f.regexps, "regex", nil, "Alias of --regexp")
+	cmd.Flags().IntVar(&f.maxResults, "max-results", 0, "Maximum number of results (0 = unlimited)")
+	cmd.Flags().BoolVar(&f.showSamples, "samples", false, "Show context lines around matches")
+	cmd.Flags().IntVar(&f.ctxLines, "context", 0, "Number of lines before and after (for --samples)")
+	cmd.Flags().IntVarP(&f.beforeCtx, "before", "B", 0, "Number of lines before match (for --samples)")
+	cmd.Flags().IntVarP(&f.afterCtx, "after", "A", 0, "Number of lines after match (for --samples)")
+	cmd.Flags().BoolVar(&f.jsonOutput, "json", false, "Output results as JSON")
+	cmd.Flags().StringVar(&f.colorFlag, "color", "auto",
 		"Colorize output: 'always', 'never', or 'auto' (color only on a terminal)")
-	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable colored output (alias for --color=never)")
+	cmd.Flags().BoolVar(&f.noColor, "no-color", false, "Disable colored output (alias for --color=never)")
 	addDeprecatedDebugFlag(cmd)
-	cmd.Flags().StringVar(&requestID, "request-id", "", "Custom request ID (auto-generated if not provided)")
-	cmd.Flags().StringVar(&hookOnFile, "hook-on-file", "", "URL to call when file scan completes")
-	cmd.Flags().StringVar(&hookOnMatch, "hook-on-match", "", "URL to call per match. Requires --max-results.")
-	cmd.Flags().StringVar(&hookOnComplete, "hook-on-complete", "", "URL to call when trace completes")
-	cmd.Flags().BoolVar(&noCache, "no-cache", false, "Disable trace cache")
-	cmd.Flags().BoolVar(&noIndex, "no-index", false, "Disable file indexing")
+	cmd.Flags().StringVar(&f.requestID, "request-id", "", "Custom request ID (auto-generated if not provided)")
+	cmd.Flags().StringVar(&f.hookOnFile, "hook-on-file", "", "URL to call when file scan completes")
+	cmd.Flags().StringVar(&f.hookOnMatch, "hook-on-match", "", "URL to call per match. Requires --max-results.")
+	cmd.Flags().StringVar(&f.hookOnComplete, "hook-on-complete", "", "URL to call when trace completes")
+	cmd.Flags().BoolVar(&f.noCache, "no-cache", false, "Disable trace cache")
+	cmd.Flags().BoolVar(&f.noIndex, "no-index", false, "Disable file indexing")
 	// -r is Python's short form for --recursive; since the default is
 	// already recursive, this flag exists for Python-script compat.
 	// --no-recursive is the real opt-out.
-	cmd.Flags().BoolVarP(&recursive, "recursive", "r", true,
+	cmd.Flags().BoolVarP(&f.recursive, "recursive", "r", true,
 		"Recurse into subdirectories (default: true; Python-compat flag)")
-	cmd.Flags().BoolVar(&noRecursive, "no-recursive", false,
+	cmd.Flags().BoolVar(&f.noRecursive, "no-recursive", false,
 		"Stop at top-level directory entries (Go-specific escape hatch)")
-	for _, f := range trace.MatchingFlags {
-		cmd.Flags().BoolP(f.Long, f.Short, false, f.Usage)
+	for _, mf := range trace.MatchingFlags {
+		cmd.Flags().BoolP(mf.Long, mf.Short, false, mf.Usage)
 	}
+}
 
-	return cmd
+// params turns the flags of one run, and its positional arguments,
+// into traceParams.
+func (f *traceFlags) params(cmd *cobra.Command, args []string) traceParams {
+	// --no-color is the older spelling and wins, so a script that
+	// already passes it keeps working.
+	colorFlag := f.colorFlag
+	if f.noColor {
+		colorFlag = "never"
+	}
+	return traceParams{
+		args:        args,
+		paths:       f.inputPaths,
+		regexps:     f.regexps,
+		maxResults:  f.maxResults,
+		showSamples: f.showSamples,
+		ctxLines:    f.ctxLines,
+		beforeCtx:   f.beforeCtx,
+		afterCtx:    f.afterCtx,
+		// A flag that was given as 0 means "no context", which is not
+		// the same as leaving it out; only Changed() can tell them
+		// apart on an int flag.
+		ctxSet:         cmd.Flags().Changed("context"),
+		beforeSet:      cmd.Flags().Changed("before"),
+		afterSet:       cmd.Flags().Changed("after"),
+		jsonOutput:     f.jsonOutput,
+		colorFlag:      colorFlag,
+		requestID:      f.requestID,
+		hookOnFile:     f.hookOnFile,
+		hookOnMatch:    f.hookOnMatch,
+		hookOnComplete: f.hookOnComplete,
+		noCache:        f.noCache,
+		noIndex:        f.noIndex,
+		// recursive flag is advisory; actual behavior comes from
+		// noRecursive. It is passed through to keep the field in use.
+		recursive:   f.recursive,
+		noRecursive: f.noRecursive,
+		rgFlags:     trace.RipgrepArgs(selectedMatchingFlags(cmd)),
+	}
 }
 
 // selectedMatchingFlags reads back which of trace.MatchingFlags the
@@ -219,55 +233,13 @@ func runTrace(out io.Writer, p traceParams) error {
 		return exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
 	}
 
-	// The flags and RX_HOOK_ON_*_URL resolve the same way they do over
-	// HTTP, so RX_DISABLE_CUSTOM_HOOKS switches the flags off here too.
-	hookOverrides := hooks.HookOverrides{
-		OnFileURL:     hookOverride(p.hookOnFile),
-		OnMatchURL:    hookOverride(p.hookOnMatch),
-		OnCompleteURL: hookOverride(p.hookOnComplete),
+	hookConfig, err := traceHookConfig(p)
+	if err != nil {
+		return err
 	}
-	hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), hookOverrides)
-
-	// SECURITY: hook URLs from the command line get the same guard the
-	// HTTP layer applies to hook_on_* query parameters — scheme
-	// allowlist, no credentials, and no loopback / link-local /
-	// private / CGNAT target.
-	if hookErr := hooks.ValidateConfig(hookConfig); hookErr != nil {
-		return exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
-	}
-
-	// A match hook without a cap is a request for one HTTP call per
-	// matching line, which on a log file is millions. The HTTP layer
-	// refuses the same combination.
-	if hookConfig.HasMatchHook() && p.maxResults <= 0 {
-		return exitWithError(os.Stderr, ExitUsageError,
-			"--max-results is required when --hook-on-match is configured.\n"+
-				"This prevents accidentally triggering millions of HTTP calls.")
-	}
-
-	// Validate paths against sandbox only if one is configured. The CLI
-	// is typically unsandboxed (matches Python behavior); tests can
-	// opt-in via paths.SetSearchRoots.
-	//
-	// stat each user-supplied path up front
-	// and refuse to proceed when any path is missing. Python's CLI emits
-	// "❌ Error: Path not found: <path>" and exits 1; we match with
-	// exit-code ExitFileNotFound (= 1 per common.go convention).
-	validated := make([]string, 0, len(filePaths))
-	for _, f := range filePaths {
-		v, vErr := paths.ValidatePathWithinRoots(f)
-		if vErr != nil {
-			if errors.Is(vErr, paths.ErrNoSearchRootsConfigured) {
-				validated = append(validated, f)
-				continue
-			}
-			var perr *paths.ErrPathOutsideRoots
-			if errors.As(vErr, &perr) {
-				return exitWithError(os.Stderr, ExitAccessDenied, "%s", perr.Error())
-			}
-			return exitWithError(os.Stderr, ExitAccessDenied, "%s", vErr.Error())
-		}
-		validated = append(validated, v)
+	validated, err := validateTracePaths(filePaths)
+	if err != nil {
+		return err
 	}
 
 	// The spool is deleted when this command ends, so a trace cache
@@ -316,53 +288,19 @@ func runTrace(out io.Writer, p traceParams) error {
 
 	// Fire the engine.
 	engine := trace.New()
-	var maxPtr *int
-	if p.maxResults > 0 {
-		m := p.maxResults
-		maxPtr = &m
-	}
-
 	requestID := requestIDOrNew(p.requestID)
 
-	// Declared before the dispatcher so the deferred on_complete can
-	// read the response the engine is about to produce.
+	// Declared before the webhooks start so the deferred on_complete
+	// can read the response the engine is about to produce.
 	var resp *rxtypes.TraceResponse
+	webhooks := startTraceHooks(hookConfig, requestID)
+	// Go note: the deferred closure reads resp when it runs, after the
+	// engine below has set it.
+	defer func() { webhooks.finish(resp) }()
 
-	// The dispatcher owns a worker pool and a queue, so it exists only
-	// when something is actually configured; otherwise the engine keeps
-	// its no-hook fast path. Close drains the queue and Wait blocks until
-	// the workers have finished, which is what stops a queued webhook
-	// from being lost when the process exits.
-	var firer trace.HookFirer = trace.NoopHookFirer{}
-	if hookConfig.HasAny() {
-		dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{})
-		defer func() {
-			dispatcher.Close()
-			dispatcher.Wait()
-		}()
-		// The same per-request view the HTTP handler uses: the URLs
-		// resolved above, and this run's request_id in every payload.
-		reqHooks := dispatcher.ForRequest(hookConfig, requestID)
-		firer = reqHooks
-		defer func() {
-			if resp != nil {
-				reqHooks.OnComplete(resp)
-			}
-		}()
-	}
-
-	resp, err = engine.RunWithOptions(context.Background(), validated, patterns, trace.Options{
-		MaxResults:    maxPtr,
-		RgExtraArgs:   p.rgFlags,
-		ContextBefore: resolveBefore(p),
-		ContextAfter:  resolveAfter(p),
-		NoCache:       p.noCache,
-		UncachedPaths: uncached,
-		NoIndex:       p.noIndex,
-		NoRecursive:   p.noRecursive,
-		HookFirer:     firer,
-		RequestID:     requestID,
-	})
+	opts := traceOptions(p, requestID, webhooks.firer)
+	opts.UncachedPaths = uncached
+	resp, err = engine.RunWithOptions(context.Background(), validated, patterns, opts)
 	if err != nil {
 		// A pattern ripgrep cannot compile is a usage error, and rg's own
 		// message ("regex parse error: ...") says more than we could.
@@ -386,6 +324,122 @@ func hookOverride(flagValue string) *string {
 		return nil
 	}
 	return &flagValue
+}
+
+// traceHookConfig resolves the webhooks of a trace run: the flags over
+// RX_HOOK_ON_*_URL, the same way they resolve over HTTP, so
+// RX_DISABLE_CUSTOM_HOOKS switches the flags off here too. A URL the
+// guard refuses, or a match webhook without --max-results, is a usage
+// error (exit 2).
+func traceHookConfig(p traceParams) (hooks.HookConfig, error) {
+	hookOverrides := hooks.HookOverrides{
+		OnFileURL:     hookOverride(p.hookOnFile),
+		OnMatchURL:    hookOverride(p.hookOnMatch),
+		OnCompleteURL: hookOverride(p.hookOnComplete),
+	}
+	hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), hookOverrides)
+
+	// SECURITY: hook URLs from the command line get the same guard the
+	// HTTP layer applies to hook_on_* query parameters — scheme
+	// allowlist, no credentials, and no loopback / link-local /
+	// private / CGNAT target.
+	if hookErr := hooks.ValidateConfig(hookConfig); hookErr != nil {
+		return hookConfig, exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
+	}
+
+	// A match hook without a cap is a request for one HTTP call per
+	// matching line, which on a log file is millions. The HTTP layer
+	// refuses the same combination.
+	if hookConfig.HasMatchHook() && p.maxResults <= 0 {
+		return hookConfig, exitWithError(os.Stderr, ExitUsageError,
+			"--max-results is required when --hook-on-match is configured.\n"+
+				"This prevents accidentally triggering millions of HTTP calls.")
+	}
+	return hookConfig, nil
+}
+
+// validateTracePaths checks every path against the search roots, when
+// some are configured, and returns them as the engine is to see them.
+// The CLI is typically unsandboxed (matches Python behavior), and then
+// each path is kept as given; tests can opt in via paths.SetSearchRoots.
+// A path outside the roots, or into a hidden entry, is exit 4.
+func validateTracePaths(filePaths []string) ([]string, error) {
+	validated := make([]string, 0, len(filePaths))
+	for _, f := range filePaths {
+		v, vErr := paths.ValidatePathWithinRoots(f)
+		if vErr != nil {
+			if errors.Is(vErr, paths.ErrNoSearchRootsConfigured) {
+				validated = append(validated, f)
+				continue
+			}
+			var perr *paths.ErrPathOutsideRoots
+			if errors.As(vErr, &perr) {
+				return nil, exitWithError(os.Stderr, ExitAccessDenied, "%s", perr.Error())
+			}
+			return nil, exitWithError(os.Stderr, ExitAccessDenied, "%s", vErr.Error())
+		}
+		validated = append(validated, v)
+	}
+	return validated, nil
+}
+
+// traceOptions are the engine's options for a trace run on the command
+// line, with the run's request ID and webhook firer.
+func traceOptions(p traceParams, requestID string, firer trace.HookFirer) trace.Options {
+	var maxPtr *int
+	if p.maxResults > 0 {
+		m := p.maxResults
+		maxPtr = &m
+	}
+	return trace.Options{
+		MaxResults:    maxPtr,
+		RgExtraArgs:   p.rgFlags,
+		ContextBefore: resolveBefore(p),
+		ContextAfter:  resolveAfter(p),
+		NoCache:       p.noCache,
+		NoIndex:       p.noIndex,
+		NoRecursive:   p.noRecursive,
+		HookFirer:     firer,
+		RequestID:     requestID,
+	}
+}
+
+// traceWebhooks are the webhooks of one trace run on the command line:
+// the firer the engine calls, and what finish needs to send the last
+// event and wait for every one queued.
+type traceWebhooks struct {
+	firer      trace.HookFirer
+	request    *hooks.RequestHooks
+	dispatcher *hooks.Dispatcher
+}
+
+// startTraceHooks starts the webhooks of a run. The dispatcher owns a
+// worker pool and a queue, so it exists only when something is actually
+// configured; otherwise the engine keeps its no-hook fast path.
+func startTraceHooks(hookConfig hooks.HookConfig, requestID string) *traceWebhooks {
+	if !hookConfig.HasAny() {
+		return &traceWebhooks{firer: trace.NoopHookFirer{}}
+	}
+	dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{})
+	// The same per-request view the HTTP handler uses: the URLs
+	// resolved above, and this run's request_id in every payload.
+	request := dispatcher.ForRequest(hookConfig, requestID)
+	return &traceWebhooks{firer: request, request: request, dispatcher: dispatcher}
+}
+
+// finish fires trace_complete for resp, when the run produced one, then
+// closes the dispatcher and waits until its workers have sent every
+// queued event: that is what stops a queued webhook from being lost
+// when the process exits.
+func (w *traceWebhooks) finish(resp *rxtypes.TraceResponse) {
+	if w.dispatcher == nil {
+		return
+	}
+	if resp != nil {
+		w.request.OnComplete(resp)
+	}
+	w.dispatcher.Close()
+	w.dispatcher.Wait()
 }
 
 // requestIDOrNew returns the user's --request-id, or a fresh UUID v7.
@@ -558,14 +612,19 @@ func writeTraceHuman(out io.Writer, resp *rxtypes.TraceResponse, p traceParams) 
 	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
-	before, after := resolveBefore(p), resolveAfter(p)
-	_, _ = fmt.Fprint(out, output.FormatTraceCLI(resp, output.TraceFormatOptions{
-		Before:      before,
-		After:       after,
+	_, _ = fmt.Fprint(out, output.FormatTraceCLI(resp, traceFormatOptions(p, colorize)))
+	return nil
+}
+
+// traceFormatOptions are the human output's settings for a run: the
+// context window, whether the context section is shown, and color.
+func traceFormatOptions(p traceParams, colorize bool) output.TraceFormatOptions {
+	return output.TraceFormatOptions{
+		Before:      resolveBefore(p),
+		After:       resolveAfter(p),
 		ShowContext: p.showSamples || p.ctxSet || p.beforeSet || p.afterSet,
 		Colorize:    colorize,
-	}))
-	return nil
+	}
 }
 
 // addDeprecatedDebugFlag keeps `--debug` on the command line of

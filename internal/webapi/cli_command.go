@@ -126,25 +126,7 @@ func noValueDefault() AbsentValue           { return AbsentValue{NoValue: true} 
 // internal/clicommand; a test in cmd/rx compares them with the real
 // command tree and parses every command the server renders.
 var cliCommandTable = map[string]CLICommandOperation{
-	"trace": {
-		Subcommand: "trace",
-		Args: []CLIArg{
-			{Field: "path", Kind: ArgPositional},
-			{Field: "regexp", Flag: "regexp", Kind: ArgFlag, Absent: defaultValue("[]")},
-			{Field: "matching_flags", Kind: ArgSwitchList},
-			{Field: "max_results", Flag: "max-results", Kind: ArgFlag, Absent: defaultValue("0")},
-			{Field: "context", Flag: "context", Kind: ArgFlag, Absent: defaultValue("0")},
-			{Field: "before_context", Flag: "before", Kind: ArgFlag, Absent: sameAsField("context")},
-			{Field: "after_context", Flag: "after", Kind: ArgFlag, Absent: sameAsField("context")},
-			{Field: "no_cache", Flag: "no-cache", Kind: ArgFlag, Absent: defaultValue("false")},
-			{Field: "no_index", Flag: "no-index", Kind: ArgFlag, Absent: defaultValue("false")},
-			{Field: "no_recursive", Flag: "no-recursive", Kind: ArgFlag, Absent: defaultValue("false")},
-			{Field: "request_id", Flag: "request-id", Kind: ArgFlag, Absent: defaultValue("")},
-			{Field: "hook_on_file", Flag: "hook-on-file", Kind: ArgFlag, Absent: defaultValue("")},
-			{Field: "hook_on_match", Flag: "hook-on-match", Kind: ArgFlag, Absent: defaultValue("")},
-			{Field: "hook_on_complete", Flag: "hook-on-complete", Kind: ArgFlag, Absent: defaultValue("")},
-		},
-	},
+	"trace": {Subcommand: "trace", Args: traceCLIArgs},
 	"samples": {
 		Subcommand: "samples",
 		Args: []CLIArg{
@@ -213,6 +195,9 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "after_context", Flag: "after", Kind: ArgFlag, Absent: sameAsField("context")},
 		},
 	},
+	// GET /v1/logs/trace is `rx logs trace`, which takes every flag of
+	// `rx trace`.
+	"logs_trace": {Subcommand: "logs trace", Args: traceCLIArgs},
 	// The index task of a log chain is `rx logs index`.
 	"logs_index": {
 		Subcommand: "logs index",
@@ -232,6 +217,25 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
 		},
 	},
+}
+
+// traceCLIArgs are the fields of a trace request, as GET /v1/trace and
+// GET /v1/logs/trace render them into `rx trace` and `rx logs trace`.
+var traceCLIArgs = []CLIArg{
+	{Field: "path", Kind: ArgPositional},
+	{Field: "regexp", Flag: "regexp", Kind: ArgFlag, Absent: defaultValue("[]")},
+	{Field: "matching_flags", Kind: ArgSwitchList},
+	{Field: "max_results", Flag: "max-results", Kind: ArgFlag, Absent: defaultValue("0")},
+	{Field: "context", Flag: "context", Kind: ArgFlag, Absent: defaultValue("0")},
+	{Field: "before_context", Flag: "before", Kind: ArgFlag, Absent: sameAsField("context")},
+	{Field: "after_context", Flag: "after", Kind: ArgFlag, Absent: sameAsField("context")},
+	{Field: "no_cache", Flag: "no-cache", Kind: ArgFlag, Absent: defaultValue("false")},
+	{Field: "no_index", Flag: "no-index", Kind: ArgFlag, Absent: defaultValue("false")},
+	{Field: "no_recursive", Flag: "no-recursive", Kind: ArgFlag, Absent: defaultValue("false")},
+	{Field: "request_id", Flag: "request-id", Kind: ArgFlag, Absent: defaultValue("")},
+	{Field: "hook_on_file", Flag: "hook-on-file", Kind: ArgFlag, Absent: defaultValue("")},
+	{Field: "hook_on_match", Flag: "hook-on-match", Kind: ArgFlag, Absent: defaultValue("")},
+	{Field: "hook_on_complete", Flag: "hook-on-complete", Kind: ArgFlag, Absent: defaultValue("")},
 }
 
 // CLICommandOperations returns a copy of the table BuildCLICommand

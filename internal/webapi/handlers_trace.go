@@ -151,18 +151,165 @@ func openNamedFile(path string) error {
 	return f.Close()
 }
 
+// preparedTrace is a trace request after the checks every search route
+// makes before it reads a file: GET /v1/trace and GET /v1/logs/trace.
+type preparedTrace struct {
+	// paths are the request's paths, each checked against the search
+	// roots (and made absolute when roots are set).
+	paths []string
+	// maxResults is the cap, nil when the request set none.
+	maxResults *int
+	// matchingFlags are the ripgrep matching flags the query turned on,
+	// by long name.
+	matchingFlags map[string]bool
+	// hooks is the request's view of the server's webhook dispatcher;
+	// nil when the request has no webhook.
+	hooks *hooks.RequestHooks
+	// options are the trace engine's options for the request.
+	options trace.Options
+}
+
+// prepareTrace checks a trace request as every search route does and
+// turns it into the engine's options. In order: ripgrep must be there
+// (503); every path must lie inside the search roots (403); the webhook
+// URLs must be allowed (400, SSRF defense); a match webhook needs
+// max_results (400). The request id is the client's or a new UUID v7.
+//
+// It reads no file: whether a path exists is each route's own check.
+func prepareTrace(s *Server, in *traceInput) (*preparedTrace, error) {
+	if s.cfg.RipgrepPath == "" {
+		return nil, ErrServiceUnavailable("ripgrep is not available on this system")
+	}
+
+	// Sandbox check across every path.
+	validatedPaths := make([]string, 0, len(in.Path))
+	for _, p := range in.Path {
+		v, err := paths.ValidatePathWithinRoots(p)
+		if err != nil {
+			var perr *paths.ErrPathOutsideRoots
+			if errors.As(err, &perr) {
+				return nil, NewSandboxError(perr)
+			}
+			// Unsandboxed (no roots configured) → allow the path;
+			// treat the special error explicitly so tests without
+			// SetSearchRoots still exercise the endpoint.
+			if errors.Is(err, paths.ErrNoSearchRootsConfigured) {
+				v = p
+			} else {
+				return nil, ErrForbidden(err.Error())
+			}
+		}
+		validatedPaths = append(validatedPaths, v)
+	}
+
+	// Effective hook config.
+	overrides := hookOverridesFromQuery(in.HookOnFile, in.HookOnMatch, in.HookOnComplete)
+	hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), overrides)
+
+	// SSRF validation: reject hook URLs pointing at loopback / link-
+	// local / private addresses unless the operator has explicitly
+	// opted in via RX_ALLOW_INTERNAL_HOOKS. Prevents a malicious
+	// user from targeting internal infrastructure (e.g. cloud IMDS)
+	// via the request-scoped hook_on_* query params.
+	if err := hooks.ValidateConfig(hookConfig); err != nil {
+		return nil, ErrBadRequest(err.Error())
+	}
+
+	// Validation: max_results required when on_match is active.
+	// 0 means "not set" (huma sentinel for pointer absence).
+	if hookConfig.HasMatchHook() && in.MaxResults == 0 {
+		return nil, ErrBadRequest(
+			"max_results is required when hook_on_match is configured. " +
+				"This prevents accidentally triggering millions of HTTP calls.",
+		)
+	}
+
+	// Request ID: accept client-supplied, otherwise UUID v7.
+	reqID := in.RequestID
+	if reqID == "" {
+		if id, err := uuid.NewV7(); err == nil {
+			reqID = id.String()
+		} else {
+			reqID = uuid.New().String()
+		}
+	}
+
+	// 0 is huma's "not set" sentinel; the engine wants nil for that.
+	var maxResultsPtr *int
+	if in.MaxResults > 0 {
+		m := in.MaxResults
+		maxResultsPtr = &m
+	}
+
+	// This request's view of the shared hook dispatcher: its own URLs
+	// and its own request_id. The engine keeps its no-hook fast path
+	// (NoopHookFirer) when the request has no hook at all.
+	//
+	// Go note: reqHooks is a pointer that may be nil, and a nil pointer
+	// stored in an interface is not a nil interface; the firer gets it
+	// only when it is set, so the engine's no-hook check sees Noop.
+	reqHooks := requestHooks(s, hookConfig, reqID)
+	var firer trace.HookFirer = trace.NoopHookFirer{}
+	if reqHooks != nil {
+		firer = reqHooks
+	}
+
+	matchingFlags := in.matchingFlags()
+	before, after := in.contextWindow()
+	return &preparedTrace{
+		paths:         validatedPaths,
+		maxResults:    maxResultsPtr,
+		matchingFlags: matchingFlags,
+		hooks:         reqHooks,
+		options: trace.Options{
+			MaxResults:    maxResultsPtr,
+			RgExtraArgs:   trace.RipgrepArgs(matchingFlags),
+			ContextBefore: before,
+			ContextAfter:  after,
+			NoCache:       in.NoCache,
+			NoIndex:       in.NoIndex,
+			NoRecursive:   in.NoRecursive,
+			HookFirer:     firer,
+			RequestID:     reqID,
+		},
+	}, nil
+}
+
+// cliParams are the values BuildCLICommand renders a search route's
+// equivalent command from. The request ID and the hook URLs are the
+// ones the request gave, not the generated ID or the RX_HOOK_*
+// fallbacks: the command run elsewhere reads its own environment, as
+// this server did.
+func (p *preparedTrace) cliParams(in *traceInput) map[string]any {
+	return map[string]any{
+		"path":             p.paths,
+		"regexp":           in.Regexp,
+		"matching_flags":   selectedFlagNames(p.matchingFlags),
+		"max_results":      p.maxResults,
+		"context":          in.Context,
+		"before_context":   nilIfNegative(in.BeforeContext),
+		"after_context":    nilIfNegative(in.AfterContext),
+		"no_cache":         in.NoCache,
+		"no_index":         in.NoIndex,
+		"no_recursive":     in.NoRecursive,
+		"request_id":       in.RequestID,
+		"hook_on_file":     in.HookOnFile,
+		"hook_on_match":    in.HookOnMatch,
+		"hook_on_complete": in.HookOnComplete,
+	}
+}
+
 // registerTraceHandlers mounts GET /v1/trace.
 //
 // Matches rx-python/src/rx/web.py:355-607. Flow:
-//  1. Check ripgrep availability (503 when missing).
-//  2. Validate every path via paths.ValidatePathWithinRoots (403 outside).
-//  3. Resolve effective hook config (env + per-request overrides).
-//  4. Validate hook_on_match ⇒ max_results constraint (400 if violated).
-//  5. Verify every path exists (404 otherwise).
-//  6. Generate / accept a request ID.
-//  7. Call trace.Engine.RunWithOptions with this request's view of the
+//  1. Check the request (prepareTrace): ripgrep availability (503),
+//     every path inside the search roots (403), the effective hook
+//     config and its URLs (400), hook_on_match only with max_results
+//     (400), and a request ID, generated or accepted.
+//  2. Verify every path exists (404) and every named file opens (403).
+//  3. Call trace.Engine.RunWithOptions with this request's view of the
 //     shared hook dispatcher.
-//  8. Build response, fire on_complete hook, record metrics, return.
+//  4. Build response, fire on_complete hook, record metrics, return.
 func registerTraceHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "trace",
@@ -182,52 +329,9 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		// many returns is taken.
 		defer func() { recordEndpoint(ctx, prometheus.RecordTraceRequest, traceErr) }()
 
-		if s.cfg.RipgrepPath == "" {
-			return nil, ErrServiceUnavailable("ripgrep is not available on this system")
-		}
-
-		// Sandbox check across every path.
-		validatedPaths := make([]string, 0, len(in.Path))
-		for _, p := range in.Path {
-			v, err := paths.ValidatePathWithinRoots(p)
-			if err != nil {
-				var perr *paths.ErrPathOutsideRoots
-				if errors.As(err, &perr) {
-					return nil, NewSandboxError(perr)
-				}
-				// Unsandboxed (no roots configured) → allow the path;
-				// treat the special error explicitly so tests without
-				// SetSearchRoots still exercise the endpoint.
-				if errors.Is(err, paths.ErrNoSearchRootsConfigured) {
-					v = p
-				} else {
-					return nil, ErrForbidden(err.Error())
-				}
-			}
-			validatedPaths = append(validatedPaths, v)
-		}
-
-		// Effective hook config.
-		overrides := hookOverridesFromQuery(in.HookOnFile, in.HookOnMatch, in.HookOnComplete)
-		hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), overrides)
-
-		// SSRF validation: reject hook URLs pointing at loopback / link-
-		// local / private addresses unless the operator has explicitly
-		// opted in via RX_ALLOW_INTERNAL_HOOKS. Prevents a malicious
-		// user from targeting internal infrastructure (e.g. cloud IMDS)
-		// via the request-scoped hook_on_* query params. .
-		//
-		if err := hooks.ValidateConfig(hookConfig); err != nil {
-			return nil, ErrBadRequest(err.Error())
-		}
-
-		// Validation: max_results required when on_match is active.
-		// 0 means "not set" (huma sentinel for pointer absence).
-		if hookConfig.HasMatchHook() && in.MaxResults == 0 {
-			return nil, ErrBadRequest(
-				"max_results is required when hook_on_match is configured. " +
-					"This prevents accidentally triggering millions of HTTP calls.",
-			)
+		prepared, err := prepareTrace(s, in)
+		if err != nil {
+			return nil, err
 		}
 
 		// Existence and readability check. The engine lists a file it
@@ -236,63 +340,25 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		// different: answering "0 matches" for a file nobody could read
 		// answers a question that was never asked, so it is refused as
 		// the CLI refuses it (exit 4), opened through its pin.
-		for _, p := range validatedPaths {
-			info, err := os.Stat(p)
-			if err != nil {
-				if os.IsNotExist(err) {
+		for _, p := range prepared.paths {
+			info, statErr := os.Stat(p)
+			if statErr != nil {
+				if os.IsNotExist(statErr) {
 					return nil, ErrNotFound(fmt.Sprintf("Path not found: %s", p))
 				}
-				return nil, ErrForbidden(err.Error())
+				return nil, ErrForbidden(statErr.Error())
 			}
 			if info.IsDir() {
 				continue
 			}
-			if err := openNamedFile(p); err != nil {
-				return nil, ErrFileAccess(p, err)
+			if openErr := openNamedFile(p); openErr != nil {
+				return nil, ErrFileAccess(p, openErr)
 			}
-		}
-
-		// Request ID: accept client-supplied, otherwise UUID v7.
-		reqID := in.RequestID
-		if reqID == "" {
-			if id, err := uuid.NewV7(); err == nil {
-				reqID = id.String()
-			} else {
-				reqID = uuid.New().String()
-			}
-		}
-
-		// 0 is huma's "not set" sentinel; the engine wants nil for that.
-		var maxResultsPtr *int
-		if in.MaxResults > 0 {
-			m := in.MaxResults
-			maxResultsPtr = &m
-		}
-
-		// This request's view of the shared hook dispatcher: its own URLs
-		// and its own request_id. The engine keeps its no-hook fast path
-		// (NoopHookFirer) when the request has no hook at all.
-		reqHooks := requestHooks(s, hookConfig, reqID)
-		var firer trace.HookFirer = trace.NoopHookFirer{}
-		if reqHooks != nil {
-			firer = reqHooks
 		}
 
 		// Run the engine.
-		matchingFlags := in.matchingFlags()
-		before, after := in.contextWindow()
 		start := time.Now()
-		resp, err := s.cfg.Engine.RunWithOptions(ctx, validatedPaths, in.Regexp, trace.Options{
-			MaxResults:    maxResultsPtr,
-			RgExtraArgs:   trace.RipgrepArgs(matchingFlags),
-			ContextBefore: before,
-			ContextAfter:  after,
-			NoCache:       in.NoCache,
-			NoIndex:       in.NoIndex,
-			NoRecursive:   in.NoRecursive,
-			HookFirer:     firer,
-			RequestID:     reqID,
-		})
+		resp, err := s.cfg.Engine.RunWithOptions(ctx, prepared.paths, in.Regexp, prepared.options)
 		if err != nil {
 			// A pattern ripgrep cannot compile is the caller's mistake,
 			// not ours, and rg's message names the exact position.
@@ -301,40 +367,21 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			}
 			return nil, ErrInternal(fmt.Sprintf("Internal error: %s", err.Error()))
 		}
-		resp.RequestID = reqID
+		resp.RequestID = prepared.options.RequestID
 
-		observeTraceDuration(validatedPaths, start)
+		observeTraceDuration(prepared.paths, start)
 		observeTraceResult(resp)
 
 		// Fire on_complete hook if configured. resp.RequestID is set
 		// above, so the payload and the response carry the same ID.
-		if reqHooks != nil {
-			reqHooks.OnComplete(resp)
+		if prepared.hooks != nil {
+			prepared.hooks.OnComplete(resp)
 		}
 
 		// Attach CLI command equivalent. CLICommand is *string because a
 		// schema-documented field must emit null rather than vanish, so
 		// &cli converts the builder's string into a pointer.
-		// The request ID and the hook URLs are the ones the request
-		// gave, not the generated ID or the RX_HOOK_* fallbacks: the
-		// command run elsewhere reads its own environment, as this
-		// server did.
-		cli := BuildCLICommand("trace", map[string]any{
-			"path":             validatedPaths,
-			"regexp":           in.Regexp,
-			"matching_flags":   selectedFlagNames(matchingFlags),
-			"max_results":      maxResultsPtr,
-			"context":          in.Context,
-			"before_context":   nilIfNegative(in.BeforeContext),
-			"after_context":    nilIfNegative(in.AfterContext),
-			"no_cache":         in.NoCache,
-			"no_index":         in.NoIndex,
-			"no_recursive":     in.NoRecursive,
-			"request_id":       in.RequestID,
-			"hook_on_file":     in.HookOnFile,
-			"hook_on_match":    in.HookOnMatch,
-			"hook_on_complete": in.HookOnComplete,
-		})
+		cli := BuildCLICommand("trace", prepared.cliParams(in))
 		resp.CLICommand = &cli
 
 		return &traceOutput{Body: *resp}, nil

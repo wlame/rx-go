@@ -31,6 +31,7 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `GET` | `/v1/logs/chain` | One log chain described: parts in time order, checks, state, fingerprint | [logs-chain](endpoints/logs-chain.md) |
 | `POST` | `/v1/logs/index` | Index every part of one log chain (background task) | [logs-index](endpoints/logs-index.md) |
 | `GET` | `/v1/logs/samples` | Lines of a log chain by global line, by part and line, or by time | [logs-samples](endpoints/logs-samples.md) |
+| `GET` | `/v1/logs/trace` | Search log chains, directories and files: each chain's parts in its order, each match with its line in the chain | [logs-trace](endpoints/logs-trace.md) |
 | `GET` | `/v1/detectors` | List registered anomaly detectors | [detectors](endpoints/detectors.md) |
 | `GET` | `/metrics` | Prometheus exposition | [metrics](endpoints/metrics.md) |
 

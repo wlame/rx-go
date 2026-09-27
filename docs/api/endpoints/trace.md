@@ -395,6 +395,7 @@ Status: `400`. Add `&max_results=N` to the request.
 ## See also
 
 - [`rx trace`](../../cli/trace.md) — CLI equivalent
+- [`GET /v1/logs/trace`](logs-trace.md) — the same search with rotated logs read as log chains
 - [Webhooks](../webhooks.md) — payload shapes
 - [concepts/chunking](../../concepts/chunking.md) — parallel algorithm
 - [concepts/caching](../../concepts/caching.md) — trace cache behavior
