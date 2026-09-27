@@ -196,6 +196,7 @@ nav:
       - Caching: concepts/caching.md
       - Line indexes: concepts/line-indexes.md
       - Timestamps: concepts/timestamps.md
+      - Log chains: concepts/log-chains.md
       - Byte offsets vs line numbers: concepts/byte-offsets-vs-line-numbers.md
       - Compression: concepts/compression.md
       - Analyzers: concepts/analyzers.md

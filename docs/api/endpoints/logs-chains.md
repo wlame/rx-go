@@ -26,47 +26,35 @@ GET /v1/logs/chains?path=<dir>
 
 ## Which files form a chain
 
-A file is a part of a chain when its name has one of these shapes; the
-chain's name is the name its active file has (or would have):
+A file is a part of a chain when its name has the shape of one of four
+name templates: numbered (`syslog.1`, `dpkg.log.11.gz`), dated
+(`auth.log-20261001.gz`), and both with the number or date before the
+extension (`app.1.log.gz`, `app-2026-10-01.3.log.gz`). The chain's name
+is the name its active file has, or would have.
+[Log chains](../../concepts/log-chains.md#which-files-form-a-chain)
+gives the templates, examples of names and the rules; the ones this
+answer shows:
 
-| Shape | Examples | Chain name |
-|---|---|---|
-| `{name}.{N}`, N of 1 to 5 digits | `syslog.1`, `dpkg.log.11.gz`, `dmesg.0` | `{name}` |
-| `{name}{sep}{DATE}`, optionally `{sep}{digits}` | `syslog-20261001-1790812801.gz`, `app.log.2026-10-01_12`, `0.log.20261001-120000`, `access_log.1790726400` | `{name}` |
-| `{stem}{sep}{DATE}`, optionally `{sep}{N}`, then `.{ext}` | `app-2026-10-01.3.log.gz`, `app-2026-10-01T12-00-00.000.log.gz`, `postgresql-2026-10-01_000000.log` | `{stem}.{ext}` |
-| `{stem}{sep}{N}.{ext}` | `app.1.log.gz`, `app-2.log` | `{stem}.{ext}`, only when that file exists |
-
-`sep` is `.`, `-` or `_`; `ext` is a letter and up to seven letters or
-digits. `DATE` is `yyyymmdd`, `yyyymmddhh` (or a 10-digit epoch),
-`yyyymmdd` followed by `-`, `T` or `_` and `HHMMSS`, or `yyyy-mm-dd`
-optionally followed by `_` or `T` and `HH`, `HH-MM`, `HHMM`,
-`HH-MM-SS`, `HHMMSS` or `HH-MM-SS.mmm`. A compression suffix (`.gz`,
-`.bz2`, `.xz`, `.zst`) may end every shape. A name is matched as the
-text it is: spaces, brackets and other characters in it are only
-characters.
-
-A number of four digits from 1970 to 2100 where `N` goes (`report.2023`,
-`app.2024.log`) is a year, so such a file is a yearly part ordered by its
-year, not the 2023rd rotation.
-
-The file named exactly like the chain is its **active** part, the one a
-program still writes. A chain needs two parts; the active file counts
-when it exists.
-
-Left out of every chain: directories, hidden entries (unless the server
-runs with `--hidden`), names ending in `.tmp`, and files that are not
-text by the rule every route applies (a NUL byte in the first 8 KiB of
-the text, so `wtmp` and `wtmp.1` are no chain). An empty file is text,
-so a chain of empty files is a chain. A file whose name makes it a part
-but which cannot be opened (its permissions, an I/O error) stays a part
-and is named in `unreadable`: the chain cannot be read as one text until
-it can, and [`GET /v1/logs/chain`](logs-chain.md) says so.
-
-One generation in several encodings (`app.log-2025121008`, its `.gz` and
-its `.zst`) is one part. The part is the encoding found first in this
-order, by the bytes of each file, not by its name: plain, seekable zstd,
-zstd, gzip, bzip2, xz. The others are its duplicates and are not
-listed in `parts`.
+- The file named exactly like the chain is its **active** part, the one
+  a program still writes. A chain needs two parts; the active file
+  counts when it exists.
+- A number of four digits from 1970 to 2100 where a rotation number goes
+  (`report.2023`) is a year: such a file is a yearly part, ordered by its
+  year, and is never counted in `missing`.
+- Left out of every chain: directories, hidden entries (unless the
+  server runs with `--hidden`), names ending in `.tmp`, and files that
+  are not text by the rule every route applies (a NUL byte in the first
+  8 KiB of the text, so `wtmp` and `wtmp.1` are no chain). An empty file
+  is text, so a chain of empty files is a chain.
+- A file whose name makes it a part but which cannot be opened (its
+  permissions, an I/O error) stays a part and is named in `unreadable`:
+  the chain cannot be read as one text until it can, and
+  [`GET /v1/logs/chain`](logs-chain.md) says so.
+- One generation in several encodings (`app.log-2025121008`, its `.gz`
+  and its `.zst`) is one part: the encoding found first in this order,
+  by the bytes of each file, not by its name: plain, seekable zstd,
+  zstd, gzip, bzip2, xz. The others are its duplicates and are not
+  listed in `parts`.
 
 ## Response — 200 OK
 
@@ -156,4 +144,5 @@ it is.
 ## See also
 
 - [`rx logs`](../../cli/logs.md) — the same from a terminal
+- [Log chains](../../concepts/log-chains.md) — templates, order, states and numbering
 - [`GET /v1/tree`](tree.md) — the directory's files
