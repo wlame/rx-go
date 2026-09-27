@@ -373,9 +373,11 @@ their names, each of its matches prints `?` as its line in the chain
 chain with a match:
 
 ```text
-Hint: the log chain /var/log/syslog is pending (a part has no line index), so its matches have no line in the chain: run rx logs index /var/log/syslog for chain line numbers.
+Hint: the log chain /var/log/syslog is pending (a part has no line index), so its matches have no line in the chain: run rx logs index -- /var/log/syslog for chain line numbers.
 ```
 
+The `--` ends the options of `rx logs index`, so the command pastes as
+it is, also for a handle that starts with a dash.
 [`rx logs index`](#rx-logs-index) stores the indexes; the next search
 gives every match its line in the chain, and the parts in time order.
 (`rx logs show` and `rx logs samples` do read a part without an index,
