@@ -114,10 +114,11 @@ type AbsentValue struct {
 	NoValue bool
 }
 
-// defaultValue and sameAsField build the kinds of AbsentValue the table
-// uses, so it reads one line per field.
+// defaultValue, sameAsField and noValueDefault build the three kinds of
+// AbsentValue, so the table below reads one line per field.
 func defaultValue(value string) AbsentValue { return AbsentValue{Value: value} }
 func sameAsField(field string) AbsentValue  { return AbsentValue{SameAs: field} }
+func noValueDefault() AbsentValue           { return AbsentValue{NoValue: true} }
 
 // cliCommandTable is the one description of how each HTTP operation
 // renders its rx command. The defaults are those of the cobra flags in
@@ -155,6 +156,8 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "path", Kind: ArgPositional},
 			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
 			{Field: "analyze", Flag: "analyze", Kind: ArgFlag, Absent: defaultValue("false")},
+			{Field: "threshold", Flag: "threshold", Kind: ArgFlag, Absent: noValueDefault()},
+			{Field: "analyze_window_lines", Flag: "analyze-window-lines", Kind: ArgFlag, Absent: defaultValue("0")},
 		},
 	},
 	"compress": {

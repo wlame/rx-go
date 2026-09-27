@@ -268,9 +268,11 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 func indexTaskResultFrom(idx *rxtypes.UnifiedFileIndex, indexPath, absPath string, req rxtypes.IndexRequest) rxtypes.IndexTaskResult {
 	projection := indexResponseFrom(idx)
 	projection.CLICommand = BuildCLICommand("index_post", map[string]any{
-		"path":    absPath,
-		"force":   req.Force,
-		"analyze": req.Analyze,
+		"path":                 absPath,
+		"force":                req.Force,
+		"analyze":              req.Analyze,
+		"threshold":            req.Threshold,
+		"analyze_window_lines": req.AnalyzeWindowLines,
 	})
 	return rxtypes.IndexTaskResult{
 		IndexResponse: projection,
