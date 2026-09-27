@@ -9,6 +9,7 @@ package main
 import (
 	"compress/gzip"
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -241,6 +242,7 @@ func TestTraceMatchingFlag_CacheIsKeyedByTheFlags(t *testing.T) {
 
 	caseSensitive := traceJSON(t, dir, env, "trace", "error", path)
 	firstIgnoreCase := traceJSON(t, dir, env, "trace", "-i", "error", path)
+	written := traceCacheFiles(t, cacheDir)
 	cachedIgnoreCase := traceJSON(t, dir, env, "trace", "-i", "error", path)
 
 	if got, want := caseSensitive.lines(), []int{2, 4, 5, 9}; !slices.Equal(got, want) {
@@ -252,8 +254,8 @@ func TestTraceMatchingFlag_CacheIsKeyedByTheFlags(t *testing.T) {
 	if got := cachedIgnoreCase.lines(); !slices.Equal(got, firstIgnoreCase.lines()) {
 		t.Errorf("cached -i lines = %v, want %v", got, firstIgnoreCase.lines())
 	}
-	if chunks := cachedIgnoreCase.FileChunks["f1"]; chunks != 0 {
-		t.Errorf("third run file_chunks = %d, want 0 (served from the cache)", chunks)
+	if !maps.Equal(traceCacheFiles(t, cacheDir), written) {
+		t.Error("the third run scanned the file instead of reading the cache")
 	}
 }
 

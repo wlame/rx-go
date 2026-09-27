@@ -275,20 +275,14 @@ func TestEngine_Run_CacheHitRoundTrip(t *testing.T) {
 		t.Fatalf("expected cache file under %s/rx/trace_cache after first run", cacheDir)
 	}
 
-	// Second run with same inputs should hit the cache (we don't
-	// expose a hit counter here but the invariant is match equality
-	// plus file_chunks == 0 for the file).
-	second, err := New().RunWithOptions(
-		context.Background(), []string{p}, []string{"error"}, Options{},
-	)
-	if err != nil {
-		t.Fatalf("second run: %v", err)
-	}
+	// Second run with same inputs is answered from the cache, and
+	// answers what the first run answered.
+	second := traceFromCache(t, p, []string{"error"})
 	if len(second.Matches) != len(first.Matches) {
 		t.Errorf("cache-hit match count = %d, want %d", len(second.Matches), len(first.Matches))
 	}
-	if second.FileChunks["f1"] != 0 {
-		t.Errorf("file_chunks[f1] = %d, want 0 for cache hit", second.FileChunks["f1"])
+	if second.FileChunks["f1"] != first.FileChunks["f1"] {
+		t.Errorf("cache-hit file_chunks[f1] = %d, want %d", second.FileChunks["f1"], first.FileChunks["f1"])
 	}
 }
 

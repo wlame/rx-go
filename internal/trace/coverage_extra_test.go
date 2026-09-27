@@ -268,17 +268,10 @@ func TestEngine_Run_NoCache_VsCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first run: %v", err)
 	}
-	resp2, err := eng.RunWithOptions(context.Background(), []string{p}, []string{"error"}, Options{})
-	if err != nil {
-		t.Fatalf("second run: %v", err)
-	}
+	resp2 := traceFromCache(t, p, []string{"error"})
 	if len(resp1.Matches) != len(resp2.Matches) {
 		t.Errorf("match count differs between runs: %d vs %d",
 			len(resp1.Matches), len(resp2.Matches))
-	}
-	// The second run should use the cache — file_chunks[f1] = 0 signals that.
-	if chunks, ok := resp2.FileChunks["f1"]; ok && chunks != 0 {
-		t.Logf("second run used %d chunks (may not be cached)", chunks)
 	}
 }
 
@@ -639,6 +632,7 @@ func TestIsCacheValid_WrongPatternHash(t *testing.T) {
 		SourceModifiedAt: srcInfo.ModTime().Local().Format("2006-01-02T15:04:05.000000"),
 		Patterns:         []string{"error"},
 		PatternsHash:     ComputePatternsHash([]string{"error"}, nil),
+		ChunkCount:       1,
 	}
 	if err := SaveCache(p, data); err != nil {
 		t.Fatalf("SaveCache: %v", err)

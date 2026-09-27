@@ -41,22 +41,10 @@ func cacheFixture(t *testing.T, patterns []string) (string, string, *rxtypes.Tra
 func TestCacheHitMatchesFreshScan(t *testing.T) {
 	path, _, fresh := cacheFixture(t, []string{"NEEDLE"})
 
-	cached, err := New().RunWithOptions(
-		context.Background(), []string{path}, []string{"NEEDLE"}, Options{},
-	)
-	if err != nil {
-		t.Fatalf("second scan: %v", err)
-	}
+	cached := traceFromCache(t, path, []string{"NEEDLE"})
 	if len(cached.Matches) != len(fresh.Matches) {
 		t.Fatalf("cache hit returned %d matches, fresh scan %d",
 			len(cached.Matches), len(fresh.Matches))
-	}
-	// A cache hit is served from disk, which the chunk count reports as 0.
-	for fileID, chunks := range cached.FileChunks {
-		if chunks != 0 {
-			t.Fatalf("file %s reports %d chunks; the second scan did not hit the cache",
-				fileID, chunks)
-		}
 	}
 	for i := range fresh.Matches {
 		f, c := fresh.Matches[i], cached.Matches[i]
@@ -152,7 +140,7 @@ func TestCacheFromAnOlderVersionIsDiscarded(t *testing.T) {
 		t.Fatalf("write cache: %v", err)
 	}
 
-	if _, err := GetCachedMatches(path, []string{"NEEDLE"}, nil); err == nil {
+	if _, err := GetCachedScan(path, []string{"NEEDLE"}, nil); err == nil {
 		t.Fatal("a cache from an older version was accepted")
 	}
 
