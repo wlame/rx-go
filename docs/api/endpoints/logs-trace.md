@@ -72,7 +72,7 @@ in `skip_reasons`:
 | Reason | Means |
 |---|---|
 | `duplicate_part: the same part of its log chain as NAME, which is searched` | another encoding of one generation (`syslog.3` beside `syslog.3.gz`): the chain reads one, in the order plain, seekable zstd, zstd, gzip, bzip2, xz |
-| the reason a trace gives (`permission denied`, `cannot be read`, …) | a part the listing could not read; its chain is invalid with the reason `unreadable` |
+| the reason a trace gives (`permission denied`, `cannot be read`, …) | a part the listing could not read; its chain is invalid with the reason `unreadable`, whose message gives the same words |
 
 A chain of more than 10,000 parts is not read as one text: its files are
 searched as files of their own, where the walk lists them, and its

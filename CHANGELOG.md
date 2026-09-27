@@ -56,8 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own layout), and duplicates; the
   chain's state (`pending` until every frozen part has a current line
   index, `ready`, or `invalid` with `reasons`: `no_timestamps`,
-  `overlap` with `overlap_ms`, `active_not_last`, `unreadable`,
-  `too_many_parts`, which lists no part), its first and last time, `frozen_line_count` and
+  `overlap` with `overlap_ms`, `active_not_last`, `unreadable` (worded
+  as a search words the failure in `skip_reasons`, never with the
+  error's own text), `too_many_parts`, which lists no part), its first
+  and last time, `frozen_line_count` and
   `line_count`, the time gaps (with four parts or more, where a part's
   end and the next part's start are more than 1.5 times the median
   distance between first timestamps apart), the missing parts and
