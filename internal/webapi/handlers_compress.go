@@ -117,9 +117,9 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		InputPath:        validated,
 		OutputPath:       output,
 		FrameSizeBytes:   frameSizeBytes,
-		FrameSizeDisplay: frameSize,
 		CompressionLevel: level,
 		BuildIndex:       req.BuildIndex,
+		CLICommand:       compressCLICommand(validated, output, req),
 	}
 	go runDetached(mgr, taskID, "compress", logger, func() {
 		runCompressTask(mgr, taskID, job)
@@ -141,9 +141,26 @@ type compressJob struct {
 	InputPath        string
 	OutputPath       string
 	FrameSizeBytes   int64
-	FrameSizeDisplay string
 	CompressionLevel int
 	BuildIndex       bool
+	// CLICommand is the rx command that does what the request asked.
+	CLICommand string
+}
+
+// compressCLICommand renders the rx command for a compress request.
+// input and output are the validated paths. The output is named only
+// when the request named one: without --output, rx compress writes to
+// the same input + ".zst" the request defaulted to.
+func compressCLICommand(input, output string, req rxtypes.CompressRequest) string {
+	params := map[string]any{
+		"input_path":        input,
+		"frame_size":        req.FrameSize,
+		"compression_level": req.CompressionLevel,
+	}
+	if req.OutputPath != nil && *req.OutputPath != "" {
+		params["output_path"] = output
+	}
+	return BuildCLICommand("compress", params)
 }
 
 // runCompressTask does the actual encoding work in the background.
@@ -223,12 +240,7 @@ func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 		CompressionRatio: ratio,
 		FrameCount:       frameCount,
 		TimeSeconds:      elapsed,
-		CLICommand: BuildCLICommand("compress", map[string]any{
-			"input_path":        job.InputPath,
-			"output_path":       job.OutputPath,
-			"frame_size":        job.FrameSizeDisplay,
-			"compression_level": job.CompressionLevel,
-		}),
+		CLICommand:       job.CLICommand,
 	}
 
 	// Index the file just written, so a later `samples --lines=N` on it
