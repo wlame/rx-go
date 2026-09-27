@@ -144,8 +144,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   crosses part edges in a ready chain, and so does the look back of
   `line_timestamps`: lines that continue at the start of a part a record
   the part before began carry its timestamp, from the earlier part's
-  line index, as the parts read as one file give them. Before the chain
-  is ready a part is read alone (`part` and `lines`, global numbers
+  line index, as the parts read as one file give them; they carry none
+  (`null`) when that index does not give the timestamp in the
+  `file_tz` zone (a part whose zone offset changes more often than the
+  index records), and a line at exactly the look back's distance
+  carries none when the earlier part's last byte decides and reading it
+  would decode more than is left of `RX_SAMPLES_MAX_BYTES`. Before the
+  chain is ready a part is read alone (`part` and `lines`, global numbers
   -1), and a request by global line or by time waits for the chain's
   index task, `202` with the task under `Prefer: respond-async` once
   `RX_SAMPLES_WAIT_SECONDS` has passed. Parts are read through the

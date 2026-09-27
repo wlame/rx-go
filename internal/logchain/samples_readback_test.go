@@ -3,12 +3,16 @@ package logchain
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -40,29 +44,34 @@ func stamped(at time.Time, width int, label string, withBreak bool) []byte {
 }
 
 // partReads counts the reads a chain answer makes of each part: through
-// the reader, and through the read back's own reads of an earlier part
-// (its last byte, one of its lines).
+// the reader, and through the read back's own read of an earlier part's
+// last byte, with the read limit each of those was given and how many
+// of them the limit refused (samples.ErrReadLimit: nothing read).
 type partReads struct {
-	mu     sync.Mutex
-	reader map[string]int
-	ends   map[string]int
-	lines  map[string]int
+	mu        sync.Mutex
+	reader    map[string]int
+	ends      map[string]int
+	endLimits map[string][]int64
+	refused   map[string]int
 }
 
 // countPartReads makes the read back's reads count into a partReads for the
 // rest of the test, and returns it with a reader that counts too.
 func countPartReads(t *testing.T) (*partReads, PartReader) {
 	t.Helper()
-	counts := &partReads{reader: map[string]int{}, ends: map[string]int{}, lines: map[string]int{}}
-	ends, line := partEndsWithLineBreak, resolveEarlierLine
-	t.Cleanup(func() { partEndsWithLineBreak, resolveEarlierLine = ends, line })
-	partEndsWithLineBreak = func(ctx context.Context, req samples.Request, textLen int64) (bool, error) {
-		counts.add(counts.ends, req.Path)
-		return ends(ctx, req, textLen)
-	}
-	resolveEarlierLine = func(ctx context.Context, req samples.Request) (*rxtypes.SamplesResponse, error) {
-		counts.add(counts.lines, req.Path)
-		return line(ctx, req)
+	counts := &partReads{reader: map[string]int{}, ends: map[string]int{}, endLimits: map[string][]int64{}, refused: map[string]int{}}
+	ends := partEndsWithLineBreak
+	t.Cleanup(func() { partEndsWithLineBreak = ends })
+	partEndsWithLineBreak = func(ctx context.Context, req samples.Request, textLen, readLimit int64) (bool, error) {
+		name := counts.add(counts.ends, req.Path)
+		got, err := ends(ctx, req, textLen, readLimit)
+		counts.mu.Lock()
+		defer counts.mu.Unlock()
+		counts.endLimits[name] = append(counts.endLimits[name], readLimit)
+		if errors.Is(err, samples.ErrReadLimit) {
+			counts.refused[name]++
+		}
+		return got, err
 	}
 	reader := func(ctx context.Context, part Part, req samples.Request) (*rxtypes.SamplesResponse, error) {
 		counts.add(counts.reader, part.Path)
@@ -71,17 +80,21 @@ func countPartReads(t *testing.T) (*partReads, PartReader) {
 	return counts, reader
 }
 
-func (p *partReads) add(m map[string]int, path string) {
+// add counts one read of the file at path under its name, and returns
+// the name.
+func (p *partReads) add(m map[string]int, path string) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	m[path[strings.LastIndexByte(path, '/')+1:]]++
+	name := path[strings.LastIndexByte(path, '/')+1:]
+	m[name]++
+	return name
 }
 
 // readsOf is how many times name was read, by every route.
 func (p *partReads) readsOf(name string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.reader[name] + p.ends[name] + p.lines[name]
+	return p.reader[name] + p.ends[name]
 }
 
 // tracebackChain is a chain whose second part and active file start with
@@ -137,8 +150,7 @@ func TestSamples_ReadBackReadsNoEarlierPartWhenItsIndexAnswers(t *testing.T) {
 			t.Fatalf("scan %v: the first traceback line has no timestamp", scan)
 		}
 		if n := counts.readsOf("app.log.2.gz"); n != 0 {
-			t.Fatalf("scan %v: app.log.2.gz read %d times (reader %v, ends %v, lines %v)", scan, n,
-				counts.reader, counts.ends, counts.lines)
+			t.Fatalf("scan %v: app.log.2.gz read %d times (reader %v, ends %v)", scan, n, counts.reader, counts.ends)
 		}
 		if n := counts.readsOf("app.log.1"); n != 1 {
 			t.Fatalf("scan %v: app.log.1 read %d times, want once", scan, n)
@@ -231,6 +243,196 @@ func TestSamples_ReadBackAtExactlyItsDistance(t *testing.T) {
 					t.Fatalf("a line nearer than the distance read the last byte of %s", name)
 				}
 			})
+		}
+	}
+}
+
+// SECURITY: the last byte of an earlier part is read within what is left
+// of the request's byte limit. At exactly the read back's distance a
+// line's timestamp depends on that byte. A plain part gives it in a
+// read of one byte. A gzip part whose text is longer than what is left
+// is not read: the line carries no timestamp (null, not known) rather
+// than one the part may not give it, and the line before it still
+// carries its value. With room for the gzip part's text the answer
+// equals the concatenation's, as without a limit. Cold and indexed.
+func TestSamples_ReadBackReadsAPartsEndWithinTheByteLimit(t *testing.T) {
+	t.Setenv("RX_TIMESTAMP_LOOKBACK_KB", "1")
+	const tight = 4096
+	for _, codec := range []string{"", compressedcopy.Gzip} {
+		name := "app.log.1"
+		if codec != "" {
+			name = "app.log.1.gz"
+		}
+		// 100 lines before the last make the part's text about 5.6 KiB,
+		// more than the tight limit, while the answer's two lines hold
+		// under 1 KiB. The last line is 100 bytes with its line break, and
+		// the active file's second line (103) starts 924 bytes into it:
+		// 1024 bytes after the last line's start.
+		first := append(timedLines(chainBase, time.Second, 1, 100, name), stamped(chainBase.Add(200*time.Second), 100, "last", true)...)
+		active := append(traceback(1, 924, "near"), traceback(1, 50, "edge")...)
+		active = append(active, timedLines(chainBase.Add(time.Hour), time.Second, 104, 2, "app.log")...)
+		c := buildChain(t, "app.log", []chainFile{
+			{name: name, text: first, codec: codec},
+			{name: "app.log", text: active},
+		})
+		base := SamplesRequest{Lines: lines(t, "102-103"), IndexLoader: samples.StoredIndex}
+		want := concatSamples(t, c, base)
+		wantStamps := want.LineTimestamps["102-103"]
+		if wantStamps[0] == nil || wantStamps[1] == nil {
+			t.Fatalf("the concatenation gives %s, want two values", stampsText(wantStamps, 2))
+		}
+		for _, scan := range []bool{true, false} {
+			if !scan {
+				storeIndexes(t, c.dir, c.order...)
+			}
+			d := describe(t, c.dir, c.name, Options{Scan: scan})
+			for _, limit := range []int64{tight, 1 << 20} {
+				label := fmt.Sprintf("%s, scan %v, limit %d", name, scan, limit)
+				counts, reader := countPartReads(t)
+				req := base
+				req.MaxBytes = limit
+				resp, err := Samples(context.Background(), d, req, reader)
+				if err != nil {
+					t.Fatalf("%s: %v", label, err)
+				}
+				got, stamps := flatten(resp.Samples["102-103"])
+				if !slices.Equal(got, want.Samples["102-103"]) {
+					t.Fatalf("%s: lines %q", label, got)
+				}
+				if counts.ends[name] != 1 || counts.endLimits[name][0] > limit {
+					t.Fatalf("%s: the last byte read %d times with limits %v", label, counts.ends[name], counts.endLimits[name])
+				}
+				refused := codec != "" && limit == tight
+				if refused != (counts.refused[name] == 1) {
+					t.Fatalf("%s: %d reads refused by the limit", label, counts.refused[name])
+				}
+				wantText := stampsText(wantStamps, 2)
+				if refused {
+					wantText = stampsText([]*int64{wantStamps[0], nil}, 2)
+				}
+				if got := stampsText(stamps, 2); got != wantText {
+					t.Fatalf("%s: line_timestamps %s, want %s", label, got, wantText)
+				}
+			}
+		}
+	}
+}
+
+// Under file_tz, the index of an earlier part whose written zone offset
+// changes more often than the index records (zone_offsets null) does not
+// give the instant of the part's last timestamped line. The read back
+// across the edge does not read the part for it: the lines at the start
+// of the next part that would carry it get none (null, not known), cold
+// and indexed. Their text, and the timestamp of every line with one of
+// its own, equal the concatenation's.
+func TestSamples_ReadBackDoesNotReadAPartForAnInstantItsIndexLacks(t *testing.T) {
+	t.Setenv(config.ChainOverlapSecondsSetting.Name, "86400")
+	const layout = "2006-01-02T15:04:05.000"
+	n := index.MaxZoneOffsets + 76
+	var first bytes.Buffer
+	for i := 0; i < n; i++ {
+		offset := "+01:00"
+		if i%2 == 1 {
+			offset = "+02:00"
+		}
+		fmt.Fprintf(&first, "%s%s LINE %d part=app.log.1.gz local=%d\n", chainBase.Add(time.Duration(i)*time.Second).Format(layout), offset, i+1, i+1)
+	}
+	var stampedTail bytes.Buffer
+	for i := 0; i < 5; i++ {
+		fmt.Fprintf(&stampedTail, "%s+01:00 LINE %d part=app.log local=%d\n", chainBase.Add(2*time.Hour+time.Duration(i)*time.Second).Format(layout), n+4+i, i+4)
+	}
+	c := buildChain(t, "app.log", []chainFile{
+		{name: "app.log.1.gz", text: first.Bytes(), codec: compressedcopy.Gzip},
+		{name: "app.log", text: append(traceback(3, 60, "active"), stampedTail.Bytes()...)},
+	})
+	utc, err := config.ParseZone("UTC")
+	if err != nil {
+		t.Fatalf("zone: %v", err)
+	}
+	c.zone = utc
+	// The active part's three traceback lines and its first line with a
+	// timestamp of its own: no line of the earlier part.
+	key := fmt.Sprintf("%d-%d", n+1, n+4)
+	req := SamplesRequest{Lines: lines(t, key), IndexLoader: samples.StoredIndex}
+	want := concatSamples(t, c, req)
+	wantStamps := want.LineTimestamps[key]
+	for _, scan := range []bool{true, false} {
+		if !scan {
+			storeIndexes(t, c.dir, c.order...)
+		}
+		d := describe(t, c.dir, c.name, Options{Scan: scan, FileZone: utc})
+		if d.Response.State != rxtypes.ChainStateReady || d.facts[d.Order[0]].lastMs != nil {
+			t.Fatalf("scan %v: want a ready chain whose first part's index gives no last instant: %s", scan, jsonOf(t, d.Response))
+		}
+		counts, reader := countPartReads(t)
+		resp, err := Samples(context.Background(), d, req, reader)
+		if err != nil {
+			t.Fatalf("scan %v: %v", scan, err)
+		}
+		if reads := counts.readsOf("app.log.1.gz"); reads != 0 {
+			t.Fatalf("scan %v: app.log.1.gz read %d times (reader %v, ends %v)", scan, reads, counts.reader, counts.ends)
+		}
+		got, stamps := flatten(resp.Samples[key])
+		if !slices.Equal(got, want.Samples[key]) {
+			t.Fatalf("scan %v: lines %q", scan, got)
+		}
+		// The concatenation gives the traceback the instant of line n, the
+		// earlier part's last; the chain gives it none. Line n+4 has a
+		// timestamp of its own.
+		expect := []*int64{nil, nil, nil, wantStamps[3]}
+		if wantStamps[0] == nil || stampsText(stamps, 4) != stampsText(expect, 4) {
+			t.Fatalf("scan %v: line_timestamps %s, the concatenation %s", scan, stampsText(stamps, 4), stampsText(wantStamps, 4))
+		}
+	}
+}
+
+// SECURITY: the reads of earlier parts' last bytes share what is left of
+// the request's byte limit. Two gzip parts each about 5.6 KiB of text
+// meet a line at exactly the read back's distance in the part after
+// them. Under a limit of 8 KiB the first fits and is read; the second
+// does not fit in what the first left, and its line gets no timestamp.
+// With room for both, both lines equal the concatenation's.
+func TestSamples_ReadBackEdgeReadsShareTheByteLimit(t *testing.T) {
+	t.Setenv("RX_TIMESTAMP_LOOKBACK_KB", "1")
+	// Each part after the first starts with a line 924 bytes long and a
+	// line that starts 1024 bytes after the previous part's last line.
+	opening := func(label string) []byte {
+		return append(traceback(1, 924, label+"-near"), traceback(1, 50, label+"-edge")...)
+	}
+	first := append(timedLines(chainBase, time.Second, 1, 100, "app.log.2.gz"), stamped(chainBase.Add(200*time.Second), 100, "last", true)...)
+	second := append(opening("second"), timedLines(chainBase.Add(time.Hour), time.Second, 104, 100, "app.log.1.gz")...)
+	second = append(second, stamped(chainBase.Add(time.Hour+200*time.Second), 100, "last", true)...)
+	active := append(opening("active"), timedLines(chainBase.Add(2*time.Hour), time.Second, 207, 2, "app.log")...)
+	c := buildChain(t, "app.log", []chainFile{
+		{name: "app.log.2.gz", text: first, codec: compressedcopy.Gzip},
+		{name: "app.log.1.gz", text: second, codec: compressedcopy.Gzip},
+		{name: "app.log", text: active},
+	})
+	base := SamplesRequest{Lines: lines(t, "102-103,205-206"), IndexLoader: samples.StoredIndex}
+	want := concatSamples(t, c, base)
+	d := describe(t, c.dir, c.name, Options{Scan: true})
+	for _, tc := range []struct {
+		limit         int64
+		secondRefused bool
+	}{{8 << 10, true}, {1 << 20, false}} {
+		counts, reader := countPartReads(t)
+		req := base
+		req.MaxBytes = tc.limit
+		resp, err := Samples(context.Background(), d, req, reader)
+		if err != nil {
+			t.Fatalf("limit %d: %v", tc.limit, err)
+		}
+		if counts.refused["app.log.2.gz"] != 0 || (counts.refused["app.log.1.gz"] == 1) != tc.secondRefused {
+			t.Fatalf("limit %d: refused %v, limits given %v", tc.limit, counts.refused, counts.endLimits)
+		}
+		for _, key := range []string{"102-103", "205-206"} {
+			wantStamps := want.LineTimestamps[key]
+			if key == "205-206" && tc.secondRefused {
+				wantStamps = []*int64{wantStamps[0], nil}
+			}
+			if _, stamps := flatten(resp.Samples[key]); stampsText(stamps, 2) != stampsText(wantStamps, 2) {
+				t.Fatalf("limit %d, key %s: line_timestamps %s, want %s", tc.limit, key, stampsText(stamps, 2), stampsText(wantStamps, 2))
+			}
 		}
 	}
 }
