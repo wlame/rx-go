@@ -82,7 +82,10 @@ type Task struct {
 	StartedAt   time.Time
 	CompletedAt *time.Time
 	Error       string
-	Result      map[string]any
+	// Result is the value the worker completed the task with (an
+	// rxtypes.IndexTaskResult or rxtypes.CompressTaskResult); nil until
+	// then. The manager stores it without looking inside.
+	Result any
 }
 
 // IsTerminal reports whether the task is done (completed or failed).
@@ -229,7 +232,7 @@ func (m *Manager) Create(path, operation string) (*Task, bool) {
 // Callers pass non-zero values for fields they want to change; zero
 // values leave the field untouched. A helper variant Update*() could
 // be added per-field if this becomes unwieldy.
-func (m *Manager) Update(taskID string, status Status, errMsg string, result map[string]any) bool {
+func (m *Manager) Update(taskID string, status Status, errMsg string, result any) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	task, ok := m.tasks[taskID]
@@ -263,7 +266,7 @@ func (m *Manager) MarkRunning(taskID string) bool {
 }
 
 // Complete marks a task successful with the given result.
-func (m *Manager) Complete(taskID string, result map[string]any) bool {
+func (m *Manager) Complete(taskID string, result any) bool {
 	return m.Update(taskID, StatusCompleted, "", result)
 }
 

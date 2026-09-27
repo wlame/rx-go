@@ -157,15 +157,78 @@ type IndexRequest struct {
 	AnalyzeWindowLines *int   `json:"analyze_window_lines,omitempty"`
 }
 
-// IndexResponse is the body returned by GET /v1/index (synchronous)
-// and the terminal payload of POST /v1/index tasks.
+// IndexResponse is the body of GET /v1/index: the cached index of one
+// file, projected for a client. It is a view of UnifiedFileIndex with
+// client-facing names (path, size_bytes), the line-length statistics
+// grouped, and counts precomputed. IndexTaskResult extends it with the
+// fields a finished POST /v1/index task adds.
+//
+// Every field is always present; a value that does not apply is null.
+// The shape follows rx-python's _unified_index_to_dict, except that
+// rx-python leaves longest_line out when it has no line number.
 type IndexResponse struct {
-	Success         bool     `json:"success"`
-	Path            string   `json:"path"`
-	IndexPath       *string  `json:"index_path"`
-	LineCount       *int64   `json:"line_count"`
-	FileSize        *int64   `json:"file_size"`
-	CheckpointCount *int     `json:"checkpoint_count"`
-	TimeSeconds     *float64 `json:"time_seconds"`
-	Error           *string  `json:"error"`
+	Path              string   `json:"path" doc:"The indexed file."`
+	FileType          FileType `json:"file_type" enum:"text,binary,compressed,seekable_zstd"`
+	SizeBytes         int64    `json:"size_bytes" doc:"Size of the file on disk."`
+	CreatedAt         string   `json:"created_at" doc:"When the index was built (ISO 8601)."`
+	BuildTimeSeconds  float64  `json:"build_time_seconds"`
+	AnalysisPerformed bool     `json:"analysis_performed" doc:"Whether the line statistics and anomalies were computed."`
+
+	// LineIndex is never null: an index without checkpoints answers [].
+	LineIndex    []LineIndexEntry `json:"line_index" nullable:"false"`
+	IndexEntries int              `json:"index_entries" doc:"Number of line_index entries."`
+
+	LineCount      *int64           `json:"line_count"`
+	EmptyLineCount *int64           `json:"empty_line_count"`
+	LineEnding     *string          `json:"line_ending" doc:"LF, CRLF, CR or mixed; null without analysis."`
+	LineLength     *LineLengthStats `json:"line_length" doc:"Line-length statistics; null without analysis."`
+	LongestLine    *LongestLine     `json:"longest_line" doc:"Where the longest line is; null without analysis."`
+
+	CompressionFormat     *string  `json:"compression_format"`
+	DecompressedSizeBytes *int64   `json:"decompressed_size_bytes"`
+	CompressionRatio      *float64 `json:"compression_ratio"`
+
+	AnomalyCount int `json:"anomaly_count"`
+	// AnomalySummary counts anomalies per detector name; null without
+	// analysis. Tagged nullable because huma declares a map as a
+	// non-null object otherwise.
+	AnomalySummary map[string]int        `json:"anomaly_summary" nullable:"true"`
+	Anomalies      *[]AnomalyRangeResult `json:"anomalies"`
+
+	CLICommand string `json:"cli_command" doc:"The rx command that gives this answer."`
+}
+
+// IndexTaskResult is the result of a completed POST /v1/index task: the
+// index it built or reused, plus where it is stored.
+//
+// IndexResponse is embedded, so its fields sit at the top level of the
+// JSON object (encoding/json and huma both flatten an embedded struct).
+type IndexTaskResult struct {
+	IndexResponse
+	Success   bool   `json:"success"`
+	IndexPath string `json:"index_path" doc:"Where the index is stored in the cache."`
+}
+
+// LineLengthStats groups the line-length statistics of an analyzed
+// index, in bytes.
+//
+// The `_` field makes the schema itself nullable: huma cannot mark a
+// field that refers to a named object as nullable, so the object
+// declares it once for every field that refers to it.
+type LineLengthStats struct {
+	_      struct{} `nullable:"true"`
+	Max    int64    `json:"max"`
+	Avg    *float64 `json:"avg"`
+	Median *float64 `json:"median"`
+	P95    *float64 `json:"p95"`
+	P99    *float64 `json:"p99"`
+	Stddev *float64 `json:"stddev"`
+}
+
+// LongestLine locates the longest line of an analyzed index. Nullable
+// for the reason LineLengthStats gives.
+type LongestLine struct {
+	_          struct{} `nullable:"true"`
+	LineNumber int64    `json:"line_number"`
+	ByteOffset int64    `json:"byte_offset"`
 }

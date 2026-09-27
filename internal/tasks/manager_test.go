@@ -241,7 +241,7 @@ func TestManager_MarkRunning_Flow(t *testing.T) {
 	if got.Status != StatusCompleted {
 		t.Errorf("status = %q, want completed", got.Status)
 	}
-	if got.Result["bytes_compressed"] != 1000 {
+	if result, _ := got.Result.(map[string]any); result["bytes_compressed"] != 1000 {
 		t.Errorf("result = %v", got.Result)
 	}
 }
