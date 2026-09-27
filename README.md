@@ -105,6 +105,7 @@ rx samples  /var/log/app.log --lines=450000 --context=3 # context by line
 rx index    /var/log/app.log                     # build line-offset index
 rx index    /var/log/app.log --analyze           # + run anomaly detectors
 rx compress /var/log/app.log                     # produce seekable .zst
+rx logs show /var/log/syslog                     # syslog, syslog.1, syslog.2.gz, … as one log
 rx serve    --port=7777 --search-root=/var/log   # HTTP API + SPA
 ```
 
@@ -120,6 +121,7 @@ for the full catalog and wire contract.
 | `trace`    | Parallel regex search with optional caching and sample context   |
 | `samples`  | Extract context windows by byte offset or line number            |
 | `index`    | Build (or inspect) a cached line-offset index                    |
+| `logs`     | Read a rotated log (`syslog`, `syslog.1`, `syslog.2.gz`, …) as one log chain: list, describe, index, sample by line or time, search |
 | `compress` | Produce a seekable zstd file for frame-parallel decompression    |
 | `serve`    | REST API (`chi` + `huma` v2) with Swagger UI, metrics, SPA       |
 
@@ -136,6 +138,7 @@ for the full catalog and wire contract.
 | POST   | `/v1/compress`   | Start background compression task   |
 | GET    | `/v1/tasks/{task_id}` | Background task status         |
 | GET    | `/v1/tree`       | Browse directory tree               |
+| GET, POST | `/v1/logs/*`  | Log chains: list, describe, index, samples, search |
 | GET    | `/v1/detectors`  | Anomaly detectors and severity scale |
 | GET    | `/metrics`       | Prometheus metrics                  |
 | GET    | `/docs`          | Swagger UI (from `/openapi.json`)   |
@@ -185,6 +188,7 @@ just clean        # remove build and coverage artifacts
 - `internal/webapi/` — HTTP layer (chi + huma v2).
 - `internal/seekable/` · `internal/compression/` — zstd + format detection.
 - `internal/index/` · `internal/samples/` — line-offset index and resolver.
+- `internal/logchain/` — log chains: the files of a rotated log read as one.
 - `pkg/rxtypes/` — public wire types (shared JSON schemas).
 - `docs/` — architecture, CLI, API, concepts (30+ pages).
 

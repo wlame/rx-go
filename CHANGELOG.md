@@ -9,224 +9,244 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `rx logs`, a command group for log chains (rotated logs read as one
-  text), with `rx logs list [DIR...]` (default: the current directory):
-  per directory, a line with its path and number of chains, then a
-  table of name, parts, size, `idx` and missing parts; `--json` prints
-  the `GET /v1/logs/chains` body, one object for one directory and an
-  array for several. Exit 3 for a directory that does not exist, 4 for
-  one outside `--search-root`, hidden or unreadable, 2 for a file; with
-  several directories the others are still listed. Exit codes 6 (the
-  chain is invalid) and 7 (the chain's files changed since a given
-  fingerprint) join the table for the `rx logs` commands that read one
-  chain.
-- `GET /v1/logs/chains?path=DIR` lists the log chains of a directory:
-  the files of each rotated log (`syslog`, `syslog.1`, `syslog.2.gz`,
-  `syslog-20261001-1790812801.gz`, `app.1.log.gz`,
-  `app-2026-10-01.3.log.gz`, …), found from their names alone by a
-  table of four name templates (numbered, dated, and both with the
-  number or date before the extension). Each entry gives the chain's
-  handle (its directory joined with the active file's name), its parts
-  oldest first by the number or date in their names, whether the active
-  file exists, the missing numbers (`missing`, at most 100 names, and
-  `missing_count`, how many are missing in all), the total size, the
-  compression formats and whether every frozen part has a line index
-  built from the file the listing found (an empty part needs none).
-  A four-digit number from 1970 to 2100 where a rotation number goes
-  (`report.2023`) is a year, so yearly files are ordered by year and
-  name no missing parts; missing numbers are named only when no more
-  are missing than numbered parts are present. One generation in several encodings is
-  one part (plain, seekable zstd, zstd, gzip, bzip2, xz, by the bytes);
-  directories, hidden entries, `.tmp` files and files that are not text
-  are no parts, so `wtmp` and `wtmp.1` form no chain; a file that cannot
-  be opened stays a part and is named in `unreadable`; a chain needs two
-  parts and may have 10,000. A larger chain is listed with
-  `too_many_parts` and no parts, and its files are checked only until
-  that is known. Errors as `GET /v1/tree` for the same path.
-  `GET /health` lists the feature `log_chains`. Contract 1.7.
-- `GET /v1/logs/chain?path=HANDLE[&file_tz=ZONE][&fingerprint=FP]`
-  describes one log chain: its parts in time order (by first
-  timestamp; an empty part keeps its place), each with its line count,
-  first, last and highest timestamp (`max_ms`, an upper bound marked
-  `max_is_bound` under `file_tz` in a part that writes several zone
-  offsets), `global_start` (the chain's number of its first line),
-  compression, size, `is_indexed`, time format, its first timestamp as
-  its line writes it (`example`) and `day_first` (as `GET
-  /v1/time-range` gives them, so a client shows the part's times in its
-  own layout), and duplicates; the
-  chain's state (`pending` until every frozen part has a current line
-  index, `ready`, or `invalid` with `reasons`: `no_timestamps`,
-  `overlap` with `overlap_ms`, `active_not_last`, `unreadable` (worded
-  as a search words the failure in `skip_reasons`, never with the
-  error's own text), `too_many_parts`, which lists no part), its first
-  and last time, `frozen_line_count` and
-  `line_count`, the time gaps (with four parts or more, where a part's
-  end and the next part's start are more than 1.5 times the median
-  distance between first timestamps apart), the missing parts and
-  `missing_count`, and a fingerprint of its files (16 hex digits; the active file growing does
-  not change it). It reads each frozen part's stored index and the head
-  and tail of the active file, never a whole part; descriptions of
-  chains whose frozen parts are all indexed (or empty) are kept in
-  memory (64 chains, 40,000 parts in all), keyed by a digest of every
-  part's stat with its ctime, and a kept description is dropped when a
-  frozen part's index file was removed or rebuilt, and not used by a
-  request whose listing could not open a frozen part.
-  A pending chain starts its index task in the background (or joins the
-  running one) and names it in `index_build`; otherwise `index_build`
-  names the chain's last index task. How that task ended is kept with
-  the chain for `RX_TASK_TTL_MINUTES` after its end while the chain's
-  files keep their fingerprint, even once the task table has dropped
-  the task; a failed task's `message` names the part and the error.
-  Year-less timestamps take their year from their own part. 409 with
-  the current description when `fingerprint` differs or a part is
-  replaced while the request reads it; 404 when the handle names fewer
-  than two parts; 400, 403 and 422 as the other routes.
-- `rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]`
-  prints each chain's description: its state, reasons and fingerprint,
-  then a table of its parts in order (name, compression, lines, global
-  lines, first time, highest time, `idx`), its gaps and missing parts;
-  `--json` prints the `GET /v1/logs/chain` body. It never waits: a part
-  without a line index is indexed in memory. A chain of more than
-  10,000 parts says `too many parts (N)`. `rx logs time-range
-  CHAIN... [--json] [--file-tz=ZONE]` prints each chain's first and last
-  time in the layout of `rx time-range`. Both write times in the layout
-  the parts write them (`Sep 29 00:00:00`, `2025-12-10 07:00:30`) when
-  every part with lines writes them one way, as `rx time-range` writes
-  one file's, and to the millisecond otherwise. Exit 3 when a handle names no
-  chain, 6 when a chain is invalid, 7 when `--fingerprint=` differs
-  (each after printing), 2 for a malformed fingerprint or one given
-  with several chains.
-- `POST /v1/logs/index?path=HANDLE[&force=true][&fingerprint=FP]`
-  starts the index task of a log chain, or joins the one running for
-  it, and answers 200 with the task. The task (operation `chain_index`
-  at `GET /v1/tasks/{id}`, its `path` the handle) builds and stores the
-  line index of every part without a current one, the active file too
-  (with `force=true`, of every part), whatever a part's size, through
-  the same background builds a samples lookup starts: at most
-  `RX_MAX_INDEX_BUILDS` at a time, the next part submitted as one ends,
-  so a chain of thousands of parts never fills the build queue, and the
-  part builds of all chains together, queued or running, take at most
-  half of it (128), so a lookup in another file finds room however many
-  chains are pending. Each
-  part build is a task of its own; finished part builds are kept apart
-  from other tasks (at most 256 of them), so a large chain never drops
-  another client's task from the task table. Its
-  `progress` is the share of parts done; it fails with the first part
-  whose build fails, naming the part, as the build itself reports it
-  (whether or not the table still holds the build's task); its result
-  (`ChainIndexTaskResult`) lists the parts it built and gives
-  `rx logs index HANDLE` as `cli_command`. One task per chain: it is
-  keyed by the chain directory's device and inode and the chain's name,
-  so handles that reach one directory by different paths (a symbolic
-  link, another case on a case-insensitive disk) share it, and a task
-  on the active file runs beside it; on a filesystem that gives inode 0
-  the key is the handle.
-  The task `GET /v1/logs/chain` starts for a pending chain is the same
-  task, for the parts the chain waits for; it is not started again on
-  describe while the last one failed for the same files. 409 with the
-  current description and no task when `fingerprint` differs; 400, 403,
-  404, 422 and 500 as `GET /v1/logs/chain`.
-- `rx logs index CHAIN... [--json] [--force]` builds and stores the line
-  index of every part of each chain, the active file too, in the
-  foreground in the chain's order, whatever a part's size
-  (`RX_LARGE_FILE_MB` does not apply), keeping a current index unless
-  `--force`; it reports each part as `rx index` reports a file,
-  counted as parts (`Indexed 4 parts in 0.1s`), then prints the chain
-  as `rx logs show` does. `--json` prints per chain
-  `{path, indexed, skipped, skip_reasons, errors, total_time, chain}`.
-  Exit codes as `rx index`, and 3 when a handle names no chain.
-- `GET /v1/logs/samples?path=HANDLE&(lines=SPEC[&part=NAME]|timestamps=T...)`
-  gives lines of a log chain as `GET /v1/samples` gives a file's: by the
-  chain's global line numbers (`-N` from the chain's end), by a part and
-  its own numbers (`part`), or by time (the first line in the chain's
-  order at or after T, found in the first part whose highest time
-  reaches it; a range runs to the line before the first line later
-  than T2). Each key's lines come as pieces, one per part its window
-  touches, each with the part, its first local and global line, the
-  lines, their `line_timestamps`, `part_start`, `part_end` and the
-  `rx samples PART --lines=A-B` command for exactly those lines. Context
-  crosses part edges in a ready chain, and so does the look back of
-  `line_timestamps`: lines that continue at the start of a part a record
-  the part before began carry its timestamp, from the earlier part's
-  line index, as the parts read as one file give them; they carry none
-  (`null`) when that index does not give the timestamp in the
-  `file_tz` zone (a part whose zone offset changes more often than the
-  index records), and a line at exactly the look back's distance
-  carries none when the earlier part's last byte decides and reading it
-  would decode more than is left of `RX_SAMPLES_MAX_BYTES`. Before the
-  chain is ready a part is read alone (`part` and `lines`, global numbers
-  -1), and a request by global line or by time waits for the chain's
-  index task, `202` with the task under `Prefer: respond-async` once
-  `RX_SAMPLES_WAIT_SECONDS` has passed. Parts are read through the
-  path of `GET /v1/samples` (their index, an answer from the head while
-  a part's index builds, `202` for a part build that outlasts the
-  wait). `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` bound the
-  whole answer. 409 with the current description when `fingerprint`
-  differs or a part changed while it was read; 422 for an invalid
-  chain (the detail lists the reasons); 404 when the handle names fewer
-  than two parts; 400 for a part that is not a member and the samples
-  parameter errors.
-- `rx logs samples CHAIN (--lines=SPEC [--part=NAME] | --timestamps=T...)
-  [--context=N] [--before=N] [--after=N] [--file-tz=ZONE]
-  [--fingerprint=FP] [--json]` gives the same answer from a terminal,
-  without waiting for background work (the chain is described as
-  `rx logs show` describes it); each line is printed with its global
-  number and `part:local`, and a `-- NAME --` line where a part's lines
-  start. Exit 3 when the handle names no chain, 6 when it is invalid, 7
-  when `--fingerprint=` differs or a part changed while it was read, 2
-  for a part that is not a member and the usage errors of `rx samples`.
-- `GET /v1/logs/trace` takes the parameters of `GET /v1/trace` and
-  searches rotated logs: each `path` is a directory (the files of each
-  directory its walk lists are grouped into log chains, as
-  `GET /v1/logs/chains` groups them), a chain's handle (even without an
-  active file), or a file (a part's own path is a file); a handle or a
-  file opens only the files that can belong to the chain of its name,
-  never the rest of its directory. What a request reaches more than
-  once (a path given twice, a directory and a handle or a part in it, a
-  link to a directory) is searched once: one entry per chain, one file
-  id per file, each match once and in its chain. A chain is known by
-  its name and the device and inode its directory had when it was
-  listed (by its path where the filesystem gives inode 0), and two
-  chains that still give one identity are both searched, the second's
-  parts as files of their own, never left out. The parts of
-  each chain are searched in the chain's order (by time once it is
-  ready, by name before) by the trace engine, where the walk met the
-  chain's first file, so the file ids, the order of the matches and the
-  `max_results` cut follow it; context never crosses a part's edge, and
-  each part keeps its own trace cache entry and line index. The answer
-  is the trace answer plus `chains` (`c1`, `c2`, …: handle, name, the
-  parts' file ids in order, fingerprint, state, reasons), and each match
-  gives `chain` and `chain_line`, its global line (`-1` for a file of
-  its own, a pending or invalid chain, and a match the trace left
-  unnumbered). Another encoding of a part is skipped with the reason
-  `duplicate_part: …`, also when it is named on its own beside its
-  chain, whichever comes first (never both searched and skipped, so
-  each of its lines comes once, in the chain), a part that cannot be
-  read with its read error,
-  and a chain of more than 10,000 parts is searched as files of their
-  own. Chains are described from their parts' indexes, and no index
-  build starts. 409 when a part changed while its chain was described;
-  the other statuses as `GET /v1/trace`. The webhooks fire with the
-  payloads of a trace. `GET /v1/trace` is unchanged.
-- `rx logs trace PATTERN [CHAIN|DIR|FILE ...]` with every flag of
-  `rx trace` gives the same search from a terminal: a match in a part
-  prints as `CHAIN:LINE (PART:LINE): TEXT`, one in a file of its own as
-  `FILE:LINE: TEXT`, and `--json` prints the `GET /v1/logs/trace` body.
-  Each chain is described from its parts' stored line indexes, as the
-  route describes it, never by reading a part, so a search capped with
-  `--max-results=` reads what `rx trace` reads on the same files; a
-  chain with a part not indexed yet is pending, its matches print `?`
-  as their line in the chain, and stderr says
-  `run rx logs index -- CHAIN for chain line numbers` (`--` before
-  the handle, so a handle that starts with a dash pastes as it is). An
-  invalid chain is named on stderr. Exit 3 for a path that is no
-  directory, chain or file, 4 outside the search roots or for a
-  named file that cannot be read, 7 when a part changed while its chain
-  was described, 2 for a pattern that does not compile, `-` and the
-  usage errors of `rx trace`.
-- `RX_CHAIN_OVERLAP_SECONDS` (default 60, 0 to 86400): how far a part
-  of a log chain may reach past the first timestamp of the next part
-  before the chain is invalid.
+- Log chains: a rotated log (`syslog`, `syslog.1`, `syslog.2.gz`,
+  `auth.log-20261001.gz`, `app-2026-10-01.3.log.gz`, …) is read, searched
+  and numbered as one text. rx finds a chain from the names in one
+  directory listing, by a table of four name templates; orders its parts
+  by their first timestamps; checks that every part with lines has
+  timestamps, that the parts follow each other in time and that the
+  active file comes last; and numbers the lines of the chain as those of
+  its parts decompressed in that order into one file, so every chain
+  answer equals the answer for that file, with line indexes and without.
+  It keeps no state between requests: a fingerprint of the chain's files
+  lets a client notice a rotation (`409`, exit 7), and the active file
+  may grow. A chain is `pending` until its frozen parts are indexed (one
+  background task per chain builds them), `ready`, or `invalid` with its
+  reasons. New: `rx logs list`, `show`, `time-range`, `index`, `samples`
+  and `trace`; `GET /v1/logs/chains`, `GET /v1/logs/chain`,
+  `POST /v1/logs/index`, `GET /v1/logs/samples` and `GET /v1/logs/trace`
+  (contract 1.7, feature `log_chains` in `GET /health`); exit codes 6
+  (the chain is invalid) and 7 (its files changed since a fingerprint);
+  `RX_CHAIN_OVERLAP_SECONDS`; the docs page Concepts / Log chains. In
+  detail:
+  - `rx logs`, a command group for log chains (rotated logs read as one
+    text), with `rx logs list [DIR...]` (default: the current directory):
+    per directory, a line with its path and number of chains, then a
+    table of name, parts, size, `idx` and missing parts; `--json` prints
+    the `GET /v1/logs/chains` body, one object for one directory and an
+    array for several. Exit 3 for a directory that does not exist, 4 for
+    one outside `--search-root`, hidden or unreadable, 2 for a file; with
+    several directories the others are still listed. Exit codes 6 (the
+    chain is invalid) and 7 (the chain's files changed since a given
+    fingerprint) join the table for the `rx logs` commands that read one
+    chain.
+  - `GET /v1/logs/chains?path=DIR` lists the log chains of a directory:
+    the files of each rotated log (`syslog`, `syslog.1`, `syslog.2.gz`,
+    `syslog-20261001-1790812801.gz`, `app.1.log.gz`,
+    `app-2026-10-01.3.log.gz`, …), found from their names alone by a
+    table of four name templates (numbered, dated, and both with the
+    number or date before the extension). Each entry gives the chain's
+    handle (its directory joined with the active file's name), its parts
+    oldest first by the number or date in their names, whether the active
+    file exists, the missing numbers (`missing`, at most 100 names, and
+    `missing_count`, how many are missing in all), the total size, the
+    compression formats and whether every frozen part has a line index
+    built from the file the listing found (an empty part needs none).
+    A four-digit number from 1970 to 2100 where a rotation number goes
+    (`report.2023`) is a year, so yearly files are ordered by year and
+    name no missing parts; missing numbers are named only when no more
+    are missing than numbered parts are present. One generation in several encodings is
+    one part (plain, seekable zstd, zstd, gzip, bzip2, xz, by the bytes);
+    directories, hidden entries, `.tmp` files and files that are not text
+    are no parts, so `wtmp` and `wtmp.1` form no chain; a file that cannot
+    be opened stays a part and is named in `unreadable`; a chain needs two
+    parts and may have 10,000. A larger chain is listed with
+    `too_many_parts` and no parts, and its files are checked only until
+    that is known. Errors as `GET /v1/tree` for the same path.
+    `GET /health` lists the feature `log_chains`. Contract 1.7.
+  - `GET /v1/logs/chain?path=HANDLE[&file_tz=ZONE][&fingerprint=FP]`
+    describes one log chain: its parts in time order (by first
+    timestamp; an empty part keeps its place), each with its line count,
+    first, last and highest timestamp (`max_ms`, an upper bound marked
+    `max_is_bound` under `file_tz` in a part that writes several zone
+    offsets), `global_start` (the chain's number of its first line),
+    compression, size, `is_indexed`, time format, its first timestamp as
+    its line writes it (`example`) and `day_first` (as `GET
+    /v1/time-range` gives them, so a client shows the part's times in its
+    own layout), and duplicates; the
+    chain's state (`pending` until every frozen part has a current line
+    index, `ready`, or `invalid` with `reasons`: `no_timestamps`,
+    `overlap` with `overlap_ms`, `active_not_last`, `unreadable` (worded
+    as a search words the failure in `skip_reasons`, never with the
+    error's own text), `too_many_parts`, which lists no part), its first
+    and last time, `frozen_line_count` and
+    `line_count`, the time gaps (with four parts or more, where a part's
+    end and the next part's start are more than 1.5 times the median
+    distance between first timestamps apart), the missing parts and
+    `missing_count`, and a fingerprint of its files (16 hex digits; the active file growing does
+    not change it). It reads each frozen part's stored index and the head
+    and tail of the active file, never a whole part; descriptions of
+    chains whose frozen parts are all indexed (or empty) are kept in
+    memory (64 chains, 40,000 parts in all), keyed by a digest of every
+    part's stat with its ctime, and a kept description is dropped when a
+    frozen part's index file was removed or rebuilt, and not used by a
+    request whose listing could not open a frozen part.
+    A pending chain starts its index task in the background (or joins the
+    running one) and names it in `index_build`; otherwise `index_build`
+    names the chain's last index task. How that task ended is kept with
+    the chain for `RX_TASK_TTL_MINUTES` after its end while the chain's
+    files keep their fingerprint, even once the task table has dropped
+    the task; a failed task's `message` names the part and the error.
+    Year-less timestamps take their year from their own part. 409 with
+    the current description when `fingerprint` differs or a part is
+    replaced while the request reads it; 404 when the handle names fewer
+    than two parts; 400, 403 and 422 as the other routes.
+  - `rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]`
+    prints each chain's description: its state, reasons and fingerprint,
+    then a table of its parts in order (name, compression, lines, global
+    lines, first time, highest time, `idx`), its gaps and missing parts;
+    `--json` prints the `GET /v1/logs/chain` body. It never waits: a part
+    without a line index is indexed in memory. A chain of more than
+    10,000 parts says `too many parts (N)`. `rx logs time-range
+    CHAIN... [--json] [--file-tz=ZONE]` prints each chain's first and last
+    time in the layout of `rx time-range`. Both write times in the layout
+    the parts write them (`Sep 29 00:00:00`, `2025-12-10 07:00:30`) when
+    every part with lines writes them one way, as `rx time-range` writes
+    one file's, and to the millisecond otherwise. Exit 3 when a handle names no
+    chain, 6 when a chain is invalid, 7 when `--fingerprint=` differs
+    (each after printing), 2 for a malformed fingerprint or one given
+    with several chains.
+  - `POST /v1/logs/index?path=HANDLE[&force=true][&fingerprint=FP]`
+    starts the index task of a log chain, or joins the one running for
+    it, and answers 200 with the task. The task (operation `chain_index`
+    at `GET /v1/tasks/{id}`, its `path` the handle) builds and stores the
+    line index of every part without a current one, the active file too
+    (with `force=true`, of every part), whatever a part's size, through
+    the same background builds a samples lookup starts: at most
+    `RX_MAX_INDEX_BUILDS` at a time, the next part submitted as one ends,
+    so a chain of thousands of parts never fills the build queue, and the
+    part builds of all chains together, queued or running, take at most
+    half of it (128), so a lookup in another file finds room however many
+    chains are pending. Each
+    part build is a task of its own; finished part builds are kept apart
+    from other tasks (at most 256 of them), so a large chain never drops
+    another client's task from the task table. Its
+    `progress` is the share of parts done; it fails with the first part
+    whose build fails, naming the part, as the build itself reports it
+    (whether or not the table still holds the build's task); its result
+    (`ChainIndexTaskResult`) lists the parts it built and gives
+    `rx logs index HANDLE` as `cli_command`. One task per chain: it is
+    keyed by the chain directory's device and inode and the chain's name,
+    so handles that reach one directory by different paths (a symbolic
+    link, another case on a case-insensitive disk) share it, and a task
+    on the active file runs beside it; on a filesystem that gives inode 0
+    the key is the handle.
+    The task `GET /v1/logs/chain` starts for a pending chain is the same
+    task, for the parts the chain waits for; it is not started again on
+    describe while the last one failed for the same files. 409 with the
+    current description and no task when `fingerprint` differs; 400, 403,
+    404, 422 and 500 as `GET /v1/logs/chain`.
+  - `rx logs index CHAIN... [--json] [--force]` builds and stores the line
+    index of every part of each chain, the active file too, in the
+    foreground in the chain's order, whatever a part's size
+    (`RX_LARGE_FILE_MB` does not apply), keeping a current index unless
+    `--force`; it reports each part as `rx index` reports a file,
+    counted as parts (`Indexed 4 parts in 0.1s`), then prints the chain
+    as `rx logs show` does. `--json` prints per chain
+    `{path, indexed, skipped, skip_reasons, errors, total_time, chain}`.
+    Exit codes as `rx index`, and 3 when a handle names no chain.
+  - `GET /v1/logs/samples?path=HANDLE&(lines=SPEC[&part=NAME]|timestamps=T...)`
+    gives lines of a log chain as `GET /v1/samples` gives a file's: by the
+    chain's global line numbers (`-N` from the chain's end), by a part and
+    its own numbers (`part`), or by time (the first line in the chain's
+    order at or after T, found in the first part whose highest time
+    reaches it; a range runs to the line before the first line later
+    than T2). Each key's lines come as pieces, one per part its window
+    touches, each with the part, its first local and global line, the
+    lines, their `line_timestamps`, `part_start`, `part_end` and the
+    `rx samples PART --lines=A-B` command for exactly those lines. Context
+    crosses part edges in a ready chain, and so does the look back of
+    `line_timestamps`: lines that continue at the start of a part a record
+    the part before began carry its timestamp, from the earlier part's
+    line index, as the parts read as one file give them; they carry none
+    (`null`) when that index does not give the timestamp in the
+    `file_tz` zone (a part whose zone offset changes more often than the
+    index records), and a line at exactly the look back's distance
+    carries none when the earlier part's last byte decides and reading it
+    would decode more than is left of `RX_SAMPLES_MAX_BYTES`. Before the
+    chain is ready a part is read alone (`part` and `lines`, global numbers
+    -1), and a request by global line or by time waits for the chain's
+    index task, `202` with the task under `Prefer: respond-async` once
+    `RX_SAMPLES_WAIT_SECONDS` has passed. Parts are read through the
+    path of `GET /v1/samples` (their index, an answer from the head while
+    a part's index builds, `202` for a part build that outlasts the
+    wait). `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` bound the
+    whole answer. 409 with the current description when `fingerprint`
+    differs or a part changed while it was read; 422 for an invalid
+    chain (the detail lists the reasons); 404 when the handle names fewer
+    than two parts; 400 for a part that is not a member and the samples
+    parameter errors.
+  - `rx logs samples CHAIN (--lines=SPEC [--part=NAME] | --timestamps=T...)
+    [--context=N] [--before=N] [--after=N] [--file-tz=ZONE]
+    [--fingerprint=FP] [--json]` gives the same answer from a terminal,
+    without waiting for background work (the chain is described as
+    `rx logs show` describes it); each line is printed with its global
+    number and `part:local`, and a `-- NAME --` line where a part's lines
+    start. Exit 3 when the handle names no chain, 6 when it is invalid, 7
+    when `--fingerprint=` differs or a part changed while it was read, 2
+    for a part that is not a member and the usage errors of `rx samples`.
+  - `GET /v1/logs/trace` takes the parameters of `GET /v1/trace` and
+    searches rotated logs: each `path` is a directory (the files of each
+    directory its walk lists are grouped into log chains, as
+    `GET /v1/logs/chains` groups them), a chain's handle (even without an
+    active file), or a file (a part's own path is a file); a handle or a
+    file opens only the files that can belong to the chain of its name,
+    never the rest of its directory. What a request reaches more than
+    once (a path given twice, a directory and a handle or a part in it, a
+    link to a directory) is searched once: one entry per chain, one file
+    id per file, each match once and in its chain. A chain is known by
+    its name and the device and inode its directory had when it was
+    listed (by its path where the filesystem gives inode 0), and two
+    chains that still give one identity are both searched, the second's
+    parts as files of their own, never left out. The parts of
+    each chain are searched in the chain's order (by time once it is
+    ready, by name before) by the trace engine, where the walk met the
+    chain's first file, so the file ids, the order of the matches and the
+    `max_results` cut follow it; context never crosses a part's edge, and
+    each part keeps its own trace cache entry and line index. The answer
+    is the trace answer plus `chains` (`c1`, `c2`, …: handle, name, the
+    parts' file ids in order, fingerprint, state, reasons), and each match
+    gives `chain` and `chain_line`, its global line (`-1` for a file of
+    its own, a pending or invalid chain, and a match the trace left
+    unnumbered). Another encoding of a part is skipped with the reason
+    `duplicate_part: …`, also when it is named on its own beside its
+    chain, whichever comes first (never both searched and skipped, so
+    each of its lines comes once, in the chain), a part that cannot be
+    read with its read error,
+    and a chain of more than 10,000 parts is searched as files of their
+    own. Chains are described from their parts' indexes, and no index
+    build starts. 409 when a part changed while its chain was described;
+    the other statuses as `GET /v1/trace`. The webhooks fire with the
+    payloads of a trace. `GET /v1/trace` is unchanged.
+  - `rx logs trace PATTERN [CHAIN|DIR|FILE ...]` with every flag of
+    `rx trace` gives the same search from a terminal: a match in a part
+    prints as `CHAIN:LINE (PART:LINE): TEXT`, one in a file of its own as
+    `FILE:LINE: TEXT`, and `--json` prints the `GET /v1/logs/trace` body.
+    Each chain is described from its parts' stored line indexes, as the
+    route describes it, never by reading a part, so a search capped with
+    `--max-results=` reads what `rx trace` reads on the same files; a
+    chain with a part not indexed yet is pending, its matches print `?`
+    as their line in the chain, and stderr says
+    `run rx logs index -- CHAIN for chain line numbers` (`--` before
+    the handle, so a handle that starts with a dash pastes as it is). An
+    invalid chain is named on stderr. Exit 3 for a path that is no
+    directory, chain or file, 4 outside the search roots or for a
+    named file that cannot be read, 7 when a part changed while its chain
+    was described, 2 for a pattern that does not compile, `-` and the
+    usage errors of `rx trace`.
+  - `RX_CHAIN_OVERLAP_SECONDS` (default 60, 0 to 86400): how far a part
+    of a log chain may reach past the first timestamp of the next part
+    before the chain is invalid.
 - `rx samples --file-tz=ZONE` (all three modes) and
   `rx time-range --file-tz=ZONE` read a file's timestamps as the wall
   clock each line writes, in ZONE, for a log whose zone is missing or
