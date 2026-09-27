@@ -66,8 +66,10 @@ type TaskResult any
 // omitempty, the convention IndexRequest documents for request bodies:
 // a Go caller that leaves FrameSize or CompressionLevel at zero sends no
 // key and gets the default, rather than an explicit 0 that the level
-// range refuses. BuildIndex has no omitempty on purpose: its default is
-// true, so dropping an explicit false would turn it into true.
+// range refuses. BuildIndex is a pointer because its default is true:
+// huma fills the default into every field whose value is the zero value,
+// so a plain bool could not carry an explicit false. A nil pointer is
+// "not given", and huma sets it to true.
 //
 // FrameSize is a human-readable size string (e.g. "4M", "16MB"), parsed
 // by the handler. CompressionLevel is the zstd level, 1..22; huma
@@ -77,7 +79,7 @@ type CompressRequest struct {
 	OutputPath       *string `json:"output_path,omitempty" required:"false" doc:"Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root."`
 	FrameSize        string  `json:"frame_size,omitempty" required:"false" default:"4M" doc:"Target frame size: bytes, or a number with B, K, KB, M, MB, G or GB."`
 	CompressionLevel int     `json:"compression_level,omitempty" required:"false" default:"3" minimum:"1" maximum:"22" doc:"zstd compression level."`
-	BuildIndex       bool    `json:"build_index" required:"false" default:"true" doc:"Build the line index of the compressed file after compressing it."`
+	BuildIndex       *bool   `json:"build_index,omitempty" required:"false" default:"true" doc:"Build the line index of the compressed file after compressing it."`
 	Force            bool    `json:"force,omitempty" required:"false" default:"false" doc:"Overwrite the output file if it exists."`
 }
 

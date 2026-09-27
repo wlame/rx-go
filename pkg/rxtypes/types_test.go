@@ -483,25 +483,26 @@ func TestHealthResponse_MissingPythonPackages(t *testing.T) {
 // TestCompressRequest_UnsetFieldsAreLeftOut pins how a Go caller's
 // request reaches POST /v1/compress: an optional field left at its zero
 // value sends no key, so the server applies the `rx compress` default
-// instead of receiving an explicit 0 or "". build_index is always sent,
-// because its default is true and an explicit false must survive.
+// instead of receiving an explicit 0 or "". build_index is a pointer, so
+// a nil one sends no key (default true) and a pointer to false survives.
 func TestCompressRequest_UnsetFieldsAreLeftOut(t *testing.T) {
 	t.Parallel()
 	data, err := json.Marshal(CompressRequest{InputPath: "/tmp/big.log"})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if got, want := string(data), `{"input_path":"/tmp/big.log","build_index":false}`; got != want {
+	if got, want := string(data), `{"input_path":"/tmp/big.log"}`; got != want {
 		t.Errorf("zero-value request: got %s, want %s", got, want)
 	}
 
 	out := "/tmp/big.zst"
+	buildIndex := true
 	data, err = json.Marshal(CompressRequest{
 		InputPath:        "/tmp/big.log",
 		OutputPath:       &out,
 		FrameSize:        "1M",
 		CompressionLevel: 9,
-		BuildIndex:       true,
+		BuildIndex:       &buildIndex,
 		Force:            true,
 	})
 	if err != nil {
