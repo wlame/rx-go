@@ -35,13 +35,6 @@ type SearchRequest struct {
 	// and index switches, the hooks. NoRecursive also limits the walk
 	// that finds a directory's chains to its own files.
 	Options trace.Options
-	// Scan describes each chain the way `rx logs show` does (Options.Scan
-	// of Describe): a part without a current line index is indexed in
-	// memory, so the chain is ready, or invalid, and every match in it
-	// that the trace numbers gets its chain line. Without it, as over
-	// HTTP, a chain with a part not indexed yet is pending, and its
-	// matches have chain_line -1.
-	Scan bool
 }
 
 // SearchResult is the answer of a search of log chains.
@@ -78,6 +71,18 @@ func (e *SearchPathError) Unwrap() error { return e.Err }
 // other path is a file, which a part's own path is. Each chain is
 // described (Describe), and its parts are searched in its order: by
 // time when it is ready or invalid, in the provisional order before.
+//
+// A chain is described from what is stored alone, never by reading a
+// part: each frozen part's current line index (a part without one is
+// only opened and closed, to learn that it can be read) and the head
+// and tail of the active file. So a search capped by max_results reads
+// what a trace of the same files reads, however large the parts. A
+// chain with a frozen part not indexed yet is pending: its parts are
+// searched in the provisional order, and its matches have chain_line
+// -1, which the -1 rule allows ("not computed"); once the parts are
+// indexed (`rx logs index`, POST /v1/logs/index) the same search gives
+// every chain line. GET /v1/logs/trace and `rx logs trace` both search
+// this way.
 // The search itself is the trace engine's, over the resolved files in
 // that order, so the file ids, the order of the matches and the cut to
 // max_results follow the parts' order, and every trace rule (context,
@@ -538,7 +543,10 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, names map[st
 		return nil
 	}
 	r.chainKeys[key] = true
-	d, err := Describe(ctx, c, Options{Scan: r.req.Scan})
+	// No Scan: a part without a line index is not read to describe the
+	// chain (see Search), so the description costs index loads, an open
+	// of each such part and the active file's head and tail.
+	d, err := Describe(ctx, c, Options{})
 	if err != nil {
 		return err
 	}

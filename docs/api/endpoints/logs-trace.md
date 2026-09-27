@@ -92,9 +92,11 @@ Each chain is described from its parts' stored line indexes and the
 head and tail of its active file, as `GET /v1/logs/chain` describes it,
 but no index build starts: a chain whose frozen parts are not all
 indexed is `pending`, searched in the provisional order, and its
-matches have `chain_line` `-1`. `POST /v1/logs/index` (or a
-`GET /v1/logs/chain`) builds the indexes; the next search gives every
-chain line. `no_index` applies to the search, as on `GET /v1/trace`,
+matches have `chain_line` `-1`. No part is read to describe its chain,
+so a search capped by `max_results` reads what `GET /v1/trace` reads on
+the same files. `POST /v1/logs/index` (or a `GET /v1/logs/chain`, or
+`rx logs index`) builds the indexes; the next search gives every chain
+line. `rx logs trace` describes chains the same way. `no_index` applies to the search, as on `GET /v1/trace`,
 not to the description.
 
 ## Response
