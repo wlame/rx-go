@@ -16,7 +16,6 @@ import (
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/prometheus"
-	"github.com/wlame/rx-go/internal/requeststore"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/internal/trace"
 )
@@ -42,11 +41,10 @@ type Config struct {
 
 	// Backends. Any nil pointer is replaced with a sensible default at
 	// NewServer() time.
-	Engine       *trace.Engine
-	TaskManager  *tasks.Manager
-	RequestStore *requeststore.Store
-	Hooks        *hooks.Dispatcher
-	Frontend     *frontend.Manager
+	Engine      *trace.Engine
+	TaskManager *tasks.Manager
+	Hooks       *hooks.Dispatcher
+	Frontend    *frontend.Manager
 
 	// Logger used by middleware. Defaults to slog.Default().
 	Logger *slog.Logger
@@ -166,9 +164,6 @@ func applyConfigDefaults(cfg *Config) {
 	// Always start the sweeper, whether we built the manager or the
 	// caller gave us one. Start() is idempotent (sync.Once-gated).
 	cfg.TaskManager.Start()
-	if cfg.RequestStore == nil {
-		cfg.RequestStore = requeststore.New(requeststore.Config{})
-	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}

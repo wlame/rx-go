@@ -423,6 +423,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `serve` no longer keeps a record of every failed `GET /v1/trace` for
+  the life of the process. The trace handler kept each request in an
+  in-memory store that nothing read, and only a successful trace
+  became eligible for eviction, so a long-running server grew by one
+  entry per failed search. The store is removed.
+
 - An answer served from the trace cache reports the `file_chunks` of
   the scan that wrote the cache, on `rx trace --json` and `GET
   /v1/trace`. It reported `0` for a plain file (where the scan reported,
