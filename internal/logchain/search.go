@@ -100,17 +100,26 @@ func (e *SearchPathError) Unwrap() error { return e.Err }
 // parts.
 //
 // Whatever reaches them twice — a path given twice, however spelled, a
-// directory and a handle or a file in it, a link to a directory — each
-// path is resolved once, each chain is described once and has one
-// entry, and each file is searched once, under one file id, so each
-// match comes once. A part named on its own as well as through its
-// chain is a part of the chain, whichever comes first. A chain is known
-// again by its directory's device and inode, from the stat the listing
-// or the walk checked the directory with, and by its name (chainKey); a
-// directory without an inode (inode 0, as some filesystems give every
-// one) by its path. Two chains that give one key all the same (an inode
-// reused within one request) lose nothing: the second's parts are
-// searched as files of their own.
+// directory and a handle or a file in it, a link to a directory, a
+// directory under another spelling of its path (another case on a
+// case-insensitive disk, a bind mount) — each path is resolved once,
+// each chain is described once and has one entry, and each file is
+// searched once, under one file id, so each match comes once. A part
+// named on its own as well as through its chain is a part of the
+// chain, whichever comes first. A chain is known again by its
+// directory's device and inode, from the stat the listing or the walk
+// checked the directory with, and by its name (chainKey); its parts
+// then by their own device and inode (planAsPartOf), since another
+// spelling of the directory gives them other paths. A directory without
+// an inode (inode 0, as some filesystems give every one) is known by
+// its path, and its chain also by its parts' paths with every link
+// resolved (chainReachedAgain). Two chains that give one key all the
+// same (an inode reused within one request) lose nothing: the second's
+// parts that are not the first's files are searched as files of their
+// own. Another encoding of a part is known by its device and inode
+// too, so it is skipped under whatever path it is named. Any other file
+// is known by its path with every link resolved (fileKey): two hard
+// links are two files.
 //
 // The patterns are checked before any path is walked. The errors are
 // *SearchPathError, ErrPartChanged (a part was renamed or replaced
@@ -152,15 +161,30 @@ type searchResolver struct {
 	// absolute (absPath), so a path given twice is walked, described
 	// and searched once.
 	resolved map[string]bool
-	// chainKeys holds the key (chainKey) of each chain added, so a chain
-	// reached twice — through a directory and its handle, or through a
-	// link to its directory — is described once and has one entry.
-	chainKeys map[string]bool
+	// chainKeys maps the key (chainKey) of each chain added to the chain
+	// that holds it, so a chain reached twice — through a directory and
+	// its handle, through a link to its directory, or through another
+	// spelling of its directory — is described once and has one entry.
+	// The value is nil for a key that names a chain whose parts were all
+	// skipped (chainReachedAgain).
+	chainKeys map[string]*searchChain
 	// planned holds what the search made of each file met so far, by
 	// the path it leads to with every link resolved (fileKey): the slot
 	// it is searched in, or skipped. So a file reached twice is searched
 	// once, under one file id, or skipped once.
 	planned map[string]plannedFile
+	// byIdentity lists, for the identity (fileIdentity) of each file in
+	// planned, the keys it is planned under: one per spelling of the
+	// file the search met (another case of its directory, a bind mount,
+	// a hard link). skipOtherEncoding looks a file up here, so another
+	// encoding of a part is never searched under any spelling. Files
+	// without an identity are not listed.
+	byIdentity map[fileID][]string
+	// encodings holds the identity of each file skipped as another
+	// encoding of a part (skipOtherEncoding), so addOwnFile skips that
+	// file under a path met after it too, and skipOtherEncoding looks at
+	// the other paths of one file (byIdentity) once per search.
+	encodings map[fileID]bool
 	// withdrawn holds the slots taken back before the search runs
 	// (skipOtherEncoding): another encoding of a part, planned as a file
 	// of its own before its chain was found. finish leaves them out of
@@ -174,16 +198,42 @@ type searchResolver struct {
 // newSearchResolver is the resolver of one search, with its maps made.
 func newSearchResolver(req SearchRequest) *searchResolver {
 	return &searchResolver{
-		req:       req,
-		partOf:    map[int]partPlace{},
-		files:     map[string]classified{},
-		dirs:      map[string]*listedDir{},
-		resolved:  map[string]bool{},
-		chainKeys: map[string]bool{},
-		planned:   map[string]plannedFile{},
-		withdrawn: map[int]bool{},
-		placeByID: map[string]partPlace{},
+		req:        req,
+		partOf:     map[int]partPlace{},
+		files:      map[string]classified{},
+		dirs:       map[string]*listedDir{},
+		resolved:   map[string]bool{},
+		chainKeys:  map[string]*searchChain{},
+		planned:    map[string]plannedFile{},
+		byIdentity: map[fileID][]string{},
+		encodings:  map[fileID]bool{},
+		withdrawn:  map[int]bool{},
+		placeByID:  map[string]partPlace{},
 	}
+}
+
+// fileID names a file by the device and inode its stat records: the
+// pair os.SameFile compares on the platforms rx builds for. Two paths
+// with one fileID lead to one file, whether they spell one path two
+// ways (another case of a directory on a case-insensitive disk, a bind
+// mount) or are two hard links.
+//
+// Go note: a struct whose fields are all comparable is comparable
+// itself, so it is a map key as it is, with nothing built per look-up.
+type fileID struct {
+	device, inode uint64
+}
+
+// fileIdentity is the identity of the file src pins, by the rule
+// DirectoryIdentity applies to a directory, which holds for any file:
+// ok is false when the stat gives none — no stat, a platform without
+// inodes, or inode 0, which a filesystem that numbers no file gives
+// every file, so that every file would be the same. A file without an
+// identity is never taken for another one; it is known by its path
+// alone (fileKey).
+func fileIdentity(src paths.Pinned) (fileID, bool) {
+	device, inode, ok := DirectoryIdentity(src.Info())
+	return fileID{device: device, inode: inode}, ok
 }
 
 // plannedFile is what the search made of a file: the slot it is
@@ -215,6 +265,12 @@ type searchChain struct {
 	desc  *Description
 	slots []int
 	files []string
+	// partKeys maps the identity (fileIdentity) of each part addChain
+	// added to the key (fileKey) it is planned under. A chain that gives
+	// this chain's key again looks its parts up here (planAsPartOf): a
+	// part that is the same file is this chain's part, whatever path
+	// spelled it. Parts without an identity are not listed.
+	partKeys map[fileID]string
 }
 
 // listedDir is the listing of one directory a handle named, and the
@@ -357,7 +413,7 @@ func (r *searchResolver) addHandle(ctx context.Context, p string) (found bool, e
 		// searched as a file of its own, in the listing's order.
 		for _, e := range listed.chainEntries(c.Name) {
 			if isCandidateFile(e) {
-				r.addFile(e.File)
+				r.addOwnFile(e.File)
 			}
 		}
 	}
@@ -517,7 +573,7 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 	for _, e := range files {
 		wc := owner[e.Path]
 		if wc == nil {
-			r.addFile(e.File)
+			r.addOwnFile(e.File)
 			continue
 		}
 		if !wc.found {
@@ -529,7 +585,7 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 		if wc.candidate.TooManyParts {
 			// Not read as one text: each of its files is searched where
 			// the walk lists it, as a file of its own.
-			r.addFile(e.File)
+			r.addOwnFile(e.File)
 		}
 	}
 	return nil
@@ -567,10 +623,16 @@ func entriesByName(entries []Entry) map[string]Entry {
 // identity of the directory (DirectoryIdentity: no stat, a platform
 // without inodes, or inode 0) the key is the handle, made absolute.
 //
-// Two chains can still give one key (an inode reused within one
-// request); addChain then searches the second's parts as files of their
-// own, so a clash costs the chain fields of those matches, never the
-// matches.
+// One key is not always one chain read one way. The same directory
+// under two spellings (another case on a case-insensitive disk, a bind
+// mount) gives one key from parts whose paths differ; addChain then
+// knows each part by its identity (planAsPartOf), so each is searched
+// once, in the chain. Two different chains can also give one key (an
+// inode reused within one request); addChain then searches the
+// second's parts as files of their own, so a clash costs the chain
+// fields of those matches, never the matches. A directory without an
+// identity is keyed by its handle, so a link to it gives a second key;
+// chainReachedAgain then knows the chain by its parts' paths.
 func chainKey(c Candidate) string {
 	if device, inode, ok := DirectoryIdentity(c.DirInfo); ok {
 		return strconv.FormatUint(device, 10) + ":" + strconv.FormatUint(inode, 10) + "/" + c.Name
@@ -595,12 +657,18 @@ func absPath(p string) string {
 // entry and adds no part: its caller searches its files on their own.
 //
 // A chain whose key (chainKey) a chain added before holds is not
-// described again and gets no entry; its parts are passed to addFile as
-// files of their own (addPartsAsFiles). For the same chain reached a
-// second way that adds nothing: every part is planned already, under
-// its file id and in its chain. For another chain that gives the same
-// key it searches that chain's parts with no chain, rather than losing
-// them.
+// described again and gets no entry; its parts go to addPartsAsFiles.
+// For the same chain reached a second way that adds nothing: a part the
+// holder of the key has, as the same file (planAsPartOf) or under the
+// same path (addFile), is searched once already, under its file id and
+// in its chain — so one directory under two spellings is one chain.
+// For another chain that gives the same key it searches that chain's
+// parts with no chain, rather than losing them.
+//
+// A chain in a directory without an identity is keyed by its handle,
+// so the same chain reached through a link to its directory gives
+// another key; it is known by its parts' paths instead
+// (chainReachedAgain), and gets no second, empty entry.
 //
 // byName holds the entries the chain was grouped from, by name: the
 // other encodings of its parts are looked up there.
@@ -608,11 +676,14 @@ func absPath(p string) string {
 // The error is Describe's: ErrPartChanged, or the context's.
 func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[string]Entry) error {
 	key := chainKey(c)
-	if r.chainKeys[key] {
-		r.addPartsAsFiles(c, byName)
+	if holder, held := r.chainKeys[key]; held {
+		r.addPartsAsFiles(c, holder, byName)
 		return nil
 	}
-	r.chainKeys[key] = true
+	if holder, again := r.chainReachedAgain(c); again {
+		r.chainKeys[key] = holder
+		return nil
+	}
 	// No Scan: a part without a line index is not read to describe the
 	// chain (see Search), so the description costs index loads, an open
 	// of each such part and the active file's head and tail.
@@ -620,7 +691,11 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[s
 	if err != nil {
 		return err
 	}
-	ch := &searchChain{id: "c" + strconv.Itoa(len(r.chains)+1), desc: d, files: []string{}}
+	ch := &searchChain{
+		id: "c" + strconv.Itoa(len(r.chains)+1), desc: d, files: []string{},
+		partKeys: make(map[fileID]string, len(d.Order)),
+	}
+	r.chainKeys[key] = ch
 	index := len(r.chains)
 	r.chains = append(r.chains, ch)
 	for order, part := range d.Parts() {
@@ -636,6 +711,9 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[s
 			ch.slots = append(ch.slots, slot)
 			r.partOf[slot] = partPlace{chain: index, order: order}
 		}
+		if id, hasID := fileIdentity(part.File); hasID {
+			ch.partKeys[id] = fileKey(part.File)
+		}
 		for _, name := range part.Duplicates {
 			// byName holds every entry the chain was grouped from, its
 			// parts' other encodings too.
@@ -645,23 +723,104 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[s
 	return nil
 }
 
-// addPartsAsFiles adds the parts of the chain c to the search as files
-// of their own, in its provisional order, and skips their other
-// encodings as addChain does; see addChain for when. A file planned or
-// skipped already keeps what it got (addFile, skipOtherEncoding), so
-// for a chain added already this plans and names nothing new. A chain
-// of more than MaxParts parts adds nothing here: its caller searches
-// every file of its name.
-func (r *searchResolver) addPartsAsFiles(c Candidate, byName map[string]Entry) {
+// addPartsAsFiles adds the parts of the chain c, whose key the chain
+// holder holds already, to the search, in c's provisional order, and
+// skips their other encodings as addChain does; see addChain for when.
+//
+// A part that is the same file as a part of holder (planAsPartOf) is
+// that part: searched already, in holder. Any other part is a file of
+// its own (addFile), and a file planned or skipped already keeps what
+// it got there. So for the chain holder reached a second way — under
+// the same path, through a link, or under another spelling of its
+// directory — this plans and names nothing new. A chain of more than
+// MaxParts parts adds nothing here: its caller searches every file of
+// its name.
+//
+// holder is nil when the key names a chain none of whose parts is
+// searched (chainReachedAgain); every part then goes to addOwnFile.
+func (r *searchResolver) addPartsAsFiles(c Candidate, holder *searchChain, byName map[string]Entry) {
 	if c.TooManyParts {
 		return
 	}
 	for _, part := range c.Parts {
-		r.addFile(part.File)
+		if !r.planAsPartOf(holder, part.File) {
+			r.addOwnFile(part.File)
+		}
 		for _, name := range part.Duplicates {
 			r.skipOtherEncoding(byName[name].File, part.Name)
 		}
 	}
+}
+
+// planAsPartOf reports whether src is the same file as a part of the
+// chain holder: the same device and inode (os.SameFile's test), the
+// inode not 0. Then src's path is recorded with what the search made
+// of that part, so src is searched once, as that part, under the
+// part's file id, and a later look-up of src's path finds it.
+//
+// Holder and src's chain give one key (the same directory and chain
+// name), so a part that is the same file is the same part reached
+// through another spelling of the directory: another case of it on a
+// case-insensitive disk, or a bind mount of it. Their paths differ even
+// with every link resolved, so fileKey alone cannot tell.
+//
+// SECURITY: the comparison is by the identities the pins recorded when
+// they were checked, never by a new look-up of either path. A part is
+// read only through its own pin, so taking it for holder's part reads
+// nothing more and nothing else.
+func (r *searchResolver) planAsPartOf(holder *searchChain, src paths.Pinned) bool {
+	if holder == nil {
+		return false
+	}
+	id, ok := fileIdentity(src)
+	if !ok {
+		return false
+	}
+	partKey, same := holder.partKeys[id]
+	if !same {
+		return false
+	}
+	if key := fileKey(src); key != partKey {
+		if _, seen := r.planned[key]; !seen {
+			r.record(src, key, r.planned[partKey])
+		}
+	}
+	return true
+}
+
+// chainReachedAgain reports whether c, a chain in a directory without
+// an identity (DirectoryIdentity: inode 0, or none), is a chain the
+// search added already, reached again through a link to its directory:
+// every one of its parts is planned already under the path it leads to
+// with every link resolved (fileKey), as a part of a chain or skipped,
+// so c would add an entry with no part. holder is the chain that holds
+// the first of those parts, nil when every part was skipped.
+//
+// A directory with an identity is known again by its key (chainKey),
+// so it is not looked at here; neither is a chain one of whose parts is
+// not planned yet, or is planned as a file of its own, which c then
+// claims as its part.
+func (r *searchResolver) chainReachedAgain(c Candidate) (holder *searchChain, again bool) {
+	if _, _, ok := DirectoryIdentity(c.DirInfo); ok || len(c.Parts) == 0 {
+		return nil, false
+	}
+	for _, part := range c.Parts {
+		planned, seen := r.planned[fileKey(part.File)]
+		if !seen {
+			return nil, false
+		}
+		if !planned.ok {
+			continue
+		}
+		place, claimed := r.partOf[planned.slot]
+		if !claimed {
+			return nil, false
+		}
+		if holder == nil {
+			holder = r.chains[place.chain]
+		}
+	}
+	return holder, true
 }
 
 // skipOtherEncoding keeps another encoding of the part named part out of
@@ -669,14 +828,26 @@ func (r *searchResolver) addPartsAsFiles(c Candidate, byName map[string]Entry) {
 // ReasonDuplicatePart: it holds the lines of the part its chain reads,
 // so searching it too would give each of them twice.
 //
-// The search may have met the file before its chain. Planned as a file
-// of its own (named on its own, as `app.log.1.gz` beside the handle
-// `app.log`), it is taken back (withdrawn) before the search runs, so
-// the file is skipped rather than both searched and skipped. Skipped
-// already (as another encoding, or because it cannot be read), it is
-// not named twice. Claimed as a part of another chain (a link into
-// that chain's directory), it stays that chain's part. Met after its
-// chain, it is skipped already, and addFile does not plan it.
+// The search may have met the file before its chain. Under its own
+// path: skipped already (as another encoding, or because it cannot be
+// read), it is not named twice; claimed as a part of another chain (a
+// link into that chain's directory), it stays that chain's part;
+// planned as a file of its own (named on its own, as `app.log.1.gz`
+// beside the handle `app.log`), it is taken back (withdrawn) before the
+// search runs, so the file is skipped rather than both searched and
+// skipped. Under another path that leads to the same file (byIdentity:
+// another case of its directory, a bind mount, a hard link), each path
+// it is planned under as a file of its own is withdrawn too, and the
+// file is named once: not again when one of those paths, or an earlier
+// call for the same file, named it already. A path that holds a part of
+// another chain is left as it is: a chain is searched with every part
+// it describes (addFile). Met after its chain, under any path, the file
+// is skipped already, and addOwnFile does not plan it (encodings).
+//
+// Each file is looked up under its other paths once per search: a later
+// call for the same file finds it in encodings and records its own path
+// alone, so the cost is one pass over the paths of each file however
+// many chains name it as another encoding.
 func (r *searchResolver) skipOtherEncoding(other paths.Pinned, part string) {
 	key := fileKey(other)
 	if planned, seen := r.planned[key]; seen {
@@ -688,8 +859,33 @@ func (r *searchResolver) skipOtherEncoding(other paths.Pinned, part string) {
 		}
 		r.withdrawn[planned.slot] = true
 	}
-	r.planned[key] = plannedFile{}
-	r.skip(other.Path(), duplicateReason(part))
+	id, hasID := fileIdentity(other)
+	if hasID && r.encodings[id] {
+		// Skipped as another encoding under another path already, and
+		// named then.
+		r.record(other, key, plannedFile{})
+		return
+	}
+	named := false
+	if hasID {
+		for _, k := range r.byIdentity[id] {
+			planned := r.planned[k]
+			switch _, claimed := r.partOf[planned.slot]; {
+			case k == key:
+				// other's own path, handled above.
+			case !planned.ok:
+				named = true
+			case !claimed:
+				r.withdrawn[planned.slot] = true
+				r.record(other, k, plannedFile{})
+			}
+		}
+		r.encodings[id] = true
+	}
+	r.record(other, key, plannedFile{})
+	if !named {
+		r.skip(other.Path(), duplicateReason(part))
+	}
 }
 
 // duplicateReason is the reason given for another encoding of the part
@@ -707,7 +903,7 @@ func (r *searchResolver) addNamedFile(p string, pinned paths.Pinned) error {
 		return &SearchPathError{Path: p, Err: err}
 	}
 	_ = f.Close()
-	r.addFile(pinned)
+	r.addOwnFile(pinned)
 	return nil
 }
 
@@ -716,16 +912,54 @@ func (r *searchResolver) addNamedFile(p string, pinned paths.Pinned) error {
 // ok is false for a file that is skipped instead: one that cannot be
 // read or is not text, named with the reason a trace gives, or another
 // encoding of a part already skipped (skipOtherEncoding). A file met
-// before, under any spelling (fileKey), is not added again: the answer
-// is the one it got then.
+// before, under any spelling of its path (fileKey), is not added again:
+// the answer is the one it got then. A file is known here by its path
+// alone, so two hard links are two files: two chains whose parts are
+// hard links of each other's are both searched in full.
 func (r *searchResolver) addFile(src paths.Pinned) (slot int, ok bool) {
 	key := fileKey(src)
 	if planned, seen := r.planned[key]; seen {
 		return planned.slot, planned.ok
 	}
 	slot, ok = r.planFile(src)
-	r.planned[key] = plannedFile{slot: slot, ok: ok}
+	r.record(src, key, plannedFile{slot: slot, ok: ok})
 	return slot, ok
+}
+
+// addOwnFile adds a file of its own to the search: one named on its
+// own, one a walk lists outside any chain, a file of a chain of more
+// than MaxParts parts, or a part of a chain whose key another holds.
+// It is addFile, except that the same file as another encoding of a
+// part skipped already (encodings), met under another path — another
+// case of its directory, a bind mount, a hard link — is skipped too,
+// and not named again: its lines are the part's, which its chain
+// searches, so searching it would give each of them twice.
+//
+// A part of a chain goes to addFile instead: a chain is searched with
+// every part it describes, whatever other file one of them is.
+func (r *searchResolver) addOwnFile(src paths.Pinned) {
+	key := fileKey(src)
+	if _, seen := r.planned[key]; !seen {
+		if id, hasID := fileIdentity(src); hasID && r.encodings[id] {
+			r.record(src, key, plannedFile{})
+			return
+		}
+	}
+	r.addFile(src)
+}
+
+// record sets what the search made of the file src, known by key (its
+// fileKey), and lists key under src's identity (byIdentity) the first
+// time key is recorded, so skipOtherEncoding finds the file under every
+// path the search met it by. Every write to planned goes through here,
+// so the two maps never disagree.
+func (r *searchResolver) record(src paths.Pinned, key string, p plannedFile) {
+	if _, seen := r.planned[key]; !seen {
+		if id, ok := fileIdentity(src); ok {
+			r.byIdentity[id] = append(r.byIdentity[id], key)
+		}
+	}
+	r.planned[key] = p
 }
 
 // fileKey names the file a pin leads to by its path with every link
