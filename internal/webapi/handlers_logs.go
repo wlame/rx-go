@@ -165,7 +165,9 @@ func registerLogChainHandler(s *Server, api huma.API) {
 		resp.CLICommand = BuildCLICommand("log_chain", map[string]any{
 			"path": resp.Path, "file_tz": in.FileTZ, "fingerprint": in.Fingerprint,
 		})
-		resp.IndexBuild = s.chainIndex.forDescription(d)
+		// A pending chain past the limit on chain index tasks is described
+		// as pending with no task; a later describe starts it.
+		resp.IndexBuild, _ = s.chainIndex.forDescription(d)
 		return &logChainOutput{Status: logChainStatus(changed, in.Fingerprint, resp.Fingerprint), Body: resp}, nil
 	})
 }
@@ -198,7 +200,22 @@ func logIndexResponses(api huma.API) map[string]*huma.Response {
 	responses[strconv.Itoa(http.StatusConflict)] = jsonResponse("The chain's files changed: the fingerprint the "+
 		"request sent differs from the current one, or a part was renamed or replaced while the request read it. "+
 		"The body is the current description; no task started.", description)
+	responses[strconv.Itoa(http.StatusServiceUnavailable)] = chainTasksFullResponse(api,
+		"No index task runs for the chain, and none can start now: as many log chain index tasks as the server "+
+			"runs at once are running or waiting. No task started; ask again once one of them has ended.")
 	return responses
+}
+
+// chainTasksFullResponse declares the 503 answer of a route that would
+// start a log chain's index task when as many chain index tasks as the
+// server runs at once (chainIndexTasks.maxUnfinished: half the build
+// queue, 128) are unfinished: the error envelope, described for the
+// route. The shared 503 description is about ripgrep, which these
+// routes do not run.
+func chainTasksFullResponse(api huma.API, description string) *huma.Response {
+	envelope := api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(apiError{}), true, "ApiError")
+	return jsonResponse(fmt.Sprintf("%s At most %d run or wait at once: half the line-index build queue, as many "+
+		"as the part builds of all chains may take.", description, maxQueuedIndexBuilds/2), envelope)
 }
 
 // registerLogIndexHandler mounts POST /v1/logs/index, which starts the
@@ -242,6 +259,9 @@ func registerLogIndexHandler(s *Server, api huma.API) {
 		task, isNew := s.chainIndex.start(chainTaskStart{
 			handle: d.Response.Path, key: chainKeyOf(d), fingerprint: d.Response.Fingerprint, parts: parts, force: in.Force,
 		})
+		if task == nil {
+			return nil, ErrServiceUnavailable(chainTasksFullDetail(d.Response.Path, s.chainIndex.maxUnfinished()))
+		}
 		message := fmt.Sprintf("Indexing %s of the log chain %s; follow GET /v1/tasks/%s",
 			partCount(len(parts)), d.Response.Path, task.TaskID)
 		if !isNew {

@@ -649,6 +649,50 @@ func TestOpenAPIConformance_ChainSamplesWhileTheChainIndexesAnswersAsDeclared(t 
 	manager.Fail(held.TaskID, "released by the test")
 }
 
+// Past the limit on log chain index tasks (here one, the chains' share
+// of a build queue of two), a pending chain whose task cannot start
+// answers 503 to POST /v1/logs/index and to a samples request by global
+// line, as declared. The one place is taken by another chain's task,
+// which waits for a compression that holds one of its parts.
+func TestOpenAPIConformance_ChainsPastTheTaskLimitAnswerAsDeclared(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	root := conformanceFixtures(t)
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	manager := tasks.New(tasks.Config{})
+	server := NewServer(Config{AppVersion: "conformance-test", TaskManager: manager})
+	server.samplesIndex.maxQueued = 2
+	ts := httptest.NewServer(server)
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { awaitEveryTask(t, manager) })
+	run := &conformanceRun{t: t, base: ts.URL, contract: loadContract(t), answered: map[string][]int{}}
+
+	part, err := paths.ValidatePathWithinRoots(filepath.Join(root, "rotated", "app.log.1"))
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	held, _ := manager.Create(part, "compress")
+	t.Cleanup(func() { manager.Fail(held.TaskID, "released by the test") })
+	run.check(apiCall{label: "log chain whose index task takes the one place", method: http.MethodGet,
+		template: "/v1/logs/chain", path: "/v1/logs/chain",
+		query: url.Values{"path": {filepath.Join(root, "rotated", "app.log")}}, want: http.StatusOK})
+	second := filepath.Join(root, "second")
+	if err := os.Mkdir(second, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeIndexChain(t, second, []chainPartFile{{name: "app.log.1"}, {name: "app.log"}}, 2, chainStart)
+	handle := filepath.Join(second, "app.log")
+
+	run.check(apiCall{label: "index a log chain past the task limit", method: http.MethodPost,
+		template: "/v1/logs/index", path: "/v1/logs/index",
+		query: url.Values{"path": {handle}}, want: http.StatusServiceUnavailable})
+	run.check(apiCall{label: "log samples of a pending chain past the task limit", method: http.MethodGet,
+		template: "/v1/logs/samples", path: "/v1/logs/samples",
+		query: url.Values{"path": {handle}, "lines": {"1"}}, want: http.StatusServiceUnavailable})
+}
+
 func TestContractMismatch_FindsEachKindOfDeparture(t *testing.T) {
 	c := loadContract(t)
 	const method, template = http.MethodPost, "/v1/compress"

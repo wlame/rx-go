@@ -50,6 +50,18 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 // woken per build's end, so a samples lookup in another file still
 // finds room in the queue however many chains are pending.
 //
+// # At most as many tasks as the chains' part builds have places
+//
+// At most maxUnfinished chain index tasks are unfinished at once (half
+// the build queue, 128 by default: as many as the part builds of all
+// chains may take, so each task can hold one). Past that a start creates
+// no task: a describe of a pending chain names none, POST
+// /v1/logs/index and a samples request that needs the chain ready
+// answer 503, until a task ends and gives its place back. A start for a
+// chain whose task runs still joins it. So the goroutines, task table
+// entries and records of pending chains are bounded, whatever the
+// number of chains under the search roots.
+//
 // # What is remembered
 //
 // records maps each chain to the last index task started for it, the
@@ -73,9 +85,9 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 //
 // Lock order: mu, then the task manager's lock (CreateKeyed, Get, and
 // the Get of each record without an end when the records are pruned).
-// The task goroutine takes mu once, alone, to record its end
-// (recordEnd), and never while it holds the task manager's lock or
-// chainIndexRun.mu.
+// The task goroutine takes mu once, alone, to record its end and give
+// its place back (recordEnd; giveBackPlace after a panic), and never
+// while it holds the task manager's lock or chainIndexRun.mu.
 type chainIndexTasks struct {
 	tasks  *tasks.Manager
 	builds *samplesIndexBuilds
@@ -85,6 +97,12 @@ type chainIndexTasks struct {
 	// records maps a chain's key (chainTaskKey) to the last index task
 	// started for it.
 	records map[string]chainTaskRecord
+	// unfinished counts the index tasks started here that hold a place
+	// among the unfinished ones: counted up when startLocked creates one,
+	// down when its run records its end (recordEnd), or, when its
+	// goroutine panicked first, when the goroutine returns
+	// (giveBackPlace). At most maxUnfinished.
+	unfinished int
 	// now is the clock the records' ends are stamped and expired by:
 	// time.Now, which a test replaces to reach past the task TTL.
 	now func() time.Time
@@ -175,17 +193,39 @@ func chainKeyOf(d *logchain.Description) string {
 	return chainTaskKey(d.Response.Path)
 }
 
+// maxUnfinished is how many chain index tasks may be unfinished at
+// once: as many as the part builds of all chains may take places in the
+// build queue (samplesIndexBuilds.maxChainParts), so each task can hold
+// at least one.
+func (c *chainIndexTasks) maxUnfinished() int {
+	return c.builds.maxChainParts()
+}
+
 // start starts the index task of a chain for the parts in s, or joins
 // the one running for the chain, and returns the task (a copy) and
-// whether it is new.
-func (c *chainIndexTasks) start(s chainTaskStart) (tasks.Task, bool) {
+// whether it is new. It returns nil when no task runs for the chain and
+// maxUnfinished chain index tasks are unfinished already: nothing is
+// started then.
+func (c *chainIndexTasks) start(s chainTaskStart) (*tasks.Task, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.startLocked(s)
 }
 
 // startLocked is start; the caller holds c.mu.
-func (c *chainIndexTasks) startLocked(s chainTaskStart) (tasks.Task, bool) {
+func (c *chainIndexTasks) startLocked(s chainTaskStart) (*tasks.Task, bool) {
+	if c.unfinished >= c.maxUnfinished() {
+		// SECURITY: no new task past the limit, so the chains pending at
+		// once cost a bounded number of goroutines and table entries. A
+		// chain whose task runs is joined: it takes no new place. Every
+		// chain task is created under c.mu, so no other start can create
+		// one for this key between the look and the answer.
+		running, held := c.tasks.Holder(s.key)
+		if !held {
+			return nil, false
+		}
+		return running, false
+	}
 	task, isNew := c.tasks.CreateKeyed(chainIndexOperation, s.handle, s.key)
 	if !isNew {
 		// The running task is the manager's own, which its goroutine
@@ -193,14 +233,15 @@ func (c *chainIndexTasks) startLocked(s chainTaskStart) (tasks.Task, bool) {
 		// is read here, and Get copies the rest under the lock.
 		running, known := c.tasks.Get(task.TaskID)
 		if !known {
-			return tasks.Task{TaskID: task.TaskID, Path: s.handle, Operation: chainIndexOperation}, false
+			return &tasks.Task{TaskID: task.TaskID, Path: s.handle, Operation: chainIndexOperation}, false
 		}
-		return *running, false
+		return running, false
 	}
 	// A copy taken before the task goroutine exists: once it runs, it
 	// changes the task's status under the manager's lock, and reading
 	// the manager's own Task then would be a data race.
 	snapshot := *task
+	c.unfinished++
 	c.rememberLocked(s.key, chainTaskRecord{
 		taskID: snapshot.TaskID, fingerprint: s.fingerprint, startedAt: snapshot.StartedAt,
 	})
@@ -212,8 +253,25 @@ func (c *chainIndexTasks) startLocked(s chainTaskStart) (tasks.Task, bool) {
 	// The task goroutine. It outlives the request that started it: no
 	// request context reaches it, so a client that goes away stops
 	// nothing. runDetached turns a panic inside it into a failed task.
-	go runDetached(c.tasks, snapshot.TaskID, chainIndexOperation, c.logger, run.run)
-	return snapshot, true
+	go runDetached(c.tasks, snapshot.TaskID, chainIndexOperation, c.logger, func() {
+		// Deferred, so it also runs while a panic unwinds, before
+		// runDetached recovers it and fails the task: a run that panicked
+		// before it recorded its end gives its place back here. A start
+		// that comes between the two may join the task about to fail,
+		// which then names the failure, as for any failed task.
+		defer run.giveBackPlaceUnlessEnded()
+		run.run()
+	})
+	return &snapshot, true
+}
+
+// giveBackPlace gives back the place of a task among the unfinished
+// chain tasks when its run could not (recordEnd): its goroutine
+// panicked.
+func (c *chainIndexTasks) giveBackPlace() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.unfinished--
 }
 
 // rememberLocked records record as the last index task of the chain
@@ -224,15 +282,17 @@ func (c *chainIndexTasks) rememberLocked(key string, record chainTaskRecord) {
 	c.pruneLocked()
 }
 
-// recordEnd records how the index task taskID of the chain key ended,
-// when it is still the chain's last task: a newer task may have taken
-// the record's place, or the record may have been dropped. It is called
-// from the task goroutine just before the task is marked ended in the
-// task manager, so a describe never finds the task ended without its
-// end in the record.
+// recordEnd gives back the place of the index task taskID of the chain
+// key among the unfinished chain tasks, and records how it ended, when
+// it is still the chain's last task: a newer task may have taken the
+// record's place, or the record may have been dropped. It is called
+// once per task, from the task goroutine, just before the task is
+// marked ended in the task manager, so a describe never finds the task
+// ended without its end in the record, nor without its place free.
 func (c *chainIndexTasks) recordEnd(key, taskID string, status tasks.Status, err string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.unfinished--
 	record, recorded := c.records[key]
 	if !recorded || record.taskID != taskID {
 		return
@@ -326,7 +386,12 @@ func (c *chainIndexTasks) expired(record chainTaskRecord, now time.Time) bool {
 // now or joined, unless the last task of these same files failed; for
 // every other chain, the last task started for it (lastLocked); nil
 // when there is none.
-func (c *chainIndexTasks) forDescription(d *logchain.Description) *rxtypes.SamplesIndexBuild {
+//
+// refused is true when d is a pending chain that waits for parts and no
+// task could start for it: maxUnfinished chain index tasks are
+// unfinished already (start). The index_build is nil then; a later
+// description starts the task once a place is free.
+func (c *chainIndexTasks) forDescription(d *logchain.Description) (build *rxtypes.SamplesIndexBuild, refused bool) {
 	handle, key := d.Response.Path, chainKeyOf(d)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -335,14 +400,25 @@ func (c *chainIndexTasks) forDescription(d *logchain.Description) *rxtypes.Sampl
 	waiting := d.WaitingParts()
 	if d.Response.State != rxtypes.ChainStatePending || len(waiting) == 0 || failedForTheseFiles {
 		if last == nil {
-			return nil
+			return nil, false
 		}
-		return chainIndexBuildOf(*last, handle)
+		return chainIndexBuildOf(*last, handle), false
 	}
 	task, _ := c.startLocked(chainTaskStart{
 		handle: handle, key: key, fingerprint: d.Response.Fingerprint, parts: waiting,
 	})
-	return chainIndexBuildOf(task, handle)
+	if task == nil {
+		return nil, true
+	}
+	return chainIndexBuildOf(*task, handle), false
+}
+
+// chainTasksFullDetail is the detail of the 503 answer for a pending
+// chain, handle, whose index task cannot start: limit chain index tasks
+// are unfinished already.
+func chainTasksFullDetail(handle string, limit int) string {
+	return fmt.Sprintf("The log chain %s is pending, and its index task cannot start now: the most log chain index "+
+		"tasks the server runs at once (%d) are running or waiting; ask again once one of them has ended", handle, limit)
 }
 
 // last names the last index task started for the chain d describes, as
@@ -436,6 +512,10 @@ type chainIndexRun struct {
 	start  chainTaskStart
 	// window is how many part builds of this run are in flight at most.
 	window int
+	// ended says that the run has recorded its end with the chain (fail,
+	// complete), which gives its place among the unfinished chain tasks
+	// back. Only the task goroutine reads and writes it.
+	ended bool
 
 	// mu guards done and inFlight, which the task goroutine changes and
 	// a status request reads (progress). It is never held while the task
@@ -524,6 +604,7 @@ func (r *chainIndexRun) run() {
 // ended without its end recorded.
 func (r *chainIndexRun) fail(failure string) {
 	r.owner.recordEnd(r.start.key, r.taskID, tasks.StatusFailed, failure)
+	r.ended = true
 	r.tasks.Fail(r.taskID, failure)
 }
 
@@ -531,7 +612,17 @@ func (r *chainIndexRun) fail(failure string) {
 // the same order as fail.
 func (r *chainIndexRun) complete(built []bool) {
 	r.owner.recordEnd(r.start.key, r.taskID, tasks.StatusCompleted, "")
+	r.ended = true
 	r.tasks.Complete(r.taskID, r.result(built))
+}
+
+// giveBackPlaceUnlessEnded gives the task's place among the unfinished
+// chain tasks back when the run did not record its end: its goroutine
+// panicked. It is deferred in the task goroutine.
+func (r *chainIndexRun) giveBackPlaceUnlessEnded() {
+	if !r.ended {
+		r.owner.giveBackPlace()
+	}
 }
 
 // submit starts the build of parts[position]'s line index, or joins the

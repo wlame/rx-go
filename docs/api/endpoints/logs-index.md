@@ -47,6 +47,13 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
   `path`. The task holds that key, not the handle: a task on the
   active file, whose path equals the handle (`POST /v1/index` of it),
   runs beside it.
+- **At most 128 chain tasks at once.** As many chains' index tasks run
+  or wait at once as the part builds of all chains may take places in
+  the build queue (half of it, 128), so each can hold one. Past that, no
+  task starts: the request answers `503` and starts nothing, and a
+  describe of a pending chain names no task (`index_build` null) until
+  one of them ends. A request for a chain whose task runs still joins
+  it.
 - **Every part, whatever its size.** `RX_LARGE_FILE_MB`, below which
   `rx index` and `POST /v1/index` skip a file, does not apply: the chain
   needs each part's line count and times, and rotated parts are often
@@ -60,9 +67,10 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
   as one of them ends, so a chain of thousands of parts never fills the
   queue of 256 builds that wait for a slot. The part builds of all
   chains together, queued or running, take at most half of that queue
-  (128): a chain that finds them all taken waits for a build to end, so
+  (128): a chain that finds them all taken waits in line for room, so
   a lookup in another file always finds room, however many chains are
-  pending.
+  pending. Each build's end that leaves room lets the first chain in
+  line go on: one chain, not all of them.
 - **Part builds leave other tasks alone.** Each part build the task
   starts is a task of its own (operation `index`, its `path` the
   part's), shown at `GET /v1/tasks/{id}` like any other. Finished part
@@ -127,6 +135,7 @@ A request that joins a running task says so in `message`.
 | `409 Conflict` | The body is the current description (as `GET /v1/logs/chain` gives it): `fingerprint` differs from it, or a part was replaced while the request read it. No task starts |
 | `422 Unprocessable Entity` | `path` is missing, or `fingerprint` is not 16 hex digits |
 | `500 Internal Server Error` | The chain's files kept changing on every attempt to read them (three) |
+| `503 Service Unavailable` | No task runs for the chain, and none can start: 128 chains' index tasks run or wait already. No task started; ask again once one of them has ended |
 
 ## Examples
 
