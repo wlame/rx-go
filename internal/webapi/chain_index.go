@@ -417,6 +417,31 @@ func (c *chainIndexTasks) forDescription(d *logchain.Description) (build *rxtype
 	return chainIndexBuildOf(*task, handle), false
 }
 
+// fillIndexBuild sets the index_build of d's description to the task
+// forDescription starts, joins or names, and its index_build_refused to
+// the reason when d is a pending chain for which no task could start;
+// index_build_refused is null in every other case.
+//
+// d.Response is the description this request built (a cached
+// description keeps the parts' facts, not this answer), so writing to
+// it changes no other request's answer.
+func (c *chainIndexTasks) fillIndexBuild(d *logchain.Description) {
+	build, refused := c.forDescription(d)
+	d.Response.IndexBuild, d.Response.IndexBuildRefused = build, nil
+	if refused {
+		reason := chainTasksFullReason(c.maxUnfinished())
+		d.Response.IndexBuildRefused = &reason
+	}
+}
+
+// chainTasksFullReason is the index_build_refused of a pending chain
+// whose index task cannot start: limit chain index tasks are unfinished
+// already.
+func chainTasksFullReason(limit int) string {
+	return fmt.Sprintf("too many log chains wait for an index build: the most log chain index tasks the server "+
+		"runs at once (%d) are running or waiting; a request after one of them has ended starts this chain's task", limit)
+}
+
 // chainTasksFullRetryAfterSeconds is the Retry-After of the 503 answer
 // for a pending chain whose index task cannot start: how long a client
 // waits before it asks again. A place frees when any chain index task

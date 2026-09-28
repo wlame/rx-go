@@ -339,11 +339,11 @@ per chain (operation `chain_index`, followed at
   room, however many chains are pending.
 - At most 128 chains' index tasks run or wait at once, as many as that
   half of the queue has places. Past that a pending chain gets no task:
-  its description names none (`index_build` null), and
-  `POST /v1/logs/index` and a samples request that needs the chain
-  ready answer `503` with `Retry-After: 5`, until one of those tasks
-  has ended. A chain
-  waiting for room waits in line, and each build's end lets one go on.
+  its description names none (`index_build` null) and says why
+  (`index_build_refused`), and `POST /v1/logs/index` and a samples
+  request that needs the chain ready answer `503` with
+  `Retry-After: 5`, until one of those tasks has ended. A chain waiting
+  for room waits in line, and each build's end lets one go on.
 - Finished part builds are kept apart from other tasks, at most 256 of
   them, the oldest dropped first. A chain of thousands of parts cycles
   through that share and never drops a task another client follows; a

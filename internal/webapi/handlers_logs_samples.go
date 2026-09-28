@@ -257,7 +257,7 @@ func (s *Server) chainConflict(d *logchain.Description, in *logSamplesInput) *lo
 	resp.CLICommand = BuildCLICommand("log_chain", map[string]any{
 		"path": resp.Path, "file_tz": in.FileTZ, "fingerprint": in.Fingerprint,
 	})
-	resp.IndexBuild, _ = s.chainIndex.forDescription(d)
+	s.chainIndex.fillIndexBuild(d)
 	return &logSamplesOutput{Status: http.StatusConflict, Body: resp}
 }
 

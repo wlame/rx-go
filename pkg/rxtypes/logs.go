@@ -99,7 +99,10 @@ type ChainResponse struct {
 	FrozenLineCount *int64             `json:"frozen_line_count" doc:"The lines of every part but the active file. Null unless the chain is ready."`
 	LineCount       *int64             `json:"line_count" doc:"The chain's lines, the active file's included, when its count is known (from its current line index, or read by rx logs show). Null unless the chain is ready."`
 	IndexBuild      *SamplesIndexBuild `json:"index_build" doc:"The chain's index task (operation chain_index), to follow at GET /v1/tasks/{task_id}: for a pending chain the task that builds the line indexes it waits for, which this request started or joined (not started again while the last task failed for the same files); otherwise the last index task of the chain, running or ended, while the server keeps it (RX_TASK_TTL_MINUTES after its end). Null when there is none. It says how the chain is being made ready; the description is the same with an index task and without."`
-	CLICommand      string             `json:"cli_command" doc:"The rx command that gives this answer."`
+	// IndexBuildRefused says why a pending chain has no index task, when
+	// the server could not start one for it; null in every other case.
+	IndexBuildRefused *string `json:"index_build_refused" doc:"Why a pending chain has no index task (index_build is null), in words: as many log chain index tasks as the server runs at once (128) are running or waiting, so none could start for this chain. A request after one of them has ended starts it. Null otherwise: a task runs or was started or joined, the chain waits for no part, or its last task failed for the same files (index_build names that task)."`
+	CLICommand        string  `json:"cli_command" doc:"The rx command that gives this answer."`
 }
 
 // ChainPart is one part of a described chain: an element of
