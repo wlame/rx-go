@@ -214,11 +214,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     chain. A chain is known by its name and the device and inode its
     directory had when it was listed (by its path where the filesystem
     gives inode 0, and then also by its parts' paths with every link
-    resolved), and a part by its device and inode, so one directory
+    resolved), and a part as one directory entry (the directory's device
+    and inode, the part's name, the file's whole stat), so one directory
     under two spellings is one chain whose parts are searched once; two
     chains that still give one identity are both searched, the second's
-    parts that are not the first's files as files of their own, never
-    left out. The parts of
+    parts that are not the first's as files of their own, never left
+    out. Device and inode alone never make two paths one file: where the
+    search cannot tell, it searches both, so a line may come twice but
+    never goes missing, and every order of the same paths gives the same
+    answer. The parts of
     each chain are searched in the chain's order (by time once it is
     ready, by name before) by the trace engine, where the walk met the
     chain's first file, so the file ids, the order of the matches and the
@@ -230,9 +234,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     its own, a pending or invalid chain, and a match the trace left
     unnumbered). Another encoding of a part is skipped with the reason
     `duplicate_part: …`, also when it is named on its own beside its
-    chain, whichever comes first and under whatever path leads to it
-    (never both searched and skipped, so each of its lines comes once,
-    in the chain), a part that cannot be read with its read error,
+    chain, whichever comes first, under its own path, through a link to
+    it or under another spelling of its directory (never both searched
+    and skipped, so each of its lines comes once, in the chain; a hard
+    link of it named on its own elsewhere is a file of its own, and a
+    link to it that is another chain's part is searched in that chain),
+    a part that cannot be read with its read error,
     and a chain of more than 10,000 parts is searched as files of their
     own. Chains are described from their parts' indexes, and no index
     build starts. 409 when a part changed while its chain was described;
