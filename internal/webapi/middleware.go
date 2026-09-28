@@ -138,25 +138,21 @@ func recoverMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// metricsMiddleware updates rx_http_responses_total{method,endpoint,status}.
+// unmatchedEndpointLabel is the endpoint label of a request no route
+// matched: a path nothing serves, or a method a path does not accept.
+// One constant keeps the series count fixed whatever paths a client
+// tries.
+const unmatchedEndpointLabel = "unmatched"
+
+// metricsMiddleware updates rx_http_responses_total{method,endpoint,status_code}.
+// It is the only place that counts a response, so each request is
+// counted exactly once, with the status the client received.
 //
-// Uses the matched chi route PATTERN as the `endpoint` label rather
-// than r.URL.Path so per-request IDs don't explode Prometheus
-// cardinality. Concretely: GET /v1/tasks/abc-123 and /v1/tasks/def-456
-// both report endpoint="/v1/tasks/{task_id}" — one time series instead
-// of N.
-//
-// Previously this middleware used r.URL.Path directly despite
-// the comment claiming otherwise. That made long-running servers
-// accumulate unbounded label values, slowing /metrics scrapes and
-// causing Prometheus itself to enforce its cardinality limit by
-// dropping metrics..
-//
-// Fallback behavior: chi.RouteContext MAY be nil or return "" if the
-// route didn't match any registered pattern (e.g. 404 static file).
-// In that case we fall back to r.URL.Path so 404 traffic still shows
-// up in metrics; the cardinality risk is bounded because no path-
-// parameter explosion happens on unmatched routes.
+// The endpoint label is the matched chi route PATTERN, never r.URL.Path,
+// so path parameters do not multiply the series: GET /v1/tasks/abc-123
+// and /v1/tasks/def-456 both report endpoint="/v1/tasks/{task_id}".
+// A request chi did not match has no pattern and is labeled
+// unmatchedEndpointLabel.
 func metricsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sr := &statusRecorder{ResponseWriter: w, status: 0}
@@ -164,23 +160,23 @@ func metricsMiddleware(next http.Handler) http.Handler {
 		if sr.status == 0 {
 			sr.status = http.StatusOK
 		}
-		// Resolve the endpoint label from the chi route context. The
-		// context is populated by chi's router when it matches a
-		// registered pattern; it contains the template string
-		// (e.g. "/v1/tasks/{task_id}").
-		//
-		// NOTE: chi.RouteContext must be invoked AFTER next.ServeHTTP
-		// — the routing info only attaches to the request's context
-		// inside the router's dispatch. Calling before ServeHTTP would
-		// return a nil context.
-		endpoint := r.URL.Path
-		if rctx := chi.RouteContext(r.Context()); rctx != nil {
-			if pattern := rctx.RoutePattern(); pattern != "" {
-				endpoint = pattern
-			}
-		}
-		prometheus.RecordHTTPResponse(r.Method, endpoint, sr.status)
+		prometheus.RecordHTTPResponse(r.Method, endpointLabel(r), sr.status)
 	})
+}
+
+// endpointLabel returns the chi route pattern that served r, or
+// unmatchedEndpointLabel when no route matched.
+//
+// It must be called AFTER next.ServeHTTP: chi's router fills the route
+// context (shared with this middleware through the request's context)
+// while it dispatches, so before that the pattern is still empty.
+func endpointLabel(r *http.Request) string {
+	if rctx := chi.RouteContext(r.Context()); rctx != nil {
+		if pattern := rctx.RoutePattern(); pattern != "" {
+			return pattern
+		}
+	}
+	return unmatchedEndpointLabel
 }
 
 // securityHeaders is the table of response headers every route carries.
