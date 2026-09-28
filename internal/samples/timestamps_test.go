@@ -417,15 +417,15 @@ func TestTimestamps_Zones(t *testing.T) {
 	})
 }
 
-// logShape is one shape of the playground's logs: the text of line n
-// (n from 1) and the timestamp text a person copies from it.
+// logShape is one shape real logs write: the text of line n (n from 1)
+// and the timestamp text a person copies from it.
 type logShape struct {
 	name  string
 	line  func(n int) string
 	stamp func(n int) string
 }
 
-// logShapes are the line shapes of the playground's real logs.
+// logShapes are line shapes real logs write.
 var logShapes = []logShape{
 	{"middleware", func(n int) string { return fmt.Sprintf("2025-12-10 07:49:%02d.%03d INFO LINE %d", n, n*7, n) },
 		func(n int) string { return fmt.Sprintf("2025-12-10 07:49:%02d.%03d", n, n*7) }},
@@ -440,9 +440,9 @@ var logShapes = []logShape{
 		func(n int) string { return fmt.Sprintf("2025-12-10 07:49:%02d,%03d", n, n*7) }},
 }
 
-// A timestamp copied from a line of each playground shape finds that
-// line. The postgresql shape has a continuation line after each
-// record, so its record n is line 2n-1.
+// A timestamp copied from a line of each log shape finds that line.
+// The postgresql shape has a continuation line after each record, so
+// its record n is line 2n-1.
 func TestTimestamps_CopiedTimestampFindsItsLine(t *testing.T) {
 	for _, shape := range logShapes {
 		t.Run(shape.name, func(t *testing.T) {

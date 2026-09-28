@@ -31,7 +31,8 @@ var (
 	epochWindowed   = Format{Family: FamilyEpoch, HasZone: true}
 )
 
-// mtime2025 is the mtime of the playground's year-less core.log.
+// mtime2025 is the mtime of a year-less log last written in December
+// 2025, whose lines take their year from it.
 var mtime2025 = time.Date(2025, 12, 27, 10, 0, 0, 0, time.UTC)
 
 func mustParser(t testing.TB, f Format, mtime time.Time) *Parser {

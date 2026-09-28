@@ -154,8 +154,8 @@ func TestTimeRange_NoFormat(t *testing.T) {
 	}
 }
 
-// display_zone and example for each shape of the playground's logs,
-// and the instants for a file without zones read in RX_LOG_TZ.
+// display_zone and example for each common log shape, and the instants
+// for a file without zones read in RX_LOG_TZ.
 func TestTimeRange_DisplayZoneAndExampleOfEachShape(t *testing.T) {
 	cases := []struct {
 		name        string

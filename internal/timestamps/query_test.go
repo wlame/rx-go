@@ -57,8 +57,8 @@ func TestParseQuery_Forms(t *testing.T) {
 }
 
 // TestParseQuery_CopiedFromTheFile: a timestamp copied from a line of
-// each playground shape parses with that file's parser to the value the
-// line has.
+// each log shape parses with that file's parser to the value the line
+// has.
 func TestParseQuery_CopiedFromTheFile(t *testing.T) {
 	cases := []struct {
 		format Format
