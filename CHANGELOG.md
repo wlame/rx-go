@@ -427,6 +427,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace --no-index` no longer reads the line index. A scan cut
+  short by `--max-results` used to number its unnumbered matches from
+  the index even under the flag. Under `--no-index` those lines are now
+  counted from the start of the file, up to the last such match, so the
+  answer is the one an index gives and no index file is read or
+  written. Without the flag, nothing changes: an index numbers them,
+  and without one they stay `-1`.
+
 - `rx index` and `rx compress` exit 3 when a file they were given does
   not exist, as `rx trace` and `rx samples` do; they exited 1. Both
   still go through every path and report each failure in their output.

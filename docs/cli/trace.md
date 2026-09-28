@@ -21,8 +21,8 @@ patterns and one or more paths, then:
 2. Launches a goroutine pool to scan chunks in parallel via `ripgrep`
 3. Consults the on-disk trace cache — a valid cache entry bypasses
    re-scanning entirely
-4. Resolves absolute line numbers using the file's line-offset index
-   when one is available
+4. Numbers the matches a `--max-results` cap left unnumbered, from the
+   file's line index when one exists (see below)
 5. Optionally fires webhooks per file / per match / per run completion
 6. Emits matches sorted by file, then byte offset
 
@@ -49,7 +49,7 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `--hook-on-match` | `string` | `RX_HOOK_ON_MATCH_URL` | Webhook URL, fired per match (requires `--max-results`) |
 | `--hook-on-complete` | `string` | `RX_HOOK_ON_COMPLETE_URL` | Webhook URL, fired once per invocation |
 | `--no-cache` | `bool` | `false` | Don't consult or write the trace cache |
-| `--no-index` | `bool` | `false` | Don't consult the unified line index |
+| `--no-index` | `bool` | `false` | Neither read nor write a line index; number lines by counting instead (same answer) |
 | `-r`, `--recursive` | `bool` | `true` | Recurse into subdirectories (default; present for compatibility) |
 | `--no-recursive` | `bool` | `false` | Stop at top-level directory entries |
 | `-i`, `--ignore-case` | `bool` | `false` | Match case-insensitively (ripgrep `-i`) |
@@ -278,11 +278,19 @@ planned, so a log that grows during a scan is scanned again next time.
 
 ### Line number resolution
 
-`ripgrep` reports line numbers relative to the start of each chunk. `rx`
-converts these to absolute line numbers using a per-file line index — a
-sparse map of line-number-to-byte-offset checkpoints. If no index
-exists, absolute line numbers are still computed by counting `\n`s
-before each match, which is more expensive on the first access.
+Each chunk worker counts the newlines it reads, so a scan that runs to
+the end numbers every match with its line in the whole file. A scan cut
+short by `--max-results` stops some chunks part-way, and a match in a
+chunk after one of them has an offset but no line number yet.
+
+- With a line index for the file, `rx` counts forward from the nearest
+  checkpoint before such a match, which is cheap.
+- Without one, the match keeps `absolute_line_number: -1` (a `?` in
+  human output) rather than reading the whole file up to it.
+  `rx samples --offsets=…` resolves those offsets in one pass.
+- With `--no-index`, `rx` neither reads nor writes an index and counts
+  the lines from the start of the file up to the last such match. The
+  answer is the one the index gives; only the time to reach it differs.
 
 ### Performance characteristics
 
