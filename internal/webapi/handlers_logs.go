@@ -210,12 +210,20 @@ func logIndexResponses(api huma.API) map[string]*huma.Response {
 // start a log chain's index task when as many chain index tasks as the
 // server runs at once (chainIndexTasks.maxUnfinished: half the build
 // queue, 128) are unfinished: the error envelope, described for the
-// route. The shared 503 description is about ripgrep, which these
-// routes do not run.
+// route, and its Retry-After header (chainTasksFullError). The shared
+// 503 description is about ripgrep, which these routes do not run.
 func chainTasksFullResponse(api huma.API, description string) *huma.Response {
 	envelope := api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(apiError{}), true, "ApiError")
-	return jsonResponse(fmt.Sprintf("%s At most %d run or wait at once: half the line-index build queue, as many "+
+	response := jsonResponse(fmt.Sprintf("%s At most %d run or wait at once: half the line-index build queue, as many "+
 		"as the part builds of all chains may take.", description, maxQueuedIndexBuilds/2), envelope)
+	response.Headers = map[string]*huma.Param{
+		"Retry-After": {
+			Description: fmt.Sprintf("%d: the seconds to wait before asking again (RFC 9110). A place frees when "+
+				"any chain index task ends.", chainTasksFullRetryAfterSeconds),
+			Schema: &huma.Schema{Type: huma.TypeInteger},
+		},
+	}
+	return response
 }
 
 // registerLogIndexHandler mounts POST /v1/logs/index, which starts the
@@ -260,7 +268,7 @@ func registerLogIndexHandler(s *Server, api huma.API) {
 			handle: d.Response.Path, key: chainKeyOf(d), fingerprint: d.Response.Fingerprint, parts: parts, force: in.Force,
 		})
 		if task == nil {
-			return nil, ErrServiceUnavailable(chainTasksFullDetail(d.Response.Path, s.chainIndex.maxUnfinished()))
+			return nil, chainTasksFullError(d.Response.Path, s.chainIndex.maxUnfinished())
 		}
 		message := fmt.Sprintf("Indexing %s of the log chain %s; follow GET /v1/tasks/%s",
 			partCount(len(parts)), d.Response.Path, task.TaskID)

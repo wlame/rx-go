@@ -288,7 +288,7 @@ func (s *Server) awaitChainReady(ctx context.Context, in *logSamplesInput, opts 
 	for wait := 0; d.Response.State == rxtypes.ChainStatePending; wait++ {
 		build, refused := s.chainIndex.forDescription(d)
 		if refused {
-			return nil, nil, ErrServiceUnavailable(chainTasksFullDetail(d.Response.Path, s.chainIndex.maxUnfinished()))
+			return nil, nil, chainTasksFullError(d.Response.Path, s.chainIndex.maxUnfinished())
 		}
 		if build == nil || build.Status == string(tasks.StatusFailed) || wait == maxChainWaits {
 			return nil, nil, ErrInternal(chainNotReadyDetail(d, build))

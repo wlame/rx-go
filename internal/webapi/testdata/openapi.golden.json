@@ -3469,7 +3469,15 @@
                 }
               }
             },
-            "description": "No index task runs for the chain, and none can start now: as many log chain index tasks as the server runs at once are running or waiting. No task started; ask again once one of them has ended. At most 128 run or wait at once: half the line-index build queue, as many as the part builds of all chains may take."
+            "description": "No index task runs for the chain, and none can start now: as many log chain index tasks as the server runs at once are running or waiting. No task started; ask again once one of them has ended. At most 128 run or wait at once: half the line-index build queue, as many as the part builds of all chains may take.",
+            "headers": {
+              "Retry-After": {
+                "description": "5: the seconds to wait before asking again (RFC 9110). A place frees when any chain index task ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "default": {
             "content": {
@@ -3756,7 +3764,15 @@
                 }
               }
             },
-            "description": "A request by global line or by time on a pending chain whose index task does not run and cannot start now: as many log chain index tasks as the server runs at once are running or waiting. Ask again once one of them has ended. At most 128 run or wait at once: half the line-index build queue, as many as the part builds of all chains may take."
+            "description": "A request by global line or by time on a pending chain whose index task does not run and cannot start now: as many log chain index tasks as the server runs at once are running or waiting. Ask again once one of them has ended. At most 128 run or wait at once: half the line-index build queue, as many as the part builds of all chains may take.",
+            "headers": {
+              "Retry-After": {
+                "description": "5: the seconds to wait before asking again (RFC 9110). A place frees when any chain index task ends.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "default": {
             "content": {

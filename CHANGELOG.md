@@ -131,7 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     chains are pending; a chain that finds no room waits in line, and
     each build's end lets one waiting chain go on, not all of them. At
     most 128 chains' index tasks run or wait at once: past that the
-    request starts nothing and answers `503`. Each
+    request starts nothing and answers `503` with `Retry-After: 5`. Each
     part build is a task of its own; finished part builds are kept apart
     from other tasks (at most 256 of them), so a large chain never drops
     another client's task from the task table. Its
@@ -149,7 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     task, for the parts the chain waits for; it is not started again on
     describe while the last one failed for the same files. 409 with the
     current description and no task when `fingerprint` differs; 400, 403,
-    404, 422 and 500 as `GET /v1/logs/chain`; 503 past the 128 tasks.
+    404, 422 and 500 as `GET /v1/logs/chain`; 503 with `Retry-After: 5`
+    past the 128 tasks.
   - `rx logs index CHAIN... [--json] [--force]` builds and stores the line
     index of every part of each chain, the active file too, in the
     foreground in the chain's order, whatever a part's size
@@ -181,8 +182,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     chain is ready a part is read alone (`part` and `lines`, global numbers
     -1), and a request by global line or by time waits for the chain's
     index task, `202` with the task under `Prefer: respond-async` once
-    `RX_SAMPLES_WAIT_SECONDS` has passed, `503` when the task does not
-    run and cannot start because 128 chains' index tasks run or wait. Parts are read through the
+    `RX_SAMPLES_WAIT_SECONDS` has passed, `503` with `Retry-After: 5`
+    when the task does not run and cannot start because 128 chains'
+    index tasks run or wait. Parts are read through the
     path of `GET /v1/samples` (their index, an answer from the head while
     a part's index builds, `202` for a part build that outlasts the
     wait). `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` bound the
