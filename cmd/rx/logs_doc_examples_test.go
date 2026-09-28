@@ -3,9 +3,10 @@ package main
 // The rx logs examples of the docs run here, against a generated host
 // whose /var/log and /srv/app/logs hold rotated logs of the kinds the
 // pages show. Every `rx logs` command in a shell fence of the README or
-// a page under docs/ must exit 0 there. The commands of one fence run in
-// order on one cache of their own, so a fence can index a chain and
-// then read it. Where a fence ends with an rx logs command and a
+// a page under docs/ must exit 0 there, and may name no absolute path
+// outside those two directories (toHost). The commands of one fence
+// run in order on one cache of their own, so a fence can index a chain
+// and then read it. Where a fence ends with an rx logs command and a
 // ```text fence follows it, that text is what the last command prints:
 // the test compares it with the real output, line by line, after
 // normalize (spacing, fingerprints, sizes, times taken and request ids
@@ -18,6 +19,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -86,14 +88,27 @@ func docFences(t *testing.T, page string) []docFence {
 type logsDocDirs map[string]string
 
 // toHost rewrites one word of a documented command onto the generated
-// host.
-func (d logsDocDirs) toHost(word string) string {
+// host: a path under one of the documented directories, written as the
+// word or as the value of a long flag (`--search-root=/var/log`), moves
+// to the directory that stands for it. Any other absolute path is
+// refused with an error, so a doc example never runs on the real
+// filesystem; a pattern that starts with `/` is refused too, which a
+// page avoids by writing it another way.
+func (d logsDocDirs) toHost(word string) (string, error) {
+	flag, value := "", word
+	if name, flagValue, isFlag := strings.Cut(word, "="); isFlag && strings.HasPrefix(name, "-") {
+		flag, value = name+"=", flagValue
+	}
 	for doc, real := range d {
-		if word == doc || strings.HasPrefix(word, doc+"/") {
-			return real + strings.TrimPrefix(word, doc)
+		if value == doc || strings.HasPrefix(value, doc+"/") {
+			return flag + real + strings.TrimPrefix(value, doc), nil
 		}
 	}
-	return word
+	if filepath.IsAbs(value) {
+		return "", fmt.Errorf("the absolute path %s in %q is not on the generated host: write it under one of %v",
+			value, word, slices.Sorted(maps.Keys(d)))
+	}
+	return word, nil
 }
 
 // fromHost writes the generated host's directories in text back as the
@@ -509,7 +524,12 @@ func runDocumentedLogsCommand(t *testing.T, dirs logsDocDirs, cache []string, co
 	t.Helper()
 	args := make([]string, 0, len(command.words)-1)
 	for _, word := range command.words[1:] {
-		args = append(args, dirs.toHost(word))
+		moved, err := dirs.toHost(word)
+		if err != nil {
+			t.Errorf("%s: %v", command.location, err)
+			return
+		}
+		args = append(args, moved)
 	}
 	shownAs := strings.Join(command.words, " ")
 	code, stdout, stderr := runRxIn(t, dirs["/var/log"], cache, args...)
@@ -547,5 +567,33 @@ func TestLogsDocExamples_TheComparisonRejectsAnotherOutput(t *testing.T) {
 	}
 	if !docLineMatches("Pattern: … error …", "Pattern: an error here") || docLineMatches("Pattern: error", "Pattern: errors") {
 		t.Error("… does not stand for any text, or a line matches another")
+	}
+}
+
+// A documented command runs on the generated host only: a path under
+// a documented directory moves onto it, as a word or as a flag's value,
+// and any other absolute path is refused, so no example can read or
+// write the real filesystem.
+func TestLogsDocExamples_RefusesAnAbsolutePathItCannotMove(t *testing.T) {
+	dirs := logsDocDirs{"/var/log": "/host/var-log", "/srv/app/logs": "/host/app-logs"}
+	for word, want := range map[string]string{
+		"/var/log":                    "/host/var-log",
+		"/var/log/syslog":             "/host/var-log/syslog",
+		"/srv/app/logs/app.log":       "/host/app-logs/app.log",
+		"--search-root=/var/log":      "--search-root=/host/var-log",
+		"--search-root=/srv/app/logs": "--search-root=/host/app-logs",
+		"--part=syslog.3.gz":          "--part=syslog.3.gz",
+		"--timestamps=2026-10-03T14:00..2026-10-03T15:00": "--timestamps=2026-10-03T14:00..2026-10-03T15:00",
+		"syslog": "syslog",
+		"-e":     "-e",
+	} {
+		if got, err := dirs.toHost(word); err != nil || got != want {
+			t.Errorf("toHost(%q) = %q, %v; want %q", word, got, err, want)
+		}
+	}
+	for _, word := range []string{"/etc/passwd", "/var/logs/x", "/srv/app", "--search-root=/x", "--file=/var/log2"} {
+		if got, err := dirs.toHost(word); err == nil {
+			t.Errorf("toHost(%q) = %q with no error; want it refused", word, got)
+		}
 	}
 }
