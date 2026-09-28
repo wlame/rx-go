@@ -129,6 +129,22 @@ type samplesIndexBuilder func(path string, progress *index.Progress) (*rxtypes.U
 // chainParts, and while they number half the queue (maxChainParts) a
 // chain starts no other: its task waits for a build to end, as when the
 // queue is full. The other half is always left to lookups.
+//
+// # Chains that wait for room, in line
+//
+// A chain's task that finds no room for a part, and has none of its
+// parts in flight, waits in line (chainWaiters, awaitChainRoom), each
+// task on a channel of its own. A build's end that leaves room wakes
+// the first task in line, one task and not all of them, so the work a
+// build's end sets off does not grow with the number of chains waiting.
+// The woken task takes the room, or, when its part needs none (a build
+// of the part runs already), passes the wake-up on to the next.
+//
+// INVARIANT: while tasks wait in line, a build of this registry is
+// queued or running, and its end will wake one. A task joins the line
+// only when there is no room, under the lock that finish frees room
+// under, and no room means a full queue (a build holds every slot) or
+// the chains' half taken (chain part builds are queued or running).
 type samplesIndexBuilds struct {
 	tasks  *tasks.Manager
 	logger *slog.Logger
@@ -139,7 +155,8 @@ type samplesIndexBuilds struct {
 	maxRunning int
 	maxQueued  int
 
-	// mu guards running, active and queue. It is taken before the task
+	// mu guards running, active, queue and the chain fields below. It is
+	// taken before the task
 	// manager's own lock (join calls Create while holding it), never the
 	// other way round, so the two cannot deadlock.
 	mu      sync.Mutex
@@ -153,6 +170,14 @@ type samplesIndexBuilds struct {
 	// queued or running: counted up when one is created, down when it
 	// finishes (finish).
 	chainParts int
+	// chainWaiters lists the index tasks of log chains that wait for room
+	// to submit a part, oldest first: each is the channel its task blocks
+	// on, closed when the task is woken (wakeChainWaiterLocked).
+	chainWaiters []chan struct{}
+	// chainPartJoins counts the calls of joinChainPart: how many times
+	// the index tasks of log chains have asked for a part's build. Tests
+	// read it to see how much work one build's end sets off.
+	chainPartJoins int
 }
 
 // maxQueuedIndexBuilds is how many samples index builds may wait for a
@@ -380,9 +405,13 @@ func chainPartOf(manager *tasks.Manager, taskID string, givesIndex bool) chainPa
 // joinChainPart is join for one part of a log chain's index task: it
 // returns the task that builds path's index for the file identity
 // describes, or that holds the path, and false when the part is to be
-// submitted again once a build ends: nothing holds the path, and the
-// queue is full or the chains' builds already take their half of it
-// (maxChainParts).
+// submitted again once there is room (awaitChainRoom): nothing holds
+// the path, and the queue is full or the chains' builds already take
+// their half of it (maxChainParts).
+//
+// When it leaves room behind, it wakes the next chain's task in line
+// (wakeChainWaiterLocked): a task woken for room its part did not need
+// passes the wake-up on, so no task is left waiting while room is free.
 //
 // A build it starts is a subtask (tasks.Manager.CreateSubtask): once
 // finished it counts toward the cap of the subtasks, so the parts of a
@@ -393,6 +422,10 @@ func chainPartOf(manager *tasks.Manager, taskID string, givesIndex bool) chainPa
 func (b *samplesIndexBuilds) joinChainPart(path string, identity index.SourceIdentity, size int64) (chainPartBuild, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Go note: deferred calls run last-in first-out, so this one runs
+	// before the Unlock deferred above, while b.mu is still held.
+	defer b.wakeChainWaiterLocked()
+	b.chainPartJoins++
 
 	if build, ok := b.running[path]; ok {
 		return chainPartOf(b.tasks, build.taskID, build.identity.Equal(identity)), true
@@ -427,6 +460,56 @@ func (b *samplesIndexBuilds) maxChainParts() int {
 	return max(1, b.maxQueued/2)
 }
 
+// chainRoomLocked reports whether a chain's task may create a part
+// build now: the queue has room, and the chains' builds take less than
+// their half of it. joinChainPart refuses a part exactly when this is
+// false and nothing holds the part's path. The caller holds b.mu.
+func (b *samplesIndexBuilds) chainRoomLocked() bool {
+	return !b.queueFullLocked() && b.chainParts < b.maxChainParts()
+}
+
+// awaitChainRoom returns the channel a chain's task receives from before
+// it submits a part again, once joinChainPart refused the part and none
+// of the task's parts is in flight. The channel is closed already when
+// there is room now. Otherwise the task joins the end of the line of
+// waiting tasks, and the channel is closed when the task is first in
+// line and a build's end leaves room (wakeChainWaiterLocked).
+//
+// The check for room and the joining of the line happen under one hold
+// of b.mu, the lock finish frees room under, so no build can end
+// between them unseen: a wake-up is never lost.
+//
+// SECURITY: the line holds at most one entry per unfinished chain index
+// task, and a build's end wakes one of them, whatever their number.
+func (b *samplesIndexBuilds) awaitChainRoom() <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.chainRoomLocked() {
+		return closedChannel
+	}
+	wake := make(chan struct{})
+	b.chainWaiters = append(b.chainWaiters, wake)
+	return wake
+}
+
+// wakeChainWaiterLocked wakes the first chain's task in line when there
+// is room for a part build: one task, which then tries its part again.
+// The caller holds b.mu.
+//
+// Go note: closing a channel releases the goroutine blocked on it. Each
+// channel belongs to one waiting task, leaves the line when it is
+// closed, and is closed once.
+func (b *samplesIndexBuilds) wakeChainWaiterLocked() {
+	if len(b.chainWaiters) == 0 || !b.chainRoomLocked() {
+		return
+	}
+	close(b.chainWaiters[0])
+	// Clear the slot before reslicing, so the backing array does not keep
+	// the closed channel alive.
+	b.chainWaiters[0] = nil
+	b.chainWaiters = b.chainWaiters[1:]
+}
+
 // queueFullLocked reports whether there is no room for another build:
 // every slot is taken and the queue is full. The caller holds b.mu.
 func (b *samplesIndexBuilds) queueFullLocked() bool {
@@ -456,27 +539,6 @@ func (b *samplesIndexBuilds) addLocked(build queuedIndexBuild, identity index.So
 		return
 	}
 	b.queue = append(b.queue, build)
-}
-
-// slotHolder returns the task of a build that holds a slot now, and
-// false when none does. A chain's index task that finds the queue full
-// waits for that task to end before it submits a part again.
-func (b *samplesIndexBuilds) slotHolder() (string, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	queued := make(map[string]bool, len(b.queue))
-	for _, build := range b.queue {
-		queued[build.taskID] = true
-	}
-	// Go note: running holds the queued builds too; the first entry not
-	// in the queue holds a slot. Map order is random, which does not
-	// matter: any build that holds a slot frees one when it ends.
-	for _, build := range b.running {
-		if !queued[build.taskID] {
-			return build.taskID, true
-		}
-	}
-	return "", false
 }
 
 // startLocked takes a slot for build and starts its goroutine. The
@@ -514,8 +576,9 @@ func (b *samplesIndexBuilds) run(build queuedIndexBuild) {
 
 // finish runs once build has returned: it drops the path's entry,
 // unless a newer build has taken its place, frees the build's slot and,
-// for a chain's part, its place in chainParts, and starts the oldest
-// queued builds while slots are free.
+// for a chain's part, its place in chainParts, starts the oldest queued
+// builds while slots are free, and wakes the first chain's task waiting
+// for room, when there is room now.
 func (b *samplesIndexBuilds) finish(build queuedIndexBuild) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -534,6 +597,7 @@ func (b *samplesIndexBuilds) finish(build queuedIndexBuild) {
 		b.queue = b.queue[1:]
 		b.startLocked(next)
 	}
+	b.wakeChainWaiterLocked()
 }
 
 // samplesIndexRequest is the POST /v1/index request that builds what a
