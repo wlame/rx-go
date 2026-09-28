@@ -160,7 +160,9 @@ drops the oldest finished ones first, before their TTL. The part builds
 of a log chain's index task (`chain_index`) are counted apart, at most
 256 finished ones among themselves, so the parts of a large chain drop
 only older part builds, never another task. A queued or running task is
-never dropped.
+never dropped and does not count toward the 256, so however many tasks
+run or wait at once, a finished task stays until 256 later ones of its
+kind have finished, or its TTL has passed.
 
 After a task is swept, `GET /v1/tasks/{task_id}` returns `404`. If you
 need to retain results longer:

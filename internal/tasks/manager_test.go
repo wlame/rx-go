@@ -292,14 +292,15 @@ func TestManager_ActivePathLockCount(t *testing.T) {
 
 // A finished task's result stays in memory until the sweeper removes it,
 // so a burst of requests within one TTL would otherwise grow the table
-// without bound. Past the cap, the oldest finished tasks go first; a
-// running task is never dropped, since its worker still reports to it.
+// without bound. Past the cap of finished tasks, the oldest finished
+// tasks go first; a running task is never dropped, since its worker
+// still reports to it, and it does not count toward the cap.
 func TestManager_Create_DropsTheOldestFinishedTasksPastTheCap(t *testing.T) {
 	m := New(Config{Logger: silentLogger(), MaxTasks: 3})
 	running, _ := m.Create("/logs/running.log", "index")
 	m.MarkRunning(running.TaskID)
 	var finished []string
-	for _, name := range []string{"a", "b", "c", "d"} {
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
 		task, _ := m.Create("/logs/"+name+".log", "index")
 		m.Complete(task.TaskID, map[string]any{"line_index": []any{}})
 		finished = append(finished, task.TaskID)
@@ -307,8 +308,8 @@ func TestManager_Create_DropsTheOldestFinishedTasksPastTheCap(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 
-	if got := m.Size(); got != 3 {
-		t.Fatalf("Size = %d, want the cap of 3", got)
+	if got := m.Size(); got != 4 {
+		t.Fatalf("Size = %d, want the running task and the cap of 3 finished ones", got)
 	}
 	if _, ok := m.Get(running.TaskID); !ok {
 		t.Error("the running task was dropped")
@@ -322,6 +323,24 @@ func TestManager_Create_DropsTheOldestFinishedTasksPastTheCap(t *testing.T) {
 		if _, ok := m.Get(id); !ok {
 			t.Errorf("task %s, among the newest finished, was dropped", id)
 		}
+	}
+}
+
+// Unfinished tasks are not counted against the cap, whatever their
+// number: with more queued and running tasks than the cap, a task a
+// client follows stays after it ends and another task starts.
+func TestManager_Create_UnfinishedTasksNeverDropAFinishedTask(t *testing.T) {
+	m := New(Config{Logger: silentLogger(), MaxTasks: 3})
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		m.Create("/logs/"+name+".log", "index")
+	}
+	followed, _ := m.Create("/logs/followed.log", "compress")
+	m.Complete(followed.TaskID, nil)
+
+	m.Create("/logs/next.log", "index")
+
+	if _, ok := m.Get(followed.TaskID); !ok {
+		t.Fatalf("six unfinished tasks dropped the one finished task (table of %d)", m.Size())
 	}
 }
 
