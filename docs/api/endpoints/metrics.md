@@ -9,7 +9,8 @@ OpenMetrics-compatible collector.
 - Monitor request rates and latency per endpoint
 - Track webhook dispatch success/failure
 - Expose scan counters (matches, files scanned, bytes processed)
-- Surface Go runtime health (goroutines, memory, GC)
+- Surface Go runtime and process health (goroutines, memory, GC, CPU,
+  file descriptors)
 
 ## Request
 
@@ -22,89 +23,119 @@ No parameters. Response content type is `text/plain; version=0.0.4`
 
 ## Availability
 
-Metrics are only populated when `rx` is running in **serve mode**. CLI
-invocations use a no-op metrics sink and never allocate counters.
+Metrics are only updated when `rx` is running in **serve mode**. CLI
+invocations skip every update, so they pay nothing for them.
+
+A family with labels (`status`, `kind`, `endpoint` and so on) appears in
+a scrape only after its first update; a family without labels appears
+from the start, at zero.
 
 ## Metric families
 
-### Request-level
+These are the 37 `rx_*` families `/metrics` reports, with the Go
+runtime and process families listed after them.
 
-| Metric | Type | Labels | Description |
+### Requests
+
+| Metric | Type | Labels | Updated |
 |---|---|---|---|
-| `rx_trace_requests_total` | counter | `status` | Total trace requests (`ok` / `error`) |
-| `rx_samples_requests_total` | counter | `status` | Total samples requests |
-| `rx_analyze_requests_total` | counter | `status` | Total `--analyze` requests |
-| `rx_trace_duration_seconds` | histogram | `path_kind` | Trace duration, labeled `regular`/`compressed`/`seekable` |
-| `rx_samples_duration_seconds` | histogram | — | Samples request duration |
-| `rx_http_responses_total` | counter | `method`, `endpoint`, `status_code` | HTTP responses |
+| `rx_trace_requests_total` | counter | `status` | Once per `GET /v1/trace`: `success` when it answered, `error` otherwise |
+| `rx_samples_requests_total` | counter | `status` | Once per `GET /v1/samples`, `success` or `error` |
+| `rx_analyze_requests_total` | counter | `status` | Once per `POST /v1/index` with `analyze: true`, `success` or `error` (whether the task was accepted) |
+| `rx_trace_duration_seconds` | histogram | `path_kind` | Per answered trace; `regular`, `compressed` or `seekable` after the most expensive path the request named |
+| `rx_samples_duration_seconds` | histogram | — | Per answered samples request |
+| `rx_offsets_per_samples_request` | histogram | — | The offsets or lines each answered samples request asked for |
+| `rx_context_lines_before` | histogram | — | The context before each position, per answered samples request |
+| `rx_context_lines_after` | histogram | — | The context after each position, per answered samples request |
+| `rx_analyze_duration_seconds` | histogram | — | Per index build with analysis, from the task's start to the saved index; reusing an analyzed index is not counted |
+| `rx_http_responses_total` | counter | `method`, `endpoint`, `status_code` | Once per HTTP response, with the status the client received |
+| `rx_errors_total` | counter | `error_type` | Per failed trace, samples or analyze request |
 
-### Work counters
+### Trace work
 
-| Metric | Type | Labels | Description |
+| Metric | Type | Labels | Updated |
 |---|---|---|---|
-| `rx_files_processed_total` | counter | — | Files opened and scanned |
-| `rx_files_skipped_total` | counter | — | Files skipped (binary, inaccessible) |
-| `rx_bytes_processed_total` | counter | — | Total bytes read |
-| `rx_matches_found_total` | counter | — | Total matches returned |
-| `rx_max_results_limited_total` | counter | — | Requests that hit `max_results` cap |
-
-### Cache
-
-| Metric | Type | Labels | Description |
-|---|---|---|---|
-| `rx_index_cache_hits_total` | counter | — | Index cache hits |
-| `rx_index_cache_misses_total` | counter | — | Index cache misses |
-| `rx_trace_cache_hits_total` | counter | — | Trace cache hits |
-| `rx_trace_cache_misses_total` | counter | — | Trace cache misses |
-| `rx_trace_cache_writes_total` | counter | — | Trace cache writes |
-| `rx_index_build_duration_seconds` | histogram | — | Index build time |
+| `rx_files_processed_total` | counter | — | Per file a trace scanned or answered from its cache |
+| `rx_files_skipped_total` | counter | — | Per file a trace answer lists in `skipped_files` |
+| `rx_bytes_processed_total` | counter | — | The on-disk size of each file `rx_files_processed_total` counts |
+| `rx_file_size_bytes` | histogram | — | The on-disk size of each file `rx_files_processed_total` counts |
+| `rx_matches_found_total` | counter | — | The matches each trace returned |
+| `rx_patterns_per_request` | histogram | — | The pattern count of each answered trace |
+| `rx_matches_per_request` | histogram | — | The match count of each answered trace |
+| `rx_max_results_limited_total` | counter | — | Per answered trace whose match count reached `max_results` |
+| `rx_parallel_tasks_created` | histogram | — | The chunks of each plain file scanned, or the frame batches of each seekable `.zst` |
+| `rx_ripgrep_processing_seconds` | histogram | — | The duration of each ripgrep run on a chunk |
+| `rx_large_file_threshold_mb` | gauge | — | Set when `serve` starts: the chunk size, in MB, that `rx_parallel_tasks_created` depends on |
 
 ### Workers
 
-| Metric | Type | Labels | Description |
+| Metric | Type | Labels | Updated |
 |---|---|---|---|
-| `rx_active_workers` | gauge | — | Live count of worker goroutines |
-| `rx_worker_tasks_completed_total` | counter | — | Chunk-level tasks completed |
-| `rx_worker_tasks_failed_total` | counter | — | Chunk-level tasks failed |
+| `rx_active_workers` | gauge | — | Up when a chunk, frame batch or compressed-stream scan starts, down when it ends |
+| `rx_worker_tasks_completed_total` | counter | — | Per scan task that ended without an error |
+| `rx_worker_tasks_failed_total` | counter | — | Per scan task that ended with an error, an invalid pattern included |
 
-### Hooks (webhooks)
+### Trace cache
 
-| Metric | Type | Labels | Description |
+| Metric | Type | Labels | Updated |
 |---|---|---|---|
-| `rx_hook_calls_total` | counter | `kind`, `status` | Webhook calls by kind and `success`/`failure`/`dropped` |
-| `rx_hook_call_duration_seconds` | histogram | `kind` | Webhook call latency |
+| `rx_trace_cache_hits_total` | counter | — | Per lookup that found a valid cache (plain files above the large-file threshold, and seekable `.zst` files) |
+| `rx_trace_cache_misses_total` | counter | — | Per lookup that found none, or one that no longer matches its file |
+| `rx_trace_cache_writes_total` | counter | — | Per cache file written |
+| `rx_trace_cache_skip_total` | counter | — | Per scan the cache is on for but that does not qualify: below the size threshold for its kind, or capped by `max_results` |
+| `rx_trace_cache_load_duration_seconds` | histogram | — | Per cache file read and parsed |
+| `rx_trace_cache_reconstruction_seconds` | histogram | — | Per answer rebuilt from a cache hit |
 
-### Shape & distribution
+### Line index
 
-| Metric | Type | Labels | Description |
+| Metric | Type | Labels | Updated |
 |---|---|---|---|
-| `rx_errors_total` | counter | `error_type` | Errors by category |
-| `rx_file_size_bytes` | histogram | — | Distribution of file sizes at scan time |
-| `rx_patterns_per_request` | histogram | — | How many patterns per request |
-| `rx_matches_per_request` | histogram | — | How many matches per request |
-| `rx_parallel_tasks_created` | histogram | — | Concurrent tasks per request |
+| `rx_index_cache_hits_total` | counter | — | Per index lookup that found a valid index (trace, samples, `GET /v1/index`, `POST /v1/index`) |
+| `rx_index_cache_misses_total` | counter | — | Per index lookup that found none, or a stale one |
+| `rx_index_load_duration_seconds` | histogram | — | Per index file read and checked |
+| `rx_index_build_duration_seconds` | histogram | — | Per index built |
 
-### Go runtime (standard)
+A `GET /v1/tree` listing shows whether each file has an index without
+using it, so it does not count as a lookup.
 
-The default `promhttp` registry also exposes:
+### Webhooks
 
-- `go_goroutines`
-- `go_threads`
-- `go_gc_duration_seconds`
-- `go_memstats_*`
-- `process_*`
+| Metric | Type | Labels | Updated |
+|---|---|---|---|
+| `rx_hook_calls_total` | counter | `kind`, `status` | Per webhook event: `success`, `failure` or `dropped` (queue full or dispatcher closed) |
+| `rx_hook_call_duration_seconds` | histogram | `kind` | Per webhook call made |
 
-## Label cardinality
+### Go runtime and process
 
-- `endpoint` uses the **route pattern** (e.g. `/v1/tasks/{task_id}`),
-  not the concrete path (`/v1/tasks/abc-123`). This prevents
-  cardinality explosion from variable path parameters.
-- `status_code` is the exact HTTP status code as a string (`"200"`,
-  `"404"`, etc.)
-- `method` is uppercase HTTP method (`"GET"`, `"POST"`)
-- `kind` is one of `on_file`, `on_match`, `on_complete`
-- `status` on `rx_hook_calls_total` is `success` or `failure`
-- `error_type` values are enumerated internally
+The registry also holds the standard collectors of the Prometheus Go
+client, read at scrape time:
+
+- `go_*`: `go_goroutines`, `go_threads`, `go_info`,
+  `go_gc_duration_seconds`, `go_gc_gogc_percent`,
+  `go_gc_gomemlimit_bytes`, `go_sched_gomaxprocs_threads` and the
+  `go_memstats_*` family
+- `process_*`: CPU seconds, open and maximum file descriptors,
+  resident and virtual memory, and start time; the exact set depends on
+  the platform
+- `promhttp_metric_handler_errors_total`: failed scrapes
+
+## Label values
+
+- `endpoint` is the **route pattern** (`/v1/tasks/{task_id}`), never
+  the concrete path (`/v1/tasks/abc-123`). A request no route matches
+  (a path nothing serves, or a method a path does not accept) is
+  `unmatched`. The number of series stays fixed whatever paths clients
+  try.
+- `status_code` is the HTTP status as a string (`"200"`, `"404"`).
+- `method` is the uppercase HTTP method (`"GET"`, `"POST"`).
+- `status` on the request counters is `success` or `error`, as in
+  rx-python.
+- `path_kind` is `regular`, `compressed` or `seekable`.
+- `kind` on the webhook families is `on_file`, `on_match` or
+  `on_complete`; `status` on `rx_hook_calls_total` is `success`,
+  `failure` or `dropped`.
+- `error_type` is `invalid_regex`, `invalid_params`, `access_denied`,
+  `file_not_found`, `service_unavailable` or `internal_error`.
 
 ## Status codes
 
@@ -125,9 +156,9 @@ Output excerpt:
 ```text
 # HELP rx_http_responses_total HTTP responses by status code
 # TYPE rx_http_responses_total counter
-rx_http_responses_total{method="GET",endpoint="/v1/trace",status_code="200"} 42
-rx_http_responses_total{method="GET",endpoint="/v1/trace",status_code="400"} 1
-rx_http_responses_total{method="GET",endpoint="/health",status_code="200"} 287
+rx_http_responses_total{endpoint="/health",method="GET",status_code="200"} 287
+rx_http_responses_total{endpoint="/v1/trace",method="GET",status_code="200"} 42
+rx_http_responses_total{endpoint="/v1/trace",method="GET",status_code="400"} 1
 
 # HELP rx_trace_duration_seconds Time spent serving trace requests
 # TYPE rx_trace_duration_seconds histogram
@@ -179,5 +210,5 @@ rx_active_workers
 ## See also
 
 - [`rx serve`](../../cli/serve.md) — start the server to enable metrics
-- [Configuration](../../configuration.md) — `PROMETHEUS_*` env vars exposed via `/health`
+- [Configuration](../../configuration.md)
 - [API conventions](../conventions.md)

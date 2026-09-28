@@ -111,11 +111,15 @@ zero-overhead.
 
 Common metric families:
 
-- `rx_http_responses_total{method, endpoint, status}` — request counts
-- `rx_http_request_duration_seconds` — request latency histogram
-- `rx_trace_*` — per-trace counters (matches, files, time)
-- `rx_hook_*` — webhook dispatch latency, failure counters
-- Standard Go runtime metrics (GC, goroutines, memory)
+- `rx_http_responses_total{method, endpoint, status_code}` — one per
+  HTTP response
+- `rx_trace_requests_total{status}` and `rx_trace_duration_seconds{path_kind}`
+  — trace counts (`success` / `error`) and latency
+- `rx_trace_cache_*` and `rx_index_cache_*` — cache hits, misses and
+  load times
+- `rx_hook_*` — webhook calls by outcome, and their latency
+- `go_*` and `process_*` — the Go runtime and the process (GC,
+  goroutines, memory, CPU, file descriptors)
 
 See [metrics](endpoints/metrics.md) for the full list.
 
