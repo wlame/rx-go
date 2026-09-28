@@ -33,10 +33,23 @@ trap 'rm -rf "$scratch"' EXIT
 home="$scratch/home"
 mkdir -p "$home/.cache"
 
+# A webhook variable of the developer's shell (RX_HOOK_ON_*_URL and the
+# other RX_HOOK_ settings) would make a test that runs a trace send its
+# paths and matches to that hook. None of them reaches the tests; a test
+# that wants a hook sets its own.
+unset_hooks=()
+for name in $(compgen -e); do
+    case "$name" in
+        RX_HOOK_*) unset_hooks+=(-u "$name") ;;
+    esac
+done
+
 # With RX_CACHE_DIR unset and XDG_CACHE_HOME inside the throwaway HOME,
 # rx's fallback cache directory is $home/.cache/rx whichever rule applies.
+# The ${array[@]+...} form expands an empty array to nothing under
+# `set -u` in every bash version, macOS's bash 3.2 included.
 status=0
-env -u RX_CACHE_DIR HOME="$home" XDG_CACHE_HOME="$home/.cache" "$@" || status=$?
+env -u RX_CACHE_DIR ${unset_hooks[@]+"${unset_hooks[@]}"} HOME="$home" XDG_CACHE_HOME="$home/.cache" "$@" || status=$?
 
 leaked_cache="$home/.cache/rx"
 if [ -d "$leaked_cache" ]; then

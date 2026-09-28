@@ -67,10 +67,8 @@ func writeFlagFixture(t *testing.T) string {
 // isolated cache directory, and returns exit code, stdout and stderr.
 func runRxIn(t *testing.T, dir string, env []string, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(rxBinary(t), args...)
+	cmd := rxCommand(t, append([]string{"RX_CACHE_DIR=" + t.TempDir()}, env...), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "RX_CACHE_DIR="+t.TempDir())
-	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
