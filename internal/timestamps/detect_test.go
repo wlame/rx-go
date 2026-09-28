@@ -66,7 +66,7 @@ func detectCases() []detectCase {
 	// tab-led query-plan lines, one of which quotes a date.
 	postgres := concat(
 		repeat(4, func(i int) string {
-			return fmt.Sprintf("2025-12-10 07:00:3%d MST [4242]: [12-1] user=app,db=orders LOG:  duration: 175.200 ms  plan:", i)
+			return fmt.Sprintf("2025-12-10 07:00:3%d MST [4242]: [12-1] user=app,db=orders LOG:  duration: 97.314 ms  plan:", i)
 		}),
 		repeat(77, func(i int) string {
 			if i == 5 {
@@ -75,10 +75,10 @@ func detectCases() []detectCase {
 			return fmt.Sprintf("\t  ->  Seq Scan on t%d  (cost=0.00..35.50 rows=2550 width=4)", i)
 		}),
 	)
-	// The middleware shape: an ISO timestamp at column 0 and the same
+	// An application log: an ISO timestamp at column 0 and the same
 	// moment as epoch milliseconds in brackets on every line.
-	middleware := repeat(50, func(i int) string {
-		return fmt.Sprintf("2025-12-10 07:00:04.%03d [1765375204%03d] [Worker-3] INFO Conn  Waiting", i, i)
+	bracketedEpoch := repeat(50, func(i int) string {
+		return fmt.Sprintf("2025-12-10 07:00:04.%03d [1765375204%03d] [Worker-3] INFO Pool  Waiting", i, i)
 	})
 	jsonLines := repeat(10, func(i int) string {
 		if i == 3 {
@@ -146,7 +146,7 @@ func detectCases() []detectCase {
 
 	return []detectCase{
 		{"postgres: few anchored lines among tab-led ones", sample(postgres...), isoAnchored, true},
-		{"middleware: anchored iso beats windowed epoch", sample(middleware...), isoAnchored, true},
+		{"bracketed epoch: anchored iso beats windowed epoch", sample(bracketedEpoch...), isoAnchored, true},
 		{"JSON lines with one date: none", sample(jsonLines...), Format{}, false},
 		{"access log: clf windowed", sample(accessLog...), clfWindowed, true},
 		{"tie goes to table order", sample(isoAndEpochTie...), isoAnchored, true},
@@ -240,7 +240,7 @@ func BenchmarkDetect(b *testing.B) {
 	for size := 0; size < SampleBytes; {
 		line := fmt.Sprintf("\t  ->  Seq Scan on t%d  (cost=0.00..35.50 rows=2550 width=4) Filter: (x > 42) and (y < 17) and z is not null", size)
 		if len(lines)%20 == 0 {
-			line = "2025-12-10 07:00:30 MST [4242]: [12-1] user=app,db=orders LOG:  duration: 175.200 ms  plan:"
+			line = "2025-12-10 07:00:30 MST [4242]: [12-1] user=app,db=orders LOG:  duration: 97.314 ms  plan:"
 		}
 		lines = append(lines, line)
 		size += len(line) + 1

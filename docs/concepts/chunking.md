@@ -75,7 +75,7 @@ chunks = [(boundaries[i], boundaries[i+1]) for i in 0..chunk_count-1]
 A plain file is split into `file_size / RX_MIN_CHUNK_SIZE_MB` chunks,
 rounded down, at most `RX_MAX_SUBPROCESSES` and at least one. With the
 defaults (20 MB and 20) a file below 40 MB is one chunk, a 45 MB file is
-two, and every file of 400 MB or more is twenty — the 572 MB log of the
+two, and every file of 400 MB or more is twenty — the 531 MB log of the
 [quickstart](../quickstart.md) reports `Parallel chunks: 20`. Below two
 chunks' worth, the startup cost of spawning and synchronizing several
 workers would dominate.

@@ -265,8 +265,8 @@ func buildText(
 	// line numbers and byte offsets describe the text inside it. Read
 	// straight off the compressed bytes and the checkpoints would
 	// address compressed noise and the statistics would describe the
-	// container: a 600 MB log came back as 209,365 lines with a "mixed"
-	// line ending. rx-python indexes the same content the same way.
+	// container: a gzipped log came back with four times its lines and
+	// a "mixed" line ending. rx-python indexes the same content the same way.
 	source := statedBytes
 	if src.kind.IsCompressed() {
 		// The file itself is closed by Build.

@@ -13,7 +13,7 @@ This guide assumes you've already [installed `rx` and `ripgrep`](installation.md
 ## Step 1 — run a trace
 
 Pick a log file you want to search. For this walkthrough we use a
-572 MB PostgreSQL log, `/var/log/postgresql/postgresql.log`, and look for
+531 MB PostgreSQL log, `/var/log/postgresql/postgresql.log`, and look for
 statements that took a second or more; any large text file works.
 
 ```bash
@@ -33,11 +33,11 @@ Parallel chunks: 20 (1 file(s) chunked)
 Matches: 5
 
 Matches (file:line:offset [pattern]):
-  /var/log/postgresql/postgresql.log:5160:68901410 [duration: [0-9]{4}\.[0-9]+ ms]
-  /var/log/postgresql/postgresql.log:5540:73839234 [duration: [0-9]{4}\.[0-9]+ ms]
-  /var/log/postgresql/postgresql.log:6831:79068800 [duration: [0-9]{4}\.[0-9]+ ms]
-  /var/log/postgresql/postgresql.log:9872:93021045 [duration: [0-9]{4}\.[0-9]+ ms]
-  /var/log/postgresql/postgresql.log:42341:485678857 [duration: [0-9]{4}\.[0-9]+ ms]
+  /var/log/postgresql/postgresql.log:4127:51830562 [duration: [0-9]{4}\.[0-9]+ ms]
+  /var/log/postgresql/postgresql.log:4688:58904117 [duration: [0-9]{4}\.[0-9]+ ms]
+  /var/log/postgresql/postgresql.log:7203:80466390 [duration: [0-9]{4}\.[0-9]+ ms]
+  /var/log/postgresql/postgresql.log:11954:131307288 [duration: [0-9]{4}\.[0-9]+ ms]
+  /var/log/postgresql/postgresql.log:39870:442915063 [duration: [0-9]{4}\.[0-9]+ ms]
 ```
 
 The file was split into 20 chunks that were searched in parallel. Add
@@ -84,7 +84,7 @@ Output:
 
 ```text
 Indexed 1 files in 0.1s
-  /var/log/postgresql/postgresql.log: 51,329 lines, 571.85 MB
+  /var/log/postgresql/postgresql.log: 46,812 lines, 531.40 MB
 ```
 
 By default only files of 50 MB or more are indexed (configurable via
@@ -110,17 +110,17 @@ like and when entries are invalidated.
 `rx samples` jumps to a line and prints it with context:
 
 ```bash
-rx samples /var/log/postgresql/postgresql.log --lines=5160 --context=1
+rx samples /var/log/postgresql/postgresql.log --lines=4127 --context=1
 ```
 
 ```text
 File: /var/log/postgresql/postgresql.log
 Context: 1 before, 1 after
 
-=== /var/log/postgresql/postgresql.log:5160:68901410 ===
-	                    Heap Fetches: 1
-2025-12-10 07:06:25 MST [4241]: [31-1] user=app,db=orders,app=billing,client=127.0.0.1 LOG:  duration: 1520.310 ms  execute <unnamed>/C_12: w…
-2025-12-10 07:06:27 MST [4243]: [13-1] user=app,db=orders,app=billing,client=127.0.0.1 LOG:  duration: 204.125 ms  plan:
+=== /var/log/postgresql/postgresql.log:4127:51830562 ===
+	                    Heap Fetches: 0
+2025-12-10 07:06:25 MST [48213]: [41-1] user=app,db=orders,app=billing,client=127.0.0.1 LOG:  duration: 1503.226 ms  execute <unnamed>: s…
+2025-12-10 07:06:27 MST [48219]: [7-1] user=app,db=orders,app=billing,client=127.0.0.1 LOG:  duration: 211.480 ms  plan:
 ```
 
 (The long line is cut here; `rx` prints it whole.) The header of each
@@ -177,7 +177,7 @@ curl -s "http://127.0.0.1:7777/v1/trace?path=/var/log/postgresql/postgresql.log&
 # 5
 
 # Samples.
-curl -s "http://127.0.0.1:7777/v1/samples?path=/var/log/postgresql/postgresql.log&lines=5160&context=0" \
+curl -s "http://127.0.0.1:7777/v1/samples?path=/var/log/postgresql/postgresql.log&lines=4127&context=0" \
     | jq '.samples'
 
 # Health check.

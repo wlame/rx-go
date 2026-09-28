@@ -98,7 +98,7 @@ A completed task's `result` is a `ChainIndexTaskResult`:
 ```json
 {
   "path": "/var/log/syslog",
-  "built": ["syslog-20261005-1791158400.gz", "syslog-20261006-1791244800.gz", "syslog"],
+  "built": ["syslog-20260404-1775260800.gz", "syslog-20260405-1775347200.gz", "syslog"],
   "cli_command": "rx logs index /var/log/syslog"
 }
 ```

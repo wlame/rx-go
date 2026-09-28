@@ -35,10 +35,10 @@ type timedLine struct {
 	ms   int64
 }
 
-// isoLines writes lines whose timestamps are ms values, in the
-// app.log shape (`2025-12-10 07:30:00.000 INFO LINE n`); a value
-// of -1 gives a continuation line without a timestamp. Every line says
-// its number, so a wrong line is visible in a failure.
+// isoLines writes lines whose timestamps are ms values, in the shape of
+// an ISO log with milliseconds (`2025-12-10 07:30:00.000 INFO LINE n`);
+// a value of -1 gives a continuation line without a timestamp. Every
+// line says its number, so a wrong line is visible in a failure.
 func isoLines(values []int64) []timedLine {
 	lines := make([]timedLine, len(values))
 	for i, ms := range values {
@@ -427,11 +427,11 @@ type logShape struct {
 
 // logShapes are line shapes real logs write.
 var logShapes = []logShape{
-	{"middleware", func(n int) string { return fmt.Sprintf("2025-12-10 07:49:%02d.%03d INFO LINE %d", n, n*7, n) },
+	{"iso milliseconds", func(n int) string { return fmt.Sprintf("2025-12-10 07:49:%02d.%03d INFO LINE %d", n, n*7, n) },
 		func(n int) string { return fmt.Sprintf("2025-12-10 07:49:%02d.%03d", n, n*7) }},
-	{"APPLOG", func(n int) string { return fmt.Sprintf("2025-2-15 12:34:%d:%d [main] LINE %d", n, n*7, n) },
+	{"one-digit fields", func(n int) string { return fmt.Sprintf("2025-2-15 12:34:%d:%d [main] LINE %d", n, n*7, n) },
 		func(n int) string { return fmt.Sprintf("2025-2-15 12:34:%d:%d", n, n*7) }},
-	{"core syslog", func(n int) string { return fmt.Sprintf("Dec 10 07:49:%02d.%03d host app: LINE %d", n, n*7, n) },
+	{"syslog", func(n int) string { return fmt.Sprintf("Dec 10 07:49:%02d.%03d host app: LINE %d", n, n*7, n) },
 		func(n int) string { return fmt.Sprintf("Dec 10 07:49:%02d.%03d", n, n*7) }},
 	{"postgresql", func(n int) string {
 		return fmt.Sprintf("2025-12-10 07:49:%02d UTC [42]: LINE %d\n\tplan of LINE %d", n, 2*n-1, 2*n-1)

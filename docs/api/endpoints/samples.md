@@ -228,8 +228,8 @@ task in `index_build`:
 "index_build": {
   "task_id": "1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
   "status": "running",
-  "message": "Building the line index of /var/log/core.log in the background; follow GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
-  "path": "/var/log/core.log",
+  "message": "Building the line index of /var/log/big.log in the background; follow GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
+  "path": "/var/log/big.log",
   "started_at": "2026-10-03T18:12:04.512330Z"
 }
 ```
@@ -277,8 +277,8 @@ the build's task instead of the lines, with the header
 {
   "task_id": "1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10",
   "status": "running",
-  "message": "Building the line index of /var/log/core.log; poll GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10 and ask again when it completes",
-  "path": "/var/log/core.log",
+  "message": "Building the line index of /var/log/big.log; poll GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10 and ask again when it completes",
+  "path": "/var/log/big.log",
   "started_at": "2026-10-03T18:12:04.512330Z"
 }
 ```
@@ -314,7 +314,7 @@ CLI waits for the build.
 
 ```bash
 curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
-    --data-urlencode 'path=/var/log/core.log.gz' --data-urlencode 'lines=1-100' \
+    --data-urlencode 'path=/var/log/big.log.gz' --data-urlencode 'lines=1-100' \
     -o answer.json -w '%{http_code}\n'
 ```
 

@@ -10,7 +10,7 @@ import (
 // A postgres log: few lines carry a timestamp, but those that do start
 // with it, and its zone word MST is not one the package converts.
 func ExampleDetect() {
-	sample := []byte("2025-12-10 07:00:30 MST [4242]: LOG:  duration: 175.200 ms  plan:\n" +
+	sample := []byte("2025-12-10 07:00:30 MST [4242]: LOG:  duration: 97.314 ms  plan:\n" +
 		"\tQuery Text: select 1\n" +
 		"2025-12-10 07:00:31 MST [4242]: LOG:  duration: 0.042 ms\n" +
 		"\tQuery Text: select 2\n" +

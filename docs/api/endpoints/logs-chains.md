@@ -6,7 +6,7 @@ from their names alone.
 ## Purpose
 
 Rotation tools split one log into many files: `syslog`, `syslog.1`,
-`syslog.2.gz`, or `syslog-20261001-1790812801.gz`. A **log chain** is
+`syslog.2.gz`, or `syslog-20260401-1775001601.gz`. A **log chain** is
 those files, read as one text. This route finds the chains of a
 directory so a client can show one entry per chain in place of its
 files. [`rx logs list`](../../cli/logs.md) gives the same answer from a

@@ -111,7 +111,7 @@ type ChainPart struct {
 	Name              string             `json:"name" doc:"The part's file name in the chain's directory."`
 	Path              string             `json:"path" doc:"The part's path: the chain's directory joined with name. The single-file routes take it."`
 	IsActive          bool               `json:"is_active" doc:"Whether this is the active file, the one named like the chain, which may grow."`
-	Key               *string            `json:"key" doc:"The number or date in the part's name as the name writes it (3, 20261001-1790812801, 2026-10-01.3); null for the active file."`
+	Key               *string            `json:"key" doc:"The number or date in the part's name as the name writes it (3, 20260401-1775001601, 2026-10-01.3); null for the active file."`
 	CompressionFormat *string            `json:"compression_format" doc:"How the part is compressed, by its bytes: gzip, bz2, xz or zstd (seekable zstd included); null for a plain file."`
 	Size              int64              `json:"size" doc:"The part's size in bytes as stored, from the listing."`
 	ModifiedAt        string             `json:"modified_at" format:"date-time" doc:"The part's modification time, RFC 3339 in UTC with six fractional digits, from the listing."`

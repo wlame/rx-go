@@ -257,7 +257,7 @@ func chainDisplayLocation(fileZone config.Zone) *time.Location {
 //
 //	/var/log/syslog: ready, 3 parts, 240 lines, fingerprint 3fa2c4d5e6f70812, times in UTC
 //	#  NAME                           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME           HIGHEST TIME         IDX
-//	1  syslog-20260930-1790726400.gz  gzip         130    1-130         2026-09-29 00:00:01  2026-09-30 01:59:58  idx
+//	1  syslog-20260331-1774915200.gz  gzip         130    1-130         2026-03-30 00:00:01  2026-03-31 01:59:58  idx
 //
 // A chain of more parts than are read as one text lists none, and its
 // first line says how many its files' names give: "too many parts

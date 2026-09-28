@@ -1,6 +1,6 @@
 // Package logchain finds log chains: the files of one rotated log in
 // one directory (`syslog`, `syslog.1`, `syslog.2.gz`,
-// `syslog-20261001-1790812801.gz`), which rx reads and searches as one
+// `syslog-20260401-1775001601.gz`), which rx reads and searches as one
 // text.
 //
 // Membership comes from names only. A table of name templates

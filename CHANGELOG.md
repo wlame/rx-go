@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     chain.
   - `GET /v1/logs/chains?path=DIR` lists the log chains of a directory:
     the files of each rotated log (`syslog`, `syslog.1`, `syslog.2.gz`,
-    `syslog-20261001-1790812801.gz`, `app.1.log.gz`,
+    `syslog-20260401-1775001601.gz`, `app.1.log.gz`,
     `app-2026-10-01.3.log.gz`, …), found from their names alone by a
     table of four name templates (numbered, dated, and both with the
     number or date before the extension). Each entry gives the chain's
