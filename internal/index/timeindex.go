@@ -203,11 +203,12 @@ func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 // It is written as a choice between two values, with no store inside
 // the if, so that the compiler emits conditional moves (CSEL on arm64,
 // CMOV on amd64) rather than a branch. That matters on the per-line
-// path: in a log that many threads write, such as app.log, about
-// 40% of the lines set a new highest millisecond and most of the rest
-// repeat it, in an order a branch predictor cannot learn. Written as a
-// branch around a store to t.maxAt, the comparison measured about 3% of
-// the whole index build of that file.
+// path: in a log that many threads write, about 40% of the lines set a
+// new highest millisecond and most of the rest repeat it, in an order a
+// branch predictor cannot learn. Written as a branch around a store to
+// t.maxAt, the comparison costs about 10% of observe and 3% of a whole
+// index build of such a log (BenchmarkTimeIndexerObserve and
+// BenchmarkIndexBuild_ThreadedLog measure both).
 //
 // Go note: TimePoint is three int64s, so it is passed and returned in
 // registers and the call is inlined into observe; nothing here touches

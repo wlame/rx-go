@@ -137,6 +137,28 @@ Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it); CI runs
 lint` and `just vuln` — install them with `go install`. `just docs-build`
 needs `uv`.
 
+### Benchmarks
+
+`just bench` runs every benchmark once and is not a CI gate; flags pass
+through (`just bench -bench=Index` runs the index build's). To show what
+a change costs, run the benchmarks it touches ten times before it and
+ten times after it, and let benchstat compare the two runs:
+
+```bash
+go test ./internal/index/ -run='^$' -bench=Index -count=10 > /tmp/before.txt
+# make the change, then:
+go test ./internal/index/ -run='^$' -bench=Index -count=10 > /tmp/after.txt
+go run golang.org/x/perf/cmd/benchstat@latest /tmp/before.txt /tmp/after.txt
+```
+
+A difference counts when benchstat gives it a small `p` (below 0.05).
+The index build's benchmarks (`internal/index/timeindex_bench_test.go`)
+report `ns/line` on generated lines whose timestamps rise, repeat and
+step back as in a log that many threads write, from a seeded generator:
+a constant timestamp would hide the cost of a branch on the running
+maximum, which a branch predictor learns at once on such input. Keep
+the per-line path measured that way.
+
 ## Architecture
 
 ```
