@@ -240,8 +240,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     chain, whichever comes first, under its own path, through a link to
     it or under another spelling of its directory (never both searched
     and skipped, so each of its lines comes once, in the chain; a hard
-    link of it named on its own elsewhere is a file of its own, and a
-    link to it that is another chain's part is searched in that chain),
+    link of it named on its own elsewhere is a file of its own, a link
+    to it that is another chain's part is searched in that chain, and a
+    path that is it under another name — a link to it, or the file it
+    links to, named on its own or listed by a walk — is named in
+    `skipped_files` too, under its own path),
     a part that cannot be read with its read error,
     and a chain of more than 10,000 parts is searched as files of their
     own. Chains are described from their parts' indexes, and no index

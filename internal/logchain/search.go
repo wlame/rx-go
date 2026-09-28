@@ -197,6 +197,13 @@ type searchResolver struct {
 	// up here, so the encoding is searched under no spelling of its own
 	// path. A file without a known entry is not listed.
 	ownAt map[entryID][]string
+	// ownPaths lists, for the key (fileKey) of each file added as a file
+	// of its own, every path it was added by, with the directory entry
+	// each was met as: a file named on its own, listed by a walk, or
+	// both. finish names in skipped_files each such path that it
+	// withdraws as another encoding of a part and that is not that
+	// encoding's own entry (settleEncodingGroup).
+	ownPaths map[string][]ownPath
 	// otherEncodings are the other encodings of parts the chains found,
 	// in the order met, each named in plan.Skipped already. finish
 	// settles each one once every path is resolved (settleOtherEncodings).
@@ -227,6 +234,7 @@ func newSearchResolver(req SearchRequest) *searchResolver {
 		chainKeys: map[string]*searchChain{},
 		planned:   map[string]plannedFile{},
 		ownAt:     map[entryID][]string{},
+		ownPaths:  map[string][]ownPath{},
 		withdrawn: map[int]bool{},
 		unnamed:   map[int]bool{},
 		placeByID: map[string]partPlace{},
@@ -323,6 +331,14 @@ type otherEncoding struct {
 	key    string
 	entry  entryID
 	skipAt int
+}
+
+// ownPath is one path a file of its own was added to the search by, as
+// the request or a walk gave it, and the directory entry it was met as
+// (the zero entryID when not known).
+type ownPath struct {
+	path  string
+	entry entryID
 }
 
 // plannedFile is what the search made of a file: the slot it is
@@ -507,7 +523,13 @@ type encodingGroupID struct {
 //     too would give each of them twice;
 //   - the encoding is named once in skipped_files, where it was first
 //     met, unless a chain searches it or one of its paths was skipped
-//     already for another reason (it cannot be read), which named it.
+//     already for another reason (it cannot be read), which named it;
+//   - each withdrawn path that is not the encoding's own entry under
+//     some spelling — the file a link that is the encoding leads to,
+//     or a link to the encoding elsewhere, named on its own or listed
+//     by a walk — is named in skipped_files too, under its own path,
+//     with the encoding's reason: the request reached it, and a path
+//     the search leaves out is always named.
 //
 // INVARIANT: never lose a line. A slot a chain claimed is never
 // withdrawn, so every part a chain describes is searched, and only a
@@ -519,6 +541,7 @@ type encodingGroupID struct {
 func (r *searchResolver) settleOtherEncodings() {
 	groups := map[encodingGroupID]*encodingGroup{}
 	var order []encodingGroupID
+	names := r.newWithdrawnNames()
 	for _, e := range r.otherEncodings {
 		id := encodingGroupID{entry: e.entry}
 		if !e.entry.known() {
@@ -536,15 +559,46 @@ func (r *searchResolver) settleOtherEncodings() {
 		g.skipAts = append(g.skipAts, e.skipAt)
 	}
 	for _, id := range order {
-		r.settleEncodingGroup(groups[id])
+		r.settleEncodingGroup(groups[id], names)
 	}
+}
+
+// withdrawnNames is what settleOtherEncodings needs, across every
+// group, to name each withdrawn path once (nameWithdrawnPaths): the
+// directory entries and the paths of every other encoding the chains
+// found, which are named as encodings and never again; the withdrawn
+// keys whose paths were looked at; and the paths named so far.
+type withdrawnNames struct {
+	encodingEntries map[entryID]bool
+	encodingPaths   map[string]bool
+	keysDone        map[string]bool
+	named           map[string]bool
+}
+
+// newWithdrawnNames is the withdrawnNames of this search's other
+// encodings, with nothing named yet.
+func (r *searchResolver) newWithdrawnNames() *withdrawnNames {
+	names := &withdrawnNames{
+		encodingEntries: map[entryID]bool{}, encodingPaths: map[string]bool{},
+		keysDone: map[string]bool{}, named: map[string]bool{},
+	}
+	for _, e := range r.otherEncodings {
+		if e.entry.known() {
+			names.encodingEntries[e.entry] = true
+		}
+		names.encodingPaths[r.plan.Skipped[e.skipAt].Path] = true
+	}
+	return names
 }
 
 // settleEncodingGroup applies settleOtherEncodings' rules to one group:
 // it withdraws the group's files of their own, leaves its claimed parts
-// alone, and keeps the first place it is named at, or none.
-func (r *searchResolver) settleEncodingGroup(g *encodingGroup) {
+// alone, keeps the first place it is named at, or none, and names each
+// withdrawn path that is not the encoding's own entry
+// (nameWithdrawnPaths).
+func (r *searchResolver) settleEncodingGroup(g *encodingGroup, names *withdrawnNames) {
 	searched, skippedAlready := false, false
+	var withdrawnKeys []string
 	for _, key := range g.keys {
 		planned, seen := r.planned[key]
 		if !seen {
@@ -559,10 +613,44 @@ func (r *searchResolver) settleEncodingGroup(g *encodingGroup) {
 			continue
 		}
 		r.withdrawn[planned.slot] = true
+		withdrawnKeys = append(withdrawnKeys, key)
 	}
+	// The reason the encoding was named with, read before any place is
+	// taken back: finish drops the unnamed places only after every group
+	// is settled, so plan.Skipped still holds them here.
+	reason := r.plan.Skipped[g.skipAts[0]].Reason
 	for i, at := range g.skipAts {
 		if i > 0 || searched || skippedAlready {
 			r.unnamed[at] = true
+		}
+	}
+	r.nameWithdrawnPaths(withdrawnKeys, reason, names)
+}
+
+// nameWithdrawnPaths names in skipped_files, with reason, every path a
+// withdrawn key was added by (ownPaths) that is not an other encoding
+// itself: not the directory entry of one, and not a path one is named
+// by. A spelling of an encoding's own entry (another case of its
+// directory, a bind mount) is that encoding, which its chain names. Each
+// path is named once, with the reason of the first group that withdraws
+// it, however many times it was added and however many encodings it is.
+//
+// Bound: each withdrawn key's paths are looked at once (keysDone), and
+// a path is added once per time the request or a walk reached it, so
+// the work is at most the files met.
+func (r *searchResolver) nameWithdrawnPaths(withdrawnKeys []string, reason string, names *withdrawnNames) {
+	for _, key := range withdrawnKeys {
+		if names.keysDone[key] {
+			continue
+		}
+		names.keysDone[key] = true
+		for _, own := range r.ownPaths[key] {
+			isAnEncoding := (own.entry.known() && names.encodingEntries[own.entry]) || names.encodingPaths[own.path]
+			if isAnEncoding || names.named[own.path] {
+				continue
+			}
+			names.named[own.path] = true
+			r.skip(own.path, reason)
 		}
 	}
 }
@@ -1140,7 +1228,9 @@ func (r *searchResolver) addFile(src paths.Pinned) (slot int, ok bool) {
 //
 // It is addFile, and it lists the file under its entry (ownAt), so
 // finish can withdraw it if it is another encoding of a part under some
-// spelling of its path (settleOtherEncodings). Whether it is one is
+// spelling of its path (settleOtherEncodings), and records the path it
+// came by (ownPaths), so finish can name that path when it withdraws
+// the file as an encoding met under another entry. Whether it is one is
 // never decided here: the chain that names it as an encoding may come
 // later, and the answer must not depend on that order.
 //
@@ -1151,6 +1241,7 @@ func (r *searchResolver) addOwnFile(src paths.Pinned, entry entryID) {
 	if _, seen := r.planned[key]; !seen && entry.known() {
 		r.ownAt[entry] = append(r.ownAt[entry], key)
 	}
+	r.ownPaths[key] = append(r.ownPaths[key], ownPath{path: src.Path(), entry: entry})
 	r.addFile(src)
 }
 

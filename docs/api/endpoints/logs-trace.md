@@ -69,9 +69,13 @@ with `duplicate_part` and never searched, whichever comes first, under
 its own path, through a link to it, or under another spelling of its
 directory, so each of its lines comes once, from the part the chain
 reads; it is named once in `skipped_files`, under the path its chain
-lists it by. A part of another chain that is a link to that encoding is
-a part of its own chain, searched there, and the encoding is then not
-named as skipped. Two chains that still give one identity (an inode
+lists it by. A path the request or a walk reaches that is that file
+under another name (a link to the encoding elsewhere, or the file the
+encoding links to) is not searched either, and is named in
+`skipped_files` too, under its own path, with the same reason. A part
+of another chain that is a link to that encoding is a part of its own
+chain, searched there, and the encoding is then not named as skipped.
+Two chains that still give one identity (an inode
 reused while the request runs) are both searched: the first as its
 chain, the second's parts that are not the first's as files of their
 own, with `chain` null. `path` in the answer lists the paths as the
