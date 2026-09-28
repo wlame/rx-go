@@ -78,6 +78,11 @@ A path outside every configured root exits 4. A root that does not exist
 is a usage error and exits 2. With neither the flag nor the variable set
 there is no sandbox. See [Security](../concepts/security.md).
 
+Every path given is processed, and each failure is reported in the
+output. The command then exits 3 when every failure was a file that does
+not exist, 4 when every failure was a path outside the roots, and 1 when
+the failures were of different kinds.
+
 ## Examples
 
 ### Default encode

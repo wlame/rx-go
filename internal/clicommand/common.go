@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"unicode"
 	"unicode/utf8"
@@ -139,6 +140,58 @@ func capitalizeFirst(msg string) string {
 		return msg
 	}
 	return string(unicode.ToUpper(first)) + msg[size:]
+}
+
+// exitCodeForPathError is the exit code a failure to stat or open a path
+// the user named produces when that failure is the only one: 3 for a
+// path that does not exist, 4 for one the process may not read, and 1
+// for anything else.
+func exitCodeForPathError(err error) int {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return ExitFileNotFound
+	case errors.Is(err, fs.ErrPermission):
+		return ExitAccessDenied
+	default:
+		return ExitGenericError
+	}
+}
+
+// failureSummaries is the closing error line of a multi-path command
+// whose every failure had the same exit code. A code missing here, and
+// a run whose failures had different codes, get the command's generic
+// line instead.
+var failureSummaries = map[int]string{
+	ExitFileNotFound: "one or more files do not exist",
+	ExitAccessDenied: "one or more files were outside the search roots",
+}
+
+// multiPathFailure is the error a command that processes several paths
+// returns after reporting each failure on its own.
+//
+// failureCodes holds the exit code each failed path would have produced
+// alone. When they are all the same, the run exits with that code, so
+// `rx index missing.log` exits 3 exactly like `rx trace x missing.log`.
+// When they differ, no single code tells the whole story and the run
+// exits 1. genericSummary is the line printed in that case, such as
+// "one or more files failed to index". It returns nil when nothing
+// failed.
+func multiPathFailure(failureCodes []int, genericSummary string) error {
+	if len(failureCodes) == 0 {
+		return nil
+	}
+	code := failureCodes[0]
+	for _, other := range failureCodes[1:] {
+		if other != code {
+			code = ExitGenericError
+			break
+		}
+	}
+	summary, ok := failureSummaries[code]
+	if !ok {
+		summary = genericSummary
+	}
+	return NewExitError(code, errors.New(summary))
 }
 
 // sandboxCheck validates a user-supplied path against the --search-root
