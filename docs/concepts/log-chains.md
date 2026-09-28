@@ -127,7 +127,9 @@ parts before it.
    permissions, an I/O error) stays a part, named in `unreadable`; the
    chain is invalid until it can be read.
 7. A chain may have at most 10,000 parts. A larger one is listed with
-   `too_many_parts` and read no further.
+   `too_many_parts`; `rx logs show` describes it as invalid with that
+   reason (exit 6), and `rx logs samples` refuses it; a search searches
+   its files one by one, as files of their own.
 
 ### Missing parts
 

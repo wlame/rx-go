@@ -121,6 +121,7 @@ for the full catalog and wire contract.
 | `trace`    | Parallel regex search with optional caching and sample context   |
 | `samples`  | Extract context windows by byte offset or line number            |
 | `index`    | Build (or inspect) a cached line-offset index                    |
+| `time-range` | Show the format and the first and last timestamp of each file |
 | `logs`     | Read a rotated log (`syslog`, `syslog.1`, `syslog.2.gz`, …) as one log chain: list, describe, index, sample by line or time, search |
 | `compress` | Produce a seekable zstd file for frame-parallel decompression    |
 | `serve`    | REST API (`chi` + `huma` v2) with Swagger UI, metrics, SPA       |
