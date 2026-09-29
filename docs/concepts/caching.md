@@ -2,15 +2,16 @@
 
 `rx` caches two kinds of artifacts on disk:
 
-- **Line indexes** — produced by `rx index`, consumed by `rx trace`,
-  `rx samples`, and the HTTP endpoints
+- **Line indexes** — produced by `rx index`, `rx compress`, and by the
+  first `rx samples` lookup in a large or compressed file; consumed by
+  `rx trace`, `rx samples`, and the HTTP endpoints
 - **Trace results** — produced by `rx trace`, consumed by subsequent
-  `rx trace` calls with identical inputs
+  `rx trace` calls with the same file, patterns and matching flags
 
-Caches are content-addressed under `~/.cache/rx/` (or
-`$RX_CACHE_DIR/rx/`, or `$XDG_CACHE_HOME/rx/`). They are invalidated
-when the source file changes (its size, mtime, inode, ctime or
-fingerprint), not by TTL.
+Caches live under `~/.cache/rx/` (or `$RX_CACHE_DIR/rx/`, or
+`$XDG_CACHE_HOME/rx/`), named after the source path and, for a trace,
+the patterns. They are invalidated when the source file changes (its
+size, mtime, inode, ctime or fingerprint), not by TTL.
 
 ## Cache location
 
@@ -37,15 +38,22 @@ a missing cache directory gracefully return "no cache".
 
 ```text
 ~/.cache/rx/
-├── indexes/                        — line-offset indexes
-│   └── <filename>_<hash16>.json
-├── trace_cache/                    — trace-result caches
-│   └── <hash>.json
-├── frontend/                       — rx-viewer SPA (downloaded once)
-│   ├── index.html
-│   ├── assets/
-│   └── .metadata.json
-└── (ephemeral temporaries as needed)
+├── indexes/                                — line-offset indexes
+│   └── <basename>_<path_hash16>.json
+├── trace_cache/                            — trace-result caches
+│   └── <patterns_hash16>/
+│       └── <path_hash16>_<basename>.json
+└── frontend/                               — rx-viewer SPA (downloaded once)
+    ├── index.html
+    ├── assets/
+    └── .metadata.json
+```
+
+For example, after a trace and an index of one log:
+
+```text
+rx/indexes/middleware.log-2025121008_7d075e46bc77f062.json
+rx/trace_cache/65744821eb30e352/7d075e46bc77f062_middleware.log-2025121008.json
 ```
 
 ### `indexes/`
@@ -62,21 +70,28 @@ Contents: the full `UnifiedFileIndex` struct. See
 
 ### `trace_cache/`
 
-Each trace cache entry is keyed by a hash of:
+A trace cache entry's directory is named after a hash of the pattern
+set (sorted) and the ripgrep flags that change which lines match (`-i`,
+`-w`, `-x`, `-F`, `-P`); its file name carries a hash of the absolute
+source path. `--max-results` is not part of the key.
 
-- Source file path
-- Pattern set
-- The ripgrep flags that change which lines match (`-i`, `-w`, `-x`,
-  `-F`, `-P`)
-
-When `rx trace` is invoked, the engine computes the key and looks for
-an existing cache file whose source identity still matches the file
-(see below). Hit → load and reconstruct the response. Miss → run the
-scan, write the response to cache. Only a complete scan of a file at or
-above the large-file threshold (`RX_LARGE_FILE_MB`), without
-`--max-results`, is written.
+When `rx trace` is invoked on a plain file of `RX_LARGE_FILE_MB` (50 MB)
+or more, or on a seekable zstd file, the engine looks for an entry whose
+source identity still matches the file (see below). Hit → load and
+reconstruct the response; a request with `--max-results` is answered
+from a full entry too, and then returns the first matches in file order
+(a capped scan returns whichever chunks finished first). Miss → run the scan. Only a complete scan without
+`--max-results` is written: of a plain file of `RX_LARGE_FILE_MB` or
+more, or of a seekable zstd file of 1 MB or more. Gzip, bzip2, xz and
+plain zstd files are never cached.
 
 `--no-cache` bypasses both the read and write steps.
+
+A hit costs reading the entry, which grows with the match count. On a
+465 MB log in the page cache, a rare pattern took 65 ms to scan and
+15 ms from the cache, but `WARN` with 51,817 matches (a 4.9 MB entry)
+took 331 ms to scan and 429 ms from the cache. On a 6.3 GB log the rare
+pattern took 481 ms to scan and 12 ms from the cache.
 
 Anomaly detection writes no files of its own. An analysis is part of
 the file's line index, which records the window and the detectors (each
@@ -119,6 +134,11 @@ all. Either way the next trace scans again and finds the new lines.
 **There is no TTL.** A cache entry from a year ago is still valid if
 the source file hasn't been touched.
 
+The mtime and the ctime are compared as text at microsecond precision,
+exactly; there is no tolerance. Both sides come from the same
+filesystem, so a filesystem with whole-second times compares
+whole-second times.
+
 ### Manual invalidation
 
 ```bash
@@ -140,7 +160,8 @@ Per-invocation flags:
 | Flag | Effect |
 |---|---|
 | `--no-cache` (on `rx trace`) | Disable trace cache for this invocation — no read, no write |
-| `--no-index` (on `rx trace`) | Don't consult the line-index cache for this invocation |
+| `--no-index` (on `rx trace`) | Neither read nor write a line index; count lines from the start of the file instead (same answer) |
+| `--no-index` (on `rx samples`), `RX_NO_INDEX` | Neither build nor read a line index for this lookup |
 
 ### Edge cases
 
@@ -153,37 +174,40 @@ Per-invocation flags:
   one case left is an edit confined to the middle of a file that keeps
   its size and mtime, on a filesystem whose ctime does not move; use
   `--force` (index) or `--no-cache` (trace) there.
-- **Fractional-second mtimes** are preserved at microsecond precision
-  in the cache. Most filesystems provide this; a few network mounts
-  and FAT32 do not, which means whole-second mtimes may be compared
-  with microsecond-precision cached values. `rx` detects this case
-  and treats it as a match.
+- **Fractional-second mtimes** are recorded at microsecond precision,
+  in the layout rx-python writes, and compared exactly.
 
 ## Atomic writes
 
 Cache files are written via a temp-file-plus-rename pattern:
 
-1. Write the full content to `<target>.<pid>.tmp`
-2. `fsync` the temp file
-3. `rename` to the final name (atomic on POSIX)
+1. Write the full content to a temporary file in the same directory:
+   `.tmp-<random>` for an index, `<target>.tmp` for a trace entry
+2. `rename` it to the final name (atomic on POSIX)
 
-This guarantees:
+There is no `fsync`. This guarantees:
 
-- No partially-written cache files on disk (a crash mid-write leaves
-  a `.tmp` file that's ignored)
 - No torn reads — a concurrent reader either sees the old file or the
   new file, never a half-written state
-- Safe to run multiple `rx` instances against the same cache
-  concurrently
+- A failed write leaves no entry under the final name; an index's
+  temporary file is removed, and a leftover `.tmp` is never read
+
+It does not guarantee the entry survives a power loss: the rename can
+reach the disk before the content. A truncated entry fails to parse and
+is treated as absent, so the cost is a rebuild. Two `rx` processes
+writing the same trace entry at once share one `<target>.tmp` name; the
+last rename wins.
 
 ## Cache size
 
 No hard cap. Caches grow as you index more files. Typical sizes:
 
-- **Index cache**: ~100-500 KB per multi-GB source file
-- **Trace cache**: 1 KB - 10 MB per entry, scaling with match count
-- **Analyzer cache**: 0 (no analyzers at v1)
-- **Frontend cache**: ~15 MB (one-time download)
+- **Index cache**: about one checkpoint per MB of source; a 465 MB log
+  gave a 9.3 KB index with 429 checkpoints (an analysis adds its
+  anomalies)
+- **Trace cache**: grows with the match count; 51,817 matches of the
+  same log took 4.9 MB
+- **Frontend cache**: the size of the rx-viewer bundle
 
 For most developer workstations, the cache stays well under 1 GB.
 Production servers that index many large files should monitor cache
@@ -216,9 +240,11 @@ For test environments:
 
 The first query against a file pays the cold build cost:
 
-- `rx index` on a 260 MB file: ~1-2 seconds cold, ~10 ms warm
-- `rx trace` with a complex pattern: seconds cold, milliseconds warm
-  (cache hit)
+- `rx index` on a 465 MB log in the page cache: 142 ms to build, 11 ms
+  when a valid index exists
+- `rx trace` of a rare pattern: 65 ms scanning, 15 ms from the cache
+  (see the trace cache section for a dense pattern, where the cache is
+  slower)
 
 Pre-warming helps. Indexing is idempotent — running `rx index` once
 per file at deploy time amortizes the cost.
@@ -226,7 +252,8 @@ per file at deploy time amortizes the cost.
 ### Cache-hit determinism
 
 Repeated calls with identical inputs (and unchanged sources) produce
-identical outputs — the cache stores the full response. This is
+identical outputs, apart from `request_id` and `time` — the cache stores
+the matches and the chunk count of the scan that wrote it. This is
 useful for:
 
 - Reproducible CI runs
@@ -250,4 +277,4 @@ export RX_CACHE_DIR="/var/cache/rx-users/$USER"
 - [Byte offsets vs line numbers](byte-offsets-vs-line-numbers.md) — why
   indexes matter
 - [Chunking](chunking.md) — when the trace cache is written
-- [Analyzers](analyzers.md) — analyzer cache namespacing
+- [Analyzers](analyzers.md) — the analysis stored in an index
