@@ -438,6 +438,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The README, the docs home, the installation page and the quickstart
+  describe the current binary. The README's `rx samples … -C 3` is
+  `--context=3`; it no longer lists `RX_NO_CACHE`, which nothing reads,
+  names `RX_SEARCH_ROOTS` with its real defaults, lists
+  `POST /v1/compress` and `GET /v1/detectors`, and its Development
+  section uses `just` (there is no Makefile). The install examples fetch
+  the release binaries as they are published (`rx-<os>-<arch>` plus a
+  `.sha256`) instead of a `v0.1.0` or `2.2.1-go` archive, and the
+  version is the release tag. The quickstart's outputs come from a real
+  run.
+
 - `rx_large_file_threshold_mb` reports `RX_LARGE_FILE_MB`, the threshold
   its name says. It reported the chunk size, `RX_MIN_CHUNK_SIZE_MB`.
 
