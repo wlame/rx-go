@@ -221,3 +221,58 @@ func statInode(t *testing.T, info os.FileInfo) uint64 {
 	}
 	return sys.Ino
 }
+
+// runIndexCommand runs `rx index` with args and fails the test on error.
+func runIndexCommand(t *testing.T, args ...string) {
+	t.Helper()
+	var buf bytes.Buffer
+	cmd := NewIndexCommand(&buf)
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("rx index %v: %v\n%s", args, err, buf.String())
+	}
+}
+
+func TestIndex_AnalysisWithAnotherWindowIsNotReused(t *testing.T) {
+	setCacheDir(t, t.TempDir())
+	src := writeIndexableFile(t, t.TempDir(), "data.log")
+
+	runIndexCommand(t, src, "--json", "--analyze", "--analyze-window-lines=100")
+	runIndexCommand(t, src, "--json", "--analyze", "--analyze-window-lines=200")
+
+	idx, err := index.LoadForSource(src)
+	if err != nil || idx == nil {
+		t.Fatalf("load index: %v", err)
+	}
+	if idx.AnalysisWindowLines == nil || *idx.AnalysisWindowLines != 200 {
+		t.Errorf("stored analysis window = %v, want 200 (the analysis with window 100 was reused)",
+			idx.AnalysisWindowLines)
+	}
+}
+
+func TestIndex_AnalysisByAnotherDetectorSetIsNotReused(t *testing.T) {
+	setCacheDir(t, t.TempDir())
+	src := writeIndexableFile(t, t.TempDir(), "data.log")
+	runIndexCommand(t, src, "--json", "--analyze")
+	idx, err := index.LoadForSource(src)
+	if err != nil || idx == nil || idx.AnalysisDetectorSet == nil {
+		t.Fatalf("load index: %v (%+v)", err, idx)
+	}
+	current := *idx.AnalysisDetectorSet
+	older := "traceback-python@0.0.1"
+	idx.AnalysisDetectorSet = &older
+	if _, err := index.Save(idx); err != nil {
+		t.Fatalf("save index: %v", err)
+	}
+
+	runIndexCommand(t, src, "--json", "--analyze")
+
+	idx, err = index.LoadForSource(src)
+	if err != nil || idx == nil || idx.AnalysisDetectorSet == nil {
+		t.Fatalf("load index: %v", err)
+	}
+	if *idx.AnalysisDetectorSet != current {
+		t.Errorf("stored detector set = %q, want %q (the older analysis was reused)",
+			*idx.AnalysisDetectorSet, current)
+	}
+}

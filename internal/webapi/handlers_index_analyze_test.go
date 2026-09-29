@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/analyzer"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -132,4 +133,97 @@ func waitForTaskCompletion(t *testing.T, baseURL, taskID string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("task did not complete in time")
+}
+
+// postAnalyzeAndWait starts an analyzing index task for path with the
+// given window and waits for it to complete.
+func postAnalyzeAndWait(t *testing.T, baseURL, path string, window int) {
+	t.Helper()
+	body, _ := json.Marshal(rxtypes.IndexRequest{
+		Path:               path,
+		Threshold:          intPtr(0),
+		Analyze:            true,
+		AnalyzeWindowLines: intPtr(window),
+	})
+	resp, err := http.Post(baseURL+"/v1/index", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("post status %d: %s", resp.StatusCode, b)
+	}
+	var tr rxtypes.TaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	waitForTaskCompletion(t, baseURL, tr.TaskID)
+}
+
+// analysisFixture writes a small log in a fresh search root and returns
+// its path.
+func analysisFixture(t *testing.T, name string) string {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	path := filepath.Join(root, name)
+	if err := os.WriteFile(path, []byte(strings.Repeat("hello world\n", 1000)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	return path
+}
+
+// storedAnalysisKey reads the cached index of path and returns the
+// window and detector set its analysis recorded.
+func storedAnalysisKey(t *testing.T, path string) (int, string) {
+	t.Helper()
+	idx, err := index.LoadForSource(path)
+	if err != nil || idx == nil {
+		t.Fatalf("load index: %v", err)
+	}
+	if idx.AnalysisWindowLines == nil || idx.AnalysisDetectorSet == nil {
+		t.Fatalf("stored index has no analysis key")
+	}
+	return *idx.AnalysisWindowLines, *idx.AnalysisDetectorSet
+}
+
+func TestIndexPost_AnalysisWithAnotherWindowIsNotReused(t *testing.T) {
+	path := analysisFixture(t, "window.log")
+	ts := newTestServer(t)
+
+	postAnalyzeAndWait(t, ts.URL, path, 100)
+	postAnalyzeAndWait(t, ts.URL, path, 200)
+
+	if window, _ := storedAnalysisKey(t, path); window != 200 {
+		t.Errorf("stored analysis window = %d, want 200 (the analysis with window 100 was reused)", window)
+	}
+}
+
+func TestIndexPost_AnalysisByAnotherDetectorSetIsNotReused(t *testing.T) {
+	path := analysisFixture(t, "detectors.log")
+	ts := newTestServer(t)
+	postAnalyzeAndWait(t, ts.URL, path, 100)
+	_, current := storedAnalysisKey(t, path)
+
+	// Rewrite the stored analysis as if an older detector set made it.
+	idx, err := index.LoadForSource(path)
+	if err != nil || idx == nil {
+		t.Fatalf("load index: %v", err)
+	}
+	older := "traceback-python@0.0.1"
+	idx.AnalysisDetectorSet = &older
+	if _, err := index.Save(idx); err != nil {
+		t.Fatalf("save index: %v", err)
+	}
+
+	postAnalyzeAndWait(t, ts.URL, path, 100)
+
+	if _, set := storedAnalysisKey(t, path); set != current {
+		t.Errorf("stored detector set = %q, want %q (the older analysis was reused)", set, current)
+	}
 }
