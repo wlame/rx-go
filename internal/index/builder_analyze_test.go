@@ -65,7 +65,7 @@ func (c *cueDetector) OnLine(w *analyzer.Window) {
 	}
 	// Emit immediately during OnLine so Finalize has work to return.
 	// We set a semantic Category the coordinator must leave untouched —
-	// the coordinator only stamps DetectorName, not Category (finding #8).
+	// the coordinator only stamps DetectorName, not Category.
 	c.emitted = append(c.emitted, analyzer.Anomaly{
 		StartLine:   ev.Number,
 		EndLine:     ev.Number,

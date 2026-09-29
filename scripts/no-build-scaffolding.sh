@@ -9,7 +9,8 @@
 # Run from the repository root. `just ci` calls it.
 set -euo pipefail
 
-pattern='Stage [0-9]|Round [0-9]|R[0-9]-[A-Z][0-9]|Reviewer [0-9]|Finding [0-9]|user decision [0-9.]'
+# Either case, with or without "#": "Finding 6", "finding #7", "stage 3".
+pattern='[Ss]tage #?[0-9]|[Rr]ound #?[0-9]|R[0-9]-[A-Z][0-9]|Reviewer [0-9]|[Ff]inding #?[0-9]|user decision [0-9.]'
 # Design documents, task lists and a separate prototype the product does
 # not contain: "Decision 5.1", "spec §7", "(Task 4)", "Task 6:",
 # "plan-mandated", "another-rx-go/internal/…", "Post-Stage-8", "per

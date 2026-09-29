@@ -183,12 +183,10 @@ func TestDetector_StringsWithBraces(t *testing.T) {
 // The unterminated.log fixture has 7 lines total (opener on line 2,
 // body to line 7), so with W=4 the abort triggers on line 6.
 //
-// Prior versions of this detector also emitted a synthetic "sentinel"
-// anomaly at (0,0) carrying the per-run truncated count. That sentinel
-// was dropped (review finding #7): its zero-offset dedup key could
-// collide with legitimate anomalies at byte 0, and truncated_count
-// wasn't summable across workers. Only the real partial anomaly is
-// emitted now.
+// The detector emits no synthetic "sentinel" anomaly at (0,0) carrying
+// the per-run truncated count: its zero-offset dedup key could collide
+// with legitimate anomalies at byte 0, and truncated_count is not
+// summable across workers. Only the real partial anomaly is emitted.
 func TestDetector_Unterminated_TruncatedAtWindow(t *testing.T) {
 	got := feedFixture(t, "unterminated.log", 4)
 
@@ -299,7 +297,7 @@ func TestDetector_CloserIndentMismatch(t *testing.T) {
 
 // TestDetector_UnclosedAtEOF covers the EOF case: a blob opens but the
 // file ends while the blob is still open. Finalize must emit the
-// truncated span (no sentinel, per review finding #7).
+// truncated span, and no sentinel.
 func TestDetector_UnclosedAtEOF(t *testing.T) {
 	lines := linesFromStrings([]string{
 		"{",
