@@ -438,6 +438,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An index of a log that grows while it is built covers exactly the
+  size it records. The builder stated the file, then read to whatever
+  end the file had by then, so the index described bytes past its
+  recorded size and took its fingerprint after the read. It now takes
+  the identity first and reads no further than that size; the next use
+  sees the larger file and rebuilds, as before.
+
 - A seekable-zstd trace cache records `frames_with_matches` and each
   match's `frame_index`, as rx-python's does. Both were always empty, so
   the cache could not say which frames to decompress again.
