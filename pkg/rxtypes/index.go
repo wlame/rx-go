@@ -93,6 +93,15 @@ type UnifiedFileIndex struct {
 	// Analysis flag
 	AnalysisPerformed bool `json:"analysis_performed"`
 
+	// AnalysisWindowLines and AnalysisDetectorSet record what the
+	// analysis ran with: the sliding-window size, and every detector as
+	// "name@version", sorted and comma-joined. A cached analysis answers
+	// a later request only when both match it. Both are null when no
+	// analysis was performed, and in an index written before they
+	// existed.
+	AnalysisWindowLines *int    `json:"analysis_window_lines"`
+	AnalysisDetectorSet *string `json:"analysis_detector_set"`
+
 	// Analysis results (only populated when AnalysisPerformed == true)
 	LineCount               *int64   `json:"line_count"`
 	EmptyLineCount          *int64   `json:"empty_line_count"`

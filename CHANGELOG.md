@@ -427,6 +427,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A cached analysis is reused only for a request it answers. `rx index
+  --analyze` and `POST /v1/index` with `analyze: true` reused any
+  analyzed index, whatever `analyze_window_lines` it ran with and
+  whichever detectors were registered then, so a new window or an
+  upgraded detector had no effect until `--force`. An analyzed index
+  now records `analysis_window_lines` and `analysis_detector_set`
+  (every detector as `name@version`), and a request with another window
+  or another detector set rebuilds it. The index format version is 5;
+  an index of version 4, which rx-python still writes, is treated as
+  absent and rebuilt.
+
 - `rx trace --no-index` no longer reads the line index. A scan cut
   short by `--max-results` used to number its unnumbered matches from
   the index even under the flag. Under `--no-index` those lines are now
