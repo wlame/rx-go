@@ -105,7 +105,7 @@ See [concepts/security](concepts/security.md) and
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them. |
+| `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them. At most 256 tasks are kept; past that, the oldest finished ones go first. |
 
 ## Logging
 
