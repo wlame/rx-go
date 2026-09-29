@@ -128,7 +128,7 @@ func (w *Window) push(num, start, end int64, line []byte, indent int, bin bool) 
 	slot.endOffset = end
 	// Buffer reuse with a retained-capacity cap. Normal case: reslice the
 	// existing backing array to zero length and append copies without
-	// allocating. Exceptional case (finding #9): if the slot's retained
+	// allocating. Exceptional case: if the slot's retained
 	// capacity already exceeds maxSlotBufCap, OR the incoming line is
 	// larger than maxSlotBufCap, we allocate a fresh buffer sized to the
 	// line. This prevents a single huge line from permanently inflating

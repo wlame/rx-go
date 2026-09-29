@@ -264,8 +264,9 @@ Data flow for `rx trace "pattern" big.log`:
   the goroutine lifecycle and the invariant. Label invariants (`INVARIANT:`,
   `SECURITY:`). Do not reference review rounds, stages, plans or ticket numbers
   in code comments; describe what the code guarantees instead. `just
-  scaffolding-check` is a CI gate that fails on `Stage N`, `Round N`,
-  `Reviewer N`, `Finding N`, `Rn-Xn` and `user decision N.N`.
+  scaffolding-check` is a CI gate that fails on `Stage N`, `Round N` and
+  `Finding N` in either case and with or without `#`, and on
+  `Reviewer N`, `Rn-Xn` and `user decision N.N`.
 - Prefer a lookup table over a chain of `if`/`switch` when the logic is a mapping.
 - Long flags use `=` in help text, docs and printed commands.
 - Small functions, early returns, no flag parameters that switch behaviour.
