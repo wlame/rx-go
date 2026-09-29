@@ -73,7 +73,7 @@ runtime and process families listed after them.
 |---|---|---|---|
 | `rx_active_workers` | gauge | — | Up when a chunk, frame batch or compressed-stream scan starts, down when it ends |
 | `rx_worker_tasks_completed_total` | counter | — | Per scan task that ended without an error |
-| `rx_worker_tasks_failed_total` | counter | — | Per scan task that ended with an error, an invalid pattern included |
+| `rx_worker_tasks_failed_total` | counter | — | Per scan task that ended with an error, an invalid pattern included. A task stopped by a `max_results` cap or an abandoned request counts in neither family |
 
 ### Trace cache
 

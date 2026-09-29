@@ -115,6 +115,23 @@ type ContextRaw struct {
 	LineText     string
 }
 
+// recordWorkerOutcome counts one finished worker task (a chunk, a
+// compressed stream or a batch of seekable frames) by the error it
+// returned: completed when there was none, failed when there was one,
+// and neither when it was context.Canceled. A cancel is how a
+// max_results cap, or a request abandoned by its caller, stops the work
+// still running; nothing failed. The helpers are no-ops in CLI mode.
+func recordWorkerOutcome(err error) {
+	switch {
+	case err == nil:
+		prometheus.IncWorkerTasksCompleted()
+	case errors.Is(err, context.Canceled):
+		// Stopped on purpose: counted as neither.
+	default:
+		prometheus.IncWorkerTasksFailed()
+	}
+}
+
 // ChunkRequest is one unit of work for ProcessChunk.
 type ChunkRequest struct {
 	Task          FileTask
@@ -179,13 +196,7 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	// enabled switch — CLI-mode callers pay no cost here.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
-	defer func() {
-		if err == nil {
-			prometheus.IncWorkerTasksCompleted()
-		} else {
-			prometheus.IncWorkerTasksFailed()
-		}
-	}()
+	defer func() { recordWorkerOutcome(err) }()
 
 	// Build the rg argv. We filter out args that would change the
 	// output shape (--byte-offset, --only-matching) — Python does
