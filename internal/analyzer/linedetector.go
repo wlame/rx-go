@@ -98,10 +98,10 @@ type FlushContext struct {
 //   - Finalize: called once after the last line, with file-global
 //     stats. The return value is this detector's anomalies.
 //
-// Implementations are created fresh per worker (the index builder
-// shards the file across N workers), so instance state does NOT cross
-// worker boundaries. Cross-worker correctness comes from a W-line
-// overlap and a post-pass deduplication step.
+// The index builder makes one fresh instance per build from the
+// registered factory and feeds it every line of the file in one
+// sequential pass, so an instance sees the whole file in order and its
+// state never leaks into another build.
 type LineDetector interface {
 	FileAnalyzer
 

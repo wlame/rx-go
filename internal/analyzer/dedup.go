@@ -1,13 +1,12 @@
 package analyzer
 
-// This file implements cross-worker anomaly deduplication.
+// This file implements anomaly deduplication across groups of results.
 //
-// Background: the index builder shards the file across K workers, and
-// each worker scans its range plus a W-line overlap into the next
-// chunk. That overlap is what guarantees detectors with multi-line
-// cues (e.g. a traceback whose open line lands at the seam) see the
-// whole pattern — at the cost of detecting it on BOTH sides of the
-// boundary. We de-dup those exact repeats here.
+// The index builder scans the file in one sequential pass and passes
+// one group, so today every anomaly is kept. A builder that split the
+// file into ranges, each scanned with an overlap into the next, would
+// see an anomaly at a seam on both sides; Deduplicate collapses those
+// exact repeats.
 //
 // Design points:
 //
