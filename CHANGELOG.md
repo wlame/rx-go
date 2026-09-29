@@ -451,6 +451,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The performance figures in the docs come from runs of the current
+  binary on real logs (465 MB and 6.3 GB) instead of an older build on
+  another host, and the bounded-read table names its exceptions: the
+  first `samples` lookup in a large or compressed file reads the whole
+  file to build an index, and a line lookup in a gzip, bzip2, xz or
+  plain zstd file streams the whole file every time. Corrected on the
+  way: an index build keeps only its checkpoints (22 MB RSS for a
+  6.3 GB log, not "about the file size"), `--analyze` costs about 130
+  times a plain build (not 2-4 times), and trace memory grows with the
+  match count. The performance page no longer cites the review that
+  found earlier regressions.
+
 - The caching and line-index docs describe the files rx writes. The
   trace cache lives under `trace_cache/<patterns_hash>/`; its key has no
   `--max-results` (a capped request is answered from a full entry);

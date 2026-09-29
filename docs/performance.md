@@ -5,37 +5,44 @@ realistic workloads.
 
 ## Headline numbers
 
-Measured on a linux/arm64 host (4 physical cores, NVMe storage) with
-user-supplied real-world fixtures:
+Measured on an Apple M4 Max (16 cores, 128 GB RAM) with real log files
+already in the page cache, `rx` built from source, median of five runs
+of the whole command (process start included). From disk, the scans are
+bounded by read bandwidth instead.
 
 | Scenario | Input | Median wall-clock |
 |---|---|---:|
-| Literal-dense regex, 4 workers | 1.3 GB Twitter dump (10 M lines) | **38.9 s** (~40 ms/MB) |
-| Multi-pattern regex, 4 workers | 1.3 GB Twitter dump | **62.2 s** |
-| Warm-cache index read | 260 MB JSON file | **10.7 ms** |
-| Cold index build | 260 MB JSON file | **693 ms** |
-| Cold index build | 11 MB WebRTC log | **11 ms** |
-| Trace cache hit | 260 MB file | **< 50 ms** |
-| Samples range (`--lines=1-1000`) on 1.3 GB | 1.3 GB Twitter dump | **~5 ms** |
-| Samples range mid-file (indexed) on 1.3 GB | 1.3 GB Twitter dump | **~5 ms** |
-| Trace with `--max-results=10` | 1.3 GB Twitter dump | **~70 ms** |
-| Server cold start | — | **~50 ms** |
+| Rare literal, no cache | 6.3 GB log, 42.5 M lines | **0.49 s** |
+| Dense pattern (`" E "`, 894,264 matching lines), `--json` | 6.3 GB log | **5.07 s** |
+| Three patterns (`-e ERROR -e WARN -e Exception`) | 6.3 GB log | **0.52 s** |
+| `--max-results=10` on the dense pattern | 6.3 GB log | **31 ms** |
+| Trace cache hit, rare literal | 6.3 GB log | **12 ms** |
+| Cold index build | 6.3 GB log | **2.2 s** |
+| Cold index build | 465 MB log | **142 ms** |
+| `rx index` with a valid index | 465 MB log | **11 ms** |
+| `samples --lines=40000000`, with index | 6.3 GB log | **20 ms** |
+| `samples --lines=40000000`, no index | 6.3 GB log | **2.46 s** |
+| `samples --lines=1-1000`, no index | 6.3 GB log | **12 ms** |
+| `rx --version` | — | **11 ms** |
 
-The 40 ms/MB literal-scan figure is a useful rule of thumb for
-extrapolation, though real throughput depends heavily on pattern
-complexity, file content, and hardware.
+For comparison, `rg -c " E "` on the same 6.3 GB file took 0.64 s. The
+dense trace spends its extra time building and printing 894,264 match
+records.
 
 ## Bounded read contract
 
-`rx` guarantees that every read-oriented operation consumes no more of
-the source file than its result requires. Specifically:
+`rx` reads no more of the source file than its result requires, except
+where this table says otherwise:
 
-| Operation | Guarantees we read |
+| Operation | What it reads |
 |---|---|
-| `rx samples --lines=START-END` | at most `END × avg_line_bytes` (+ buffer overshoot); with an index, from the nearest checkpoint to END |
-| `rx samples --lines=N --context=K` | a window of about `2K+1` lines around N, starting from the index checkpoint at-or-before `N-K` |
-| `rx samples --offsets=A-B` | roughly `B + avg_line` bytes (offset-to-line conversion scans from byte 0; future optimization planned) |
-| `rx trace --max-results=M` | **early-cancel**: as soon as the collector has M matches, all in-flight ripgrep subprocesses receive SIGKILL and queued chunks are skipped; you do not pay for work past the cap |
+| `rx samples --lines=START-END` (plain file) | with an index, from the nearest checkpoint before START to END; without one, from byte 0 to END |
+| `rx samples --lines=N --context=K` (plain file) | the same, for the window `N-K` to `N+K` |
+| `rx samples --offsets=A-B` (plain file) | from the nearest checkpoint before A (or byte 0 without an index) to about B, to number the lines |
+| **First `rx samples` lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in any compressed file, with no cached index** | **the whole file, to build and store the index**, inside the call (CLI or `GET /v1/samples`); not shared between concurrent requests and without a deadline. `--no-index` or `RX_NO_INDEX` turns it off |
+| **`rx samples --lines` on a gzip, bzip2, xz or plain zstd file** | **the whole decompressed stream, every time**, whatever lines are asked; twice for a negative line |
+| `rx samples --lines` on a seekable zstd file with an index | the frames holding the wanted lines |
+| `rx trace --max-results=M` | **early-cancel**: as soon as the collector has M matches, in-flight ripgrep subprocesses are killed and queued chunks are skipped; numbering a match the cap left unnumbered reads from the nearest index checkpoint, or nothing without an index (or from byte 0 with `--no-index`) |
 | `rx trace` (no cap) | full file — this is the design |
 | `rx index` | full file — this is the design (builds the checkpoint map) |
 | `rx compress` | full file — this is the design (output is the file) |
@@ -43,104 +50,87 @@ the source file than its result requires. Specifically:
 | `GET /v1/index` (cached) | the cached JSON index file only; no source-file access |
 | Webhook dispatch | non-blocking fire-and-forget; full queue = drop with metric, never blocks trace |
 
-These bounds are enforced by byte-budget unit tests (see
-`internal/samples/resolver_budget_test.go` and
-`internal/trace/worker_maxresults_test.go`) that wrap the I/O with a
-counting reader and assert on bytes actually read. Regressions of the
-form "the output is correct but we read more than necessary" are caught
-at unit-test time rather than surfacing as end-user slowdowns.
-
-### History
-
-Stage 9 Round 5 (2026-04-18) found and fixed three bounded-read regressions:
-
-- **R5-B1**: `samples --lines=START-END` was reading to EOF on every
-  range request because the loop's break condition was unreachable when
-  no target line was requested. On the 1.3 GB fixture, a request for
-  lines 1-1000 took ~590 ms before the fix and ~5 ms after
-  (**~140× speedup**). The fix introduces a `needTarget` flag that
-  decouples the range-only path from the target-offset path.
-- **R5-B2**: `ProcessAllChunks` did not propagate `max_results` to its
-  worker fanout, so all chunks scanned to completion regardless. The
-  fix adds a tally channel and a cooperative cancel: as soon as the
-  match count reaches the cap, the errgroup context is canceled,
-  in-flight ripgrep subprocesses are killed via `exec.CommandContext`,
-  and queued chunks are skipped without spawning rg at all.
-- **R5-B3**: `ProcessSeekable` had the same issue for seekable-zstd
-  files. Fixed with the same tally+cancel pattern.
+The bold rows are known exceptions to "no more than the result
+requires". The bounds are enforced by byte-budget unit tests (for
+example `internal/samples/resolver_budget_test.go`,
+`internal/samples/batch_offsets_budget_test.go` and
+`internal/trace/maxresults_budget_test.go`) that wrap the I/O with a
+counting reader and assert on bytes actually read, so a regression of
+the form "the output is correct but we read more than necessary" is
+caught at unit-test time.
 
 ## Worker scaling
 
-On the 1.3 GB fixture:
+The rare literal on the 6.3 GB log, by `RX_WORKERS` (median of three):
 
 | Workers | Wall-clock | Speedup vs 1 worker |
 |---:|---:|---:|
-| 1 | 69.7 s | 1.00× |
-| 2 | 43.8 s | 1.59× |
-| 4 | 35.3 s | 1.97× |
-| 8 | 36.0 s | plateau |
+| 1 | 1.45 s | 1.00× |
+| 2 | 1.03 s | 1.41× |
+| 4 | 0.52 s | 2.80× |
+| 8 | 0.46 s | 3.18× |
+| 16 | 0.50 s | 2.93× |
 
-Scaling is near-linear to the physical core count (4 in this run).
-Beyond physical cores, hyperthreads don't help — the workload is
-memory-bandwidth-bound and sharing a core between two regex threads
-adds cache pressure without adding throughput.
+Gains flatten past 4-8 workers: the scan becomes bound by memory
+bandwidth and by the work outside the scan (process start, planning,
+merging).
 
 ### Tuning advice
 
-- **Default**: don't set `RX_WORKERS` — `rx` uses `NumCPU`, which
-  matches the scaling sweet spot on most hardware
+- **Default**: don't set `RX_WORKERS` — `rx` uses the smaller of
+  `NumCPU` and `RX_MAX_SUBPROCESSES` (20)
 - **Limit when**: running alongside other CPU-heavy workloads. Cap to
   half the core count to leave headroom
 - **Increase when**: I/O-bound scans (high-latency network mounts)
-  where Go runtime will happily park blocked workers and dispatch
-  more. Try `NumCPU * 2`
+  where more requests in flight hide the latency. Try `NumCPU * 2`
 
 ## Memory profile
 
-Memory usage varies by pattern complexity and match density:
+Peak RSS (`/usr/bin/time -l`) on the same machine:
 
-- **Single-pattern literal scan**: a few hundred MB per worker
-- **Multi-pattern regex (3-5 patterns)**: peaks at several GB on
-  large fixtures because each worker holds a compiled regex set
-- **Index build**: peak RSS roughly equals the source file size
-  (the full line-offset slice is held in memory before emission)
-- **Trace with large result set**: scales with match count; a
-  million-match scan holds roughly 100-200 bytes per match
+| Command | Peak RSS |
+|---|---:|
+| `rx trace NullPointerException` on the 6.3 GB log (58 matches) | 22 MB |
+| `rx trace " E " --json` on the 6.3 GB log (894,264 matches) | 5.9 GB |
+| `rx index` on the 465 MB log | 22 MB |
+| `rx index` on the 6.3 GB log | 23 MB |
 
-Rule of thumb: budget at least **file size ÷ workers** in RAM,
-plus a few hundred MB per worker for overhead.
+A scan itself streams; what costs memory is the result. Every match is
+held, with its line text, until the answer is printed, so memory grows
+with the match count and the line length — about 6.6 KB per match on
+that log. An index build keeps only its checkpoints.
 
 ### OOM mitigations
 
-If you're hitting OOM on large multi-pattern scans:
+If you're hitting OOM on scans with many matches:
 
-1. Reduce `RX_WORKERS` (fewer automaton copies)
-2. Reduce `RX_MIN_CHUNK_SIZE_MB` to work with smaller in-flight buffers
-3. Split the scan: one pattern per `rx trace` call
-4. Add `--max-results` to bound result memory
+1. Add `--max-results` to bound the result
+2. Make the pattern more selective
+3. Split the input: one file per `rx trace` call
 
 ## Binary size and startup
 
-- Statically-linked binary: **13 MB** (stripped, `CGO_ENABLED=0`)
-- Cold start overhead: **~50 ms** (`time rx --version`)
+- Statically-linked binary: **13.9 MB** (`-ldflags '-s -w'`,
+  `CGO_ENABLED=0`, darwin/arm64)
+- Start-up: **11 ms** (`rx --version`)
 - No runtime dependencies except `ripgrep`
 - No external shared libraries (`libzstd`, `libxz`, etc. are bundled in
   pure-Go implementations)
 
 ## Caching impact
 
-The trace cache and index cache have large effects on repeated
-operations:
-
-| Operation | Cold | Warm |
+| Operation | Without cache or index | With |
 |---|---|---|
-| `rx index` on 260 MB | ~700 ms | ~10 ms |
-| `rx trace` on 260 MB with matching patterns | ~1.7 s | ~50 ms (cache hit) |
-| `rx samples --lines=N` on 260 MB | index-dependent | ~10 ms |
+| `rx index` on the 465 MB log | 142 ms (build) | 11 ms (valid index found) |
+| `rx trace` rare literal, 6.3 GB log | 0.48 s | 12 ms (trace cache hit) |
+| `rx trace WARN`, 465 MB log, 51,817 matches | 331 ms | 429 ms (trace cache hit) |
+| `rx samples --lines=40000000`, 6.3 GB log | 2.46 s | 20 ms (index) |
 
-The warm-cache index read is particularly fast — a single JSON parse.
-For workloads that query the same files repeatedly, pre-warming the
-cache has outsized leverage:
+A trace cache hit reads the stored matches, so it is cheap for a
+selective pattern and can cost more than a scan for a dense one when
+the file is already in the page cache. From disk, a scan of a large
+file costs far more than either. For workloads that look up lines in
+the same files repeatedly, pre-building the indexes pays off:
 
 ```bash
 # Pre-warm at deploy time.
@@ -151,42 +141,43 @@ find /var/log -name "*.log" -size +50M -exec rx index {} \;
 
 ### Read throughput
 
-Decompressor throughput bounds scan speed for compressed files:
-
-| Format | Approximate decompress rate |
-|---|---|
-| gzip | 200-400 MB/s |
-| bzip2 | 20-80 MB/s |
-| xz | 60-120 MB/s |
-| zstd | 500-1500 MB/s |
-
-Compressed-file `rx trace` is single-threaded — parallel workers
-can't split a non-seekable compressed stream. Use
-[`rx compress`](cli/compress.md) to convert to seekable zstd for
-parallelism on future scans.
+Compressed-file `rx trace` is single-threaded for gzip, bzip2, xz and
+plain zstd — parallel workers can't split a non-seekable compressed
+stream. A seekable zstd file is scanned frame-parallel. `rx samples
+--lines` on a 113 MB `.gz` of the 465 MB log took 1.6 s for any line,
+because it streams the whole file. Use [`rx compress`](cli/compress.md)
+to convert to seekable zstd for parallel scans and frame-sized
+lookups.
 
 ### Seekable zstd encoding
 
-- **Level 3 (default)**: ~200-300 MB/s per worker
-- **Level 9**: ~30-50 MB/s per worker
-- **Level 19**: ~5 MB/s per worker
-- **Size ratio**: typically 10×-30× on real-world log data
+`--level` accepts 1-22, but the encoder has four settings. On the
+465 MB log, one worker, 4 MiB frames:
 
-Seekable zstd is ~4-5% larger than monolithic zstd at the same level
-due to per-frame dictionary restarts.
+| Levels | Time | Output | Ratio |
+|---|---:|---:|---:|
+| 1 | 0.47 s | 82.9 MB | 5.88× |
+| 2-5 (default 3) | 0.71 s | 47.8 MB | 10.19× |
+| 6-9 | 0.97 s | 44.4 MB | 10.99× |
+| 10-22 | 4.84 s | 43.2 MB | 11.27× |
+
+`--workers=4` took the default level to 0.29 s and levels 10-22 to
+1.71 s. `zstd -3`, one frame, wrote 41.6 MB.
 
 ### Frame size trade-off
 
-Smaller frames = better random access, worse ratio:
+Smaller frames = finer random access, worse ratio. Same log, default
+level:
 
-| Frame size | Ratio penalty vs monolithic | Seek granularity |
-|---|---|---|
-| 1 MiB | ~8% | 1 MiB |
-| 4 MiB (default) | ~4% | 4 MiB |
-| 16 MiB | ~2% | 16 MiB |
-| 64 MiB | ~1% | 64 MiB |
+| Frame size | Frames | Output | Ratio |
+|---|---:|---:|---:|
+| 1 MiB | 429 | 95.3 MB | 5.11× |
+| 4 MiB (default) | 114 | 47.8 MB | 10.19× |
+| 16 MiB | 29 | 32.7 MB | 14.91× |
+| 64 MiB | 8 | 29.7 MB | 16.43× |
 
-For files queried by line number, 1-4 MiB is usually right.
+For files queried by line number, 1-4 MiB is usually right; this log's
+very long lines make small frames costlier than usual.
 
 ## When to build an index
 
@@ -196,27 +187,22 @@ Build an index when:
 - You'll run line-number lookups or range queries (`--lines=...`) AND
 - The file is queried more than once
 
+`rx samples` builds one by itself on the first lookup in such a file,
+so an explicit `rx index` moves that cost to a time you choose.
+
 Skip the index when:
 
-- The file is small (< 50 MB) — below-threshold files stream-scan
-  fast enough without help
-- You'll only query the file once — the build cost exceeds the query
-  cost
-- You only use byte offsets — they don't need an index
+- The file is small (< 50 MB) — a lookup from byte 0 is cheap
+- You'll only query the file once — the build costs a full read
+- You only use byte offsets near the start of the file
 
 ### Cost/benefit
 
-| Operation | Without index | With index |
+| Operation (6.3 GB log) | Without index | With index |
 |---|---|---|
-| `rx samples --lines=1000000` on 1.3 GB | linear scan to line 1 000 000 (~150 MB read, ~200 ms) | ~5 ms (seek to nearest checkpoint) |
-| `rx samples --lines=-50--1` on 1.3 GB | full-file line count (~1.3 GB read, ~1 s) | ~5 ms (total line count from index) |
-| `rx trace` absolute line numbers | linear scan per chunk | O(log N) index lookup |
-
-Without an index, `samples` still respects the bounded-read contract:
-it reads from byte 0 up to the requested end line and stops there. The
-index turns that linear portion into a sub-second random-access seek.
-
-Pay once at index-build time; every subsequent query is near-free.
+| `rx samples --lines=40000000` | 2.46 s (reads to line 40 000 000) | 20 ms (seek to the nearest checkpoint) |
+| `rx samples --lines=-50--1` | 11 ms | 11 ms |
+| `rx trace --max-results=N` line numbers | `-1` for matches the cap left unnumbered | counted from the nearest checkpoint |
 
 ## I/O patterns
 
@@ -234,34 +220,33 @@ expect noticeably worse latency per lookup.
 
 ### Write patterns
 
-Caches are written atomically via temp-file + rename. Each
-cache-write is a few hundred KB to a few MB for indexes; trace caches
-scale with match count.
+Caches are written via a temporary file and a rename. An index is
+about one checkpoint per MB of source (9.3 KB for the 465 MB log); a
+trace cache entry grows with the match count (4.9 MB for 51,817
+matches).
 
 ## Extrapolation to very large files
 
-The largest measured fixture was **1.3 GB**. For files in the
-10-100 GB range, the scaling behavior is expected to hold for
-literal-dense patterns and `NumCPU=4`:
+The largest file measured here is **6.3 GB**. For files in the
+10-100 GB range, a rare-pattern scan from the page cache grows with
+the file size:
 
 ```text
-naive projection = (file_size / 1.3 GB) × 38.9 s
+naive projection = (file_size / 6.3 GB) × 0.49 s
 ```
 
-For a 100 GB file: ~50 minutes of wall-clock. Caveats:
+For a 100 GB file that is about 8 s, which no machine reaches unless
+the file is in memory. Caveats:
 
-- **Memory scaling is not verified** at this size. Single-pattern
-  scans should be fine (bounded per-worker buffers), but multi-pattern
-  scans at peak match density could exceed typical RAM.
-- **Disk bandwidth becomes the bottleneck**. At NVMe speeds (3 GB/s),
-  minimum read time for 100 GB is ~33 s, so the 50 min estimate
-  assumes the scan is CPU-bound, not disk-bound.
-- **Result set size**: a literal-dense scan of a 100 GB file could
-  produce many millions of matches, exceeding JSON output buffers.
-  Use `--max-results` to cap.
+- **Disk bandwidth becomes the bottleneck.** At 3 GB/s, reading
+  100 GB takes over 30 s, so a scan from disk is disk-bound, not
+  CPU-bound.
+- **Result set size**: memory grows with the match count (about
+  6.6 KB per match on the log above). A dense pattern over a 100 GB
+  file can exhaust RAM. Use `--max-results` to cap.
 
 **Recommendation**: benchmark at your target scale before claiming
-reliability there. File an issue if you do — we'd like data points.
+reliability there.
 
 ## Measuring your own workloads
 
@@ -274,8 +259,9 @@ approaches:
 time rx "pattern" /var/log/your-file.log > /dev/null
 ```
 
-Median over 5 runs: discard the first (cold cache), average the
-remaining 4.
+Run it five times and take the median. The first run reads the file
+from disk; the others find it in the page cache, so report the two
+separately.
 
 ### Server-side metrics
 

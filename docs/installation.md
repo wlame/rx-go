@@ -11,15 +11,19 @@ regex search.
 - **`ripgrep` (`rg`):** required for `rx trace` and the HTTP `/v1/trace`
   endpoint. Must be reachable via `$PATH`. `samples`, `index`, `compress`
   and the other endpoints work without it.
-- **Disk:** roughly 2-5% of your largest indexed file for on-disk caches.
+- **Disk:** an index is about one checkpoint per MB of source (9.3 KB
+  for a 465 MB log); a cached trace answer grows with its match count
+  (4.9 MB for 51,817 matches).
   Cache location defaults to `~/.cache/rx/`; override with
   [`RX_CACHE_DIR`](configuration.md).
-- **Memory:** depends on workload. A single worker scanning a dense
-  literal pattern on a multi-GB file typically peaks at a few hundred MB
-  RSS per worker. See [performance](performance.md) for profile numbers.
+- **Memory:** grows with the number of matches a trace returns, not
+  with the file size: a rare pattern over a 6.3 GB log peaked at 22 MB
+  RSS, a pattern with 894,264 matches at 5.9 GB. See
+  [performance](performance.md#memory-profile).
 
 `rx` itself has no shared-library dependencies and no bundled
-`libzstd`. The statically-linked binary is ~13 MB.
+`libzstd`. The statically-linked binary is about 14 MB (13.9 MB for
+darwin/arm64).
 
 ### What `rx` does *not* need
 
@@ -116,7 +120,7 @@ rx --version
 ```
 
 The `-s -w` flags strip debug symbols and the DWARF table, producing a
-~13 MB binary. Omit them if you need a symbolized build for debugging.
+~14 MB binary. Omit them if you need a symbolized build for debugging.
 
 ### Verify installation
 
