@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/compression"
-	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
 	sandbox "github.com/wlame/rx-go/internal/paths" // aliased: local vars named `paths`
 	"github.com/wlame/rx-go/internal/prometheus"
@@ -67,7 +66,7 @@ func (o *Options) applyDefaults() {
 // ============================================================================
 
 // Engine is the reusable trace engine. Safe for concurrent use: each
-// Run call manages its own subprocesses and has no shared state beyond
+// RunWithOptions call manages its own subprocesses and has no shared state beyond
 // the immutable config.
 type Engine struct{}
 
@@ -76,7 +75,8 @@ type Engine struct{}
 // registry injected for tests) don't break callers.
 func New() *Engine { return &Engine{} }
 
-// Run is the top-level search. It:
+// RunWithOptions is the top-level search, used by the CLI, the HTTP
+// handler and tests. It:
 //
 //  1. Resolves each input path (file vs. directory, validated).
 //  2. Assigns file IDs ("f1", "f2", ...) and pattern IDs ("p1", ...).
@@ -97,21 +97,6 @@ func New() *Engine { return &Engine{} }
 // up to intentional differences in logging (structured vs slog) and
 // the order in which concurrent batches complete (we sort at the end,
 // same as Python).
-func (e *Engine) Run(ctx context.Context, req *rxtypes.TraceRequest) (*rxtypes.TraceResponse, error) {
-	opts := Options{
-		MaxResults:    req.MaxResults,
-		RgExtraArgs:   req.RgFlags,
-		ContextBefore: ptrIntDeref(req.BeforeContext, 0),
-		ContextAfter:  ptrIntDeref(req.AfterContext, 0),
-		NoCache:       req.NoCache,
-		NoIndex:       req.NoIndex,
-	}
-	return e.RunWithOptions(ctx, req.Path, req.Patterns, opts)
-}
-
-// RunWithOptions is the programmatic entry point used by the CLI and
-// tests. It accepts paths + patterns + Options directly (the HTTP
-// wrapper calls Run(req)).
 func (e *Engine) RunWithOptions(
 	ctx context.Context,
 	paths []string,
@@ -931,32 +916,6 @@ func dedupStrings(in []string) []string {
 	}
 	return out
 }
-
-// ptrIntDeref returns *p if non-nil, else def. Used for the optional
-// int fields of TraceRequest.
-func ptrIntDeref(p *int, def int) int {
-	if p == nil {
-		return def
-	}
-	return *p
-}
-
-// ParsePaths is a convenience wrapper matching the Python entry point
-// name. New code should call Engine{}.Run directly; this is provided
-// so CLI glue code can keep the Python call-site vocabulary.
-func ParsePaths(
-	ctx context.Context,
-	paths []string,
-	patterns []string,
-	opts Options,
-) (*rxtypes.TraceResponse, error) {
-	return (&Engine{}).RunWithOptions(ctx, paths, patterns, opts)
-}
-
-// For future-stretch use: a `//go:build debug` variant could inject
-// debug-file writes here. We intentionally leave that hook in as a
-// single symbol so it's easy to reintroduce Python's RX_DEBUG path.
-var _ = config.DebugMode
 
 // scanToCache decides, before a file is scanned, whether the scan's
 // answer is to be written to the trace cache, and if so starts the

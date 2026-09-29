@@ -12,14 +12,12 @@
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
 //
-// Design decision (5.12 — "task store backing"):
-//
-//	Python uses an asyncio.Lock with dict mutation. Go port uses a
-//	plain sync.Mutex around a sync.Map — a map[string]*Task — for
-//	tasks, plus a sync.Mutex-guarded map[string]string for path
-//	locks. A full sync.Map would work too, but we need the "is
-//	this path already locked?" atomic check-and-insert, and the
-//	single-lock variant is simpler to reason about.
+// Task store backing: Python uses an asyncio.Lock with dict mutation.
+// This package uses one sync.Mutex guarding a map[string]*Task for the
+// tasks and a map[string]string for the path locks. A sync.Map would
+// work too, but the "is this path already locked?" check-and-insert
+// has to be atomic, and one lock around plain maps is simpler to
+// reason about.
 package tasks
 
 import (
