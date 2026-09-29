@@ -160,12 +160,10 @@ The output is the same whatever the worker count.
 - Opens the decompressor
 - Streams through decompressed output, counting `\n`
 - Captures lines in the window `[N-C, N+C]`
-- Stops after the last requested line
+- Reads on to the end of the stream
 
-Performance depends on the target line:
-
-- Line 100: microseconds-milliseconds
-- Line 1,000,000 on a 1 GB source: seconds
+So the cost is one full decompression whatever the line: on the 113 MB
+`.gz` of a 465 MB log, line 5 and line 1,191,541 both took 1.55 s.
 
 `rx samples` builds and stores a line index for a compressed file the
 first time it is asked about one (unless `--no-index` or `RX_NO_INDEX`
