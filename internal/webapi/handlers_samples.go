@@ -102,16 +102,11 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 
 		// Compression check.
 		compressed := compression.IsCompressed(validated)
-		compFmt := compression.FormatNone
-		if compressed {
-			compFmt, _ = compression.DetectFromPath(validated)
-		}
 		if compressed && in.Offsets != "" {
 			return nil, ErrBadRequest(
 				"Byte offsets are not supported for compressed files. Use 'lines' parameter instead.",
 			)
 		}
-		_ = compFmt
 
 		// Context defaults (-1 sentinel = "not provided").
 		defaultCtx := 3

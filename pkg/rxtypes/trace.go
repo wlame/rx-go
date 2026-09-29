@@ -1,29 +1,5 @@
 package rxtypes
 
-// TraceRequest is the request body for POST /v1/trace and the input to
-// the CLI `rx trace` command.
-//
-// Field semantics mirror Python's TraceRequest/parse_paths signature
-// (rx-python/src/rx/trace.py). Optional flags use pointer types so that
-// the zero value ("not set") is distinguishable from an explicit 0.
-type TraceRequest struct {
-	Patterns      []string `json:"patterns"`
-	Path          []string `json:"path"`
-	RgFlags       []string `json:"rg_flags,omitempty"`
-	MaxResults    *int     `json:"max_results,omitempty"`
-	BeforeContext *int     `json:"before_context,omitempty"`
-	AfterContext  *int     `json:"after_context,omitempty"`
-	NoCache       bool     `json:"no_cache,omitempty"`
-	NoIndex       bool     `json:"no_index,omitempty"`
-
-	// Optional webhook URL overrides. A nil pointer means "use the
-	// environment-configured URL"; an empty string disables the hook
-	// entirely for this request.
-	HookOnFileURL     *string `json:"hook_on_file_url,omitempty"`
-	HookOnMatchURL    *string `json:"hook_on_match_url,omitempty"`
-	HookOnCompleteURL *string `json:"hook_on_complete_url,omitempty"`
-}
-
 // Submatch is a single regex match within a matched line.
 //
 // Submatches are derived from ripgrep's --json output and represent

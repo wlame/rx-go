@@ -59,48 +59,6 @@ func TestGetCompressedCacheInfo_Miss(t *testing.T) {
 	}
 }
 
-// TestParsePaths covers the convenience wrapper (0% coverage otherwise).
-func TestParsePaths(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed")
-	}
-	dir := t.TempDir()
-	p := filepath.Join(dir, "a.log")
-	_ = os.WriteFile(p, []byte("hello\nerror one\n"), 0o644)
-
-	resp, err := ParsePaths(context.Background(), []string{p}, []string{"error"}, Options{})
-	if err != nil {
-		t.Fatalf("ParsePaths: %v", err)
-	}
-	if len(resp.Matches) != 1 {
-		t.Errorf("expected 1 match, got %d", len(resp.Matches))
-	}
-}
-
-// TestEngine_Run_WithTraceRequestStruct covers the .Run variant (as
-// opposed to .RunWithOptions).
-func TestEngine_Run_WithTraceRequestStruct(t *testing.T) {
-	if _, err := exec.LookPath("rg"); err != nil {
-		t.Skip("rg not installed")
-	}
-	dir := t.TempDir()
-	p := filepath.Join(dir, "a.log")
-	_ = os.WriteFile(p, []byte("hit\nerror one\nno match\n"), 0o644)
-
-	eng := New()
-	req := &rxtypes.TraceRequest{
-		Path:     []string{p},
-		Patterns: []string{"error"},
-	}
-	resp, err := eng.Run(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if len(resp.Matches) != 1 {
-		t.Errorf("expected 1 match, got %d", len(resp.Matches))
-	}
-}
-
 // TestEngine_Run_WithMaxResults verifies MaxResults capping.
 func TestEngine_Run_WithMaxResults(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
@@ -543,17 +501,6 @@ func TestRemainingResults(t *testing.T) {
 				t.Errorf("got %d, want %d", *got, tc.want)
 			}
 		})
-	}
-}
-
-// TestPtrIntDeref covers both arms of the helper.
-func TestPtrIntDeref(t *testing.T) {
-	if got := ptrIntDeref(nil, 42); got != 42 {
-		t.Errorf("nil pointer: got %d, want 42", got)
-	}
-	five := 5
-	if got := ptrIntDeref(&five, 42); got != 5 {
-		t.Errorf("valued pointer: got %d, want 5", got)
 	}
 }
 
