@@ -40,10 +40,11 @@ out compresses the way the CLI does without that flag.
 
 ### Compression level
 
-- `1` → fastest, largest output
-- `3` → default, balanced
-- `19` → slow, much smaller output
-- `22` → ultra, rarely worth the encode time
+Any level from 1 to 22 is accepted, but the encoder has four settings:
+`1` (fastest), `2`-`5` (default), `6`-`9` (better compression) and
+`10`-`22` (best compression). Levels in one group write identical
+files. See [compression levels](../../concepts/compression.md#compression-level)
+for measured sizes and times.
 
 ## Response — 200 OK
 
@@ -181,7 +182,7 @@ When the task completes, its `result` field contains a
 | `output_path` | string | Destination `.zst` file |
 | `compressed_size` | int64 | Bytes on disk after encoding |
 | `decompressed_size` | int64 | Original file size |
-| `compression_ratio` | number | `decompressed / compressed` (≥ 1.0) |
+| `compression_ratio` | number | `decompressed / compressed`; below 1 when the input does not compress, such as a file that is already compressed |
 | `frame_count` | int | Number of independent zstd frames |
 | `total_lines` | int64 \| null | Line count from the index; `null` when no index was built |
 | `index_built` | bool | Whether the line index was built and saved |
@@ -232,10 +233,11 @@ body; the sentence names the same task.
 - Encoding is currently single-worker in the HTTP path — full
   `--workers=N` parallelism is CLI-only in this release
 - Memory overhead: one frame buffer (default 4 MiB) during encode
-- Compression ratio is highly input-dependent — real-world logs
-  typically hit 10×-30× at default level
-- Higher levels (9, 19, 22) are slower with diminishing size returns;
-  default level 3 is usually the sweet spot
+- Compression ratio is highly input-dependent — a 465 MB application
+  log gave 10.19× at the default level with 4 MiB frames
+- Levels 10-22 took about 7× the time of the default level on that log
+  for 10% less output; see
+  [compression levels](../../concepts/compression.md#compression-level)
 
 ## See also
 
