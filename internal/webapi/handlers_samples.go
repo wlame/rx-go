@@ -69,18 +69,15 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		Summary:     "Get context lines around byte offsets or line numbers",
 		Description: "Use this endpoint to view actual content around matches from /v1/trace.",
 		Tags:        []string{"Context"},
+		// No 503: samples reads the file itself and never runs ripgrep.
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusUnprocessableEntity,
-			http.StatusInternalServerError, http.StatusServiceUnavailable),
+			http.StatusInternalServerError),
 	}, func(_ context.Context, in *samplesInput) (out *samplesOutput, err error) {
 		start := time.Now()
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.
 		defer func() { recordEndpoint(prometheus.RecordSamplesRequest, err) }()
-
-		if s.cfg.RipgrepPath == "" {
-			return nil, ErrServiceUnavailable("ripgrep is not available on this system")
-		}
 
 		// Sandbox.
 		validated, err := paths.ValidatePathWithinRoots(in.Path)

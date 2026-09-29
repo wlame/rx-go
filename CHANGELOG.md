@@ -434,6 +434,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `GET /v1/samples` answers on a server without `ripgrep`. It returned
+  `503`, though it reads the file itself and never runs `rg`; `rx
+  samples` already worked without it. The OpenAPI document no longer
+  declares a `503` for the operation.
+
 - A cached analysis is reused only for a request it answers. `rx index
   --analyze` and `POST /v1/index` with `analyze: true` reused any
   analyzed index, whatever `analyze_window_lines` it ran with and
