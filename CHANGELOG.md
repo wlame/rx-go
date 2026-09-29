@@ -451,6 +451,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The compression docs match the encoder and the offsets rx reports.
+  A byte offset rx reports for a compressed file is a position in the
+  decompressed text (the docs said compressed bytes); `samples
+  --offsets` refuses compressed files because it cannot seek there.
+  `--level` has four encoder settings (1, 2-5, 6-9, 10-22), not 22
+  distinct levels, and the sizes and times quoted come from a real
+  465 MB log; a seekable file is not "4-5% larger" than plain zstd
+  but 15% at the default frame size there. A seekable `.zst` is traced
+  frame-parallel. `rx compress` does not decompress a compressed input,
+  and its `--json` entries carry no `cli_command`.
+
 - The configuration page lists what rx reads: it adds `RX_NO_INDEX`,
   `RX_ANALYZE_WINDOW_LINES` and the global `--hidden` and
   `--search-root` flags, drops the variables nothing reads, and gives

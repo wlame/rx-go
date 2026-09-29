@@ -12,7 +12,7 @@ archived data.
 | bzip2 | `.bz2` | no | no | yes (slow) | no |
 | xz | `.xz` | no | no | yes (slow) | no |
 | zstd (plain) | `.zst` | no | no | yes (slow) | no |
-| **seekable zstd** | `.zst` | **yes** | **no** (see below) | **yes (fast)** | **partial** |
+| **seekable zstd** | `.zst` | **yes** | **no** (see below) | **yes (fast)** | **yes, by frame** |
 
 Format detection is automatic based on the file's magic bytes, not
 its extension.
@@ -25,10 +25,16 @@ requires decompressing the first 500 MB of output first.
 
 This has three consequences for `rx`:
 
-1. **Byte offsets don't have decompressed semantics.** A byte offset
-   in a compressed file refers to the *compressed* position, which
-   isn't useful for content retrieval. `rx samples --offsets` rejects
-   compressed files for this reason.
+1. **Byte offsets are positions in the decompressed text, and
+   `samples` cannot seek to them.** Every offset `rx` reports for a
+   compressed file — a trace match, the `lines` map of `samples` — is a
+   position in the decompressed text, the same number the plain copy of
+   the file gives. A `NullPointerException` match in a 465 MB log is at
+   offset 403366791, line 1191541, in the plain file, its `.gz` copy and
+   a seekable `.zst` made from it alike. Reaching that position again
+   means decompressing up to it, so `rx samples --offsets` refuses a
+   compressed file (`Byte offsets are not supported for compressed
+   files; use lines instead`, exit 2). `--lines` works.
 2. **Line-number lookups require streaming.** `rx samples --lines=N`
    on a `.gz` file streams the decompressor from the start, counts
    newlines, and captures content at line N. Sub-linear time is
@@ -36,7 +42,9 @@ This has three consequences for `rx`:
    structure, which for gzip is the whole stream.
 3. **Parallel trace can't split a compressed stream.** Workers would
    need independent starting points, which don't exist. `rx trace`
-   on compressed files runs in single-worker stream mode.
+   on a gzip, bzip2, xz or plain zstd file runs in single-worker stream
+   mode. A seekable zstd file has those starting points — its frames —
+   and is scanned frame-parallel.
 
 ## Seekable zstd
 
@@ -79,17 +87,24 @@ The resulting `.zst` file is:
 - **Readable by any zstd decoder** as a regular zstd stream (the
   skippable frame is ignored by non-seekable readers)
 - **Seekable via `rx samples`** on a line-number basis
-- **~4-5% larger** than a monolithic zstd file at the same level
-  (each frame restarts the dictionary, reducing compression)
+- **Larger** than a monolithic zstd file, because each frame restarts
+  the compression context: on a 465 MB application log, 4 MiB frames
+  at the default level gave 47.8 MB where `zstd -3` gave 41.6 MB (15%
+  more)
 
 ### Frame size trade-offs
 
-| Frame size | Compression ratio | Seek granularity | Memory to decompress one frame |
-|---|---|---|---|
-| 1 MiB | worst (smallest dictionary context) | best (1 MiB per seek) | lowest |
-| 4 MiB (default) | balanced | 4 MiB per seek | moderate |
-| 16 MiB | best | coarse (16 MiB per seek) | highest |
-| 64 MiB | near-monolithic ratio | very coarse | large |
+Measured on a 465 MB application log at the default level:
+
+| Frame size | Frames | Output | Ratio | Seek granularity |
+|---|---:|---:|---:|---|
+| 1 MiB | 429 | 95.3 MB | 5.11× | 1 MiB per seek |
+| 4 MiB (default) | 114 | 47.8 MB | 10.19× | 4 MiB per seek |
+| 16 MiB | 29 | 32.7 MB | 14.91× | 16 MiB per seek |
+| 64 MiB | 8 | 29.7 MB | 16.43× | 64 MiB per seek |
+
+The ratio depends on the content; this log has some very long lines,
+which small frames cut into many pieces.
 
 For log files queried by line number, 1-4 MiB frames are usually
 right. For archive storage queried sequentially, larger frames save
@@ -97,40 +112,46 @@ space.
 
 ### Compression level
 
-zstd level 1-22. Default: 3.
+`--level` accepts 1-22 (default 3), but the encoder `rx` uses
+(`klauspost/compress`) has four settings, and each level maps to one
+of them:
 
-- Level 1-3: very fast encoding (~200-300 MB/s per worker), smaller
-  ratio wins
-- Level 9: slow encoding, 5-10% better ratio
-- Level 19: very slow encoding, another 5% better
-- Level 22 (ultra): rarely worth the time
+| Levels | Encoder setting | 465 MB log, 1 worker | Output | Ratio |
+|---|---|---:|---:|---:|
+| 1 | fastest | 0.47 s | 82.9 MB | 5.88× |
+| 2-5 | default | 0.71 s | 47.8 MB | 10.19× |
+| 6-9 | better compression | 0.97 s | 44.4 MB | 10.99× |
+| 10-22 | best compression | 4.84 s | 43.2 MB | 11.27× |
+
+Two levels in the same row write byte-identical files: `--level=19`
+is `--level=10`, and `--level=5` is the default. For the smallest
+archive, `zstd -19` (13.5 MB on the same log) is far smaller, but it
+writes one frame and gives up random access.
 
 ## Parallel encoding
 
-`rx compress --workers=4` uses 4 encoder goroutines. Scales
-near-linearly to the physical core count. Beyond the core count, disk
-bandwidth and output serialization become the bottleneck.
+`rx compress --workers=4` uses 4 encoder goroutines. On a 16-core Mac,
+4 workers took the 465 MB log from 0.71 s to 0.29 s at the default
+level, and from 4.77 s to 1.71 s at level 19. Beyond the core count,
+disk bandwidth and output serialization become the bottleneck.
 
 ```bash
 time rx compress /var/log/audit-2026-03.log --workers=4 --frame-size=4M
 ```
 
-On a 582 MB fixture at level 3, this finishes in seconds on modern
-hardware.
+The output is the same whatever the worker count.
 
 ## Trace on compressed files
 
-`rx trace` can scan compressed files, but:
+`rx trace` can scan compressed files:
 
-- Only single-worker (no parallelism)
-- Reads happen through the decompressor, one byte at a time
-- Performance: roughly the decompressor's throughput
-  (often 200-500 MB/s of decompressed output for gzip/zstd)
-
-For seekable zstd, partial parallelism is possible by assigning
-frames to workers. This is implemented for content retrieval but not
-for scanning in the current release — `rx trace` on a seekable `.zst`
-uses the single-worker path.
+- A gzip, bzip2, xz or plain zstd file is one stream, decompressed and
+  piped to a single `ripgrep`; `file_chunks` reports 1
+- A seekable zstd file is scanned frame-parallel: batches of frames go
+  to separate workers, and `file_chunks` reports the frame count (114
+  for the log above, `Parallel chunks: 114` in human output)
+- Either way, offsets and line numbers are those of the decompressed
+  text
 
 ## Samples on compressed files
 
@@ -145,6 +166,14 @@ Performance depends on the target line:
 
 - Line 100: microseconds-milliseconds
 - Line 1,000,000 on a 1 GB source: seconds
+
+`rx samples` builds and stores a line index for a compressed file the
+first time it is asked about one (unless `--no-index` or `RX_NO_INDEX`
+is set), so that call reads the whole file once. Only a seekable zstd
+file uses it; a gzip, bzip2, xz or plain zstd lookup streams whether
+an index exists or not. On the 113 MB `.gz` of a 465 MB log, line
+1191541 took 3.0 s the first time (stream plus index build) and 1.6 s
+after.
 
 For seekable zstd with a built index, the seek is much faster —
 `rx` jumps to the relevant frame via the seek table, decompresses only
@@ -170,10 +199,10 @@ right choice.
 ### Chaining `rx` operations
 
 ```bash
-# Encode a log as seekable zstd.
+# Encode a log as seekable zstd; this also builds its index.
 rx compress /var/log/huge-audit.log --level=9 --frame-size=2M
 
-# Build an index against the compressed output.
+# Rebuild the index later, if it was removed.
 rx index /var/log/huge-audit.log.zst
 
 # Retrieve a line.
@@ -187,7 +216,7 @@ frame.
 ## Related concepts
 
 - [Byte offsets vs line numbers](byte-offsets-vs-line-numbers.md) —
-  why byte offsets don't work on compressed data
+  why `samples` takes no byte offsets for compressed data
 - [Line indexes](line-indexes.md) — how line lookups work with and
   without random access
 - [Caching](caching.md) — compressed-file indexes still cache

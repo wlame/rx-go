@@ -19,15 +19,18 @@ frame. Any compliant zstd decoder can read the file as plain zstd; a
 seek-aware decoder (including `rx samples`) can jump directly to any
 frame without decompressing everything before it.
 
-The trade-off: seekable zstd is ~4-5% larger than a monolithic zstd
-file at the same level, because smaller frames have less context for
-the dictionary. For files that will be searched, sampled, or
-line-indexed repeatedly, the random-access gain far outweighs the size
+The trade-off: seekable zstd is larger than a monolithic zstd file,
+because each frame restarts the compression context. On a 465 MB
+application log, the default 4 MiB frames gave 47.8 MB where `zstd -3`
+gave 41.6 MB. For files that will be searched, sampled, or
+line-indexed repeatedly, the random-access gain outweighs the size
 cost.
 
-The input file can itself be compressed (`gzip`, `bzip2`, `xz`, or
-plain `zstd`). `rx compress` decompresses on the fly and re-encodes to
-seekable zstd.
+`rx compress` encodes the bytes of the input file as they are. A
+`.gz`, `.bz2`, `.xz` or `.zst` input is **not** decompressed first: the
+result is a seekable zstd of the compressed bytes, which `rx` cannot
+search as text. Decompress first (`gunzip -k app.log.gz`), then
+compress the plain file.
 
 ## Flags
 
@@ -36,7 +39,7 @@ seekable zstd.
 | `-o`, `--output` | `string` | `<PATH>.zst` | Output file path (single-file only) |
 | `--output-dir` | `string` | — | Output directory; uses `<basename>.zst` inside |
 | `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB` |
-| `-l`, `--level` | `int` | `3` | zstd level: `1` (fast) .. `22` (slowest, smallest) |
+| `-l`, `--level` | `int` | `3` | zstd level `1`-`22`; the encoder has four settings: `1`, `2`-`5`, `6`-`9`, `10`-`22` |
 | `-f`, `--force` | `bool` | `false` | Overwrite existing output |
 | `--build-index` | `bool` | `true` | Build the frame index for the `.zst` that was written |
 | `--no-index` | `bool` | `false` | Turns `--build-index` off |
@@ -92,14 +95,14 @@ rx compress /var/log/audit-2026-03.log
 ```
 
 Produces `/var/log/audit-2026-03.log.zst` with 4 MiB frames at zstd
-level 3. Stdout:
+level 3, and its index. Stdout, for a 465 MB application log:
 
 ```text
-wrote /var/log/audit-2026-03.log.zst (582137856 bytes → 40231680 bytes, 14.47x) in 139 frames
+wrote /var/log/audit-2026-03.log.zst (487561499 bytes → 47808474 bytes, 10.19x) in 114 frames
 ```
 
-The 14.47x ratio reads as "source-size / compressed-size" — i.e., the
-file shrank to about 7% of its original size.
+The 10.19x ratio reads as "source-size / compressed-size" — i.e., the
+file shrank to about 10% of its original size.
 
 ### Tune the frame size
 
@@ -107,10 +110,11 @@ file shrank to about 7% of its original size.
 rx compress /var/log/audit-2026-03.log --frame-size=1M
 ```
 
-1 MiB frames — four times as many frames, four times the seek-table
-size, slightly worse compression ratio (~1-2% extra). Smaller frames
-mean finer-grained random access: a line-index lookup decompresses
-only the enclosing 1 MiB instead of 4 MiB.
+1 MiB frames — about four times as many frames and a worse ratio: on
+the 465 MB log, 429 frames and 95.3 MB (5.11x) against 114 frames and
+47.8 MB at 4 MiB. Smaller frames mean finer-grained random access: a
+line-index lookup decompresses only the enclosing 1 MiB instead of
+4 MiB. See [frame size trade-offs](../concepts/compression.md#frame-size-trade-offs).
 
 Use smaller frames when:
 
@@ -129,9 +133,11 @@ Use larger frames (`8M`, `16M`) when:
 rx compress /var/log/audit-2026-03.log --level=19
 ```
 
-Levels 19+ are markedly slower (roughly 5-10× encoding time vs level 3)
-and produce marginally smaller output (~5-15% smaller). Worth it for
-archival data that won't be re-encoded.
+The encoder has four settings, and levels 10 to 22 all use the
+strongest one: `--level=19` writes the same file as `--level=10`. On
+the 465 MB log it took 4.84 s against 0.71 s for the default and wrote
+43.2 MB against 47.8 MB. See
+[compression levels](../concepts/compression.md#compression-level).
 
 ### Custom output path
 
@@ -154,10 +160,11 @@ directory is auto-created with permissions `0750` if it doesn't exist.
 rx compress /var/log/audit-2026-03.log --workers=4
 ```
 
-Spawns 4 encoder goroutines, each producing one frame at a time. Useful
-on multi-core hardware — near-linear speedup up to the physical core
-count for the encoding step. I/O is single-threaded at the output side,
-so extreme worker counts provide diminishing returns.
+Spawns 4 encoder goroutines, each producing one frame at a time. On a
+16-core Mac the 465 MB log took 0.29 s instead of 0.71 s at the default
+level, and 1.71 s instead of 4.77 s at level 19. The output is the same
+for any worker count. I/O is single-threaded at the output side, so
+extreme worker counts provide diminishing returns.
 
 ### Force overwrite and re-encode
 
@@ -175,9 +182,33 @@ rx compress /var/log/audit-*.log --json > compress-report.json
 ```
 
 Produces a `files[]` wrapper listing every encode outcome — one entry
-per input, with `success`, `output`, `compressed_size`,
-`decompressed_size`, `frame_count`, `compression_ratio`, and a
-`cli_command` field reproducing the effective invocation.
+per input, with `action`, `input`, `output`, `success`,
+`compressed_size`, `decompressed_size`, `frame_count`,
+`compression_ratio` and, when an index was built, `index`:
+
+```json
+{
+  "files": [
+    {
+      "action": "compress",
+      "compressed_size": 135,
+      "compression_ratio": 3.48,
+      "decompressed_size": 471,
+      "frame_count": 1,
+      "index": {
+        "frame_count": 1,
+        "line_count": 30
+      },
+      "input": "/var/log/small.log",
+      "output": "/var/log/small.log.zst",
+      "success": true
+    }
+  ]
+}
+```
+
+The entries carry no `cli_command`; that member belongs to the HTTP
+answers.
 
 ## How it works
 
@@ -221,15 +252,14 @@ decoders ignore it.
 
 ### Performance characteristics
 
-- **Encode throughput**: roughly 100-300 MB/s per worker at level 3 on
-  modern hardware. Faster levels are IO-bound; slower levels are
-  CPU-bound.
+- **Encode throughput**: on a 16-core Mac with one worker, about
+  1 GB/s at level 1, 690 MB/s at the default level, 500 MB/s at levels
+  6-9 and 100 MB/s at levels 10-22.
 - **Memory**: one frame buffer per worker. At `--frame-size=4M` and
   `--workers=8`, peak memory is roughly 100-200 MB.
-- **Output size**: typically 4-5% larger than monolithic zstd at the
-  same level, because each frame restarts the dictionary. Real-world
-  log data often shows 10x-30x ratio regardless of seekable vs
-  monolithic.
+- **Output size**: larger than monolithic zstd, because each frame
+  restarts the compression context; how much depends on the frame size
+  (see [frame size trade-offs](../concepts/compression.md#frame-size-trade-offs)).
 - **Parallelism**: scales near-linearly to the physical core count;
   beyond that the output serialization and disk bandwidth become the
   bottleneck.
@@ -247,10 +277,10 @@ decoders ignore it.
     latency-sensitive query patterns, prefer smaller frames
     (`--frame-size=1M` or even `512K`).
 
-!!! note "Compression level is linear-compression but quadratic-time"
-    Going from level 3 → 9 typically saves ~5-10% size at ~3-4× encode
-    time. Level 19+ saves another ~5-10% at ~10× more time. Level 22
-    (ultra) is almost always not worth it unless you're archiving.
+!!! note "Four encoder settings, not 22 levels"
+    `1`, `2`-`5`, `6`-`9` and `10`-`22` each map to one encoder
+    setting. On the 465 MB log, `6`-`9` saved 7% of the size for 1.4×
+    the time, and `10`-`22` another 3% for 5× the time of `6`-`9`.
 
 !!! warning "Output file permissions"
     `--output-dir` creates missing directories with permissions
@@ -258,10 +288,10 @@ decoders ignore it.
     cannot enter the directory unless they share the group. Set
     permissions manually after compression if you need wider access.
 
-!!! tip "Compressed input is decompressed on the fly"
-    `rx compress file.gz` decompresses `file.gz` to memory-buffered
-    frames and writes `file.gz.zst`. There is no intermediate
-    uncompressed file on disk.
+!!! warning "Compressed input is not decompressed"
+    `rx compress file.gz` writes `file.gz.zst`, a seekable zstd of the
+    gzip bytes; its index counts lines in those bytes, not in the text.
+    Decompress the file first.
 
 ## See also
 
