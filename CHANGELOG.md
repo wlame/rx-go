@@ -438,6 +438,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx_large_file_threshold_mb` reports `RX_LARGE_FILE_MB`, the threshold
+  its name says. It reported the chunk size, `RX_MIN_CHUNK_SIZE_MB`.
+
 - A scan task stopped by a `max_results` cap no longer counts in
   `rx_worker_tasks_failed_total`. Every capped trace of a chunked file
   added the chunks it canceled there. A canceled task now counts as
