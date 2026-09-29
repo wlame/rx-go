@@ -41,10 +41,6 @@ a missing cache directory gracefully return "no cache".
 │   └── <filename>_<hash16>.json
 ├── trace_cache/                    — trace-result caches
 │   └── <hash>.json
-├── analyzers/                      — per-analyzer output
-│   └── <analyzer-name>/
-│       └── v<version>/
-│           └── <file-hash>.json
 ├── frontend/                       — rx-viewer SPA (downloaded once)
 │   ├── index.html
 │   ├── assets/
@@ -82,13 +78,11 @@ above the large-file threshold (`RX_LARGE_FILE_MB`), without
 
 `--no-cache` bypasses both the read and write steps.
 
-### `analyzers/<name>/v<version>/`
-
-Each analyzer gets its own namespace. Adding a new analyzer doesn't
-invalidate other analyzers' entries; bumping an analyzer's version
-starts a fresh namespace so old entries don't pollute.
-
-At v1, the analyzer registry is empty — this directory may not exist.
+Anomaly detection writes no files of its own. An analysis is part of
+the file's line index, which records the window and the detectors (each
+with its version) it ran with; a later `--analyze` request with another
+window or another detector set rebuilds the index. See
+[analyzers](analyzers.md).
 
 ### `frontend/`
 

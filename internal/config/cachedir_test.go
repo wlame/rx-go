@@ -78,16 +78,6 @@ func TestCacheSubdirectories(t *testing.T) {
 	}
 }
 
-func TestGetAnalyzerCacheDir(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("RX_CACHE_DIR", tmp)
-	got := GetAnalyzerCacheDir("drain3", "1.2.3")
-	want := filepath.Join(tmp, "rx", "analyzers", "drain3", "v1.2.3")
-	if got != want {
-		t.Errorf("got %q, want %q", got, want)
-	}
-}
-
 func TestGetCacheBase_FallbackWithNoHome(t *testing.T) {
 	// Hard to exercise because os.UserHomeDir is hard to fail deterministically.
 	// Instead, verify that the default path construction is well-formed.
@@ -111,7 +101,6 @@ func TestAllHelpersShareBase(t *testing.T) {
 		GetIndexCacheDir(),
 		GetTraceCacheDir(),
 		GetFrontendCacheDir(),
-		GetAnalyzerCacheDir("foo", "1.0.0"),
 	} {
 		if !hasPrefix(path, base) {
 			t.Errorf("helper returned %q, not under base %q", path, base)

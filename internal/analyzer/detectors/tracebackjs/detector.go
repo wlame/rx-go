@@ -57,12 +57,11 @@
 //     opener at EOF is NOT emitted — it never got confirmed, so by the
 //     lookahead rule it doesn't count as a stack trace.
 //
-// Registration: this package has an init() that calls analyzer.Register
+// Registration: this package has an init() that calls analyzer.RegisterLineDetector
 // so a blank import in cmd/rx/main.go is enough to hook it up.
 package tracebackjs
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 
@@ -197,27 +196,6 @@ func (d *Detector) SeverityRange() (float64, float64) { return severity, severit
 
 // The registry reads the band through this interface.
 var _ analyzer.SeverityRanger = (*Detector)(nil)
-
-// Supports says yes to anything. JS stack traces can appear in any
-// text-shaped log (Node stdout/stderr, browser devtools exports, CI
-// output, container logs). Non-JS logs simply never confirm the
-// lookahead so the detector is a no-op at near-zero cost.
-func (d *Detector) Supports(_ string, _ string, _ int64) bool {
-	return true
-}
-
-// Analyze is the FileAnalyzer entry point. The line-detector path is
-// driven by the coordinator, not through Analyze, so this returns an
-// empty Report — it's here to satisfy the interface. Callers that want
-// real anomalies must go through the coordinator/index.Build path.
-func (d *Detector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{
-		Name:          detectorName,
-		Version:       detectorVersion,
-		SchemaVersion: 1,
-		Result:        map[string]any{},
-	}, nil
-}
 
 // OnLine is the streaming-scan hook. Called once per line in order by
 // the coordinator. We branch on the current state.

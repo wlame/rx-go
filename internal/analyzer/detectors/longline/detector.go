@@ -42,12 +42,11 @@
 // above by `filesize / 1024 * ~32` bytes. For realistic log files with
 // very few very-long lines, the buffer stays tiny.
 //
-// Registration: this package has an init() that calls analyzer.Register.
+// Registration: this package has an init() that calls analyzer.RegisterLineDetector.
 // Blank-importing the package in cmd/rx/main.go is enough to hook it up.
 package longline
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/wlame/rx-go/internal/analyzer"
@@ -146,24 +145,6 @@ func (d *Detector) SeverityRange() (float64, float64) { return severity, severit
 
 // The registry reads the band through this interface.
 var _ analyzer.SeverityRanger = (*Detector)(nil)
-
-// Supports says yes to anything — line length is meaningful regardless
-// of mime type. Binary files are rarely indexed via this path anyway.
-func (d *Detector) Supports(_ string, _ string, _ int64) bool {
-	return true
-}
-
-// Analyze is the FileAnalyzer entry point. Real work happens through
-// the coordinator's OnLine/Finalize path; Analyze exists to satisfy the
-// FileAnalyzer interface for registry enumeration.
-func (d *Detector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{
-		Name:          detectorName,
-		Version:       detectorVersion,
-		SchemaVersion: 1,
-		Result:        map[string]any{},
-	}, nil
-}
 
 // OnLine is the streaming-scan hook. We do NOT emit here; we only buffer
 // candidates whose byte length is at or above staticFloor.
