@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/wlame/rx-go/internal/config"
@@ -472,6 +474,10 @@ func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCach
 	return out
 }
 
+// cacheWriteWarned is set once a failed trace cache write has been
+// logged, so a full disk produces one warning rather than one per file.
+var cacheWriteWarned atomic.Bool
+
 // SaveScannedFile writes the trace cache for one completed scan, unless
 // the file on disk is no longer the file the scan was planned on.
 //
@@ -483,12 +489,21 @@ func BuildCache(scan ScannedFile, patterns, rgFlags []string) *rxtypes.TraceCach
 // that lands after this check makes the next read see a mismatch.
 //
 // Errors are not returned: a cache that cannot be written only means
-// the next trace scans again.
+// the next trace scans again. The first failure in a process is logged
+// as a warning, because one that repeats (a full disk, a cache
+// directory that cannot be created) silently turns the cache off.
 func SaveScannedFile(scan ScannedFile, patterns, rgFlags []string) {
 	if !scan.Source.MatchesFile(scan.Path) {
 		return
 	}
-	_ = SaveCache(CachePath(scan.Path, patterns, rgFlags), BuildCache(scan, patterns, rgFlags))
+	err := SaveCache(CachePath(scan.Path, patterns, rgFlags), BuildCache(scan, patterns, rgFlags))
+	if err != nil && cacheWriteWarned.CompareAndSwap(false, true) {
+		// CompareAndSwap lets exactly one goroutine through, however
+		// many scans fail at the same moment.
+		slog.Default().Warn("trace_cache_write_failed",
+			"path", scan.Path, "error", err.Error(),
+			"note", "later failures are not logged; traces still work, uncached")
+	}
 }
 
 // ============================================================================
