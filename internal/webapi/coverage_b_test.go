@@ -870,43 +870,11 @@ func TestHealthEndpoint_RAMFieldsPopulated_Linux(t *testing.T) {
 	}
 }
 
-// TestHealthEndpoint_NEWLINE_SYMBOL_NotOverEscaped: Go's
-// NEWLINE_SYMBOL constant used to be double-escaped
-// relative to Python's repr() — the on-wire value read as '\\n' (two
-// literal backslashes then n) when Python emits '\n' (one backslash,
-// then n) matching the character's repr.
-//
-// The fix applies Python's repr() semantics: decode the env literal
-// `\n` → actual newline character first, then emit its repr. Test
-// asserts the exact on-wire value matches Python's output.
-func TestHealthEndpoint_NEWLINE_SYMBOL_NotOverEscaped(t *testing.T) {
-	t.Setenv("RX_CACHE_DIR", t.TempDir())
-	t.Setenv("NEWLINE_SYMBOL", "\\n") // Python default literal value
-	ts := newTestServer(t)
-	resp, err := http.Get(ts.URL + "/health")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	constants, _ := body["constants"].(map[string]any)
-	got, _ := constants["NEWLINE_SYMBOL"].(string)
-	// Python's repr('\n') is the 4-char string: ', \, n, '.
-	// Go's raw (in-memory) value should match. Previous over-escaped
-	// output was "'\\n'" (5 chars with an extra backslash).
-	if got != `'\n'` {
-		t.Errorf("NEWLINE_SYMBOL: got %q, want %q", got, `'\n'`)
-	}
-}
-
 // TestHealthEndpoint_PythonCompat_Fields exercises getAppEnvVariables
 // and getSearchRootsForHealth by reading all advertised fields.
 func TestHealthEndpoint_PythonCompat_Fields(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
-	t.Setenv("RX_DEBUG", "1")
+	t.Setenv("RX_LARGE_FILE_MB", "50")
 	ts := newTestServer(t)
 	resp, err := http.Get(ts.URL + "/health")
 	if err != nil {

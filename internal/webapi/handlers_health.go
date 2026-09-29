@@ -197,48 +197,17 @@ func getGoPackages() map[string]string {
 	return out
 }
 
-// getConstants returns the map rx-viewer uses to show "Current tunables"
-// — min chunk size, max files, etc. Same keys as Python.
+// getConstants returns the settings rx reads, under the keys rx-python
+// reports them. A variable nothing reads (rx-python's RX_DEBUG,
+// RX_MAX_FILES, RX_MAX_LINE_SIZE_KB and NEWLINE_SYMBOL) is left out, so
+// /health never presents a tunable that does nothing as one in force.
 func getConstants() map[string]any {
 	return map[string]any{
-		"LOG_LEVEL":               getLogLevelName(),
-		"DEBUG_MODE":              config.DebugMode(),
-		"LINE_SIZE_ASSUMPTION_KB": config.MaxLineSizeKB(),
-		"MAX_SUBPROCESSES":        config.MaxSubprocesses(),
-		"MIN_CHUNK_SIZE_MB":       config.MinChunkSizeMB(),
-		"MAX_FILES":               config.MaxFiles(),
-		// NEWLINE_SYMBOL uses Python's repr() format (quoted escape
-		// sequence). Matching Python exactly makes string comparisons
-		// easy in parity tests. See formatPythonRepr below.
-		"NEWLINE_SYMBOL": formatPythonRepr(config.GetStringEnv("NEWLINE_SYMBOL", "\\n")),
-		"CACHE_DIR":      config.GetCacheBase(),
+		"LOG_LEVEL":         getLogLevelName(),
+		"MAX_SUBPROCESSES":  config.MaxSubprocesses(),
+		"MIN_CHUNK_SIZE_MB": config.MinChunkSizeMB(),
+		"CACHE_DIR":         config.GetCacheBase(),
 	}
-}
-
-// formatPythonRepr mirrors Python's repr() for NEWLINE_SYMBOL's
-// health-check surface. Python's rx.utils decodes the literal env value
-// (e.g. "\n") into an actual newline character, then /health emits
-// repr(NEWLINE_SYMBOL) which for "\n" yields the 4-char string `'\n'`
-// (apostrophe, backslash, n, apostrophe).
-//
-// An earlier implementation used a ReplaceAll
-// that escaped the literal backslash a SECOND time, producing `'\\n'`
-// on the wire. Python's path (repr of the decoded character) produces
-// `'\n'` on the wire. Mismatch was visible in the /health JSON
-// constants map.
-//
-// strconv.Quote is the closest stdlib match to Python's repr():
-//   - For a real newline char, strconv.Quote returns `"\n"` (double
-//     quotes + backslash + n). We strip the outer double-quotes and
-//     substitute Python's single-quote convention.
-func formatPythonRepr(envLiteral string) string {
-	// Decode the literal escape sequences ("\\n" → actual \n). Mirrors
-	// rx-python/src/rx/utils.py's two-step replace.
-	decoded := strings.ReplaceAll(envLiteral, "\\r", "\r")
-	decoded = strings.ReplaceAll(decoded, "\\n", "\n")
-	quoted := strconv.Quote(decoded)
-	// Swap Python's single-quote convention in place of Go's double.
-	return "'" + quoted[1:len(quoted)-1] + "'"
 }
 
 // getLogLevelName returns the slog level /health exposes. Prefers the
@@ -256,20 +225,16 @@ func getLogLevelName() string {
 	return requestedLogLevelName(os.Getenv("RX_LOG_LEVEL"))
 }
 
-// getAppEnvVariables returns every env var whose name starts with an
-// rx-related prefix. Matches Python's get_app_env_variables.
+// getAppEnvVariables returns every environment variable whose name
+// starts with an rx-related prefix, as it is set, whether rx reads it or
+// not. It is an echo of the environment, not a list of settings in
+// force; getConstants is that list.
 func getAppEnvVariables() map[string]string {
-	prefixes := []string{"RX_", "UVICORN_", "PROMETHEUS_", "NEWLINE_SYMBOL"}
+	prefixes := []string{"RX_", "UVICORN_", "PROMETHEUS_"}
 	out := map[string]string{}
 	for _, kv := range os.Environ() {
-		eq := strings.IndexByte(kv, '=')
-		if eq < 0 {
-			continue
-		}
-		k := kv[:eq]
-		v := kv[eq+1:]
-		if k == "NEWLINE_SYMBOL" {
-			out[k] = v
+		k, v, found := strings.Cut(kv, "=")
+		if !found {
 			continue
 		}
 		for _, p := range prefixes {
