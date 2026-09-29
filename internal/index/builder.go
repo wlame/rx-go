@@ -64,10 +64,9 @@ type BuildOptions struct {
 	// through the coordinator code path (the coordinator's zero-detector
 	// fast path makes that effectively free).
 	//
-	// Callers typically populate this from the analyzer registry
-	// (analyzer.Snapshot filtered down to LineDetector); passing an
-	// explicit slice here is mostly for tests that want deterministic
-	// detector sets.
+	// Callers populate this from the analyzer registry
+	// (analyzer.LineDetectorSnapshot); passing an explicit slice here is
+	// mostly for tests that want deterministic detector sets.
 	Detectors []analyzer.LineDetector
 }
 

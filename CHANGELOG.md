@@ -116,6 +116,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The analyzers page describes the one way to add a detector,
+  `analyzer.RegisterLineDetector`. It named `analyzer.Register`, whose
+  detectors were listed by `GET /v1/detectors` and never run. That call
+  is gone, along with the empty `Analyze` and `Supports` methods every
+  detector carried and the per-analyzer cache directory nothing wrote;
+  the caching page no longer lists `analyzers/`.
+
 - `cli_command` follows one rule for every operation: a flag appears
   when the request gave a value and that value is not what `rx` uses
   without the flag. A value equal to the CLI default is left out, so a

@@ -6,9 +6,9 @@ import (
 )
 
 // This file defines the line-oriented detector contract layered on top
-// of the FileAnalyzer interface. Whereas FileAnalyzer consumes a whole
-// file, LineDetector observes a stream of lines as the index builder
-// scans them. This lets multiple detectors share a single file pass.
+// of the FileAnalyzer metadata. A LineDetector observes a stream of
+// lines as the index builder scans them, which lets every detector
+// share the single file pass that also builds the line index.
 //
 // Key design choices:
 //
@@ -87,9 +87,9 @@ type FlushContext struct {
 	P99LineLength int64
 }
 
-// LineDetector is the streaming-scan contract. A LineDetector embeds
-// FileAnalyzer (so it registers, versions, and describes itself the
-// same way) and adds two per-scan hooks:
+// LineDetector is the detector contract. It embeds FileAnalyzer (its
+// name, version, category and description) and adds the two per-scan
+// hooks that do the work:
 //
 //   - OnLine: called once per line in sequence with a pointer to the
 //     coordinator's Window. The most-recent line is Window.Current();
@@ -102,13 +102,6 @@ type FlushContext struct {
 // shards the file across N workers), so instance state does NOT cross
 // worker boundaries. Cross-worker correctness comes from a W-line
 // overlap and a post-pass deduplication step.
-//
-// IMPORTANT: LineDetector embeds FileAnalyzer for registration
-// uniformity, but the streaming path (coordinator → OnLine → Finalize)
-// is what produces anomalies. FileAnalyzer.Analyze is a NO-OP for
-// every shipped line detector — it returns an empty Report purely to
-// satisfy the embedded interface. Do not call Analyze on a LineDetector
-// and expect anomalies; run it through the coordinator instead.
 type LineDetector interface {
 	FileAnalyzer
 

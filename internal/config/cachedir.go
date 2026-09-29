@@ -48,14 +48,3 @@ func GetTraceCacheDir() string {
 func GetFrontendCacheDir() string {
 	return filepath.Join(GetCacheBase(), "frontend")
 }
-
-// GetAnalyzerCacheDir returns the per-analyzer cache directory:
-//
-//	{base}/analyzers/<name>/v<version>/
-//
-// Each analyzer gets its own namespace so upgrading one detector can't
-// invalidate the others' cached output. The caller typically appends
-// <file-hash>.json to get the final path.
-func GetAnalyzerCacheDir(name, version string) string {
-	return filepath.Join(GetCacheBase(), "analyzers", name, "v"+version)
-}

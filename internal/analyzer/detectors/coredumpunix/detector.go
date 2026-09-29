@@ -95,13 +95,12 @@
 //     A crash dump at the very tail of a truncated log is still a
 //     legitimate signal — arguably the strongest one.
 //
-// Registration: this package has an init() that calls analyzer.Register
+// Registration: this package has an init() that calls analyzer.RegisterLineDetector
 // so a blank import in cmd/rx/main.go is enough to hook it up.
 package coredumpunix
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"regexp"
 
@@ -279,27 +278,6 @@ func (d *Detector) SeverityRange() (float64, float64) { return severity, severit
 
 // The registry reads the band through this interface.
 var _ analyzer.SeverityRanger = (*Detector)(nil)
-
-// Supports says yes to anything. Unix crash output can appear in any
-// text-shaped log (stdout/stderr, dmesg capture, systemd journals, CI
-// output, container logs). Non-matching logs simply never trigger the
-// opener so the detector is a no-op at near-zero cost in practice.
-func (d *Detector) Supports(_ string, _ string, _ int64) bool {
-	return true
-}
-
-// Analyze is the FileAnalyzer entry point. The line-detector path is
-// driven by the coordinator, not through Analyze, so this returns an
-// empty Report — it's here to satisfy the interface. Callers that want
-// real anomalies must go through the coordinator/index.Build path.
-func (d *Detector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{
-		Name:          detectorName,
-		Version:       detectorVersion,
-		SchemaVersion: 1,
-		Result:        map[string]any{},
-	}, nil
-}
 
 // OnLine is the streaming-scan hook. Called once per line in order by
 // the coordinator. We branch on the current state and then, within

@@ -14,7 +14,7 @@ var (
 	// from the metadata-oriented analyzers slice is deliberate:
 	//
 	//   - analyzers[] is the metadata registry that /v1/detectors iterates.
-	//     It holds one FileAnalyzer per registered detector (shared, read-
+	//     It holds one prototype per registered detector (shared, read-
 	//     only — only its metadata methods are ever called).
 	//
 	//   - lineDetectorFactories is what the index builder calls to get a
@@ -34,32 +34,19 @@ var (
 // so each build gets its own independent state.
 type LineDetectorFactory func() LineDetector
 
-// Register adds an analyzer to the global registry. MUST be called
-// before Freeze — typically from an init() block.
+// RegisterLineDetector registers a line detector by factory. It is the
+// only way to add a detector, so every detector /v1/detectors lists is
+// one the index builder runs.
 //
-// Panics if called after Freeze. This catches misuse at development
-// time; in production, Freeze runs before any goroutine that might
-// call Register.
+// The factory is called once per index.Build to produce a fresh
+// LineDetector. That is how each build gets its own streaming state: a
+// shared instance would carry open runs, buffers and hashes from one
+// file into the next.
 //
 // No mutex: the pre-Freeze window is single-goroutine by Go's package
-// init semantics, so racy Register calls are impossible. This is the
-// key property the rule rests on: readers can skip the
-// mutex because writers can't happen after Freeze.
-//
-// NOTE: line-oriented detectors should use RegisterLineDetector instead,
-// which registers a factory so each build gets a fresh instance.
-// Register is kept for metadata-only FileAnalyzers (no streaming state).
-func Register(a FileAnalyzer) {
-	if frozen.Load() {
-		panic("analyzer.Register called after Freeze: analyzers must register during package init()")
-	}
-	analyzers = append(analyzers, a)
-}
-
-// RegisterLineDetector registers a line detector by factory. The factory
-// is called once per index.Build to produce a fresh LineDetector — this
-// is how we guarantee per-build state isolation (finding 6 of the
-// analyzers review: shared instances leak streaming state across files).
+// init semantics, so racy registrations are impossible. This is the
+// property the rule rests on: readers can skip the mutex because
+// writers can't happen after Freeze.
 //
 // The factory is invoked once immediately to register a prototype in the
 // overall analyzers slice so metadata (Name/Version/Category/Description)
@@ -71,20 +58,23 @@ func Register(a FileAnalyzer) {
 //	    analyzer.RegisterLineDetector(func() analyzer.LineDetector { return New() })
 //	}
 //
-// Panics if called after Freeze, same as Register.
+// Panics if called after Freeze. This catches misuse at development
+// time; in production, Freeze runs before any goroutine that might
+// register.
 func RegisterLineDetector(factory LineDetectorFactory) {
 	if frozen.Load() {
 		panic("analyzer.RegisterLineDetector called after Freeze: detectors must register during package init()")
 	}
 	// Call factory once to get a metadata prototype. This instance is only
-	// used for its Name/Version/Category/Description/Supports methods —
-	// its streaming state (if any) is never exercised.
+	// used for its Name/Version/Category/Description methods — its
+	// streaming state (if any) is never exercised.
 	proto := factory()
 	analyzers = append(analyzers, proto)
 	lineDetectorFactories = append(lineDetectorFactories, factory)
 }
 
-// Freeze locks the registry. After Freeze returns, Register panics.
+// Freeze locks the registry. After Freeze returns, RegisterLineDetector
+// panics.
 // Reads are lock-free from this point on.
 //
 // Freeze is idempotent — calling it twice is a no-op.
@@ -106,23 +96,6 @@ func unfreezeForTest() {
 	frozen.Store(false)
 	analyzers = nil
 	lineDetectorFactories = nil
-}
-
-// ApplicableFor walks the registry and returns every analyzer whose
-// Supports returns true for the given input. Caller retains ordering
-// (registration order) so results are deterministic.
-//
-// Lock-free read: plain slice iteration. Safe after Freeze because the
-// slice header can't change and the Supports method is required to be
-// safe for concurrent calls.
-func ApplicableFor(input Input) []FileAnalyzer {
-	out := make([]FileAnalyzer, 0, len(analyzers))
-	for _, a := range analyzers {
-		if a.Supports(input.Path, input.MimeHint, input.FileSize) {
-			out = append(out, a)
-		}
-	}
-	return out
 }
 
 // Snapshot returns a copy of the registry — useful for producing the

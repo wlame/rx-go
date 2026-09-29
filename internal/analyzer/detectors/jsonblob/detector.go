@@ -61,13 +61,12 @@
 //     a non-zero span. Consumers can count them by filtering on
 //     Description prefix "truncated:" if a per-run tally is needed.
 //
-// Registration: this package has an init() that calls analyzer.Register
+// Registration: this package has an init() that calls analyzer.RegisterLineDetector
 // so a blank import in cmd/rx/main.go is enough to hook it up.
 package jsonblob
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 
 	"github.com/wlame/rx-go/internal/analyzer"
@@ -160,27 +159,6 @@ func (d *Detector) SeverityRange() (float64, float64) { return severity, severit
 
 // The registry reads the band through this interface.
 var _ analyzer.SeverityRanger = (*Detector)(nil)
-
-// Supports says yes to anything. JSON blobs can appear in any
-// text-shaped log; the per-line scan is cheap enough to always run.
-// Binary files won't produce valid openers so the detector is a no-op
-// on them in practice.
-func (d *Detector) Supports(_ string, _ string, _ int64) bool {
-	return true
-}
-
-// Analyze is the FileAnalyzer entry point. The line-detector path is
-// driven by the coordinator, not through Analyze, so this returns an
-// empty Report — it's here to satisfy the interface. Callers that want
-// real anomalies must go through the coordinator/index.Build path.
-func (d *Detector) Analyze(_ context.Context, _ analyzer.Input) (*analyzer.Report, error) {
-	return &analyzer.Report{
-		Name:          detectorName,
-		Version:       detectorVersion,
-		SchemaVersion: 1,
-		Result:        map[string]any{},
-	}, nil
-}
 
 // OnLine is the streaming-scan hook. Called once per line in order by
 // the coordinator.

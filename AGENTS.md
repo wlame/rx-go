@@ -233,8 +233,9 @@ Data flow for `rx trace "pattern" big.log`:
    Go-only extensions go under `go_extras`.
 5. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
    the server starts; later registration panics; readers are lock-free. Do not
-   add a mutex. Stateful detectors register a factory with
-   `RegisterLineDetector`, never a shared instance with `Register`.
+   add a mutex. A detector registers a factory with `RegisterLineDetector`,
+   the only registration call, so every detector listed is one that runs
+   and each build gets fresh detector state.
 6. **Sandbox on every path.** Every HTTP handler and every CLI command that
    receives a path, including output paths, calls
    `paths.ValidatePathWithinRoots` before touching the filesystem.
