@@ -71,13 +71,7 @@ func ProcessCompressed(
 	// gated helpers — CLI mode skips collection.
 	prometheus.IncActiveWorkers()
 	defer prometheus.DecActiveWorkers()
-	defer func() {
-		if err == nil {
-			prometheus.IncWorkerTasksCompleted()
-		} else {
-			prometheus.IncWorkerTasksFailed()
-		}
-	}()
+	defer func() { recordWorkerOutcome(err) }()
 
 	if format == compression.FormatNone {
 		return nil, nil, 0, fmt.Errorf("%w: ProcessCompressed called with FormatNone on %s",
