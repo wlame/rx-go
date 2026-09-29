@@ -52,7 +52,8 @@ Key facts:
 - JSON bodies use `application/json; charset=utf-8`
 - Error bodies have shape `{"detail": "message"}` (path-sandbox errors
   have an extended shape — see [conventions](conventions.md))
-- Every response includes an `X-Request-ID` header (UUID v7)
+- Every response includes an `X-Request-ID` header: the client's own,
+  or a generated UUID v7. A trace body's `request_id` is a separate ID
 - Every endpoint returns explicit `null` for unset schema fields (not
   omitted keys)
 
