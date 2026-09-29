@@ -434,6 +434,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace cache that cannot be written (a full disk, a cache directory
+  that cannot be created) is logged once per process as a
+  `trace_cache_write_failed` warning. The failure was dropped, so the
+  cache could stay off without anyone knowing. Traces still answer;
+  they are only not cached.
+
+- A seekable-zstd scan whose ripgrep output cannot be read to the end
+  (a line longer than the 16 MB parse buffer) lists the file under
+  `skipped_files` instead of returning the matches before that point
+  as if they were all.
+
 - `GET /v1/samples` answers on a server without `ripgrep`. It returned
   `503`, though it reads the file itself and never runs `rg`; `rx
   samples` already worked without it. The OpenAPI document no longer
