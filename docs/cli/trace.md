@@ -142,9 +142,9 @@ there is no sandbox. See [Security](../concepts/security.md).
 rx "timeout" /var/log/app-2026-03.log
 ```
 
-Prints matches for the literal string `timeout` across the file. Since
-this is a dense-literal scan, `rx` chunks the file and scans in parallel;
-on a 1.3 GB file with 4 workers this runs in ~40 seconds.
+Prints the position of every match of the literal string `timeout`.
+A large file is chunked and scanned in parallel; see
+[performance](../performance.md) for measured times.
 
 ### Regex with multiple patterns
 
@@ -232,16 +232,33 @@ concurrent workers each produce matches past the cap before the
 cancel propagates; the response is truncated to the cap before
 return so callers always see at most `--max-results` matches.
 
+### Line numbers, `scanned_files` and the request ID in `--json`
+
+- `absolute_line_number` is `-1` (human output: `?`) for a match a
+  capped scan could not number; `relative_line_number` is then the
+  line's number within its chunk, not in the file. When the absolute
+  number is known, the two are equal. See
+  [line number resolution](#line-number-resolution).
+- `scanned_files` lists the files found by walking a directory you
+  named; it is empty when every path is a file. `files` lists every
+  file searched.
+- `files` and `path` keep each path as you typed it; over HTTP they are
+  absolute.
+- `cli_command` is `null`; only an HTTP answer carries one.
+
 ### Match with pre/post context
 
 ```bash
 rx "grep.*failed" /var/log/audit-2026-03.log --samples --before=2 --after=5
 ```
 
-For each match, also returns the 2 preceding and 5 following lines. The
-matched line sits in the middle of the `context_lines` array. Context
-retrieval uses the file's line index if present; otherwise falls back
-to a linear scan around each match.
+For each match, also prints the 2 preceding and 5 following lines. In
+`--json`, `context_lines` maps each match, keyed `pattern:file:offset`
+(`"p1:f1:60"`), to its window in file order, the matched line included;
+each entry is `{relative_line_number, absolute_line_number, line_text,
+absolute_offset}`. Without a context flag every window is just the
+matched line. Over HTTP there is no context window; see
+[`GET /v1/trace`](../api/endpoints/trace.md).
 
 ### Bypass the cache
 
@@ -258,12 +275,13 @@ debugging cache-related behavior. See
 
 ### Chunking
 
-For each input file above ~20 MB (configurable via
-[`RX_MIN_CHUNK_SIZE_MB`](../configuration.md)), `rx` divides the file
-into byte ranges, each ending on a newline. A goroutine pool
-(`RX_WORKERS`, default `NumCPU`) consumes these ranges in parallel. At
-chunk seams, the boundary is the byte immediately after a `\n`, so no
-line is split across workers.
+A plain file is divided into `size / RX_MIN_CHUNK_SIZE_MB` byte ranges
+(20 MB by default, so 40 MB or more gives two), at most
+`RX_MAX_SUBPROCESSES` (20), each ending on a newline. A goroutine pool
+(`RX_WORKERS`, default the smaller of `NumCPU` and
+`RX_MAX_SUBPROCESSES`) consumes these ranges in parallel. At chunk
+seams, the boundary is the byte immediately after a `\n`, so no line
+is split across workers. See [configuration](../configuration.md).
 
 Each worker spawns a `ripgrep` process scoped to its byte range. Results
 are accumulated in per-worker slices and merged at the end — no shared
@@ -271,8 +289,9 @@ lock on the hot path.
 
 ### Cache hit path
 
-When a trace request is made, `rx` computes a cache key from the source
-path, the pattern set and the matching flags. If an entry exists under
+For a plain file of `RX_LARGE_FILE_MB` (50) or more, and for a
+seekable zstd file, `rx` computes a cache key from the source path, the
+pattern set and the matching flags. If an entry exists under
 `~/.cache/rx/trace_cache/` and the file still has the size, mtime,
 inode, ctime and fingerprint the entry recorded, that entry is loaded
 and reconstructed into a full response without re-scanning. Cache miss
@@ -348,10 +367,11 @@ chunk after one of them has an offset but no line number yet.
     set or running the command on the host holding the files.
 
 !!! warning "Compressed file paths"
-    `rx trace` can read `.gz`, `.bz2`, `.xz`, and `.zst` files, but
-    only in single-worker mode — compressed streams don't support
-    byte-range scans. For random access on compressed data, see
-    [`rx compress`](compress.md) and [concepts/compression](../concepts/compression.md).
+    `rx trace` reads `.gz`, `.bz2`, `.xz` and plain `.zst` files in
+    single-worker mode — a compressed stream has no byte ranges to
+    split. A seekable `.zst` written by [`rx compress`](compress.md) is
+    scanned frame-parallel. Offsets are positions in the decompressed
+    text either way. See [concepts/compression](../concepts/compression.md).
 
 !!! note "Regex engine is ripgrep"
     Pattern syntax is Rust's `regex` crate as supported by `ripgrep`.

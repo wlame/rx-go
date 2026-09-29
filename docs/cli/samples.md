@@ -20,10 +20,10 @@ above and below each one. The command has two address modes:
 
 - **Byte offset** (`--offsets`): each value is a byte position; the line
   containing that byte is the target. Works on any uncompressed file;
-  O(1) seek.
+  refused for a compressed one.
 - **Line number** (`--lines`): each value is a 1-based line number. When
-  a cached line index exists, the seek is O(1); otherwise it falls back
-  to a linear scan.
+  a cached line index exists, the read starts at the nearest checkpoint;
+  otherwise it starts at byte 0.
 
 Both modes accept single values, ranges, and comma-separated lists. A
 single call can retrieve content from many locations across a file in
@@ -31,19 +31,22 @@ one pass.
 
 ### Bounded reads
 
-`samples` reads only the portion of the file it needs to produce the
-result. For a range `--lines=START-END`:
+On a plain file, `samples` reads only the portion of the file it needs,
+with one exception: the first lookup builds an index (below). Measured
+on a 465 MB log already in the page cache:
 
-- With an index: seeks to the nearest checkpoint `<= START`, then reads
-  lines from there to END. On a 1.3 GB file with a 10 MB-checkpoint
-  index, a mid-file range (e.g. `--lines=5000000-5001000`) typically
-  reads ~15 KB total and completes in ~5 ms.
-- Without an index: reads from byte 0 until it reaches END, then stops.
-  On a 1.3 GB file, a request for `--lines=1-1000` reads ~150 KB
-  (NOT the whole file) and completes in ~5 ms.
+- With an index: seeks to the nearest checkpoint before the first
+  wanted line (checkpoints are 1 MB apart by default) and reads to the
+  last one. `--lines=700000 --context=3`: 13 ms.
+- Without an index: reads from byte 0 until it reaches the last wanted
+  line, then stops. `--lines=1-1000`: 12 ms; `--lines=700000`: 90 ms.
+- The first lookup in a file of `RX_LARGE_FILE_MB` (50 MB) or more
+  with no cached index reads the whole file to build one: 137 ms.
 
-Single-line queries with context (`--lines=N --context=K`) read only
-the `2K+1`-line window around N.
+A gzip, bzip2, xz or plain zstd file is streamed to its end for every
+lookup, whatever the line (1.6 s on the 113 MB `.gz` of that log). A
+seekable zstd file with an index decompresses only the frames that hold
+the wanted lines.
 
 ## Flags
 
@@ -71,17 +74,29 @@ usage error (exit 2) rather than a silent fall back to `auto`.
 
 ### The index it may build
 
-A lookup in a large or compressed file builds a line index if none is
-cached, so the next lookup in the same file is fast. The build runs
-without analysis. `--no-index` turns it off and the lookup streams
-instead — slower, same answer. rx-python behaves identically, and so does
-`GET /v1/samples`.
+A lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in
+any compressed file, builds a line index if none is cached, so the
+next lookup in the same file is fast. That first lookup reads the whole
+file. The build runs without analysis. Only a seekable zstd file uses
+the index among compressed formats; a gzip, bzip2, xz or plain zstd
+lookup streams either way. `--no-index` turns the build off and the
+lookup reads the file without an index — slower, same answer. rx-python
+behaves identically, and so does `GET /v1/samples`.
+
+### Context at the ends of the file
+
+`before_context` and `after_context` in `--json` echo the window you
+asked for (the default is 3). Each window is clamped at line 1 and at
+the last line of the file, so a sample near either end has fewer lines
+than the echo suggests: `--lines=1 --context=3` reports
+`before_context: 3` and prints lines 1-4.
 
 ### A position the file does not have
 
 A line past the last one, line 0, or a byte offset past the last byte is
 answered rather than refused: `-1` in `lines`/`offsets`, `null` in
-`samples`, and the reason on stderr. The command exits 0 and every other
+`samples`, and the reason on stderr (`Warning: line 99 is not in the
+file.`). The command exits 0 and every other
 position in the same request is still answered — one bad number in
 `--lines=1000,1500000` must not throw away the good one, and `--json`
 would otherwise have nothing to return.
@@ -134,8 +149,8 @@ rx samples /var/log/nginx/access.log --lines=10000
 ```
 
 Prints lines 9997-10003 (±3 context lines by default). Line 10000 is
-the center. If a cached line index exists for `access.log`, this seeks
-directly; otherwise the file is scanned linearly counting newlines.
+the center. If a cached line index exists for `access.log`, the read
+starts at the nearest checkpoint; otherwise it starts at byte 0.
 
 ### Multiple byte offsets
 
@@ -154,7 +169,8 @@ rx samples /var/log/audit-2026-03.log --lines=5000-5100 --before=0 --after=0
 ```
 
 Prints exactly lines 5000-5100 with no surrounding context. Equivalent
-to `sed -n '5000,5100p'` but with O(1) seek via the index.
+to `sed -n '5000,5100p'`, but with an index the read starts at the
+nearest checkpoint.
 
 ### Negative line numbers
 
@@ -162,8 +178,10 @@ to `sed -n '5000,5100p'` but with O(1) seek via the index.
 rx samples /var/log/audit-2026-03.log --lines=-100--1 --context=0
 ```
 
-The last 100 lines of the file. Equivalent to `tail -n 100` but
-backed by the index, so it works at any file size with stable latency.
+The last 100 lines of the file, like `tail -n 100`. On a plain file
+this is fast with or without an index (`--lines=-50--1` on the 465 MB
+log: 11 ms either way). On a gzip, bzip2, xz or plain zstd file it
+costs a second pass over the stream, to count the lines first.
 
 ### Highlight matches within context
 
@@ -183,23 +201,27 @@ rx samples /var/log/audit-2026-03.log --lines=100,200,300 --json \
 ```
 
 The JSON response has a `samples` map keyed by the original range
-string, each mapping to an array of context lines:
+string, each mapping to an array of lines. `lines` maps each single
+line to the byte offset where it starts (`-1` for a range, and for a
+line past the end); `offsets` maps each offset to the number of the
+line holding it. From a 30-line file whose lines read `LINE <n>
+payload`, `--lines=1,30,99 --json`:
 
 ```json
 {
-  "path": "/var/log/audit-2026-03.log",
+  "path": "/var/log/lines.log",
   "offsets": {},
-  "lines":   { "100": 1024, "200": 2048, "300": 3072 },
+  "lines": {"1": 0, "30": 455, "99": -1},
   "before_context": 3,
-  "after_context":  3,
+  "after_context": 3,
   "samples": {
-    "100": [ "...", "line 98", "line 99", "line 100", "line 101", "line 102", "..." ],
-    "200": [ ... ],
-    "300": [ ... ]
+    "1":  ["LINE 1 payload", "LINE 2 payload", "LINE 3 payload", "LINE 4 payload"],
+    "30": ["LINE 27 payload", "LINE 28 payload", "LINE 29 payload", "LINE 30 payload"],
+    "99": null
   },
   "is_compressed": false,
   "compression_format": null,
-  "cli_command": "..."
+  "cli_command": null
 }
 ```
 
@@ -211,10 +233,11 @@ rx samples /var/log/audit-2026-03.log.gz --lines=5000 --context=2
 
 For `.gz`, `.bz2`, `.xz`, or plain (non-seekable) `.zst` files, only
 line-offset mode works. `rx` streams the decompressor from the start
-and captures lines as it passes them. Performance degrades with line
-number — line 5,000 is fast; line 5,000,000 decompresses everything
-before it. For random access on compressed data, use
-[`rx compress`](compress.md) to re-encode as seekable zstd.
+to the end of the file and captures lines as it passes them, so every
+lookup costs one full decompression, whatever the line. The offsets in
+`lines` are positions in the decompressed text. For random access on
+compressed data, use [`rx compress`](compress.md) to re-encode as
+seekable zstd.
 
 ## How it works
 
@@ -227,8 +250,9 @@ before it. For random access on compressed data, use
    otherwise count `\n`s to that point.
 5. Emit the enclosing line plus context lines.
 
-Byte offsets are O(1) to seek regardless of where they land. This is
-why byte offsets are the default unit throughout `rx`.
+To number the line, the read starts at the nearest index checkpoint
+before the offset, or at byte 0 without an index (15 ms for an offset
+403 MB into the 465 MB log).
 
 ### Line-offset mode
 
@@ -242,19 +266,16 @@ why byte offsets are the default unit throughout `rx`.
 4. Walk to gather the requested context lines.
 
 With a cached index the forward-scan distance is bounded by the index
-step (typically a few hundred KB). Without an index, the walk starts
-from the beginning of the file — fine for low line numbers, slow for
-high ones.
+step (1 MB by default). Without an index, the walk starts from the
+beginning of the file — fine for low line numbers, slower for high
+ones.
 
 ### Performance characteristics
 
-- **Byte offsets, any file size**: sub-millisecond per offset once the
-  file is open.
-- **Line offsets with warm index**: low single-digit milliseconds per
-  lookup on files up to 1 GB.
-- **Line offsets without index**: linearly proportional to the target
-  line number; a 10-millionth line on a 1.3 GB file takes several
-  seconds.
+Measured on a 465 MB log in the page cache, whole command included:
+
+- **Byte offset 403 MB in, no index**: 15 ms; with an index: 14 ms.
+- **Line 700000 with an index**: 13 ms; without one: 90 ms.
 - **Multiple addresses in one call**: amortized — the file is opened
   once and scanned once, gathering all targeted windows.
 - **Compressed line mode**: proportional to the target line number
@@ -271,16 +292,16 @@ high ones.
     ```
 
 !!! warning "Byte offsets don't work on compressed files"
-    Byte offsets into a compressed stream have no stable meaning after
-    partial decompression. `rx samples` will refuse the combination
-    with a clear error. Use `--lines` instead, or re-encode the file
-    with `rx compress` for random-access decompression.
+    The offsets `rx` reports for a compressed file are positions in the
+    decompressed text, and `samples` cannot seek there without
+    decompressing everything before. It refuses the combination (exit 2,
+    `Byte offsets are not supported for compressed files; use lines
+    instead`). Use `--lines` with the match's line number.
 
-!!! note "Negative line numbers need the total count"
-    `--lines=-1` or any other negative value requires knowing the
-    file's total line count. If the index has it cached, this is free;
-    otherwise `rx` scans the whole file once. Build an index first for
-    large files.
+!!! note "Negative line numbers on compressed files cost a second pass"
+    On a gzip, bzip2, xz or plain zstd file, `--lines=-1` streams the
+    file once to count its lines and once more to read them. On a plain
+    file a negative line is cheap.
 
 !!! warning "`--regex` is cosmetic, not a filter"
     `--regex` only controls highlight styling in the terminal. It

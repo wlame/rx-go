@@ -148,8 +148,10 @@ Each request is tagged with a UUID v7 request ID (generated if absent,
 capped at 128 chars if client-supplied via `X-Request-ID`). The ID is:
 
 - Added as an `X-Request-ID` response header
-- Included in every `slog` log record for this request
-- Propagated to webhook payloads fired as a side-effect of the request
+- Included in the `slog` log records for this request
+
+Webhooks carry the trace's own `request_id` (the body field), not this
+ID; see [request IDs](../api/conventions.md#request-ids).
 
 The path-sandbox check runs before any filesystem access. If the path
 escapes all configured roots, the response is `403` with a structured
