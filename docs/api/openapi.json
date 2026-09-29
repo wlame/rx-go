@@ -2034,16 +2034,6 @@
             },
             "description": "rx failed while serving the request"
           },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            },
-            "description": "ripgrep is not available on this system"
-          },
           "default": {
             "content": {
               "application/json": {
