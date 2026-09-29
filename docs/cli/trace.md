@@ -43,7 +43,6 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
-| `--debug` | `bool` | `false` | Write `.debug_*` artifacts for post-mortem |
 | `--request-id` | `string` | auto (UUID v7) | Custom request ID for log correlation |
 | `--hook-on-file` | `string` | `RX_HOOK_ON_FILE_URL` | Webhook URL, fired per file |
 | `--hook-on-match` | `string` | `RX_HOOK_ON_MATCH_URL` | Webhook URL, fired per match (requires `--max-results`) |
@@ -57,6 +56,10 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `-x`, `--line-regexp` | `bool` | `false` | Match only whole lines (ripgrep `-x`) |
 | `-F`, `--fixed-strings` | `bool` | `false` | Treat every pattern as literal text (ripgrep `-F`) |
 | `-P`, `--pcre2` | `bool` | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
+
+`--debug` is still accepted so that old scripts keep working, but it
+does nothing, is not listed in `--help`, and prints a deprecation note on
+stderr.
 
 ### Colour
 

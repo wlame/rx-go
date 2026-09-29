@@ -116,6 +116,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `GET /health` reports under `constants` only the settings rx reads:
+  `LOG_LEVEL`, `MAX_SUBPROCESSES`, `MIN_CHUNK_SIZE_MB` and `CACHE_DIR`.
+  `DEBUG_MODE`, `LINE_SIZE_ASSUMPTION_KB`, `MAX_FILES` and
+  `NEWLINE_SYMBOL` are gone: the variables behind them (`RX_DEBUG`,
+  `RX_DEBUG_DIR`, `RX_MAX_LINE_SIZE_KB`, `RX_MAX_FILES`,
+  `NEWLINE_SYMBOL`) were read only to be reported there. `environment`
+  no longer echoes `NEWLINE_SYMBOL`; it still echoes every `RX_*`
+  variable as it is set.
+
+- `rx trace --debug` is hidden from help and prints a deprecation note
+  on stderr. It never did anything; it stays accepted so a script that
+  passes it keeps working.
+
 - The Go package `pkg/rxtypes` no longer has `TraceRequest`. Nothing
   used it: `GET /v1/trace` reads query parameters, and `rx trace` builds
   its options directly. The wire contract is unchanged.
@@ -437,6 +450,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human output prints `?` for a line number that stayed unknown.
 
 ### Fixed
+
+- The configuration page lists what rx reads: it adds `RX_NO_INDEX`,
+  `RX_ANALYZE_WINDOW_LINES` and the global `--hidden` and
+  `--search-root` flags, drops the variables nothing reads, and gives
+  the real defaults of `RX_WORKERS` and `RX_MIN_CHUNK_SIZE_MB` (a file
+  below twice the chunk size is one chunk; the chunking page said 20 MB
+  was enough for two). The troubleshooting page no longer offers a
+  debug mode.
 
 - The README, the docs home, the installation page and the quickstart
   describe the current binary. The README's `rx samples … -C 3` is

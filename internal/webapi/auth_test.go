@@ -118,7 +118,7 @@ func TestAPIToken_SetLeavesProbesAndDocsOpen(t *testing.T) {
 // those variables must be reported as set, never by value.
 func TestHealth_RedactsSecretEnvironmentValues(t *testing.T) {
 	t.Setenv("RX_API_TOKEN", testToken)
-	t.Setenv("RX_MAX_FILES", "123")
+	t.Setenv("RX_LARGE_FILE_MB", "123")
 	ts := newTestServer(t)
 
 	_, _, body := get(t, ts.URL+"/health", "")
@@ -135,8 +135,8 @@ func TestHealth_RedactsSecretEnvironmentValues(t *testing.T) {
 	if got := health.Environment["RX_API_TOKEN"]; got != redactedEnvValue {
 		t.Errorf("RX_API_TOKEN = %q, want %q", got, redactedEnvValue)
 	}
-	if got := health.Environment["RX_MAX_FILES"]; got != "123" {
-		t.Errorf("RX_MAX_FILES = %q, want it reported as is", got)
+	if got := health.Environment["RX_LARGE_FILE_MB"]; got != "123" {
+		t.Errorf("RX_LARGE_FILE_MB = %q, want it reported as is", got)
 	}
 }
 

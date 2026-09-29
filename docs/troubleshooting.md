@@ -471,23 +471,14 @@ Or build from source on the target host:
 CGO_ENABLED=0 go build -ldflags='-s -w' -o rx ./cmd/rx
 ```
 
-## Debug mode
+## Debug output
 
-When stuck, enable debug mode:
-
-```bash
-RX_DEBUG=true rx trace "error" /var/log/app.log
-```
-
-This writes `.debug_*` artifacts under `$TMPDIR/rx-debug/` (override
-via `RX_DEBUG_DIR`):
-
-- Per-chunk ripgrep invocations
-- Parsed JSON output
-- Intermediate result slices
-
-Include these files if you're filing an issue about incorrect trace
-output.
+`rx` has no debug mode that writes files. `rx trace --debug` is still
+accepted so old scripts keep working, but it does nothing and prints a
+deprecation note on stderr. For a trace answer you doubt, capture
+`rx trace … --json` and run the same search with `--no-cache` and
+`--no-index`: the answers must be equal. For `rx serve`, set
+`RX_LOG_LEVEL=DEBUG` for more detailed logs.
 
 ## Capturing logs from `rx serve`
 
@@ -513,7 +504,7 @@ Still stuck?
 
 1. Check `GET /health` for any anomalies (`ripgrep_available: false`,
    `search_roots: null`, etc.)
-2. Try with `RX_DEBUG=true` and capture the `.debug_*` files
+2. Capture the `--json` answer, and the same run with `--no-cache --no-index`
 3. File an issue at <https://github.com/wlame/rx-go/issues> with:
    - `rx --version` output
    - Exact command that reproduces
