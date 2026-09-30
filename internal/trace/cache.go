@@ -196,8 +196,9 @@ func LoadCache(cachePath string) (*rxtypes.TraceCacheData, error) {
 
 // SaveCache writes a trace cache to disk atomically. The parent
 // directory is created if it doesn't exist; the file is written to a
-// temp path alongside and renamed into place so a concurrent reader
-// never sees a partial write.
+// temporary file of this call's own alongside and renamed into place
+// (writeFileAtomically), so a concurrent reader never sees a partial
+// write and two concurrent writers never mix their bytes.
 //
 // Python's version is NON-atomic (json.dump direct to the final path).
 // rx-go adds atomicity because concurrent serve requests on the same
@@ -218,18 +219,43 @@ func SaveCache(cachePath string, data *rxtypes.TraceCacheData) error {
 	if err != nil {
 		return fmt.Errorf("SaveCache: marshal: %w", err)
 	}
-	tmp := cachePath + ".tmp"
-	// 0o600 for the same reason as the directory above — cache JSON
-	// may contain matched line text.
-	if err := os.WriteFile(tmp, body, 0o600); err != nil {
-		return fmt.Errorf("SaveCache: write %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, cachePath); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("SaveCache: rename %s -> %s: %w", tmp, cachePath, err)
+	if err := writeFileAtomically(cachePath, body); err != nil {
+		return fmt.Errorf("SaveCache: %w", err)
 	}
 	// gated helper — CLI mode skips collection.
 	prometheus.IncTraceCacheWrites()
+	return nil
+}
+
+// writeFileAtomically puts body at path through a temporary file of its
+// own in the same directory, renamed into place. os.CreateTemp gives
+// every call a unique name, so two traces that write the same entry at
+// once never share a temporary file: each rename installs one writer's
+// whole body, and the last rename wins. A rename within one directory
+// is atomic, so a reader sees the old entry or a new one, never a part.
+//
+// os.CreateTemp creates the file with mode 0o600, which suits cache
+// JSON that may hold matched line text. On any error the temporary file
+// is removed.
+func writeFileAtomically(path string, body []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", path, err)
+	}
+	// After a successful rename the temporary name no longer exists and
+	// this Remove fails harmlessly; after any failure it cleans up.
+	defer func() { _ = os.Remove(tmp.Name()) }()
+
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close() // the write error is the one worth reporting
+		return fmt.Errorf("write %s: %w", tmp.Name(), err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", tmp.Name(), err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", tmp.Name(), path, err)
+	}
 	return nil
 }
 
@@ -261,6 +287,16 @@ func loadValidCache(
 ) *rxtypes.TraceCacheData {
 	data, err := LoadCache(cachePath)
 	if err != nil {
+		// A missing entry or one of another version is an ordinary
+		// miss. Anything else (truncated JSON, a permission error) is
+		// treated as a miss too, so the trace scans and a complete scan
+		// replaces the entry, but the operator hears about it.
+		if !errors.Is(err, ErrCacheMiss) {
+			slog.Default().Warn("trace_cache_unreadable",
+				"path", cachePath,
+				"error", err.Error(),
+			)
+		}
 		return nil
 	}
 	if data.PatternsHash != ComputePatternsHash(patterns, rgFlags) {
