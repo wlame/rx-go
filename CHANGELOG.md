@@ -460,6 +460,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `match_found` webhook sends `line_number` as the response's
+  `absolute_line_number`: the line's number in the file, or `-1` where
+  a scan cut short by `max_results` could not count it, always with the
+  byte `offset`. It used to send a number counted from the start of the
+  chunk for such a match. The events now go out once the trace has
+  numbered and capped its matches, one per match of the response, so a
+  capped trace no longer reports a match the response leaves out, and a
+  match an index or `--no-index` numbers carries that number.
+
 - The performance figures in the docs come from runs of the current
   binary on real logs (465 MB and 6.3 GB) instead of an older build on
   another host, and the bounded-read table names its exceptions: the

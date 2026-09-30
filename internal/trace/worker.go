@@ -37,8 +37,11 @@ type FileInfo struct {
 // Separate from rxtypes.Match so the hook package can format payloads
 // without importing the full trace.Match shape.
 type MatchInfo struct {
-	Pattern    string
-	Offset     int64
+	Pattern string
+	// Offset is the byte offset of the matched line in the file's text.
+	Offset int64
+	// LineNumber is the line's 1-based number in the file, or -1 when
+	// the scan could not count it; never a chunk-relative number.
 	LineNumber int64
 }
 
@@ -57,8 +60,11 @@ type MatchInfo struct {
 type HookFirer interface {
 	// OnFile is called once per file after its scan completes.
 	OnFile(ctx context.Context, path string, info FileInfo)
-	// OnMatch is called once per match. Can be very hot; implementations
-	// that cannot buffer should drop events rather than block the scan.
+	// OnMatch is called once per match of the result, after the scan,
+	// in the result's order, with the result's absolute line number (-1
+	// where it is unknown). It can be called many times in a row;
+	// implementations that cannot buffer should drop events rather
+	// than block the engine.
 	OnMatch(ctx context.Context, path string, match MatchInfo)
 }
 

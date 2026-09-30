@@ -90,8 +90,10 @@ func New() *Engine { return &Engine{} }
 //     into "matched these pattern IDs".
 //  6. Sorts, truncates to max_results, resolves absolute line numbers
 //     (for chunked files that lack them), and builds a TraceResponse.
+//     OnFile fires as each file's scan finishes; OnMatch fires once per
+//     match of the result, after this step, with the result's numbers.
 //  7. Optionally writes new trace caches for large completed scans.
-//  8. Fires OnFile hooks and returns.
+//  8. Returns the response.
 //
 // Parity with rx-python/src/rx/trace.py::parse_paths is bit-for-bit
 // up to intentional differences in logging (structured vs slog) and
@@ -318,10 +320,6 @@ func (e *Engine) RunWithOptions(
 						if cacheEntry != nil {
 							cacheEntry.Matches = append(cacheEntry.Matches, m)
 						}
-						opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
-							Pattern: patternIDs[pid], Offset: m.Offset,
-							LineNumber: int64(*m.RelativeLineNumber),
-						})
 					}
 				}
 				for _, rc := range res.Contexts {
@@ -394,10 +392,6 @@ func (e *Engine) RunWithOptions(
 						m.AbsoluteLineNumber = rm.LineNumber
 					}
 					allMatches = append(allMatches, m)
-					opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
-						Pattern: patternIDs[pid], Offset: m.Offset,
-						LineNumber: int64(*m.RelativeLineNumber),
-					})
 				}
 			}
 			for _, rc := range rawContexts {
@@ -462,10 +456,6 @@ func (e *Engine) RunWithOptions(
 						cacheEntry.Matches = append(cacheEntry.Matches, m)
 						cacheEntry.FrameIndexByOffset[m.Offset] = rm.FrameIndex
 					}
-					opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
-						Pattern: patternIDs[pid], Offset: m.Offset,
-						LineNumber: int64(*m.RelativeLineNumber),
-					})
 				}
 			}
 			for _, rc := range rawContexts {
@@ -519,13 +509,6 @@ func (e *Engine) RunWithOptions(
 			for _, cl := range reContexts {
 				allContexts = append(allContexts, contextWithFile{fileID: fileID, ctx: cl})
 			}
-			for _, m := range reMatches {
-				opts.HookFirer.OnMatch(ctx, b.path, MatchInfo{
-					Pattern:    patternIDs[m.Pattern],
-					Offset:     m.Offset,
-					LineNumber: int64(m.AbsoluteLineNumber),
-				})
-			}
 			fireOnFile(ctx, opts.HookFirer, b.path, fileStart, b.size, len(reMatches))
 		}
 	}
@@ -552,6 +535,10 @@ func (e *Engine) RunWithOptions(
 	if opts.MaxResults != nil && len(allMatches) > *opts.MaxResults {
 		allMatches = allMatches[:*opts.MaxResults]
 	}
+	// Only now is every match numbered as the response numbers it and
+	// the set cut to the cap, so the match_found events go out here
+	// rather than while the chunks are read.
+	fireMatchHooks(ctx, opts.HookFirer, allMatches, fileIDs, patternIDs)
 
 	contextDict := buildContextDict(allMatches, allContexts, opts.ContextBefore, opts.ContextAfter)
 
@@ -757,6 +744,33 @@ func toMatch(pid, fileID string, rm MatchRaw) rxtypes.Match {
 		AbsoluteLineNumber: -1, // resolved later if possible
 		LineText:           &text,
 		Submatches:         rm.Submatches,
+	}
+}
+
+// fireMatchHooks calls OnMatch once for each match of the answer, in
+// the answer's order. The engine calls it after the matches are
+// numbered, sorted and cut to the cap, so the webhook reports exactly
+// the matches the response holds, and each event's line number is the
+// response's absolute_line_number: the line's number in the file, or -1
+// where a capped scan could not count it. relative_line_number is never
+// sent, because a cut-short scan leaves it counted from the start of a
+// chunk. The offset always goes with it, so a receiver can resolve an
+// unknown line with `rx samples --offsets=…`.
+//
+// files and patterns are the response's ID maps ("f1" → path,
+// "p1" → pattern).
+func fireMatchHooks(
+	ctx context.Context,
+	firer HookFirer,
+	matches []rxtypes.Match,
+	files, patterns map[string]string,
+) {
+	for _, m := range matches {
+		firer.OnMatch(ctx, files[m.File], MatchInfo{
+			Pattern:    patterns[m.Pattern],
+			Offset:     m.Offset,
+			LineNumber: int64(m.AbsoluteLineNumber),
+		})
 	}
 }
 
