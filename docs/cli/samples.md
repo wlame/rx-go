@@ -264,8 +264,10 @@ seekable zstd.
 To number the line, the read starts at the nearest index checkpoint
 before the offset, or at byte 0 without an index (15 ms for an offset
 403 MB into the 465 MB log). For a compressed file the same walk runs
-over the decompressed text: from the frame before the offset's frame
-for an indexed seekable `.zst`, from the first byte otherwise.
+over the decompressed text: for an indexed seekable `.zst`, from the
+nearest frame before the offset's frame that holds a line break (the
+frame just before it, unless a line longer than a frame spans several),
+and from the first byte otherwise.
 
 ### Line-offset mode
 

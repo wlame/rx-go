@@ -241,12 +241,13 @@ func (s *seekableText) size() (int64, error) {
 // openNear starts the text at the first whole line of a frame before the
 // one holding offset.
 //
-// A frame's first bytes can be the tail of a line that began in the
-// frame before, so a frame start is not known to be a line start. The
+// A frame's first bytes can be the tail of a line that began in an
+// earlier frame, so a frame start is not known to be a line start. The
 // byte after a frame's first line break is: it starts line
 // FirstLine+1 of that frame. The frame chosen is the latest one before
-// offset's frame that still leaves `before` lines of context ahead of
-// it; frame 0 starts at line 1 and needs no skipping.
+// offset's frame that holds a line break and still leaves `before`
+// lines of context ahead of it; frame 0 starts at line 1 and needs no
+// skipping.
 func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 	holding := sort.Search(len(s.table.Frames), func(i int) bool {
 		return s.table.Frames[i].DecompressedEnd() > offset
@@ -261,7 +262,8 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 	}
 
 	start := holding - 1
-	for start > 0 && s.frames[holding].FirstLine-s.frames[start].FirstLine-1 < int64(before) {
+	for start > 0 && (endsNoLine(s.frames[start]) ||
+		s.frames[holding].FirstLine-s.frames[start].FirstLine-1 < int64(before)) {
 		start--
 	}
 	if start == 0 {
@@ -274,14 +276,21 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 	}
 	lineBreak := bytes.IndexByte(data, '\n')
 	if lineBreak < 0 {
-		// seekableTextFor checked that every frame but the last holds a
-		// line break, so this is a frame table that does not describe
-		// the file.
+		// The table said this frame ends a line, so it is a frame table
+		// that does not describe the file.
 		return nil, fmt.Errorf("frame %d of %s holds no line break", start, s.path)
 	}
 	rest := data[lineBreak+1:]
 	offsetAfter := s.frames[start].DecompressedOffset + int64(lineBreak) + 1
 	return s.cursorFrom(start+1, rest, offsetAfter, s.frames[start].FirstLine+1), nil
+}
+
+// endsNoLine reports whether a frame holds no line break: it lies inside
+// a line longer than a frame, or is empty. Such a frame's table entry
+// has LastLine = FirstLine-1. Only the last frame can end a line without
+// a break, and openNear never starts from the last frame.
+func endsNoLine(frame rxtypes.FrameLineInfo) bool {
+	return frame.LastLine < frame.FirstLine
 }
 
 // cursorFrom returns a cursor that reads pending first and then every
