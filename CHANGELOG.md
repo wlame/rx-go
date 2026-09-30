@@ -460,6 +460,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two traces that write the same trace cache entry at once no longer
+  share one temporary file: each writer gets its own (`.tmp-<random>`
+  beside the entry), so the entry left behind is one writer's whole
+  answer and neither write fails on a rename. An entry that cannot be
+  parsed is still treated as absent, and is now logged at Warn level
+  as `trace_cache_unreadable` with its path.
+
 - The `match_found` webhook sends `line_number` as the response's
   `absolute_line_number`: the line's number in the file, or `-1` where
   a scan cut short by `max_results` could not count it, always with the
