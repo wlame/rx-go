@@ -116,6 +116,16 @@ A log chain is the files of one rotated log, read as one text
 |---|---|---|
 | `RX_CHAIN_OVERLAP_SECONDS` | `60` | How far, in seconds, the highest timestamp of a part may be after the first timestamp of the next part before the chain is invalid (reason `overlap`). It covers a program that writes to a rotated file for a moment after the rotation. From 0 to 86400; `0` allows no overlap at all. |
 
+## Signatures
+
+[Signatures](concepts/signatures.md) are built in, and more are read
+from YAML files by the commands that use them
+([`rx signatures`](cli/signatures.md)):
+
+| Variable | Default | Description |
+|---|---|---|
+| `RX_SIGNATURES_PATH` | unset | Where your signature files are: directories or files separated by `:`, in order. Every `*.yml` and `*.yaml` file of a directory loads, in name order, without subdirectories or names that start with a dot; a file named here loads whatever its name; an entry that does not exist is skipped. Unset or empty: the first of `$XDG_CONFIG_HOME/rx/signatures/` and `~/.config/rx/signatures/` that exists. |
+
 ## Search-root sandbox
 
 | Variable | Default | Description |
@@ -201,6 +211,7 @@ Per-subcommand flags are documented on each CLI page:
 - [`rx index`](cli/line-index.md)
 - [`rx samples`](cli/samples.md)
 - [`rx compress`](cli/compress.md)
+- [`rx signatures`](cli/signatures.md)
 - [`rx serve`](cli/serve.md)
 
 ## Inspecting effective configuration

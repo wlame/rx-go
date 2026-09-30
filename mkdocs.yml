@@ -168,6 +168,7 @@ nav:
       - time-range: cli/time-range.md
       - logs: cli/logs.md
       - compress: cli/compress.md
+      - signatures: cli/signatures.md
       - serve: cli/serve.md
   - HTTP API:
       - api/index.md
@@ -199,6 +200,7 @@ nav:
       - Log chains: concepts/log-chains.md
       - Byte offsets vs line numbers: concepts/byte-offsets-vs-line-numbers.md
       - Compression: concepts/compression.md
+      - Signatures: concepts/signatures.md
       - Analyzers: concepts/analyzers.md
       - Security: concepts/security.md
   - History: MIGRATION.md

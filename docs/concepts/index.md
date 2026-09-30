@@ -34,6 +34,11 @@ performance trade-offs, operational behavior, and how to extend the tool.
   seekable-zstd write format, and the trade-offs between frame size
   and ratio.
 
+- **[Signatures](signatures.md)**  
+  Named definitions of what is worth noticing in a log (tracebacks,
+  secrets, runs of blank lines): kinds, the YAML file format, the
+  keyword gate, where rx finds your files, selection.
+
 - **[Analyzers](analyzers.md)**  
   The pluggable `FileAnalyzer` interface, the empty-at-v1 registry,
   and how to add a detector.

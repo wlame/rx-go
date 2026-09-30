@@ -7,6 +7,7 @@
 //	rx samples /var/log/app.log --lines=100
 //	rx index /var/log/app.log --analyze
 //	rx compress /var/log/app.log
+//	rx signatures                            # the signatures rx can find
 //	rx serve --port=7777
 //
 // The "default subcommand is trace" behavior is implemented by
@@ -66,6 +67,7 @@ var knownSubcommands = []string{
 	"logs",
 	"index",
 	"compress",
+	"signatures",
 	"serve",
 	"help",
 	"completion",
@@ -170,6 +172,7 @@ func newRootCmd() *cobra.Command {
 			"  rx logs list /var/log              # rotated logs, one chain each\n" +
 			"  rx index file.log --analyze        # build anomaly index\n" +
 			"  rx compress file.log               # make a seekable .zst\n" +
+			"  rx signatures                      # list the signatures rx can find\n" +
 			"  rx serve --port=7777               # HTTP API + rx-viewer SPA",
 		SilenceUsage:  true, // don't dump usage on runtime errors
 		SilenceErrors: true, // we print errors ourselves
@@ -205,6 +208,10 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(clicommand.NewLogsCommand(os.Stdout))
 	root.AddCommand(clicommand.NewIndexCommand(os.Stdout))
 	root.AddCommand(clicommand.NewCompressCommand(os.Stdout))
+	// The examples checker needs the scan engine to match lines; this
+	// build has none, so `rx signatures` loads without running examples
+	// and says so.
+	root.AddCommand(clicommand.NewSignaturesCommand(os.Stdout, nil))
 	root.AddCommand(clicommand.NewServeCommand(os.Stdout, appVersion))
 	return root
 }

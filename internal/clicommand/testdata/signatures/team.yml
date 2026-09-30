@@ -1,0 +1,31 @@
+disable: [aws-access-key]
+groups:
+  - name: billing
+    description: Events of the billing service.
+signatures:
+  - id: blank-run
+    name: Many blank lines
+    group: structure
+    level: low
+    description: Five blank lines in a row.
+    run: {blank: true, min: 5}
+  - id: invoice-failed
+    name: Invoice failed
+    group: billing
+    tags: [invoices]
+    level: high
+    description: An invoice the billing service could not create.
+    regex: '\binvoice \d+ failed\b'
+  - id: slow-invoice
+    name: Slow invoice
+    group: billing
+    tags: [invoices, perf]
+    default: false
+    description: An invoice that took a second or more.
+    regex: '\binvoice took \d{4,} ms'
+  - id: any-digit
+    name: Any digit
+    group: billing
+    default: false
+    description: A line that holds a digit; no keyword can gate it.
+    regex: '\d'

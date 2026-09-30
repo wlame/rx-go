@@ -1,0 +1,236 @@
+# `rx signatures`
+
+List, show and check the [signatures](../concepts/signatures.md) rx
+knows: the built-in ones and those of your signature files, and print a
+template file to start from.
+
+## Synopsis
+
+```text
+rx signatures [--group=GROUP] [--tag=TAG] [--json]
+rx signatures show ID [--json]
+rx signatures check [FILE...]
+rx signatures template
+```
+
+## Description
+
+rx reads the built-in signatures from its own binary and your
+signature files from the first of `RX_SIGNATURES_PATH`,
+`$XDG_CONFIG_HOME/rx/signatures/` and `~/.config/rx/signatures/`
+([where rx finds signature files](../concepts/signatures.md#where-rx-finds-signature-files)).
+Each subcommand loads them when it runs; nothing is kept between runs,
+so an edited file counts at the next command.
+
+A problem in a file never stops the command: the file or the signature
+it refuses is left out, and the problem is reported with its file, line
+and signature id.
+
+## `rx signatures`
+
+Lists the signatures group by group, in group order. Each group's line
+gives the number of its signatures that run, and `opt-in` when none of
+them is in the default set. Each row gives the id, the level, the kind,
+where the signature is defined (`built-in` or `file:line`) and its
+marks:
+
+| Mark | Meaning |
+|---|---|
+| `overrides` | a user signature that replaces the built-in of the same id |
+| `masked` | `redact: true`: the value of its findings is masked in every output |
+| `opt-in` | `default: false`: it runs only when a selection names it |
+| `disabled by file:line` | a built-in a user file switched off with `disable` |
+
+Then come the errors, and the search path with the number of files
+found on it.
+
+```bash
+rx signatures
+```
+
+```text
+traceback  1 signature
+  python-traceback  critical  block  /home/me/.config/rx/signatures/team.yml:27  overrides
+secret  1 signature
+  aws-access-key    high      regex  built-in                                    masked
+structure  0 signatures
+  blank-run         info      run    built-in                                    disabled by /home/me/.config/rx/signatures/team.yml:1
+billing  2 signatures
+  invoice-failed    high      regex  /home/me/.config/rx/signatures/team.yml:8
+  slow-invoice      medium    regex  /home/me/.config/rx/signatures/team.yml:19  opt-in
+
+Errors (1)
+  /home/me/.config/rx/signatures/draft.yml:6: refund-spike: regex: error parsing regexp: missing closing ): `(refund`
+
+Search path: /home/me/.config/rx/signatures (2 files)
+```
+
+A group without a signature to list is left out.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--group` | — | List only this group's signatures; an unknown group exits 2 with close names |
+| `--tag` | — | List only the signatures with this tag; an unknown tag exits 2 with close names |
+| `--json` | `false` | One JSON document: `signatures`, `groups`, `levels`, `errors`, `search_path` and `files` |
+
+In `--json`, each signature carries every field of its definition with
+the defaults applied, `kind`, `keywords` (the keyword clauses, a list of
+lists), `keywords_declared`, `line_pass`, `source` (`{"builtin": true}`
+or `{"file": …, "line": …}`), `overrides`, `disabled_by` (`null` or
+`{"file": …, "line": …}`), and one of `regex`, `block`, `run` and
+`measure` (the others `null`). A block always lists its rules under
+`states`, the simple form compiled. Each group carries `name`,
+`description`, `order`, `count` (its signatures that run) and
+`builtin`; each error `file`, `line`, `id` and `message`.
+
+```bash
+rx signatures --group=billing --json
+```
+
+```json
+{
+  "signatures": [
+    {
+      "id": "invoice-failed",
+      "name": "Invoice failed",
+      "group": "billing",
+      "description": "An invoice the billing service could not create.",
+      "tags": ["invoices"],
+      "level": "high",
+      "links": [],
+      "metadata": {},
+      "default": true,
+      "redact": false,
+      "kind": "regex",
+      "keywords": [["invoice "], [" failed"]],
+      "keywords_declared": false,
+      "line_pass": false,
+      "source": {"file": "/home/me/.config/rx/signatures/team.yml", "line": 8},
+      "overrides": false,
+      "disabled_by": null,
+      "examples": {"match": ["2026-01-02 10:00:00 ERROR invoice 812 failed: card expired"], "no_match": ["2026-01-02 10:00:01 INFO invoice 813 sent"]},
+      "regex": {"regex": "\\binvoice \\d+ failed\\b", "not": null, "capture": 0, "entropy": null, "validate": null},
+      "block": null,
+      "run": null,
+      "measure": null
+    }
+  ],
+  "groups": [{"name": "billing", "description": "Events of the billing service.", "order": 12, "count": 2, "builtin": false}],
+  "levels": ["info", "low", "medium", "high", "critical"],
+  "errors": [{"file": "/home/me/.config/rx/signatures/draft.yml", "line": 6, "id": "refund-spike", "message": "regex: error parsing regexp: missing closing ): `(refund`"}],
+  "search_path": ["/home/me/.config/rx/signatures"],
+  "files": ["/home/me/.config/rx/signatures/draft.yml", "/home/me/.config/rx/signatures/team.yml"]
+}
+```
+
+(The example is shortened: the real output lists `slow-invoice` too and
+puts each list item on its own line.)
+
+## `rx signatures show`
+
+Prints one signature: comment lines with its source, its marks, its
+keyword clauses (derived from the anchor or declared), whether it runs
+in the [line pass](../concepts/signatures.md#keywords-and-the-gate), and
+whether its examples ran; then its definition as YAML with every
+default filled in. The output is a valid definition: placed under
+`signatures:` in a file of your own, it loads into the same signature.
+
+```bash
+rx signatures show invoice-failed
+```
+
+```text
+# source: /home/me/.config/rx/signatures/team.yml:8
+# keywords (derived): [invoice ] AND [ failed]
+# line pass: no
+# examples: not checked in this build
+id: invoice-failed
+name: Invoice failed
+group: billing
+description: An invoice the billing service could not create.
+tags: [invoices]
+level: high
+links: []
+metadata: {}
+default: true
+redact: false
+regex: '\binvoice \d+ failed\b'
+capture: 0
+examples:
+  match:
+    - '2026-01-02 10:00:00 ERROR invoice 812 failed: card expired'
+  no_match:
+    - 2026-01-02 10:00:01 INFO invoice 813 sent
+```
+
+The members of one clause are separated by commas; a line must hold a
+member of every clause (`AND`) before the anchor is tried on it. A
+disabled built-in is shown with `# disabled by file:line`.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--json` | `false` | The signature as one JSON object, as `rx signatures --json` lists it |
+
+An id no signature has exits 2 and lists close names; an id whose every
+definition was refused exits 2 and repeats the errors.
+
+## `rx signatures check`
+
+Loads signature files and reports every problem: one line per error
+and per warning, in the form `file:line: id: error: message`, then a
+summary. With `FILE` arguments (files or directories) it loads only
+those, plus the built-ins (for overrides and groups); without, it loads
+the search path. A `FILE` that does not exist is an error.
+
+```bash
+rx signatures check ~/.config/rx/signatures/
+```
+
+```text
+/home/me/.config/rx/signatures/draft.yml:6: refund-spike: error: regex: error parsing regexp: missing closing ): `(refund`
+examples: not checked in this build
+2 files, 3 signatures: 1 error, 0 warnings
+Error: The signature files have 1 error
+```
+
+The one warning is `no keywords: runs in the line pass`, for a
+signature with an anchor from which no keyword clause could be derived:
+it works, and is tested on every line. When rx can run the signatures'
+examples it does, a failing example is an error, and the output says
+`examples: checked`; otherwise it says `examples: not checked in this
+build`.
+
+Use it in CI before you ship a signature file:
+
+```bash
+rx signatures check team-signatures.yml
+```
+
+## `rx signatures template`
+
+Prints a commented signature file with one signature of each kind and
+every field explained. It loads without errors:
+
+```bash
+rx signatures template > ~/.config/rx/signatures/mine.yml
+rx signatures check ~/.config/rx/signatures/mine.yml
+```
+
+## Exit codes
+
+| Code | When |
+|---:|---|
+| 0 | Success; for `check`, no error (warnings allowed) |
+| 1 | `check` found an error |
+| 2 | Usage error: an unknown flag or subcommand, `show` without an id, an unknown id, group or tag |
+
+The [global flags](index.md#global-flags) are accepted;
+`--search-root` does not apply to signature files, which come from the
+environment.
+
+## See also
+
+- [Signatures](../concepts/signatures.md) — the model and the file format
+- [Configuration](../configuration.md#signatures) — `RX_SIGNATURES_PATH`

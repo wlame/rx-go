@@ -125,6 +125,7 @@ func TestPreprocessArgs_TruthTable(t *testing.T) {
 		{"subcommand samples", []string{"samples", "/var/log"}, []string{"samples", "/var/log"}},
 		{"subcommand compress", []string{"compress", "/var/log"}, []string{"compress", "/var/log"}},
 		{"subcommand serve", []string{"serve", "--port=7777"}, []string{"serve", "--port=7777"}},
+		{"subcommand signatures", []string{"signatures", "show", "blank-run"}, []string{"signatures", "show", "blank-run"}},
 		{"help long", []string{"--help"}, []string{"--help"}},
 		{"help short", []string{"-h"}, []string{"-h"}},
 		{"version long", []string{"--version"}, []string{"--version"}},

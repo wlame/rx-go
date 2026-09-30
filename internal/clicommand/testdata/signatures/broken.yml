@@ -1,0 +1,6 @@
+signatures:
+  - id: broken-one
+    name: Broken
+    group: billing
+    description: A regex that does not compile.
+    regex: '(oops'

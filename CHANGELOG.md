@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Signatures: named definitions of something worth noticing in a long
+  file, such as a Python traceback, an AWS access key or a run of blank
+  lines. rx has built-in signatures (this release: `python-traceback`,
+  `aws-access-key`, `blank-run`, in eleven built-in groups) and reads
+  more from YAML files: every `*.yml` and `*.yaml` file in the
+  directories or files of `RX_SIGNATURES_PATH` (separated by `:`), else
+  in `$XDG_CONFIG_HOME/rx/signatures/`, else in
+  `~/.config/rx/signatures/`. A signature has an id, a name, a group,
+  tags, a level, a description, links, metadata, `default`, `redact`,
+  keywords, examples, and one kind: `regex` (one line, with `not`,
+  `capture`, `entropy`, `validate`), `block` (a start line and the lines
+  after it, in a simple form or as states), `run` (consecutive lines
+  that match, are blank or repeat the one before) or `measure` (Go code
+  with typed parameters). A user signature with a built-in's id replaces
+  it, `disable:` switches built-ins off, and `groups:` declares groups.
+  Each anchor regex gets keyword clauses derived from its syntax tree: a
+  line is tested only when it holds a member of every clause. Problems
+  are reported with their file, line and signature id: a YAML syntax
+  error, an unknown top-level key or a limit (1 MiB per file, 1,000 user
+  signatures, 4 KiB per regex, 10,000 nodes of alias expansion,
+  `max_lines` 10,000) refuses the whole file; a bad regex, an unknown
+  field, a missing or second kind, an unknown group or a duplicate id
+  refuses that signature. Only the commands that use signatures read
+  the files. The docs page Concepts / Signatures describes the model and
+  the file format.
+- `rx signatures` lists the signatures by group with their level, kind,
+  source and marks (`overrides`, `masked`, `opt-in`, `disabled by
+  file:line`), then the load errors and the search path; `--group=`
+  and `--tag=` narrow it and `--json` prints it as one document.
+  `rx signatures show ID` prints one definition as YAML with every
+  default, its source, its keyword clauses and whether it runs on every
+  line. `rx signatures check [FILE...]` reports every error and warning
+  of the signature files and exits 1 on an error, for CI.
+  `rx signatures template` prints a commented file with one signature
+  of each kind.
+- `RX_SIGNATURES_PATH`: where the signature files are.
+- New dependency: `go.yaml.in/yaml/v3` v3.0.5, the YAML parser, under
+  the MIT licence (the files ported from libyaml) and the Apache
+  License 2.0 (the rest).
+
 ## [0.7.0] - 2026-10-10
 
 ### Changed

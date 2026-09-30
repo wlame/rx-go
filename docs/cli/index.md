@@ -1,6 +1,6 @@
 # CLI reference
 
-`rx` exposes seven subcommands. `trace` is the default — any invocation whose
+`rx` exposes eight subcommands. `trace` is the default — any invocation whose
 first argument isn't a subcommand name gets `trace` prepended automatically.
 
 ```text
@@ -13,6 +13,7 @@ Subcommands:
   time-range Show the format and first and last timestamp of files
   logs       Read rotated logs (syslog, syslog.1, syslog.2.gz, …) as one log chain
   compress   Encode files as seekable zstd
+  signatures List, show and check the signatures rx can find in files
   serve      Start the HTTP API server
 ```
 
@@ -26,8 +27,8 @@ rx trace "error" /var/log/app.log
 ```
 
 If the first positional argument matches a known subcommand name
-(`trace`, `index`, `samples`, `time-range`, `logs`, `compress`, `serve`, `help`,
-`completion`, `version`), it's routed to that subcommand. Otherwise, `trace` is
+(`trace`, `index`, `samples`, `time-range`, `logs`, `compress`, `signatures`,
+`serve`, `help`, `completion`, `version`), it's routed to that subcommand. Otherwise, `trace` is
 assumed.
 
 ## Global flags
@@ -105,6 +106,10 @@ no 6 or 7.
 
 - **[`rx compress`](compress.md)**  
   Encode files as seekable zstd for random-access decompression.
+
+- **[`rx signatures`](signatures.md)**  
+  List the built-in and user signatures, show one, check signature
+  files, print a template.
 
 - **[`rx serve`](serve.md)**  
   Start the HTTP API + Swagger UI + Prometheus metrics.
