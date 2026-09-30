@@ -12,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -116,6 +117,30 @@ func ErrForbidden(detail string) huma.StatusError {
 // running: the detail sentence plus the running task's ID as task_id.
 func ErrTaskConflict(detail, taskID string) huma.StatusError {
 	return &taskConflictError{rxtypes.TaskConflictError{Detail: detail, TaskID: taskID}}
+}
+
+// runningOperationNames is how a 409 sentence names the operation of
+// the task that holds a path, keyed by tasks.Task.Operation.
+var runningOperationNames = map[string]string{
+	"index":    "Indexing",
+	"compress": "Compression",
+}
+
+// runningTaskConflict returns the 409 for a request refused because the
+// task running holds the path. The task manager keeps one task per path
+// whatever its operation, so the running task can be of another kind
+// than the refused request (an index request refused by a running
+// compress); the sentence and task_id both describe the running task.
+// requestedPath is the path as the caller wrote it.
+func runningTaskConflict(requestedPath string, running *tasks.Task) huma.StatusError {
+	name, known := runningOperationNames[running.Operation]
+	if !known {
+		name = "Task " + running.Operation
+	}
+	return ErrTaskConflict(
+		fmt.Sprintf("%s already in progress for %s (task: %s)", name, requestedPath, running.TaskID),
+		running.TaskID,
+	)
 }
 
 // taskConflictError carries the published TaskConflictError body. Like
