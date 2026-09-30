@@ -115,7 +115,7 @@ just run trace "error" /var/log/app.log          # run from source
 just serve --port=8080 --search-root=/var/log    # 8080 matches the viewer dev proxy
 
 just test                                        # full suite
-just test -run TestTrace ./internal/trace/       # arguments pass straight through
+just test -run='TestTrace|TestIndex'             # each argument reaches go test as one word
 just test-race                                   # race detector (about 200 s on a Mac, mostly internal/trace)
 just test-repeat ./internal/trace/               # 10x, to hunt a flaky test
 just bench                                       # benchmarks (not a CI gate)
@@ -131,6 +131,11 @@ test-race docs-build`, in that order, and `.github/workflows/ci.yml` runs `just 
 disagree. The **coverage floor is 80%** (82.4% today), enforced by
 `just cover`; raise it as coverage improves and never lower it to make a red
 build green.
+
+A recipe that forwards its arguments carries `[positional-arguments]` and
+passes them as `"$@"` (or `"$1"`), never as `{{args}}`, which the shell
+splits again at spaces and at `|`. `cmd/rx/justfile_args_test.go` fails on
+a variadic recipe that does not.
 
 Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it); CI runs
 1.25 and 1.26. `golangci-lint` v2.x and `govulncheck` are needed for `just
