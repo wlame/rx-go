@@ -460,6 +460,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `409` from `POST /v1/index` or `POST /v1/compress` names the
+  operation of the task that holds the path. An index request refused
+  because a compress of the file runs said "Indexing already in
+  progress"; it now says "Compression already in progress", the
+  operation `task_id` points at.
+
 - Two traces that write the same trace cache entry at once no longer
   share one temporary file: each writer gets its own (`.tmp-<random>`
   beside the entry), so the entry left behind is one writer's whole
