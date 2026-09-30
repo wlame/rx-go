@@ -140,10 +140,13 @@ into the recipe line before the shell reads it, so a quote, `;`, `$(` or
 backtick in the value runs as code. The version from `git describe` holds
 a tag name, which may contain all of them: the recipes read it as
 `"$BUILD_VERSION"`, which the justfile exports. Only string literals of
-the justfile (`test_timeout`, `coverage_min`) are pasted.
-`cmd/rx/justfile_args_test.go` fails on a recipe that pastes anything
-else, and `cmd/rx/justfile_release_test.go` runs `release-notes`,
-`version`, `build` and `build-all` on crafted tag names.
+the justfile (`test_timeout`, `coverage_min`) are pasted, each as a bare
+`{{name}}`. `cmd/rx/justfile_args_test.go` fails on any other `{{…}}`:
+a parameter, a variable just computes, and any expression that is not
+one variable — a backtick, a function such as `env_var`, a `+`, an
+`if` — even when its only variables are literals.
+`cmd/rx/justfile_release_test.go` runs `release-notes`, `version`,
+`build` and `build-all` on crafted tag names.
 
 Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it); CI runs
 1.25 and 1.26. `golangci-lint` v2.x and `govulncheck` are needed for `just
