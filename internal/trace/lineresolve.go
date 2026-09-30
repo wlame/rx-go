@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -22,9 +24,9 @@ var openForLineCount = func(path string) (io.ReadSeekCloser, error) {
 	return os.Open(path)
 }
 
-// lineResolver maps byte offsets in a plain file to the 1-based numbers
-// of the lines that contain them. An offset missing from the answer
-// stays unknown.
+// lineResolver maps byte offsets in a file's text to the 1-based
+// numbers of the lines that contain them. An offset missing from the
+// answer stays unknown.
 type lineResolver func(path string, offsets []int64) map[int64]int
 
 // lineResolverFor picks how a trace numbers the matches its scan could
@@ -58,6 +60,10 @@ func lineResolverFor(opts Options) lineResolver {
 // nil: counting newlines from byte 0 of a multi-gigabyte file is the
 // work the cap was set to avoid. rx-python declines it for the same
 // reason (unified_index.calculate_lines_for_offsets_batch).
+//
+// A compressed file's offsets are positions in its decompressed text,
+// and its index describes that text, so it is numbered the same way
+// through the samples resolver, which knows how to reach the text.
 func resolveLinesFromIndex(path string, offsets []int64) map[int64]int {
 	wanted := uniqueSortedOffsets(offsets)
 	if len(wanted) == 0 {
@@ -66,6 +72,11 @@ func resolveLinesFromIndex(path string, offsets []int64) map[int64]int {
 	idx, err := index.LoadForSource(path)
 	if err != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return nil
+	}
+	if compression.IsCompressed(path) {
+		return numberCompressedText(path, wanted, func(string) (*rxtypes.UnifiedFileIndex, error) {
+			return idx, nil
+		})
 	}
 	// Nearest checkpoint at or before the first offset we need. The
 	// binary search in the index package is the single implementation of
@@ -84,6 +95,9 @@ func resolveLinesByCounting(path string, offsets []int64) map[int64]int {
 	wanted := uniqueSortedOffsets(offsets)
 	if len(wanted) == 0 {
 		return nil
+	}
+	if compression.IsCompressed(path) {
+		return numberCompressedText(path, wanted, samples.NoIndex)
 	}
 	return countLinesToOffsets(path, rxtypes.LineIndexEntry{LineNumber: 1, ByteOffset: 0}, wanted)
 }
@@ -146,6 +160,30 @@ func countLinesToOffsets(path string, start rxtypes.LineIndexEntry, wanted []int
 	return out
 }
 
+// numberCompressedText maps offsets in a compressed file's decompressed
+// text to line numbers with the resolver behind `rx samples --offsets`,
+// which decompresses the text from the frame or checkpoint loader's
+// index points to (or from the first byte without one) and stops at the
+// line holding the highest offset. An offset it cannot number, or a file
+// it cannot read, is left out of the answer and stays unknown.
+func numberCompressedText(path string, wanted []int64, loader samples.IndexLoader) map[int64]int {
+	spec := make([]samples.OffsetOrRange, len(wanted))
+	for i, off := range wanted {
+		spec[i] = samples.OffsetOrRange{Start: off}
+	}
+	resp, err := samples.Resolve(samples.Request{Path: path, Offsets: spec, IndexLoader: loader})
+	if err != nil {
+		return nil
+	}
+	out := make(map[int64]int, len(wanted))
+	for _, off := range wanted {
+		if line := resp.Offsets[strconv.FormatInt(off, 10)]; line > 0 {
+			out[off] = int(line)
+		}
+	}
+	return out
+}
+
 // resolveUnknownLineNumbers fills in the line numbers left unknown by a
 // canceled scan, in place, for every file resolveLines can answer for.
 //
@@ -178,9 +216,7 @@ func resolveUnknownLineNumbers(
 	resolved := map[string]map[int64]int{}
 	for fileID, offsets := range byFile {
 		path, ok := fileIDs[fileID]
-		if !ok || compression.IsCompressed(path) {
-			// Byte offsets in a compressed file address the compressed
-			// bytes, which the line index does not describe.
+		if !ok {
 			continue
 		}
 		if lines := resolveLines(path, offsets); len(lines) > 0 {
