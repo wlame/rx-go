@@ -12,6 +12,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.15
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/sync v0.19.0
 )
 

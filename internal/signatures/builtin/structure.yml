@@ -1,0 +1,17 @@
+# Built-in signatures of the structure group.
+signatures:
+  - id: blank-run
+    name: Run of blank lines
+    group: structure
+    level: info
+    description: |
+      Three or more consecutive lines that are empty or hold only spaces
+      and tabs.
+    run:
+      blank: true
+      min: 3
+    examples:
+      match:
+        - "first\n\n\n\nlast\n"
+      no_match:
+        - "first\n\nlast\n"

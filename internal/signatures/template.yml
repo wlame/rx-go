@@ -1,0 +1,107 @@
+# An rx signature file.
+#
+# rx loads every *.yml and *.yaml file in the directories named by
+# RX_SIGNATURES_PATH (entries separated by ":"), or else in
+# $XDG_CONFIG_HOME/rx/signatures/ or ~/.config/rx/signatures/.
+# Check a file before you rely on it:
+#
+#   rx signatures check my-signatures.yml
+#
+# Regexes use Go's RE2 syntax (no lookaround, no backreferences) and are
+# matched against one line at a time, without its line ending.
+
+# Built-in signatures to switch off, by id (rx signatures lists them):
+# disable: [blank-run]
+
+# Groups of your own. Every signature names one group: a built-in one
+# (rx signatures lists them) or one declared here.
+groups:
+  - name: my-service
+    description: Events of my service.
+
+signatures:
+  # A regex signature: one line that matches.
+  - id: my-payment-declined
+    name: Payment declined
+    group: my-service
+    description: |
+      A payment the provider declined. The value is the decline code.
+    tags: [payments]
+    level: high                   # info, low, medium (the default), high, critical
+    regex: '\bpayment declined\b.*\bcode=(\w+)'
+    capture: 1                    # the value is group 1; 0 (the default) is the whole match
+    not: '\btest-card\b'          # the line must not match this
+    # entropy: 3.5                # the value needs at least this many bits per byte
+    # validate: luhn              # luhn, iban, ipv4 or ipv6: a check on the value
+    # redact: true                # mask the value in every output
+    # keywords: [declined]        # literals a line must hold before the regex runs;
+    #                             # derived from the regex when left out
+    # default: false              # run only when named: --signatures=my-payment-declined
+    # links: [https://runbooks.example.com/payments]
+    # metadata: {owner: payments-team}
+    examples:
+      match:
+        - '2026-01-02 10:00:00 ERROR payment declined for order 17, code=insufficient_funds'
+      no_match:
+        - '2026-01-02 10:00:01 ERROR payment declined for order 18 (test-card), code=do_not_honor'
+        - '2026-01-02 10:00:02 INFO payment accepted for order 19'
+
+  # A block signature: a start line and the lines that follow it.
+  - id: my-worker-dump
+    name: Worker dump
+    group: my-service
+    description: |
+      The state a worker prints when it stops: a header line, indented
+      lines, and an end line.
+    block:
+      start: '^=== worker dump ==='
+      continue: '^\s'             # a line that joins the block
+      end: '^=== end of dump ===' # a line that joins and closes it
+      # lines: 5                  # instead: the start line and the next 5 lines
+      max_lines: 100              # 200 by default, at most 10000
+      # min_lines: 2              # a shorter block is not a finding
+    # The states form, for a block of several parts:
+    # block:
+    #   states:
+    #     - {state: start, regex: '^=== worker dump ===', next: workers}
+    #     - {state: workers, regex: '^\s', next: workers}
+    #     - {state: workers, regex: '^=== end of dump ===', end: true}
+    examples:
+      match:
+        - |
+          === worker dump ===
+            worker 3 waiting on queue jobs
+            worker 4 running job 812
+          === end of dump ===
+      no_match:
+        - 'worker dump requested by admin'
+
+  # A run signature: at least min consecutive lines that qualify.
+  - id: my-retry-storm
+    name: Retry storm
+    group: my-service
+    level: low
+    description: Three or more lines in a row that retry a request.
+    run:
+      match: '\bretrying\b'       # instead: blank: true, or same: true
+      min: 3
+    examples:
+      match:
+        - |
+          retrying request 1 after 100ms
+          retrying request 1 after 200ms
+          retrying request 1 after 400ms
+      no_match:
+        - |
+          retrying request 1 after 100ms
+          request 1 done
+
+  # A measure signature: Go code with parameters. The measures and their
+  # parameters are listed in the docs (Concepts / Signatures).
+  - id: my-long-line
+    name: Very long line
+    group: my-service
+    level: low
+    default: false
+    description: A line at least 50 times longer than the lines around it.
+    measure: {name: long-line, factor: 50, min_bytes: 4096}

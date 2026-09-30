@@ -1,0 +1,25 @@
+# Built-in signatures of the traceback group.
+signatures:
+  - id: python-traceback
+    name: Python traceback
+    group: traceback
+    tags: [python]
+    level: high
+    description: |
+      An uncaught Python exception: the "Traceback (most recent call
+      last):" header, the indented frames, and the exception line that
+      ends it.
+    links: [https://docs.python.org/3/library/traceback.html]
+    block:
+      start: '^Traceback \(most recent call last\):'
+      continue: '^\s'
+      end: '^[A-Za-z_][\w.]*(?::|$)'
+    examples:
+      match:
+        - |
+          Traceback (most recent call last):
+            File "app.py", line 3, in <module>
+              main()
+          ValueError: bad input
+      no_match:
+        - INFO traceback collection is off

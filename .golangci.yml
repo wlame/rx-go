@@ -32,6 +32,10 @@ linters:
         - G204 # subprocess with variable — rx invokes rg with user patterns by design.
     misspell:
       locale: US
+      # The signature catalogue keeps the British spelling of its type
+      # name, Catalogue, which every package that uses it shares.
+      ignore-rules:
+        - catalogue
     govet:
       enable-all: true
       disable:

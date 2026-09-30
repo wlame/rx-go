@@ -1,0 +1,26 @@
+# The built-in groups, in the order rx lists them. The order also gives
+# each group its color in the viewer. User files may declare more
+# groups; those come after these.
+groups:
+  - name: traceback
+    description: Stack traces and uncaught exceptions of programs in many languages.
+  - name: crash
+    description: Crashes, aborts, sanitizer reports, kernel oopses and processes the system killed.
+  - name: secret
+    description: Credentials and keys written into a log. Their values are masked in every output.
+  - name: pii
+    description: Personal data such as e-mail addresses, IP addresses, card numbers and IBANs.
+  - name: sql
+    description: SQL statements, dangerous statements, query plans, slow queries and lock problems.
+  - name: http
+    description: HTTP requests answered with a server error.
+  - name: severity
+    description: Lines written at an error or warning level.
+  - name: system
+    description: Resource and network failures such as a full disk, too many open files, timeouts, TLS and DNS errors.
+  - name: lifecycle
+    description: Signals, exit statuses and service state changes.
+  - name: structure
+    description: The shape of the text, such as runs of blank or repeated lines, long lines, JSON blocks and binary bytes.
+  - name: time
+    description: The timing of the log, such as bursts of lines, silences and timestamps that go backwards.
