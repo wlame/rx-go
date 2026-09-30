@@ -116,6 +116,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `just scaffolding-check` also refuses review citations in `docs/`:
+  `Stage N`, `Round N` and `Finding N` as whole words (so "around 256"
+  passes) and `Rn-Xn` labels. In Go comments it now catches
+  `USER DECISION N.N` in capitals too.
+
 - `GET /health` reports under `constants` only the settings rx reads:
   `LOG_LEVEL`, `MAX_SUBPROCESSES`, `MIN_CHUNK_SIZE_MB` and `CACHE_DIR`.
   `DEBUG_MODE`, `LINE_SIZE_ASSUMPTION_KB`, `MAX_FILES` and
