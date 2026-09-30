@@ -125,6 +125,8 @@ from YAML files by the commands that use them
 | Variable | Default | Description |
 |---|---|---|
 | `RX_SIGNATURES_PATH` | unset | Where your signature files are: directories or files separated by `:`, in order. Every `*.yml` and `*.yaml` file of a directory loads, in name order, without subdirectories or names that start with a dot; a file named here loads whatever its name; an entry that does not exist is skipped. Unset or empty: the first of `$XDG_CONFIG_HOME/rx/signatures/` and `~/.config/rx/signatures/` that exists. |
+| `RX_SIGNATURES_LINE_BYTES` | `65536` | How many bytes of each line a signature scan matches against: the line without its ending, cut here. A longer line is still counted at its full length, and the scan never holds more of it. From 1024 to 1048576. |
+| `RX_FINDINGS_MAX_PER_SIGNATURE` | `10000` | The most findings of one signature a scan of one file keeps: the first ones by line. The count of findings stays exact past it. From 100 to 1000000. |
 
 ## Search-root sandbox
 
@@ -277,6 +279,8 @@ range:
 | `RX_SAMPLES_HEAD_MB` | 64 | 0 | 4096 | MiB of text |
 | `RX_MAX_INDEX_BUILDS` | 2 | 1 | 64 | index builds running at once |
 | `RX_CHAIN_OVERLAP_SECONDS` | 60 | 0 | 86400 | seconds |
+| `RX_SIGNATURES_LINE_BYTES` | 65536 | 1024 | 1048576 | bytes of each line a signature scan matches |
+| `RX_FINDINGS_MAX_PER_SIGNATURE` | 10000 | 100 | 1000000 | findings kept per signature and file |
 
 One rule applies to all of them:
 

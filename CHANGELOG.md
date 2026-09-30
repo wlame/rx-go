@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rx signatures template` prints a commented file with one signature
   of each kind.
 - `RX_SIGNATURES_PATH`: where the signature files are.
+- `RX_SIGNATURES_LINE_BYTES` (default 65536, 1024 to 1048576): how many
+  bytes of each line a signature scan matches against; a longer line is
+  cut there for matching and still counted at its full length.
+  `RX_FINDINGS_MAX_PER_SIGNATURE` (default 10000, 100 to 1000000): the
+  most findings of one signature a scan of one file keeps, the first by
+  line, with the count kept exact past it. Out-of-range values follow
+  the rule of every integer setting.
 - New dependency: `go.yaml.in/yaml/v3` v3.0.5, the YAML parser, under
   the MIT licence (the files ported from libyaml) and the Apache
   License 2.0 (the rest).

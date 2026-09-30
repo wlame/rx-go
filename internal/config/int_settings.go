@@ -137,7 +137,35 @@ var (
 	// file for a moment after the rotation. 0 is accepted: no overlap at
 	// all. Its maximum is one day.
 	ChainOverlapSecondsSetting = IntSetting{Name: "RX_CHAIN_OVERLAP_SECONDS", Default: DefaultChainOverlapSeconds, Min: 0, Max: 86400}
+
+	// SignaturesLineBytesSetting is RX_SIGNATURES_LINE_BYTES: how many
+	// bytes of each line a signature scan matches against (the line
+	// view). A longer line is cut there for matching; its full length
+	// is still counted. Its maximum, 1 MiB, bounds what one line can
+	// hold in memory during a scan.
+	SignaturesLineBytesSetting = IntSetting{Name: "RX_SIGNATURES_LINE_BYTES", Default: DefaultSignaturesLineBytes, Min: 1024, Max: 1 << 20}
+
+	// FindingsMaxPerSignatureSetting is RX_FINDINGS_MAX_PER_SIGNATURE:
+	// the most findings of one signature a scan of one file keeps, the
+	// first ones by line. The count of findings stays exact past it.
+	FindingsMaxPerSignatureSetting = IntSetting{Name: "RX_FINDINGS_MAX_PER_SIGNATURE", Default: DefaultFindingsMaxPerSignature, Min: 100, Max: 1_000_000}
 )
+
+// DefaultSignaturesLineBytes is the default of RX_SIGNATURES_LINE_BYTES:
+// 64 KiB.
+const DefaultSignaturesLineBytes = 65536
+
+// SignaturesLineBytes returns RX_SIGNATURES_LINE_BYTES, from 1024 to
+// 1048576 bytes, or DefaultSignaturesLineBytes.
+func SignaturesLineBytes() int { return SignaturesLineBytesSetting.Value() }
+
+// DefaultFindingsMaxPerSignature is the default of
+// RX_FINDINGS_MAX_PER_SIGNATURE.
+const DefaultFindingsMaxPerSignature = 10000
+
+// FindingsMaxPerSignature returns RX_FINDINGS_MAX_PER_SIGNATURE, from
+// 100 to 1000000 findings, or DefaultFindingsMaxPerSignature.
+func FindingsMaxPerSignature() int { return FindingsMaxPerSignatureSetting.Value() }
 
 // DefaultChainOverlapSeconds is the default of RX_CHAIN_OVERLAP_SECONDS.
 const DefaultChainOverlapSeconds = 60
@@ -196,6 +224,8 @@ var IntSettings = []IntSetting{
 	SamplesHeadMBSetting,
 	MaxIndexBuildsSetting,
 	ChainOverlapSecondsSetting,
+	SignaturesLineBytesSetting,
+	FindingsMaxPerSignatureSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule
