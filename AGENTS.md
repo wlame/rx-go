@@ -266,7 +266,9 @@ Data flow for `rx trace "pattern" big.log`:
   in code comments; describe what the code guarantees instead. `just
   scaffolding-check` is a CI gate that fails on `Stage N`, `Round N` and
   `Finding N` in either case and with or without `#`, and on
-  `Reviewer N`, `Rn-Xn` and `user decision N.N`.
+  `Reviewer N`, `Rn-Xn` and `user decision N.N` (any case). In `docs/`
+  it fails on `Stage N`, `Round N`, `Finding N` as whole words and on
+  `Rn-Xn`; everywhere it ships it fails on ticket numbers.
 - Prefer a lookup table over a chain of `if`/`switch` when the logic is a mapping.
 - Long flags use `=` in help text, docs and printed commands.
 - Small functions, early returns, no flag parameters that switch behaviour.

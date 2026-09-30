@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # Either case, with or without "#": "Finding 6", "finding #7", "stage 3".
-pattern='[Ss]tage #?[0-9]|[Rr]ound #?[0-9]|R[0-9]-[A-Z][0-9]|Reviewer [0-9]|[Ff]inding #?[0-9]|user decision [0-9.]'
+pattern='[Ss]tage #?[0-9]|[Rr]ound #?[0-9]|R[0-9]-[A-Z][0-9]|Reviewer [0-9]|[Ff]inding #?[0-9]|[Uu]ser [Dd]ecision [0-9.]|USER DECISION [0-9.]'
 # Design documents, task lists and a separate prototype the product does
 # not contain: "Decision 5.1", "spec §7", "(Task 4)", "Task 6:",
 # "plan-mandated", "another-rx-go/internal/…", "Post-Stage-8", "per
@@ -40,6 +40,18 @@ if hits=$(grep -rnE "$ticket" CHANGELOG.md docs/ testdata/); then
     echo "$hits" >&2
     echo >&2
     echo "Say what changed and why; the tracker is not part of the repository." >&2
+    exit 1
+fi
+
+# The docs also cite review stages and rounds: "Stage 9 Round 5 found",
+# "R5-B1". The words are ordinary prose too ("around 256 MB"), so in the
+# docs they count only as whole words followed by a number.
+docs_pattern='(^|[^[:alnum:]_])([Ss]tage|[Rr]ound|[Ff]inding) #?[0-9]|R[0-9]-[A-Z][0-9]'
+if hits=$(grep -rnE "$docs_pattern" docs/); then
+    echo "build-process citations found in docs:" >&2
+    echo "$hits" >&2
+    echo >&2
+    echo "Describe the behaviour as it is now; the review is not part of the docs." >&2
     exit 1
 fi
 
