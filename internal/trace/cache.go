@@ -40,9 +40,14 @@ import (
 // claiming its new size with matches only up to the old one; such a
 // cache cannot be told apart from a good one and is discarded.
 //
+// Version 5: a full scan of a seekable-zstd file numbers every match.
+// A frame that holds no line break broke the frame-by-frame count in
+// version 4, and the matches after it were stored with their line
+// number inside their own frame.
+//
 // rx-python writes version 3, so each backend treats the other's trace
 // caches as absent.
-const TraceCacheVersion = 4
+const TraceCacheVersion = 5
 
 // matchingFlags are the subset of ripgrep flags that change WHICH
 // lines match. Any flag not in this set doesn't affect cache validity.

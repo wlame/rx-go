@@ -16,6 +16,13 @@ const (
 // where it lives in the compressed stream, where its decompressed
 // bytes land, and which lines it contains.
 //
+// FirstLine is the line that holds the frame's first byte, which may
+// have begun in an earlier frame. The lines a frame holds are the ones
+// it ends with a line break (and, in the last frame, a last line that
+// no break ends), so LastLine is FirstLine+LineCount-1. A frame inside
+// a line longer than a frame ends no line: LineCount is 0, LastLine is
+// FirstLine-1, and the next frame starts on the same line.
+//
 // 1-based line numbers match Python; 0-based frame index matches the
 // zstd frame ordering.
 type FrameLineInfo struct {
