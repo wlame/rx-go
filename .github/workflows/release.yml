@@ -2,7 +2,8 @@ name: Release
 
 # Build the release binaries when a vX.Y.Z tag is pushed. scripts/release.sh
 # creates the tag locally and prints the push command; nothing here runs
-# until a human pushes it.
+# until a human pushes it. A pushed tag whose name is not exactly vX.Y.Z
+# stops the job at its first step, before anything is checked out or run.
 on:
   push:
     tags:
@@ -15,6 +16,22 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Later steps hand the tag name to the justfile: the release notes
+      # step passes its version, and `git describe` gives it to the build
+      # as the version it stamps. git allows a quote, `;`, `$(` or a
+      # backtick in a tag name, and the `v*.*.*` filter above lets such a
+      # name through, so the job stops here unless the name is exactly
+      # vX.Y.Z. The name is read from the environment, never pasted into
+      # the script, so this check runs no part of it.
+      - name: check the tag name
+        shell: bash
+        run: |
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'ERROR: the tag name %q is not vX.Y.Z; nothing is built or released\n' "$GITHUB_REF_NAME"
+            exit 1
+          fi
+          printf 'tag name %s is vX.Y.Z\n' "$GITHUB_REF_NAME"
+
       - name: checkout
         uses: actions/checkout@v4
         with:

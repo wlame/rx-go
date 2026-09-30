@@ -9,6 +9,14 @@ export PATH := env_var("HOME") + "/go/bin:" + env_var("PATH")
 # there is no version constant in the source.
 version := `git describe --tags --dirty --always 2>/dev/null || echo dev`
 
+# The recipes read the version as "$BUILD_VERSION", never as {{version}}.
+# It holds a tag name, and git allows a quote, `;`, `$(` or a backtick in
+# one: pasted into a recipe line, the shell would run that part of it.
+# Read from the environment, it stays one word. The name has no RX_
+# prefix, so `GET /health` of an rx started by `just serve` does not list
+# it among rx's settings.
+export BUILD_VERSION := version
+
 # Coverage floor. 82.4% today; raise it as coverage improves, never lower it
 # to make a red build green. Recorded in AGENTS.md.
 coverage_min := "80"
@@ -24,8 +32,8 @@ build:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p dist
-    CGO_ENABLED=0 go build -ldflags '-s -w -X main.appVersion={{version}}' -o dist/rx ./cmd/rx
-    echo "built dist/rx {{version}}"
+    CGO_ENABLED=0 go build -ldflags "-s -w -X main.appVersion=$BUILD_VERSION" -o dist/rx ./cmd/rx
+    echo "built dist/rx $BUILD_VERSION"
 
 # Cross-compile the release binaries with their sha256 sidecars
 build-all:
@@ -36,7 +44,7 @@ build-all:
         os="${target%/*}"; arch="${target#*/}"
         out="dist/rx-${os}-${arch}"
         GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
-            go build -ldflags '-s -w -X main.appVersion={{version}}' -o "$out" ./cmd/rx
+            go build -ldflags "-s -w -X main.appVersion=$BUILD_VERSION" -o "$out" ./cmd/rx
         ( cd dist && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
         echo "built $out"
     done
@@ -182,7 +190,7 @@ docs-serve:
 
 # Print the version a build would stamp
 version:
-    @echo {{version}}
+    @printf '%s\n' "$BUILD_VERSION"
 
 # Cut a release (major|minor|patch): gates, changelog, commit, tag. Never pushes.
 [positional-arguments]
@@ -198,8 +206,17 @@ release-dry part='patch':
     @./scripts/release.sh "$1" --dry-run
 
 # Print one version's changelog section (e.g. just release-notes 0.1.0)
+[positional-arguments]
 release-notes version:
-    @awk '/^## \[{{version}}\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # release.yml passes the pushed tag's version here. Only X.Y.Z gets
+    # through, and awk compares it as text, never as a pattern.
+    if ! [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        printf 'error: the version must be X.Y.Z, such as 0.1.0 (got %q)\n' "$1" >&2
+        exit 2
+    fi
+    awk -v v="$1" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md
 
 # ── product ──────────────────────────────────────────────────────────────
 

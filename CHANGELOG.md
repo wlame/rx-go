@@ -447,6 +447,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as one word. They used to paste the arguments into a shell line, so
   `just run trace 'a b' app.log` searched for `a` in the files `b` and
   `app.log`, and `just test -run='A|B'` ran `B` as a command.
+- A tag name no longer runs as shell code on the release path. git
+  allows a quote, `;`, `$(` or a backtick in a tag name, and a tag such
+  as `v1.0.0';id;'` matches the `v*.*.*` filter of `release.yml`, whose
+  job may write releases. That workflow now stops at its first step
+  unless the pushed tag is exactly `vX.Y.Z`. `just release-notes`
+  refuses a version that is not `X.Y.Z` (exit 2) and finds the section
+  by plain text, not by a pattern. `just build`, `build-all` and
+  `version` read the version from `git describe` as the variable
+  `BUILD_VERSION`, so it stays one word; they stamp the same string as
+  before.
 
 ## [0.5.0] - 2026-10-06
 
