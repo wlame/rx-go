@@ -341,7 +341,8 @@ per chain (operation `chain_index`, followed at
   room, however many chains are pending.
 - At most 128 chains' index tasks run or wait at once, as many as that
   half of the queue has places. Past that a pending chain gets no task:
-  its description names none (`index_build` null) and says why
+  its description and the answer to a samples request addressed to a
+  part name none (`index_build` null) and say why
   (`index_build_refused`), and `POST /v1/logs/index` and a samples
   request that needs the chain ready answer `503` with
   `Retry-After: 5`, until one of those tasks has ended. A chain waiting

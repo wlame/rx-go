@@ -55,11 +55,12 @@ func unfinishedChainTasksOf(c *chainIndexTasks) int {
 // With as many chain index tasks unfinished as the limit allows (the
 // chains' share of the build queue, here 2), one more pending chain gets
 // no task: its describe answers pending with no index_build and says
-// why in index_build_refused (so does the 409 of a samples request), and
-// POST /v1/logs/index and a samples request by global line answer 503
-// with a Retry-After of a few seconds. A chain whose task runs is still
-// joined at the limit, with no refusal. Once a task ends, a describe of
-// the chain past the limit starts its task and names no refusal.
+// why in index_build_refused (so do the 409 of a samples request and the
+// answer to a samples request addressed to a part), and POST
+// /v1/logs/index and a samples request by global line answer 503 with a
+// Retry-After of a few seconds. A chain whose task runs is still joined
+// at the limit, with no refusal. Once a task ends, a describe of the
+// chain past the limit starts its task and names no refusal.
 func TestChainIndex_APendingChainPastTheLimitStartsNoTask(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
@@ -91,6 +92,13 @@ func TestChainIndex_APendingChainPastTheLimitStartsNoTask(t *testing.T) {
 	read := askChainRoute(t, http.MethodGet, f.base, "/v1/logs/samples", url.Values{"path": {handle("c")}, "lines": {"1"}})
 	conflict := askChainRoute(t, http.MethodGet, f.base, "/v1/logs/samples",
 		url.Values{"path": {handle("c")}, "lines": {"1"}, "fingerprint": {"0000000000000000"}})
+	// A request addressed to a part reads that part alone and is answered
+	// before the chain is ready. The parts are small plain files, so the
+	// read builds no index of its own.
+	partRead := askChainRoute(t, http.MethodGet, f.base, "/v1/logs/samples",
+		url.Values{"path": {handle("c")}, "part": {"app.log.1"}, "lines": {"1"}})
+	joinedPartRead := askChainRoute(t, http.MethodGet, f.base, "/v1/logs/samples",
+		url.Values{"path": {handle("a")}, "part": {"app.log.1"}, "lines": {"1"}})
 	joinedChain := describeChainAt(t, f.base, handle("a"))
 	joined := joinedChain.IndexBuild
 
@@ -109,6 +117,20 @@ func TestChainIndex_APendingChainPastTheLimitStartsNoTask(t *testing.T) {
 	}
 	if joinedChain.IndexBuildRefused != nil {
 		t.Errorf("a chain whose task runs: index_build_refused %q, want null", *joinedChain.IndexBuildRefused)
+	}
+	if partRead.status != http.StatusOK || joinedPartRead.status != http.StatusOK {
+		t.Fatalf("samples of a part of a pending chain: status %d, %s and %d, %s; want 200",
+			partRead.status, partRead.body, joinedPartRead.status, joinedPartRead.body)
+	}
+	if lines := decodeChainSamples(t, partRead.body); lines.IndexBuild != nil ||
+		lines.IndexBuildRefused == nil || !strings.Contains(*lines.IndexBuildRefused, refusal) {
+		t.Errorf("samples of a part past the limit: index_build %+v, index_build_refused %v; want none and the reason",
+			lines.IndexBuild, textOf(lines.IndexBuildRefused))
+	}
+	if lines := decodeChainSamples(t, joinedPartRead.body); lines.IndexBuild == nil ||
+		lines.IndexBuild.TaskID != first.TaskID || lines.IndexBuildRefused != nil {
+		t.Errorf("samples of a part of a chain whose task runs: index_build %+v, index_build_refused %v; want its task and null",
+			lines.IndexBuild, textOf(lines.IndexBuildRefused))
 	}
 	for _, answer := range []chainRouteAnswer{posted, read} {
 		if answer.status != http.StatusServiceUnavailable || !strings.Contains(string(answer.body), "tasks the server runs at once (2) are running or waiting") {
