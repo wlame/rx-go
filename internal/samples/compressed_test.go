@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 )
@@ -151,6 +152,42 @@ func TestResolveCountsLinesFromTheEndOfACompressedFile(t *testing.T) {
 	got := resp.Samples[key]
 	if len(got) != 1 || got[0] != "line 300 of the log" {
 		t.Fatalf("samples[%q] = %v", key, got)
+	}
+}
+
+// A last line with no line break after it is still a line, so -1 names
+// it in a compressed file as in the plain copy of the same text.
+func TestResolveCountsAnUnterminatedLastLineOfACompressedFile(t *testing.T) {
+	text, _ := variedLog(400, 9)
+	dir := t.TempDir()
+	plainPath := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(plainPath, text, 0o600); err != nil {
+		t.Fatalf("write plain: %v", err)
+	}
+	request := func(path string, loader IndexLoader) Request {
+		return Request{Path: path, Lines: []OffsetOrRange{{Start: -1}, {Start: -3}}, BeforeContext: 1, IndexLoader: loader}
+	}
+	plain, err := Resolve(request(plainPath, NoIndex))
+	if err != nil {
+		t.Fatalf("resolve plain: %v", err)
+	}
+	if _, ok := plain.Lines["400"]; !ok {
+		t.Fatalf("plain: -1 did not name line 400: %v", plain.Lines)
+	}
+
+	for name, path := range compressedCopiesOf(t, text, dir) {
+		for how, loader := range loadersFor(t, path) {
+			t.Run(name+"/"+how, func(t *testing.T) {
+				got, err := Resolve(request(path, loader))
+				if err != nil {
+					t.Fatalf("resolve: %v", err)
+				}
+				if !reflect.DeepEqual(got.Lines, plain.Lines) || !reflect.DeepEqual(got.Samples, plain.Samples) {
+					t.Errorf("got lines %v samples %q, want lines %v samples %q",
+						got.Lines, got.Samples, plain.Lines, plain.Samples)
+				}
+			})
+		}
 	}
 }
 

@@ -146,6 +146,10 @@ func trimNewline(s string) string {
 
 // streamCountLines decompresses the file and counts its lines without
 // keeping any of the content.
+//
+// A line is counted at its line break, and a last line that no break
+// ends is counted too: it is a line, and -1 has to name it as it does
+// in the plain copy of the same text.
 func streamCountLines(path string, format compression.Format) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -159,14 +163,22 @@ func streamCountLines(path string, format compression.Format) (int64, error) {
 	defer func() { _ = dec.Close() }()
 
 	var n int64
+	// endsAtLineStart is true while the text read so far is empty or
+	// ends with a line break, so no line is open at the end of it.
+	endsAtLineStart := true
 	buf := make([]byte, 64*1024)
 	for {
 		read, readErr := dec.Read(buf)
 		if read > 0 {
-			n += int64(bytes.Count(buf[:read], []byte{'\n'}))
+			chunk := buf[:read]
+			n += int64(bytes.Count(chunk, []byte{'\n'}))
+			endsAtLineStart = bytes.HasSuffix(chunk, []byte{'\n'})
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
+				if !endsAtLineStart {
+					n++
+				}
 				return n, nil
 			}
 			return 0, readErr

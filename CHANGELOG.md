@@ -488,6 +488,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx samples --lines=-1` and `GET /v1/samples?lines=-1` on a gzip,
+  bzip2, xz or zstd file (and on a seekable zstd file without an
+  index) name the last line when the text does not end with a line
+  break. The count from the end skipped that line, so `-1` answered
+  the line before it and every negative line was one too low.
+
 - `rx samples --offsets` fails with the error when the file cannot be
   read part-way through, instead of answering the offsets after the
   failure as past the end of the file (`-1`).
