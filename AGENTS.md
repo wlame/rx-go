@@ -455,8 +455,11 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
 - No test sends data to a hook of the developer's shell. The `just` test
   recipes drop every `RX_HOOK_*` variable from the environment, and the
   tests in `cmd/rx` start the binary through `rxCommand`, whose
-  environment leaves them out too (`testEnviron`). A test that needs a
-  hook sets its own URL.
+  environment leaves them out too (`testEnviron`). `isolatedcache.Main`,
+  the parity runners and `testEnviron` drop the same variables: one
+  filter in `isolatedcache` decides them, reached from other packages
+  through `WithoutHookVariables`. A test that needs a hook sets its own
+  URL.
 - Tests must be deterministic. Do not assert on wall-clock speed or on how far
   a race got before a cancel fired.
 - Tests that need an external tool (`rg`, `zstd`) skip with a reason when it is
