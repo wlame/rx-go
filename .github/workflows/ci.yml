@@ -19,8 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        # The floor from go.mod and the toolchain the release is built with.
-        go-version: ['1.25', '1.26']
+        # The floor from go.mod, the toolchain the release is built with,
+        # and the newest Go release.
+        go-version: ['1.25', '1.26', '1.27']
 
     steps:
       - name: checkout
@@ -51,12 +52,16 @@ jobs:
 
       # v2.x: the repo's .golangci.yml uses the v2 config schema, and the
       # binary must be built with a Go at least as new as go.mod's
-      # directive or it refuses to run. install-only: the action puts the
-      # binary on PATH and runs nothing; `just ci` runs the lint itself.
+      # directive or it refuses to run. It must also read the export data
+      # of the newest Go in the matrix: v2.13.2 cannot read Go 1.27.2's
+      # and fails every package with a typecheck error; v2.14.0 can, and
+      # finds 0 issues on 1.25, 1.26 and 1.27. install-only: the action
+      # puts the binary on PATH and runs nothing; `just ci` runs the lint
+      # itself.
       - name: install golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.2
+          version: v2.14.0
           install-mode: binary
           install-only: true
 
