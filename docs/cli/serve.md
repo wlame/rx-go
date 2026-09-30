@@ -306,7 +306,7 @@ built against (`0.2.0 <= v < 0.9.0` today). Before the server binds:
 | None | Reads GitHub's release list and installs the newest release inside the range | `v0.6.0 (installed)` |
 | Inside the range, `last_check` under a day old | Serves it; asks GitHub nothing | `v0.6.0 (cached)` |
 | Inside the range, `last_check` a day old, missing or unreadable | Reads the release list; installs a newer release inside the range, or keeps the cache; records `last_check` | `v0.6.0 (updated from v0.2.0)` or `v0.2.0 (cached)` |
-| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `v0.6.0 (updated from v0.7.1)` or `none (/ redirects to /docs)` |
+| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `v0.6.0 (updated from v1.0.0)` or `none (/ redirects to /docs)` |
 
 `--update-viewer` runs the check at once, whatever `last_check` says.
 An update that replaces a cache whose `.metadata.json` records no version
