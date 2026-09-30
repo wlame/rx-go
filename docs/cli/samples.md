@@ -225,23 +225,34 @@ payload`, `--lines=1,30,99 --json`:
 }
 ```
 
-### Compressed file (line mode only)
+### Compressed file
 
 ```bash
 rx samples /var/log/audit-2026-03.log.gz --lines=5000 --context=2
+rx samples /var/log/audit-2026-03.log.gz --offsets=403366791
 ```
 
-For `.gz`, `.bz2`, `.xz`, or plain (non-seekable) `.zst` files, only
-line-offset mode works. `rx` streams the decompressor from the start
-to the end of the file and captures lines as it passes them, so every
-lookup costs one full decompression, whatever the line. The offsets in
-`lines` are positions in the decompressed text. For random access on
+Both modes work on `.gz`, `.bz2`, `.xz` and `.zst` files. Offsets are
+positions in the decompressed text, in the request and in the answer:
+the `lines` map reports where each line starts in that text, and
+`--offsets=B` answers with the line holding byte B of it, the same
+line the plain copy of the file gives. `--lines=N` and `--offsets=` the
+offset of line N lead to each other.
+
+A gzip, bzip2, xz or plain (non-seekable) zstd file has no way in except
+from its first byte. In line mode `rx` streams the decompressor to the
+end of the file and captures lines as it passes them, so every lookup
+costs one full decompression, whatever the line. In offset mode it
+decompresses up to the line holding the last offset asked about and
+stops there; with an index it also skips counting the lines before the
+nearest checkpoint. A seekable `.zst` with an index decompresses only
+the frames around the wanted lines or offsets. For random access on
 compressed data, use [`rx compress`](compress.md) to re-encode as
 seekable zstd.
 
 ## How it works
 
-### Byte-offset mode (uncompressed files)
+### Byte-offset mode
 
 1. Parse the offsets spec into a list of (offset, range-end) pairs.
 2. For each offset, seek to that byte position.
@@ -252,7 +263,9 @@ seekable zstd.
 
 To number the line, the read starts at the nearest index checkpoint
 before the offset, or at byte 0 without an index (15 ms for an offset
-403 MB into the 465 MB log).
+403 MB into the 465 MB log). For a compressed file the same walk runs
+over the decompressed text: from the frame before the offset's frame
+for an indexed seekable `.zst`, from the first byte otherwise.
 
 ### Line-offset mode
 
@@ -291,12 +304,11 @@ Measured on a 465 MB log in the page cache, whole command included:
     rx samples access.log --offsets="$offsets" --context=5
     ```
 
-!!! warning "Byte offsets don't work on compressed files"
-    The offsets `rx` reports for a compressed file are positions in the
-    decompressed text, and `samples` cannot seek there without
-    decompressing everything before. It refuses the combination (exit 2,
-    `Byte offsets are not supported for compressed files; use lines
-    instead`). Use `--lines` with the match's line number.
+!!! note "Byte offsets on compressed files are positions in the text"
+    The offsets `rx trace` reports for a compressed file are positions
+    in the decompressed text, and `samples --offsets` takes them as they
+    are. That is how a match a capped trace left without a line number
+    (`-1`) gets one, on a compressed file as on a plain one.
 
 !!! note "Negative line numbers on compressed files cost a second pass"
     On a gzip, bzip2, xz or plain zstd file, `--lines=-1` streams the

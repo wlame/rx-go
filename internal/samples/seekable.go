@@ -20,6 +20,12 @@ import (
 // the answer is the same either way, only slower.
 var errNoFrameIndex = errors.New("samples: no frame index for this file")
 
+// decodeSeekableFrame decompresses one frame of a seekable file. It is
+// a variable so a test can count the frames a request decodes.
+var decodeSeekableFrame = func(d *seekable.Decoder, path string, frame int, table *seekable.SeekTable) ([]byte, error) {
+	return d.DecompressFrame(path, frame, table)
+}
+
 // resolveSeekableLines answers a line-mode request on a seekable-zstd
 // file by decompressing only the frames that hold the wanted lines.
 //

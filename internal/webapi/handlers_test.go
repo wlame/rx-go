@@ -499,33 +499,6 @@ func TestSamples_BadOffsetFormat(t *testing.T) {
 	}
 }
 
-// TestSamples_CompressedFileWithOffsets rejects byte-offsets on .gz.
-func TestSamples_CompressedFileWithOffsets(t *testing.T) {
-	root := t.TempDir()
-	f := filepath.Join(root, "a.log.gz")
-	// Write a valid gzip header + payload.
-	// Simplest: use the gzip package.
-	// Just fake a .gz extension; compression.IsCompressed reads headers
-	// too, but the extension alone is enough to flag it.
-	_ = os.WriteFile(f, []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03"+
-		"ABCDEFGH"), 0o644) // valid gzip magic + any data
-	if err := paths.SetSearchRoots([]string{root}); err != nil {
-		t.Fatalf("set roots: %v", err)
-	}
-	t.Cleanup(paths.Reset)
-
-	ts := newTestServer(t)
-	resp, err := http.Get(fmt.Sprintf("%s/v1/samples?path=%s&offsets=1", ts.URL, f))
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", resp.StatusCode)
-	}
-}
-
 // TestIndex_PostBelowThreshold returns 400 for small files.
 func TestIndex_PostBelowThreshold(t *testing.T) {
 	root := t.TempDir()
