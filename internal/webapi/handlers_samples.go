@@ -58,9 +58,9 @@ func nilIfNegative(n int) *int {
 // `rx samples` over HTTP: seek to offsets (or line numbers) in a file
 // and emit ±context lines of surrounding text.
 //
-// Compressed files: byte offsets are rejected (400); only line mode is
-// supported. This matches Python's behavior because byte offsets in a
-// .gz file have no stable meaning after partial decompression.
+// Compressed files answer both modes. A byte offset is a position in
+// the file's text, the decompressed stream, which is the coordinate a
+// trace of the same file reports its matches in.
 func registerSamplesHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "samples",
@@ -98,14 +98,6 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		}
 		if in.Offsets == "" && in.Lines == "" {
 			return nil, ErrBadRequest("Must provide either 'offsets' or 'lines' parameter.")
-		}
-
-		// Compression check.
-		compressed := compression.IsCompressed(validated)
-		if compressed && in.Offsets != "" {
-			return nil, ErrBadRequest(
-				"Byte offsets are not supported for compressed files. Use 'lines' parameter instead.",
-			)
 		}
 
 		// Context defaults (-1 sentinel = "not provided").
@@ -190,9 +182,6 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			IndexLoader:   loader,
 		})
 		if err != nil {
-			if errors.Is(err, samples.ErrOffsetsOnCompressed) {
-				return nil, ErrBadRequest(err.Error())
-			}
 			return nil, ErrInternal(err.Error())
 		}
 

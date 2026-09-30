@@ -173,12 +173,14 @@ func TestSamples_XZ_RangeMode(t *testing.T) {
 	}
 }
 
-// TestSamples_XZ_ByteOffset_Rejected — byte-offset mode on xz must 400.
-// Parity with gzip behavior: compressed files only allow line mode.
-func TestSamples_XZ_ByteOffset_Rejected(t *testing.T) {
+// TestSamples_XZ_ByteOffset_AnswersTheLine — a byte offset in an xz
+// file is a position in its decompressed text and resolves to the line
+// holding it, as in any other file.
+func TestSamples_XZ_ByteOffset_AnswersTheLine(t *testing.T) {
 	root := t.TempDir()
+	t.Setenv("RX_CACHE_DIR", filepath.Join(t.TempDir(), "cache"))
 	xzPath := filepath.Join(root, "a.log.xz")
-	if err := os.WriteFile(xzPath, xzCompress(t, []byte("abcdef\n")), 0o644); err != nil {
+	if err := os.WriteFile(xzPath, xzCompress(t, []byte("abcdef\nghijkl\n")), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if err := paths.SetSearchRoots([]string{root}); err != nil {
@@ -187,13 +189,23 @@ func TestSamples_XZ_ByteOffset_Rejected(t *testing.T) {
 	t.Cleanup(paths.Reset)
 
 	ts := newTestServer(t)
-	resp, err := http.Get(fmt.Sprintf("%s/v1/samples?path=%s&offsets=1", ts.URL, xzPath))
+	resp, err := http.Get(fmt.Sprintf("%s/v1/samples?path=%s&offsets=9&context=0", ts.URL, xzPath))
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status: got %d, want 400", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", resp.StatusCode)
+	}
+	var out rxtypes.SamplesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Offsets["9"] != 2 {
+		t.Errorf("offset 9 is on line %d, want 2", out.Offsets["9"])
+	}
+	if got := out.Samples["9"]; len(got) != 1 || got[0] != "ghijkl" {
+		t.Errorf("sample: got %q, want [ghijkl]", got)
 	}
 }
 

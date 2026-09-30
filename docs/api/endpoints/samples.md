@@ -50,7 +50,9 @@ GET /v1/samples?path=...&offsets=...
 | `after_context` | `int` | no | `3` | Lines after (overrides `context`) (`-1` = default) |
 
 Exactly one of `offsets` / `lines` must be provided. Both-set or
-neither-set returns `400`. `offsets` is refused for a compressed file.
+neither-set returns `400`. For a compressed file both are positions in
+its decompressed text: `offsets` names bytes of that text, and the
+`lines` map reports where each line starts in it.
 
 ### Address syntax
 
@@ -130,7 +132,7 @@ client-side and iterate accordingly.
 | Code | When |
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
-| `400 Bad Request` | Missing both `offsets` and `lines`; both set; byte offsets on compressed file; bad spec syntax; `path` is a directory |
+| `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |
 | `500 Internal Server Error` | Resolver failure; logged with stack |
@@ -207,16 +209,6 @@ curl -sG 'http://127.0.0.1:7777/v1/samples' \
 Returns line 10000 plus the next 20 lines, no preceding context.
 
 ## Error examples
-
-### Byte offsets on compressed file
-
-```json
-{
-  "detail": "Byte offsets are not supported for compressed files. Use 'lines' parameter instead."
-}
-```
-
-Status: `400`. Reaching a position in the decompressed text would mean decompressing everything before it; use `lines`.
 
 ### Bad spec syntax
 

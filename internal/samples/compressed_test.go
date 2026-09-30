@@ -3,7 +3,6 @@ package samples
 import (
 	"bytes"
 	"compress/gzip"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,20 +131,6 @@ func TestResolveNumbersTheLinesItReadsFromACompressedFile(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("line %d: got %q, want %q", i, got[i], want[i])
 		}
-	}
-}
-
-// TestResolveRefusesByteOffsetsOnACompressedFile pins the one thing a
-// compressed file cannot answer.
-func TestResolveRefusesByteOffsetsOnACompressedFile(t *testing.T) {
-	_, compressed := writeGzipFixture(t, 20)
-	spec, err := ParseCSV("100")
-	if err != nil {
-		t.Fatalf("ParseCSV: %v", err)
-	}
-	_, err = Resolve(Request{Path: compressed, Offsets: spec, IndexLoader: NoIndex})
-	if !errors.Is(err, ErrOffsetsOnCompressed) {
-		t.Fatalf("err = %v, want ErrOffsetsOnCompressed", err)
 	}
 }
 
