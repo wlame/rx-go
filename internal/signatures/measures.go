@@ -1,6 +1,7 @@
 package signatures
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -340,20 +341,43 @@ var durationUnits = []struct {
 	{"ms", time.Millisecond},
 }
 
+// maxDurationDays is the longest duration a measure parameter may be
+// written as, in days (about ten years). Every parameter's own range is
+// far shorter; the bound is checked before a day count is multiplied
+// into a time.Duration, so a large count is refused rather than wrapped
+// around to a small value.
+const maxDurationDays = 3650
+
 // parseDuration reads a duration as a measure parameter writes it: a
 // whole number of days ("1d"), or Go's duration syntax ("500ms", "60s",
-// "1h30m").
+// "1h30m"). It refuses a negative duration and one longer than
+// maxDurationDays days.
 func parseDuration(text string) (time.Duration, error) {
+	tooLong := fmt.Errorf("%q is longer than %dd", text, maxDurationDays)
 	if days, ok := strings.CutSuffix(text, "d"); ok {
-		n, err := strconv.Atoi(days)
-		if err != nil || n < 0 {
+		n, err := strconv.ParseInt(days, 10, 64)
+		switch {
+		case err != nil && errors.Is(err, strconv.ErrRange):
+			return 0, tooLong
+		case err != nil || n < 0:
 			return 0, fmt.Errorf("%q is not a duration: write a whole number of days, such as 1d", text)
+		case n > maxDurationDays:
+			return 0, tooLong
 		}
 		return time.Duration(n) * day, nil
 	}
+	// time.ParseDuration refuses a value that does not fit a
+	// time.Duration with the same error as a typo, so one message
+	// covers both.
 	d, err := time.ParseDuration(text)
-	if err != nil {
-		return 0, fmt.Errorf("%q is not a duration: write a number and a unit (ms, s, m, h, d), such as 60s", text)
+	switch {
+	case err != nil:
+		return 0, fmt.Errorf("%q is not a duration of at most %dd: write a number and a unit (ms, s, m, h, d), such as 60s",
+			text, maxDurationDays)
+	case d < 0:
+		return 0, fmt.Errorf("%q is negative: a duration is 0 or more", text)
+	case d > maxDurationDays*day:
+		return 0, tooLong
 	}
 	return d, nil
 }

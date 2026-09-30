@@ -386,6 +386,10 @@ func TestLoad_SignatureRefusals(t *testing.T) {
 		{"unknown measure parameter", header + "    measure: {name: long-line, widow: 3}\n", 11, `"widow"`},
 		{"measure parameter out of range", header + "    measure: {name: long-line, window: 0}\n", 11, "window"},
 		{"duration without a unit", header + "    measure: {name: time-gap, min_gap: 60}\n", 11, "min_gap"},
+		{"days past the duration limit", header + "    measure: {name: time-gap, min_gap: 213504d}\n", 11, "min_gap"},
+		{"hours past the duration limit", header + "    measure: {name: time-gap, min_gap: 99999999999h}\n", 11, "min_gap"},
+		{"a float that is not a number", header + "    regex: 'x'\n    entropy: .nan\n", 12, "entropy"},
+		{"a measure float that is not a number", header + "    measure: {name: density, z: .nan}\n", 11, "z"},
 		{"run without min", header + "    run: {blank: true}\n", 11, "min"},
 		{"run with two qualifiers", header + "    run: {blank: true, same: true, min: 3}\n", 11, "exactly one"},
 		{"states without a start rule", header + "    block:\n      states:\n        - {state: body, regex: 'x', next: body}\n", 13, "start"},
@@ -844,5 +848,35 @@ func TestLoad_SignatureOrder(t *testing.T) {
 	want := []string{"python-traceback", "z-traceback", "aws-access-key", "a-severity", "blank-run"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order %v, want %v", ids, want)
+	}
+}
+
+// A duration is a whole number of days or Go's syntax, at most
+// maxDurationDays days: a longer one, or one that does not fit a
+// time.Duration, is an error rather than a wrapped-around value.
+func TestParseDuration(t *testing.T) {
+	cases := []struct {
+		text string
+		want time.Duration
+		ok   bool
+	}{
+		{"60s", time.Minute, true},
+		{"500ms", 500 * time.Millisecond, true},
+		{"1d", 24 * time.Hour, true},
+		{"3650d", 3650 * 24 * time.Hour, true},
+		{"3651d", 0, false},
+		{"213504d", 0, false},
+		{"9223372036854775807d", 0, false},
+		{"87601h", 0, false},
+		{"99999999999h", 0, false},
+		{"-1d", 0, false},
+		{"-5s", 0, false},
+		{"d", 0, false},
+	}
+	for _, tc := range cases {
+		got, err := parseDuration(tc.text)
+		if (err == nil) != tc.ok || (tc.ok && got != tc.want) {
+			t.Errorf("%q: %v, %v; want %v, ok=%v", tc.text, got, err, tc.want, tc.ok)
+		}
 	}
 }

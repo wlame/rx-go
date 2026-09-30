@@ -2,6 +2,7 @@ package signatures
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	"go.yaml.in/yaml/v3"
@@ -182,7 +183,9 @@ func floatValue(n *yaml.Node, field string, lo, hi float64) (float64, *fieldErro
 	r := resolve(n)
 	var v float64
 	tag := r.ShortTag()
-	if r.Kind != yaml.ScalarNode || (tag != "!!int" && tag != "!!float") || r.Decode(&v) != nil {
+	// math.IsNaN: YAML's .nan is a float that every range check lets
+	// through, since no comparison with NaN is true.
+	if r.Kind != yaml.ScalarNode || (tag != "!!int" && tag != "!!float") || r.Decode(&v) != nil || math.IsNaN(v) {
 		return 0, newFieldError(n, "%s must be a number", field)
 	}
 	if v < lo || v > hi {

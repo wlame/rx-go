@@ -49,6 +49,9 @@ func TestDeriveClauses(t *testing.T) {
 			`(?:aa|bb|cc|dd|ee|ff|gg|hh)(?:ii|jj|kk|ll|mm|nn|oo|pp|qq)xyz`,
 			[][]string{{"iixyz", "jjxyz", "kkxyz", "llxyz", "mmxyz", "nnxyz", "ooxyz", "ppxyz", "qqxyz"}}},
 		{"no anchor text at all", `.*`, nil},
+		// The gate is ASCII case-insensitive by definition: the keyword
+		// of (?i)select is select, though the regex also matches ſelect.
+		{"a case-insensitive s stays an ASCII keyword", `(?i)select`, [][]string{{"select"}}},
 	}
 	for _, tc := range cases {
 		got, err := deriveClauses(tc.regex)

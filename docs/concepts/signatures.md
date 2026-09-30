@@ -186,7 +186,8 @@ measure: {name: long-line, factor: 50, min_bytes: 4096}
 
 `name` is one of the measures below; every other key is one of its
 parameters. A parameter left out takes its default. A duration is a
-number and a unit: `500ms`, `60s`, `5m`, `2h` or `1d`.
+number and a unit: `500ms`, `60s`, `5m`, `2h` or `1d`, at most `3650d`;
+a negative or longer one refuses the signature.
 
 | Measure | Parameter | Default | Range |
 |---|---|---|---|
@@ -235,8 +236,9 @@ of all signatures at once.
 
 The gate is part of what a signature means: a line that fails it is
 not a finding of the signature, whatever the regex says. Derived
-keywords never fail a line the regex matches (with the one exception
-below), so for most signatures the gate only makes the scan faster.
+keywords never fail a line the regex matches, with one exception (the
+Kelvin sign and the long s, under "Case" below), so for most
+signatures the gate only makes the scan faster.
 
 **Derived keywords.** Without a `keywords` field, rx derives the
 clauses from the anchor regex:
@@ -279,12 +281,16 @@ gate at all. A declaration that leaves out a word some matching line
 needs makes the signature miss that line; the examples check catches it
 when an example shows such a line.
 
-**Case.** The gate compares ASCII letters without case and every other
-byte exactly. A case-insensitive anchor (`(?i)`) letter outside ASCII
-that has another case, such as `é`, gives no keyword: the clause is cut
-there. Under `(?i)`, Go's regexp also matches `k` to the Kelvin sign
-(U+212A) and `s` to the long s (U+017F); the gate does not, so a line
-that spells a keyword with either is not a finding.
+**Case.** The gate is ASCII case-insensitive by definition: it compares
+ASCII letters without case and every other byte exactly. A letter
+outside ASCII that has another case, such as `é` in a case-insensitive
+(`(?i)`) anchor, gives no keyword: the clause is cut there.
+
+Under `(?i)`, Go's regexp also matches `k` to the Kelvin sign (U+212A)
+and `s` to the long s (U+017F); the gate does not. A line that matches
+a `(?i)` anchor only through one of these two characters is not found:
+`(?i)select` gives the keyword `select`, so the line `ſelect 1` is not
+a finding of that signature, though the regex alone would match it.
 
 ## Examples
 
