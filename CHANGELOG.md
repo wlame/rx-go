@@ -456,7 +456,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by plain text, not by a pattern. `just build`, `build-all` and
   `version` read the version from `git describe` as the variable
   `BUILD_VERSION`, so it stays one word; they stamp the same string as
-  before.
+  before. The release binaries stamp exactly the pushed tag
+  (`just --set version "$GITHUB_REF_NAME" build-all`), and the job fails
+  unless `rx --version` prints exactly `rx version <tag>`: `git describe`
+  prefers an annotated tag, so a second tag on the release commit, such
+  as `a';id;'v1.0.0`, was stamped in its place and passed the old check,
+  which only looked for the tag name inside the version.
 
 ## [0.5.0] - 2026-10-06
 

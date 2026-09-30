@@ -495,7 +495,12 @@ Paste the output. Do not summarize it.
   push` commands rather than running them. Pushing the tag is what triggers
   `release.yml`, which builds the binaries and their sha256 sidecars. Its
   first step stops the job unless the tag is exactly `vX.Y.Z`, and
-  `just release-notes` accepts only `X.Y.Z`.
+  `just release-notes` accepts only `X.Y.Z`. The job builds with
+  `just --set version "$GITHUB_REF_NAME" build-all`, so the binaries
+  stamp the pushed tag and not what `git describe` prefers (an annotated
+  tag on the same commit), and it fails unless `rx --version` prints
+  exactly `rx version <tag>`.
+  `cmd/rx/justfile_release_test.go` holds the justfile to that `--set`.
 - Never push. Never `git reset`, `stash`, `rebase` or discard changes.
 - Working files (plans, audits, notes) go in the gitignored `.claude/`.
 

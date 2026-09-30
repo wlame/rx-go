@@ -16,13 +16,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      # Later steps hand the tag name to the justfile: the release notes
-      # step passes its version, and `git describe` gives it to the build
-      # as the version it stamps. git allows a quote, `;`, `$(` or a
-      # backtick in a tag name, and the `v*.*.*` filter above lets such a
-      # name through, so the job stops here unless the name is exactly
-      # vX.Y.Z. The name is read from the environment, never pasted into
-      # the script, so this check runs no part of it.
+      # Later steps hand the tag name to the justfile: the build stamps it
+      # as the version, and the release notes step passes its version.
+      # git allows a quote, `;`, `$(` or a backtick in a tag name, and the
+      # `v*.*.*` filter above lets such a name through, so the job stops
+      # here unless the name is exactly vX.Y.Z. The name is read from the
+      # environment, never pasted into the script, so this check runs no
+      # part of it.
       - name: check the tag name
         shell: bash
         run: |
@@ -34,9 +34,6 @@ jobs:
 
       - name: checkout
         uses: actions/checkout@v4
-        with:
-          # The build stamps `git describe`, which needs the tag history.
-          fetch-depth: 0
 
       - name: setup-go
         uses: actions/setup-go@v5
@@ -46,21 +43,27 @@ jobs:
       - name: setup-just
         uses: extractions/setup-just@v4
 
+      # The binaries stamp the tag this job was started for, which the
+      # first step checked. `git describe`, the justfile's default
+      # version, prints an annotated tag in preference to the lightweight
+      # one scripts/release.sh makes: another tag on the release commit
+      # would be stamped in its place.
       - name: build binaries and checksums
-        run: just build-all
+        shell: bash
+        run: just --set version "$GITHUB_REF_NAME" build-all
 
+      # The stamped version must be the tag itself: a version that only
+      # contains the tag name, such as another tag that ends in it, fails.
       - name: verify the binary reports the tag
+        shell: bash
         run: |
           set -euo pipefail
           reported=$(./dist/rx-linux-amd64 --version)
           echo "rx --version: $reported"
-          case "$reported" in
-            *"${GITHUB_REF_NAME}"*) ;;
-            *)
-              echo "ERROR: rx --version ($reported) does not carry the tag ${GITHUB_REF_NAME}"
-              exit 1
-              ;;
-          esac
+          if [[ "$reported" != "rx version $GITHUB_REF_NAME" ]]; then
+            echo "ERROR: rx --version ($reported) is not exactly: rx version $GITHUB_REF_NAME"
+            exit 1
+          fi
 
       - name: release notes
         id: notes
