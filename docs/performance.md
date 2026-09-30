@@ -124,11 +124,15 @@ If you're hitting OOM on scans with many matches:
 | `rx index` on the 465 MB log | 142 ms (build) | 11 ms (valid index found) |
 | `rx trace` rare literal, 6.3 GB log | 0.48 s | 12 ms (trace cache hit) |
 | `rx trace WARN`, 465 MB log, 51,817 matches | 331 ms | 429 ms (trace cache hit) |
+| `rx trace WARN --max-results=100`, 465 MB log (`time` field) | 15 ms | 30 ms (trace cache hit) |
 | `rx samples --lines=40000000`, 6.3 GB log | 2.46 s | 20 ms (index) |
 
-A trace cache hit reads the stored matches, so it is cheap for a
+A trace cache hit parses the stored matches and reads the file on one
+core from the first match it returns to the last, so it is cheap for a
 selective pattern and can cost more than a scan for a dense one when
-the file is already in the page cache. From disk, a scan of a large
+the file is already in the page cache. A capped hit stops after the
+matches it returns but still parses the whole entry; see
+[caching](concepts/caching.md#trace_cache). From disk, a scan of a large
 file costs far more than either. For workloads that look up lines in
 the same files repeatedly, pre-building the indexes pays off:
 

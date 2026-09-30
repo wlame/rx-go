@@ -87,11 +87,24 @@ plain zstd files are never cached.
 
 `--no-cache` bypasses both the read and write steps.
 
-A hit costs reading the entry, which grows with the match count. On a
-465 MB log in the page cache, a rare pattern took 65 ms to scan and
-15 ms from the cache, but `WARN` with 51,817 matches (a 4.9 MB entry)
-took 331 ms to scan and 429 ms from the cache. On a 6.3 GB log the rare
-pattern took 481 ms to scan and 12 ms from the cache.
+A hit costs two things. It parses the whole entry, which grows with
+the match count. Then it reads the file once, on one core, from the
+first match it returns to the last, because the entry stores offsets
+and the line text and line numbers come from the file again. A scan
+reads the file with one ripgrep per chunk in parallel. On a 465 MB log
+in the page cache, a rare pattern took 65 ms to scan and 15 ms from the
+cache, but `WARN` with 51,817 matches (a 4.9 MB entry) took 331 ms to
+scan and 429 ms from the cache. On a 6.3 GB log the rare pattern took
+481 ms to scan and 12 ms from the cache.
+
+Under `--max-results=N` the hit rebuilds only the first N matches and
+stops reading the file after them (and after the lines their context
+can reach); the entry is still parsed whole. With `--max-results=100`
+on the 465 MB log (the `time` field, warm page cache): `WARN` took
+30 ms from its 4.6 MB entry and 15 ms to scan; `INFO`, 1,327,224
+matching lines, took 0.69 s from its 119 MB entry and 16 ms to scan.
+The cached answer numbers every line it returns, which a capped scan of
+a plain file may leave as `-1`.
 
 Anomaly detection writes no files of its own. An analysis is part of
 the file's line index, which records the window and the detectors (each

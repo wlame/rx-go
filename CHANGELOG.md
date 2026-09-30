@@ -120,6 +120,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A trace with `--max-results=N` (or `max_results`) answered from the
+  trace cache rebuilds only the first N matches and stops reading the
+  file after them and the lines their context reaches. It rebuilt every
+  cached match and read the file up to the last one first. The answer
+  is unchanged. On a 465 MB log, `WARN --max-results=100` from the
+  cache went from 0.22 s to 0.03 s; the whole entry is still parsed,
+  so a capped hit on a very large entry stays slower than a capped
+  scan (0.69 s from a 119 MB entry against 16 ms).
+
 - `just scaffolding-check` also refuses review citations in `docs/`:
   `Stage N`, `Round N` and `Finding N` as whole words (so "around 256"
   passes) and `Rn-Xn` labels. In Go comments it now catches
