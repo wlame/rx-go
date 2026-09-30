@@ -38,7 +38,12 @@ jobs:
       - name: setup-go
         uses: actions/setup-go@v5
         with:
+          # check-latest: without it setup-go takes the newest patch the
+          # runner image has cached (1.26.8 when 1.26.9 fixed 11 CVEs in
+          # the standard library) instead of the newest release, and the
+          # binaries would ship with it.
           go-version: '1.26'
+          check-latest: true
 
       - name: setup-just
         uses: extractions/setup-just@v4
