@@ -162,14 +162,14 @@ func requireRecentLastCheck(t *testing.T, m *Manager) {
 
 // Versions around the range's upper bound, derived from compat.go so
 // these tests keep their meaning when the range is widened. The comments
-// give the values for the range 0.2.0 <= v < 0.7.0.
+// give the values for the range 0.2.0 <= v < 0.9.0.
 var (
 	upperBound, _     = parseSemver(MaxViewerVersionExclusive)
-	firstPastRange    = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor)   // 0.7.0
-	patchPastRange    = fmt.Sprintf("%d.%d.1", upperBound.major, upperBound.minor)   // 0.7.1
-	pinnedPastRange   = fmt.Sprintf("%d.%d.5", upperBound.major, upperBound.minor)   // 0.7.5
-	newestInsideRange = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor-1) // 0.6.0
-	olderInsideRange  = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor-2) // 0.5.0
+	firstPastRange    = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor)   // 0.9.0
+	patchPastRange    = fmt.Sprintf("%d.%d.1", upperBound.major, upperBound.minor)   // 0.9.1
+	pinnedPastRange   = fmt.Sprintf("%d.%d.5", upperBound.major, upperBound.minor)   // 0.9.5
+	newestInsideRange = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor-1) // 0.8.0
+	olderInsideRange  = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor-2) // 0.7.0
 )
 
 // windowReleases lists one release past the window first, as GitHub
