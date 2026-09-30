@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line numbers do not add up to the file's line count is not used.
   Additive; the contract stays 1.3.
 
+- A capped `rx trace` of a compressed file numbers the matches its scan
+  left at `-1` the way it does for a plain file: through the file's
+  index (for a seekable zstd file, from the frame before the match),
+  or under `--no-index` by counting the decompressed text from its
+  first byte. Without an index they stay `-1`.
+
 - A test parses every `rx` command in the README and the docs with the
   real command tree, so a wrong flag, a bad value or a long flag
   written without `=` fails the build instead of a reader's shell.
