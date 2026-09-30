@@ -144,7 +144,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// frame instead of the stream up to it. rx-python indexes the same
 	// file the same way, and the cache is shared.
 	if seekable.IsSeekable(sourcePath) {
-		return buildSeekable(sourcePath, info, started)
+		return buildSeekable(sourcePath, info, started, step, opts)
 	}
 
 	// The index describes the file as this stat saw it. The identity is
@@ -185,21 +185,8 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		source = dec
 	}
 
-	// Wire up the analyzer coordinator when --analyze is on. One
-	// coordinator per scan; the builder is sequential, so that's
-	// effectively one "worker". A builder that sharded the file across
-	// K workers would give each worker its own Coordinator and combine
-	// the per-worker anomaly slices with analyzer.Deduplicate before
-	// storage, so an anomaly seen in two overlapping windows is kept
-	// once.
-	//
-	// When Analyze is false we pass a nil coordinator; walkLines skips
-	// all per-line dispatch so the hot loop stays byte-identical to its
-	// pre-analyzer shape (no regression for users who don't opt in).
-	var coord *analyzer.Coordinator
-	if opts.Analyze {
-		coord = analyzer.NewCoordinator(analysisWindowLines(opts), opts.Detectors)
-	}
+	// The coordinator the walk feeds each line to; nil without --analyze.
+	coord := newCoordinator(opts)
 
 	// Walk the file. Python uses `for line in f` which yields lines
 	// terminated by the platform's preferred newline. In Go, bufio's
@@ -235,34 +222,12 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		Owner:             owner,
 		LineIndex:         stats.LineIndex,
 		IndexStepBytes:    ptrInt64(step),
-		AnalysisPerformed: opts.Analyze,
 	}
 
-	// Fill stats. Python always populates line_count/empty_line_count
-	// AND the line-length aggregates, regardless of --analyze. The only
-	// fields gated on --analyze are anomaly detection and prefix pattern
-	// fields (both Python-only at v1 of rx-go).
-	//
-	// Post-Welford/reservoir refactor: the accumulator always returns a
-	// zero-valued snapshot for empty input, so the previous
-	// len(LineLengths)>0 branch collapses into a single unconditional
-	// copy. Python's JSON wire shape is preserved byte-identically —
-	// every pointer field is populated with either the real value or 0,
-	// matching unified_index.py's L174-179 fallback.
-	idx.LineCount = ptrInt64(stats.LineCount)
-	idx.EmptyLineCount = ptrInt64(stats.EmptyLineCount)
-	idx.LineLengthMax = ptrInt64(int64(stats.LineStats.Max))
-	idx.LineLengthAvg = ptrFloat64(stats.LineStats.Mean)
-	idx.LineLengthMedian = ptrFloat64(stats.LineStats.Median)
-	idx.LineLengthP95 = ptrFloat64(stats.LineStats.P95)
-	idx.LineLengthP99 = ptrFloat64(stats.LineStats.P99)
-	idx.LineLengthStddev = ptrFloat64(stats.LineStats.StdDev)
-	idx.LineLengthMaxLineNumber = ptrInt64(int64(stats.LineStats.MaxLineNumber))
-	idx.LineLengthMaxByteOffset = ptrInt64(stats.LineStats.MaxLineOffset)
-
-	// Line-ending detection runs off a prefix sample (first 64 KB) so
-	// large files don't pay O(n). Python behaves the same.
-	idx.LineEnding = ptrString(stats.LineEnding)
+	// Python always populates the line counts and the line-length
+	// aggregates, whether or not --analyze is set; only the anomaly
+	// fields depend on it.
+	applyLineStats(idx, stats)
 
 	// A compressed source records what it is and how much text it
 	// holds; the index's own offsets are positions in that text.
@@ -277,68 +242,111 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		}
 	}
 
-	// Finalize analyzer output. When opts.Analyze is true, build a
-	// FlushContext from the line-stats accumulator and hand it to every
-	// detector's Finalize. The per-worker anomaly lists are then
-	// deduplicated by analyzer.Deduplicate — today there is only one
-	// "worker" (the single sequential walk) so dedup is effectively a
-	// pass-through, but writing the code through Deduplicate keeps the
-	// plumbing ready for a chunk-parallel builder.
-	//
-	// Empty slice vs nil: rxtypes.UnifiedFileIndex.Anomalies is
-	// *[]AnomalyRangeResult so a nil pointer serializes to JSON null
-	// (pre-analyze behavior) and a populated pointer serializes to
-	// [...]. When Analyze is on we always set a pointer — to an empty
-	// slice if the detectors emitted nothing — so the JSON shape is "[]"
-	// rather than "null" in that case. That matches Python's behavior
-	// for analysis_performed=true runs.
-	if opts.Analyze && coord != nil {
-		flush := &analyzer.FlushContext{
-			TotalLines:       stats.LineCount,
-			MedianLineLength: int64(stats.LineStats.Median),
-			P99LineLength:    int64(stats.LineStats.P99),
-		}
-		// One group today (single-worker scan). When chunk-parallel builds
-		// land, collect one group per worker and pass them all in here.
-		groups := [][]analyzer.Anomaly{coord.Finalize(flush)}
-		deduped := analyzer.Deduplicate(groups)
-
-		results := make([]rxtypes.AnomalyRangeResult, 0, len(deduped))
-		summary := make(map[string]int)
-		for _, a := range deduped {
-			// Category is the semantic bucket the detector chose
-			// ("log-traceback", "secrets", "format", ...). DetectorName is
-			// the globally-unique detector identifier stamped by the
-			// coordinator. They are independent: two distinct detectors
-			// can share a category. The wire shape exposes both so UIs
-			// can group by category AND jump by detector.
-			//
-			// Summary is keyed by DetectorName (one counter per detector)
-			// because the frontend's "jump to next $detector" logic
-			// needs per-detector counts, not per-category.
-			results = append(results, rxtypes.AnomalyRangeResult{
-				StartLine:   a.StartLine,
-				EndLine:     a.EndLine,
-				StartOffset: a.StartOffset,
-				EndOffset:   a.EndOffset,
-				Severity:    a.Severity,
-				Category:    a.Category,
-				Description: a.Description,
-				Detector:    a.DetectorName,
-			})
-			summary[a.DetectorName]++
-		}
-		idx.Anomalies = &results
-		idx.AnomalySummary = summary
-		window := analysisWindowLines(opts)
-		detectorSet := analyzer.DetectorSetVersion(opts.Detectors)
-		idx.AnalysisWindowLines = &window
-		idx.AnalysisDetectorSet = &detectorSet
+	if coord != nil {
+		applyAnalysis(idx, coord, stats, opts)
 	}
 
 	// gated helper — CLI mode skips observation.
 	prometheus.ObserveIndexBuildDuration(time.Since(started))
 	return idx, nil
+}
+
+// newCoordinator returns the analyzer coordinator one build feeds its
+// lines to, or nil when opts asks for no analysis. One coordinator per
+// scan: the builder reads the text sequentially, so that is effectively
+// one "worker". A builder that sharded the file across K workers would
+// give each worker its own Coordinator and combine the per-worker
+// anomaly slices with analyzer.Deduplicate before storage, so an
+// anomaly seen in two overlapping windows is kept once.
+//
+// With a nil coordinator walkLines skips all per-line dispatch, so the
+// hot loop costs nothing extra for a build that does not analyze.
+func newCoordinator(opts BuildOptions) *analyzer.Coordinator {
+	if !opts.Analyze {
+		return nil
+	}
+	return analyzer.NewCoordinator(analysisWindowLines(opts), opts.Detectors)
+}
+
+// applyLineStats copies the line counts, the line-length statistics and
+// the line ending a walk of the file's text collected into idx.
+//
+// The accumulator returns a zero-valued snapshot for empty input, so
+// every pointer field is set, to the real value or to 0, which is the
+// JSON shape rx-python writes (unified_index.py's fallback).
+func applyLineStats(idx *rxtypes.UnifiedFileIndex, stats *walkStats) {
+	idx.LineCount = ptrInt64(stats.LineCount)
+	idx.EmptyLineCount = ptrInt64(stats.EmptyLineCount)
+	idx.LineLengthMax = ptrInt64(int64(stats.LineStats.Max))
+	idx.LineLengthAvg = ptrFloat64(stats.LineStats.Mean)
+	idx.LineLengthMedian = ptrFloat64(stats.LineStats.Median)
+	idx.LineLengthP95 = ptrFloat64(stats.LineStats.P95)
+	idx.LineLengthP99 = ptrFloat64(stats.LineStats.P99)
+	idx.LineLengthStddev = ptrFloat64(stats.LineStats.StdDev)
+	idx.LineLengthMaxLineNumber = ptrInt64(int64(stats.LineStats.MaxLineNumber))
+	idx.LineLengthMaxByteOffset = ptrInt64(stats.LineStats.MaxLineOffset)
+
+	// Line-ending detection runs off a prefix sample (first 64 KB) so
+	// large files don't pay O(n). Python behaves the same.
+	idx.LineEnding = ptrString(stats.LineEnding)
+}
+
+// applyAnalysis finalizes the detectors coord fed during the walk and
+// records their anomalies, and the window and detector set that found
+// them, in idx. It marks idx as analyzed.
+//
+// Each detector's Finalize gets a FlushContext built from the walk's
+// line statistics. The per-worker anomaly lists then go through
+// analyzer.Deduplicate: today there is one "worker" (the single
+// sequential walk), so dedup is a pass-through, but it keeps the
+// plumbing ready for a chunk-parallel builder.
+//
+// Anomalies is a pointer to a slice so that "no analysis" serializes as
+// JSON null; an analysis always sets it, to an empty slice when the
+// detectors found nothing, so the shape is [] rather than null. That
+// matches rx-python for analysis_performed=true runs.
+func applyAnalysis(idx *rxtypes.UnifiedFileIndex, coord *analyzer.Coordinator, stats *walkStats, opts BuildOptions) {
+	flush := &analyzer.FlushContext{
+		TotalLines:       stats.LineCount,
+		MedianLineLength: int64(stats.LineStats.Median),
+		P99LineLength:    int64(stats.LineStats.P99),
+	}
+	groups := [][]analyzer.Anomaly{coord.Finalize(flush)}
+	deduped := analyzer.Deduplicate(groups)
+
+	results := make([]rxtypes.AnomalyRangeResult, 0, len(deduped))
+	summary := make(map[string]int)
+	for _, a := range deduped {
+		// Category is the semantic bucket the detector chose
+		// ("log-traceback", "secrets", "format", ...). DetectorName is
+		// the globally-unique detector identifier stamped by the
+		// coordinator. They are independent: two distinct detectors can
+		// share a category. The wire shape exposes both so UIs can group
+		// by category AND jump by detector.
+		//
+		// Summary is keyed by DetectorName (one counter per detector)
+		// because the frontend's "jump to next $detector" logic needs
+		// per-detector counts, not per-category.
+		results = append(results, rxtypes.AnomalyRangeResult{
+			StartLine:   a.StartLine,
+			EndLine:     a.EndLine,
+			StartOffset: a.StartOffset,
+			EndOffset:   a.EndOffset,
+			Severity:    a.Severity,
+			Category:    a.Category,
+			Description: a.Description,
+			Detector:    a.DetectorName,
+		})
+		summary[a.DetectorName]++
+	}
+	window := analysisWindowLines(opts)
+	detectorSet := analyzer.DetectorSetVersion(opts.Detectors)
+
+	idx.AnalysisPerformed = true
+	idx.Anomalies = &results
+	idx.AnomalySummary = summary
+	idx.AnalysisWindowLines = &window
+	idx.AnalysisDetectorSet = &detectorSet
 }
 
 // ==========================================================================
@@ -621,17 +629,35 @@ func ptrString(s string) *string    { return &s }
 // checkpoints carry a frame number, and `frames` holds the line range
 // of each frame.
 //
-// The line-length statistics the text path collects are deliberately
-// absent, as they are in rx-python: they would mean a second pass over
-// the decompressed stream for numbers nothing on the seekable path
-// reads.
-func buildSeekable(sourcePath string, info os.FileInfo, started time.Time) (*rxtypes.UnifiedFileIndex, error) {
-	frames, err := seekableindex.Build(sourcePath)
+// Without analysis the line-length statistics the text path collects
+// are left out, as rx-python leaves them out: nothing on the seekable
+// path reads them. With analysis the decompressed text goes through the
+// same walk and the same detectors as a plain file's, so the analysis
+// of a seekable file equals the analysis of its decompressed copy, line
+// numbers and offsets included (both are positions in the text).
+func buildSeekable(
+	sourcePath string,
+	info os.FileInfo,
+	started time.Time,
+	step int64,
+	opts BuildOptions,
+) (*rxtypes.UnifiedFileIndex, error) {
+	identity := IdentityFromInfo(sourcePath, info)
+
+	coord := newCoordinator(opts)
+	var (
+		frames *seekableindex.Result
+		stats  *walkStats
+		err    error
+	)
+	if coord == nil {
+		frames, err = seekableindex.Build(sourcePath)
+	} else {
+		frames, stats, err = buildFramesAndWalkText(sourcePath, step, coord)
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	identity := IdentityFromInfo(sourcePath, info)
 
 	format := "zstd"
 	frameList := frames.Frames
@@ -665,5 +691,69 @@ func buildSeekable(sourcePath string, info os.FileInfo, started time.Time) (*rxt
 		ratio := float64(frames.DecompressedSizeBytes) / float64(info.Size())
 		idx.CompressionRatio = &ratio
 	}
+	if coord != nil {
+		// The walk counts the same lines the frame table does; its
+		// checkpoints are dropped, since the frame-numbered ones above
+		// are the seekable index's own.
+		applyLineStats(idx, stats)
+		applyAnalysis(idx, coord, stats, opts)
+	}
 	return idx, nil
+}
+
+// buildFramesAndWalkText makes one decompression pass over a seekable
+// file that both builds its frame table and walks its text through
+// walkLines, which feeds every line to coord.
+//
+// Two goroutines share the pass through an io.Pipe. The one started
+// here decodes the frames in order and writes each frame's text into
+// the pipe; this goroutine reads the pipe as one continuous stream, the
+// same way the text path reads a plain file. A pipe write blocks until
+// the reader has taken the bytes, so about one frame is held in memory
+// at a time, and decoding the next frame overlaps with walking this
+// one.
+//
+// Errors cross the pipe in both directions so that neither side waits
+// for the other forever: a decode failure closes the write end with
+// that error, which ends the walk; a walk failure closes the read end,
+// which makes the next write fail and ends the decoding. The decode
+// error is the one reported when both happen, because it is the cause.
+func buildFramesAndWalkText(
+	sourcePath string,
+	step int64,
+	coord *analyzer.Coordinator,
+) (*seekableindex.Result, *walkStats, error) {
+	textReader, textWriter := io.Pipe()
+
+	// framesResult carries the decoding goroutine's outcome back over
+	// the channel. The channel is buffered (capacity 1) so the goroutine
+	// can always deliver its result and exit, whatever this side does.
+	type framesResult struct {
+		frames *seekableindex.Result
+		err    error
+	}
+	decoded := make(chan framesResult, 1)
+	go func() {
+		frames, err := seekableindex.BuildAndCopyText(sourcePath, textWriter)
+		// CloseWithError(nil) is a plain Close: the walk reads io.EOF
+		// after the last frame. A non-nil error is what the walk's next
+		// read returns instead.
+		_ = textWriter.CloseWithError(err)
+		decoded <- framesResult{frames: frames, err: err}
+	}()
+
+	stats, walkErr := walkLines(textReader, step, coord)
+	// Unblocks a decoder still writing if the walk stopped early; after
+	// a complete walk the decoder has already finished and this is a
+	// no-op.
+	_ = textReader.CloseWithError(walkErr)
+
+	result := <-decoded
+	if result.err != nil {
+		return nil, nil, result.err
+	}
+	if walkErr != nil {
+		return nil, nil, fmt.Errorf("walk text of %s: %w", sourcePath, walkErr)
+	}
+	return result.frames, stats, nil
 }
