@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A test parses every `rx` command in the README and the docs with the
+  real command tree, so a wrong flag, a bad value or a long flag
+  written without `=` fails the build instead of a reader's shell.
+
 - `/metrics` reports the standard Go runtime (`go_*`) and process
   (`process_*`) families beside the `rx_*` ones. They are read when
   `/metrics` is scraped and cost nothing in between.
