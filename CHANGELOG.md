@@ -376,6 +376,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Linux, a file that was checked and then replaced by a named pipe
+  before rx opened it is refused as changed, as on macOS. Linux gives
+  the new pipe the removed file's inode number, so the device-and-inode
+  check alone took the pipe for the checked file; the check compares the
+  file type too.
 - The task table of `rx serve` counts only finished tasks against its
   cap of 256. Queued and running tasks used to count too, so with more
   than 256 of them unfinished at once (a full queue of samples index
