@@ -36,6 +36,8 @@ import (
 //	{
 //	  "indexed": [{path, file_type, size_bytes, created_at, ...}],
 //	  "skipped": ["/path/to/below-threshold.log"],
+//	  "skip_reasons": [{"path":"/path/to/below-threshold.log",
+//	                    "reason":"file size 17 bytes is below threshold 52428800 bytes"}],
 //	  "errors": [{"path":"/missing", "error":"message"}],
 //	  "total_time": 1.234
 //	}
@@ -127,10 +129,14 @@ type indexParams struct {
 // (not nil) so JSON marshals as `[]` not `null`, matching Python's
 // default_factory=list Pydantic behavior.
 type indexBuildResult struct {
-	Indexed   []map[string]any `json:"indexed"`
-	Skipped   []string         `json:"skipped"`
-	Errors    []indexErrorItem `json:"errors"`
-	TotalTime float64          `json:"total_time"`
+	Indexed []map[string]any `json:"indexed"`
+	Skipped []string         `json:"skipped"`
+	// SkipReasons says why each file of Skipped was passed over, in the
+	// same order. Skipped stays a plain list of paths, the shape rx-python
+	// emits, so a consumer that reads only it is unaffected.
+	SkipReasons []indexSkipItem  `json:"skip_reasons"`
+	Errors      []indexErrorItem `json:"errors"`
+	TotalTime   float64          `json:"total_time"`
 
 	// builtIndexes keeps the typed indexes for the human renderer, which
 	// needs fields the JSON view flattens. Never serialized.
@@ -146,6 +152,28 @@ type indexErrorItem struct {
 	// exit code is derived from all of them by multiPathFailure.
 	exitCode int
 }
+
+// indexSkipItem is the shape of each entry in the `skip_reasons` array.
+type indexSkipItem struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// skip records that path was not indexed and why. The reasons use the
+// words POST /v1/index answers its 400 with for the same file.
+func (r *indexBuildResult) skip(path, reason string) {
+	r.Skipped = append(r.Skipped, path)
+	r.SkipReasons = append(r.SkipReasons, indexSkipItem{Path: path, Reason: reason})
+}
+
+// belowThresholdReason words the skip of a file smaller than the index
+// threshold.
+func belowThresholdReason(size, thresholdBytes int64) string {
+	return fmt.Sprintf("file size %d bytes is below threshold %d bytes", size, thresholdBytes)
+}
+
+// notTextReason words the skip of a binary file, such as a .tar.gz.
+const notTextReason = "not a text file"
 
 // runIndex dispatches based on the mutually-exclusive mode flags.
 // Precedence (Python parity): --delete > --info > build.
@@ -265,9 +293,10 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 func runIndexBuild(out io.Writer, p indexParams) error {
 	t0 := time.Now()
 	result := indexBuildResult{
-		Indexed: []map[string]any{},
-		Skipped: []string{},
-		Errors:  []indexErrorItem{},
+		Indexed:     []map[string]any{},
+		Skipped:     []string{},
+		SkipReasons: []indexSkipItem{},
+		Errors:      []indexErrorItem{},
 	}
 
 	// Expand paths: stat each. Directories are walked per --recursive.
@@ -337,15 +366,13 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		// Below-threshold files are skipped rather than indexed, and the
 		// command still exits 0; rx-python does the same.
 		if !p.analyze && info.Size() < thresholdBytes {
-			result.Skipped = append(result.Skipped, path)
+			result.skip(path, belowThresholdReason(info.Size(), thresholdBytes))
 			continue
 		}
-		// A binary file has no lines to index. rx-python has always
-		// skipped these; rx-go indexed them and produced a checkpoint
-		// list that described nothing, which is also why the summary
-		// line "below threshold or not text" was only half true.
+		// A binary file, such as a .tar.gz, has no lines to index;
+		// rx-python skips these too.
 		if !index.IsTextFile(path) {
-			result.Skipped = append(result.Skipped, path)
+			result.skip(path, notTextReason)
 			continue
 		}
 
@@ -562,15 +589,14 @@ func walkFiles(dir string, out *[]string) error {
 // writeIndexBuildHuman renders the same block rx-python prints
 // (`cli/index.py`): one line per file, plus the analysis statistics and
 // the anomaly summary when --analyze was used. The two must stay
-// identical.
+// identical, except for the skipped files: rx-python prints only their
+// count, this lists each one with its reason.
 func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
 	// Nothing indexed: say so, then still report why files were passed
-	// over. rx-python prints the same two lines.
+	// over.
 	if len(r.Indexed) == 0 {
 		_, _ = fmt.Fprintln(out, "No files indexed.")
-		if len(r.Skipped) > 0 {
-			_, _ = fmt.Fprintf(out, "Skipped %d files (below threshold or not text)\n", len(r.Skipped))
-		}
+		writeSkippedHuman(out, r.SkipReasons)
 		for _, e := range r.Errors {
 			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", e.Path, e.Error)
 		}
@@ -584,11 +610,22 @@ func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
 	for _, idx := range r.builtIndexes {
 		writeIndexEntryHuman(out, idx)
 	}
-	if len(r.Skipped) > 0 {
-		_, _ = fmt.Fprintf(out, "Skipped %d files (below threshold or not text)\n", len(r.Skipped))
-	}
+	writeSkippedHuman(out, r.SkipReasons)
 	for _, e := range r.Errors {
 		_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n", e.Path, e.Error)
+	}
+}
+
+// writeSkippedHuman prints the count of skipped files and, under it, one
+// line per file with the reason it was skipped. Nothing when no file was
+// skipped.
+func writeSkippedHuman(out io.Writer, skipped []indexSkipItem) {
+	if len(skipped) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(out, "Skipped %d files:\n", len(skipped))
+	for _, item := range skipped {
+		_, _ = fmt.Fprintf(out, "  %s: %s\n", item.Path, item.Reason)
 	}
 }
 

@@ -139,6 +139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx index` says why it skipped each file. The human output lists every
+  skipped file with its reason under `Skipped N files:` instead of the
+  single line `Skipped N files (below threshold or not text)`, and
+  `--json` adds `skip_reasons`, a list of `{"path", "reason"}` in the
+  order of `skipped`, which stays a list of paths. The reasons use the
+  words of `POST /v1/index`'s `400`: `file size N bytes is below
+  threshold M bytes` and `not a text file` (a `.tar.gz`, for instance).
+
 - A trace with `--max-results=N` (or `max_results`) answered from the
   trace cache rebuilds only the first N matches and stops reading the
   file after them and the lines their context reaches. It rebuilt every
