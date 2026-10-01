@@ -21,7 +21,9 @@
 // are tested on every line.
 // Regex signatures give one finding per line (matchers.go); blocks are a
 // state machine over the following lines (block.go); runs track
-// consecutive qualifying lines (run.go).
+// consecutive qualifying lines (run.go). Measures, Go code with
+// parameters, run on the machinery their findings resemble or on state
+// of their own joined by the merge (measures.go).
 //
 // Results come back to one merge (merge.go), which takes them in text
 // order, numbers their lines, joins runs that cross a chunk edge, and

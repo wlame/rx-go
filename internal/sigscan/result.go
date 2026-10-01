@@ -40,8 +40,10 @@ type Options struct {
 	// or not (signatures.Catalogue.Redactors): every excerpt of every
 	// finding is masked by all of them and by the selected redacting
 	// signatures, so no excerpt shows a value one of them matches on its
-	// line. A signature here that does not redact, or that has no anchor
-	// (a measure), masks nothing.
+	// line: an anchor's match values, or the values an entropy or
+	// base64-run measure finds. A signature here that does not redact,
+	// or that has neither (another measure, a blank or same run), masks
+	// nothing.
 	Redactors []*signatures.Signature
 	// Progress, when set, is called as the file is read with the bytes
 	// of the file read so far and the file's size, both as stored on
@@ -75,8 +77,9 @@ type Finding struct {
 	// ValueStart and ValueEnd are bytes in the first line, counted from
 	// the line's first byte in the text: the value of a regex signature
 	// (its capture group of the first match, the whole match by
-	// default), and the anchor's first match of a redacting block or
-	// match run. Nil otherwise.
+	// default), the first token or run an entropy or base64-run measure
+	// finds, and the anchor's first match of a redacting block or match
+	// run. Nil otherwise.
 	ValueStart, ValueEnd *int
 	// Masked is true when the finding's text is masked: its signature
 	// redacts, or a redacting signature (Options.Redactors, or a selected
