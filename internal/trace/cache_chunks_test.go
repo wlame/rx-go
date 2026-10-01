@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -33,10 +34,7 @@ func TestCacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	}
 	cached := traceFromCache(t, path, patterns)
 
-	if cached.FileChunks["f1"] != fresh.FileChunks["f1"] {
-		t.Fatalf("cache hit reports %d chunks, the scan %d",
-			cached.FileChunks["f1"], fresh.FileChunks["f1"])
-	}
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }
 
 // The same holds for a seekable-zstd file, whose chunks are its frames.
@@ -61,11 +59,5 @@ func TestSeekableCacheHitReportsTheFrameCountOfTheScan(t *testing.T) {
 		t.Fatal("the second trace rewrote the cache instead of reading it")
 	}
 
-	if cached.FileChunks["f1"] != fresh.FileChunks["f1"] {
-		t.Fatalf("cache hit reports %d chunks, the scan %d",
-			cached.FileChunks["f1"], fresh.FileChunks["f1"])
-	}
-	if len(cached.Matches) != len(fresh.Matches) {
-		t.Fatalf("cache hit returned %d matches, the scan %d", len(cached.Matches), len(fresh.Matches))
-	}
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }

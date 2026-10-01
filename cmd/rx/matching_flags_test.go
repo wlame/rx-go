@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 )
 
 // flagFixture names its own line numbers in the comments below, so a
@@ -251,9 +253,7 @@ func TestTraceMatchingFlag_CacheIsKeyedByTheFlags(t *testing.T) {
 	if got, want := firstIgnoreCase.lines(), []int{1, 2, 3, 4, 5, 9}; !slices.Equal(got, want) {
 		t.Errorf("first -i lines = %v, want %v", got, want)
 	}
-	if got := cachedIgnoreCase.lines(); !slices.Equal(got, firstIgnoreCase.lines()) {
-		t.Errorf("cached -i lines = %v, want %v", got, firstIgnoreCase.lines())
-	}
+	traceanswer.RequireSame(t, "cached -i", cachedIgnoreCase, firstIgnoreCase)
 	if !maps.Equal(traceCacheFiles(t, cacheDir), written) {
 		t.Error("the third run scanned the file instead of reading the cache")
 	}

@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 	"github.com/wlame/rx-go/internal/trace"
 )
 
-// GET /v1/trace answered from the trace cache reports the chunk count
-// of the scan that wrote the cache.
+// GET /v1/trace answered from the trace cache answers as the scan that
+// wrote the cache did, its chunk count included.
 func TestTrace_CacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	t.Setenv("RX_LARGE_FILE_MB", "1")
@@ -46,8 +47,5 @@ func TestTrace_CacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	if fresh.FileChunks["f1"] < 2 {
 		t.Fatalf("fixture scanned in %d chunks; the test needs several", fresh.FileChunks["f1"])
 	}
-	if cached.FileChunks["f1"] != fresh.FileChunks["f1"] {
-		t.Errorf("cache hit file_chunks = %d, the scan reported %d",
-			cached.FileChunks["f1"], fresh.FileChunks["f1"])
-	}
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }
