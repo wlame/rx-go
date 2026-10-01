@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +69,9 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 	// primitive on a server that has no authentication.
 	// SECURITY: validate before any stat, and use the returned path for
 	// the task so the checked string is the written string.
-	output := validated + ".zst"
+	// Without output_path the output goes beside the input under the
+	// name rx compress gives it (app.log.gz → app.log.zst).
+	output := filepath.Join(filepath.Dir(validated), compressfile.DefaultOutputName(validated))
 	if req.OutputPath != nil && *req.OutputPath != "" {
 		output = *req.OutputPath
 	}
@@ -158,7 +161,7 @@ type compressJob struct {
 // compressCLICommand renders the rx command for a compress request.
 // input and output are the validated paths. The output is named only
 // when the request named one: without --output, rx compress writes to
-// the same input + ".zst" the request defaulted to.
+// the same default name the request took (compressfile.DefaultOutputName).
 func compressCLICommand(input, output string, req rxtypes.CompressRequest) string {
 	params := map[string]any{
 		"input_path":        input,
@@ -173,11 +176,24 @@ func compressCLICommand(input, output string, req rxtypes.CompressRequest) strin
 	return BuildCLICommand("compress", params)
 }
 
-// compressRefusal words a compressfile.Check error for the HTTP API:
-// the refusal of a seekable input names the request field that lifts it.
+// compressRefusalHints names, for a compressfile refusal, the request
+// field that gets past it. The first entry whose error matches
+// (errors.Is) wins.
+var compressRefusalHints = []struct {
+	err  error
+	hint string
+}{
+	{compressfile.ErrAlreadySeekable, ` (set "force": true to re-encode it)`},
+	{compressfile.ErrOutputIsInput, ` (set "output_path" to another file)`},
+}
+
+// compressRefusal words a compressfile.Check error for the HTTP API,
+// with the hint compressRefusalHints holds for it.
 func compressRefusal(err error) string {
-	if errors.Is(err, compressfile.ErrAlreadySeekable) {
-		return err.Error() + ` (set "force": true to re-encode it)`
+	for _, h := range compressRefusalHints {
+		if errors.Is(err, h.err) {
+			return err.Error() + h.hint
+		}
 	}
 	return err.Error()
 }

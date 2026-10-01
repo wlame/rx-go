@@ -21,7 +21,7 @@ Content-Type: application/json
 | Field | Type | Required | Default | Description |
 |---|---|:-:|---|---|
 | `input_path` | string | yes | — | Source file path |
-| `output_path` | string \| null | no | `<input_path>.zst` | Output file path. Validated against `--search-root` like the input |
+| `output_path` | string \| null | no | beside the input, the default name of `rx compress` | Output file path. Validated against `--search-root` like the input. The default name replaces a compression suffix by `.zst` (`app.log.gz` gives `app.log.zst`) and otherwise appends `.zst` (`app.log` gives `app.log.zst`) |
 | `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`) |
 | `compression_level` | int | no | `3` | zstd level: 1-22 |
 | `build_index` | bool | no | `true` | Build the line index of the compressed file after compressing it |
@@ -40,8 +40,11 @@ bzip2, xz or plain zstd input is decompressed on the fly, so the output
 traces like the decompressed file, and `decompressed_size` in the
 result is the size of that text. A compound archive (`.tar.gz` and its
 kin), a seekable zstd input without `"force": true`, and an
-`output_path` that is the input file are refused with `400` before a
-task is created.
+output path that is the input file are refused with `400` before a
+task is created. The last one includes a plain zstd input named
+`app.log.zst` without `output_path`, whose default name is its own:
+`<input>: the output path is the input file (set "output_path" to
+another file)`, with or without `"force": true`.
 
 ### Frame size syntax
 
@@ -95,7 +98,8 @@ for measured sizes and times.
 Both `input_path` and the effective output path are validated against
 the configured `--search-root` directories before any filesystem access.
 The effective output path is `output_path` when it is set, otherwise
-`<input_path>.zst`. A path that resolves outside every root — including
+the default name beside the input (`app.log.gz` gives `app.log.zst`,
+`app.log` gives `app.log.zst`). A path that resolves outside every root — including
 one that escapes through a symlink inside a root — is rejected with
 `403 Forbidden`, and no file is created, truncated or removed. This holds
 with `force=true` as well.
