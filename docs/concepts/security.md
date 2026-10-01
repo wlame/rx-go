@@ -219,9 +219,12 @@ that cannot be left, after a check that it is a plain directory and not
 a symbolic link; its files are opened only when they are regular files
 (checked before the open and again on the opened handle), written by a
 temporary file made with `O_EXCL` and a rename, and removed by name. A
-link anywhere in that tree is never followed, written through or
+link anywhere below `findings/` is never followed, written through or
 deleted through: the scan answers without the cache and logs
-`findings_cache_unsafe_entry` once. See
+`findings_cache_unsafe_entry` once. `findings/` itself is followed when
+it is a link, as `indexes/` and `trace_cache/` are: where the cache
+lives is the operator's choice, and whoever can replace that directory
+can choose it too, so keep the cache base writable by its owner only. See
 [caching](caching.md#the-findings-cache).
 
 ### Symlink behavior

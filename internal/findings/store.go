@@ -208,28 +208,62 @@ func openEntryDir(base, name string, create bool) (*os.Root, error) {
 // is refused with errUnsafeEntry and logged. O_NONBLOCK keeps the open
 // from waiting if the entry is swapped for a pipe after the check, and
 // the opened file must be the one Lstat saw.
+//
+// A writer replaces meta.json and the entries by renaming a new file
+// over them, so a rename can land between the Lstat and the open: both
+// are then regular files, but not the same one. That is an ordinary
+// race, not an unsafe entry: openRegular checks again, up to openTries
+// times, and a file replaced before every try is a miss (errReplaced)
+// without a warning. Only a try that finds a link or a file of another
+// kind warns.
 func openRegular(root *os.Root, name string, flag int) (*os.File, error) {
-	seen, err := root.Lstat(name)
-	if err != nil {
-		return nil, err
-	}
 	path := filepath.Join(root.Name(), name)
-	if !seen.Mode().IsRegular() {
-		warnUnsafe(path)
-		return nil, errUnsafeEntry
-	}
-	f, err := root.OpenFile(name, flag|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	opened, err := f.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(seen, opened) {
+	for try := range openTries {
+		seen, err := root.Lstat(name)
+		if err != nil {
+			return nil, err
+		}
+		if !seen.Mode().IsRegular() {
+			warnUnsafe(path)
+			return nil, errUnsafeEntry
+		}
+		if beforeOpenRegular != nil {
+			beforeOpenRegular(root, name, try)
+		}
+		f, err := root.OpenFile(name, flag|syscall.O_NONBLOCK, 0)
+		if err != nil {
+			return nil, err
+		}
+		opened, err := f.Stat()
+		switch {
+		case err != nil:
+			_ = f.Close()
+			return nil, err
+		case !opened.Mode().IsRegular():
+			_ = f.Close()
+			warnUnsafe(path)
+			return nil, errUnsafeEntry
+		case os.SameFile(seen, opened):
+			return f, nil
+		}
+		// Two regular files: a writer renamed a new one into place
+		// between the Lstat and the open. Check the new one.
 		_ = f.Close()
-		warnUnsafe(path)
-		return nil, errUnsafeEntry
 	}
-	return f, nil
+	return nil, errReplaced
 }
+
+// openTries bounds the checks of openRegular when writers keep renaming
+// new files over the one it opens.
+const openTries = 3
+
+// errReplaced reports a cache file replaced by another writer before
+// each of openRegular's tries: a miss, not an unsafe entry.
+var errReplaced = errors.New("the cache file was replaced while it was opened")
+
+// beforeOpenRegular, when set, runs between openRegular's Lstat and its
+// open, with the try's number (tests: a rename in that instant).
+var beforeOpenRegular func(root *os.Root, name string, try int)
 
 // openCacheFile opens a cache file of the directory root for reading
 // (openRegular): what scheduler.openCache does outside tests.

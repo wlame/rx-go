@@ -41,9 +41,11 @@
 // one step for other processes.
 //
 // Every operation goes through the file's directory opened as an
-// *os.Root, and nothing in the cache tree is followed as a symbolic
+// *os.Root, and nothing below ScanOptions.Dir is followed as a symbolic
 // link: a directory, meta.json, entry or lock file that is a link (or a
 // special file) is a miss, never read, written or deleted through.
+// ScanOptions.Dir itself is followed, as the other caches' directories
+// are: it is the operator's choice of where the cache lives.
 //
 // # Concurrency
 //

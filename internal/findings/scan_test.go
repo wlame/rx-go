@@ -140,9 +140,9 @@ func TestScan_ChangedRegexRescansOnlyThatSignature(t *testing.T) {
 	requireSameFindings(t, got, coldAnswer(t, text, changed, "err-line", "warn-line"))
 }
 
-// The state of a file: none before any scan, partial with part of the
-// default set, full with all of it. An opt-in signature never makes a
-// file partial, and a signature with no findings is an entry.
+// The state of a file: none before any scan, partial with only an
+// opt-in entry or with part of the default set, full with all of the
+// default set. A signature with no findings is an entry.
 func TestScan_StateFullPartialNone(t *testing.T) {
 	cat := loadCatalogue(t, defErrLine, defNever, defOptIn)
 	path := writeLog(t, t.TempDir(), "app.log", sampleLog())

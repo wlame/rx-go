@@ -155,11 +155,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names it, and a canceled or failed scan writes nothing. One scan of a
   file runs at a time in a process; a second waits and scans what is
   still missing. Every cache operation goes through the file's directory
-  opened as a root that cannot be left; a symbolic link in the cache
-  tree (the file's directory, `meta.json`, an entry or `.lock`) is never
-  followed, written through or deleted through: that file's findings
-  are not cached, and one Warn line per process,
-  `findings_cache_unsafe_entry`, names it. A missing opt-in signature
+  opened as a root that cannot be left; a symbolic link below
+  `findings/` (the file's directory, `meta.json`, an entry or `.lock`)
+  is never followed, written through or deleted through: that file's
+  findings are not cached, and one Warn line per process,
+  `findings_cache_unsafe_entry`, names it (`findings/` itself is
+  followed when it is a link, as `indexes/` is). A file another writer
+  renames into place while it is being opened is checked again, up to
+  three times, and never logged. A missing opt-in signature
   never keeps a file from full; a file scanned only with opt-in
   signatures is partial. The commands that scan come next.
 - `RX_MAX_SIGNATURE_SCANS` (default 1, 1 to 64): how many signature

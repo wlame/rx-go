@@ -247,7 +247,7 @@ func (s *scheduler) summary(file paths.Pinned, cat *signatures.Catalogue, opts S
 	}
 	defer func() { _ = root.Close() }()
 	meta, err := s.readMeta(root)
-	if errors.Is(err, errAbsent) || errors.Is(err, errUnsafeEntry) {
+	if isQuietMiss(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -438,13 +438,14 @@ func currentInMeta(meta *metaFile, scope keyScope, cat *signatures.Catalogue) ma
 
 // readMeta reads meta.json of the cache directory root. A file that is
 // absent or of another version is errAbsent; a link or a special file is
-// errUnsafeEntry (logged where it was found); one that cannot be read or
-// parsed is logged and returned as an error.
+// errUnsafeEntry (logged where it was found); one another writer kept
+// replacing while it was opened is errReplaced (a race, not logged); one
+// that cannot be read or parsed is logged and returned as an error.
 func (s *scheduler) readMeta(root *os.Root) (*metaFile, error) {
 	var meta metaFile
 	path := filepath.Join(root.Name(), metaName)
 	err := readJSON(s.openCache, root, metaName, maxMetaBytes, &meta)
-	if errors.Is(err, errAbsent) || errors.Is(err, errUnsafeEntry) {
+	if isQuietMiss(err) {
 		return nil, err
 	}
 	if err != nil {
@@ -458,6 +459,13 @@ func (s *scheduler) readMeta(root *os.Root) (*metaFile, error) {
 		meta.Signatures = map[string]metaEntry{}
 	}
 	return &meta, nil
+}
+
+// isQuietMiss reports a cache read that found nothing to use and has
+// nothing more to log: the file is absent, unsafe (logged where it was
+// found), or kept being replaced by another writer while it was opened.
+func isQuietMiss(err error) bool {
+	return errors.Is(err, errAbsent) || errors.Is(err, errUnsafeEntry) || errors.Is(err, errReplaced)
 }
 
 // commit writes the entries of a scan of the file at sourcePath, whose

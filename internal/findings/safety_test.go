@@ -2,6 +2,7 @@ package findings
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -354,4 +355,159 @@ func (c countingReadCloser) Read(p []byte) (int, error) {
 	n, err := c.ReadCloser.Read(p)
 	*c.n += int64(n)
 	return n, err
+}
+
+// renameOver replaces name in the directory root by an atomic rename of
+// a new regular file holding data, as a writer of the cache does.
+func renameOver(t *testing.T, root *os.Root, name string, data []byte) {
+	t.Helper()
+	tmp := filepath.Join(root.Name(), ".tmp-test")
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, filepath.Join(root.Name(), name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setBeforeOpen installs the seam between openRegular's Lstat and its
+// open for the test.
+func setBeforeOpen(t *testing.T, hook func(root *os.Root, name string, try int)) {
+	t.Helper()
+	beforeOpenRegular = hook
+	t.Cleanup(func() { beforeOpenRegular = nil })
+}
+
+// A writer that renames a new meta.json or entry into place between a
+// reader's Lstat and its open is an ordinary race, not an unsafe entry:
+// the reader tries again, reads the new file, and logs nothing.
+func TestRead_ConcurrentRenameBetweenLstatAndOpenIsNoMiss(t *testing.T) {
+	logs := captureWarnings(t)
+	cat := loadCatalogue(t, allDefs...)
+	file := classify(t, writeLog(t, t.TempDir(), "app.log", sampleLog()))
+	s := newScheduler(1)
+	opts := testOptions(t)
+	scanned := mustScan(t, s, file, cat, pick(t, cat, "err-line", "warn-line"), opts)
+
+	renamed := map[string]bool{}
+	setBeforeOpen(t, func(root *os.Root, name string, try int) {
+		if try > 0 || renamed[name] {
+			return
+		}
+		renamed[name] = true
+		data, err := os.ReadFile(filepath.Join(root.Name(), name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		renameOver(t, root, name, data) // a force rewrite with the same findings
+	})
+	read, err := s.read(file, cat, pick(t, cat, "err-line", "warn-line"), opts)
+	if err != nil || !slices.Equal(read.Checked, []string{"err-line", "warn-line"}) {
+		t.Fatalf("read during a rewrite: checked %v missing %v (%v)", read.Checked, read.Missing, err)
+	}
+	requireSameFindings(t, read, scanned)
+	if want := []string{metaName, "err-line.json", "warn-line.json"}; !reflect.DeepEqual(sortedKeys(renamed), sortedStrings(want)) {
+		t.Errorf("renamed %v, want each of %v once", sortedKeys(renamed), want)
+	}
+	if strings.Contains(logs.String(), "findings_cache_unsafe_entry") {
+		t.Errorf("a rename race was logged as unsafe:\n%s", logs.String())
+	}
+}
+
+// The retry is bounded: a file replaced before every open is a miss
+// after three tries, still without a warning; a link renamed into place
+// between the Lstat and the open is found by the next try and refused
+// with the warning.
+func TestOpenRegular_RetriesARenameAndRefusesALink(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.WriteFile(filepath.Join(dir, "e.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("replaced before every open", func(t *testing.T) {
+		logs := captureWarnings(t)
+		tries := 0
+		setBeforeOpen(t, func(root *os.Root, name string, try int) {
+			tries++
+			renameOver(t, root, name, []byte("{}"))
+		})
+		f, err := openRegular(root, "e.json", os.O_RDONLY)
+		if err == nil {
+			_ = f.Close()
+			t.Fatal("a file replaced before every open was opened")
+		}
+		if errors.Is(err, errUnsafeEntry) || tries != openTries || strings.Contains(logs.String(), "findings_cache_unsafe_entry") {
+			t.Errorf("err %v after %d tries, logs:\n%s", err, tries, logs.String())
+		}
+	})
+
+	t.Run("a link renamed into place", func(t *testing.T) {
+		logs := captureWarnings(t)
+		if err := os.WriteFile(filepath.Join(dir, "other.bak"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		setBeforeOpen(t, func(root *os.Root, name string, try int) {
+			if try > 0 {
+				return
+			}
+			link := filepath.Join(dir, ".tmp-link")
+			if err := os.Symlink("other.bak", link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(link, filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if f, err := openRegular(root, "e.json", os.O_RDONLY); !errors.Is(err, errUnsafeEntry) {
+			if f != nil {
+				_ = f.Close()
+			}
+			t.Fatalf("a link renamed into place gave %v", err)
+		}
+		if !strings.Contains(logs.String(), "findings_cache_unsafe_entry") {
+			t.Errorf("no warning for the link:\n%s", logs.String())
+		}
+	})
+}
+
+// sortedStrings returns a sorted copy of ss.
+func sortedStrings(ss []string) []string {
+	out := slices.Clone(ss)
+	slices.Sort(out)
+	return out
+}
+
+// A meta.json replaced before every try is a quiet miss for Read and
+// Summary: no warning of any kind.
+func TestRead_MetaReplacedBeforeEveryTryIsAQuietMiss(t *testing.T) {
+	logs := captureWarnings(t)
+	cat := loadCatalogue(t, allDefs...)
+	file := classify(t, writeLog(t, t.TempDir(), "app.log", sampleLog()))
+	s := newScheduler(1)
+	opts := testOptions(t)
+	mustScan(t, s, file, cat, pick(t, cat, "err-line"), opts)
+	setBeforeOpen(t, func(root *os.Root, name string, try int) {
+		if name == metaName {
+			data, err := os.ReadFile(filepath.Join(root.Name(), name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			renameOver(t, root, name, data)
+		}
+	})
+	read, err := s.read(file, cat, pick(t, cat, "err-line"), opts)
+	if err != nil || len(read.Checked) != 0 {
+		t.Errorf("read: %+v (%v), want a miss", read, err)
+	}
+	if sum, err := s.summary(file.Pinned(), cat, opts); err != nil || sum != nil {
+		t.Errorf("summary: %+v (%v), want none", sum, err)
+	}
+	if out := logs.String(); out != "" {
+		t.Errorf("a rename race was logged:\n%s", out)
+	}
 }

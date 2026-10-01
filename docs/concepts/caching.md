@@ -393,7 +393,7 @@ from writing it at the same time:
    temporary file left by a crash.
 
 Every operation on the cache goes through the per-file directory opened
-as a root that cannot be left, and nothing in the cache tree is
+as a root that cannot be left, and nothing below `findings/` is
 followed as a symbolic link. A per-file directory that is a link (to
 anywhere, inside the cache or out), or a `meta.json`, an entry file or
 a `.lock` that is a link or a special file, is never read, written or
@@ -402,8 +402,17 @@ entry that is a link counts as missing (a later write replaces the link
 with a file of the cache), and the first such case of a process is
 logged at Warn level as `findings_cache_unsafe_entry` with its path. A
 removal removes a link itself, never what it points at. Another local
-user who can write a shared `RX_CACHE_DIR` can so make rx scan again,
-never make it write or delete a file outside the cache.
+user who can write a shared `RX_CACHE_DIR`, but not the cache base
+itself, can so make rx scan again, never make it write or delete a file
+outside the cache. The `findings/` directory itself is the root of this
+tree and is followed when it is a link, as `indexes/` and
+`trace_cache/` are: linking it is the operator's choice of where the
+findings live, and rx then creates its per-file directories there.
+
+A reader that meets a file another writer has just renamed into place
+(between its check and its open) checks again, up to three times; a
+file replaced before every try is a miss, without a warning. Only a
+link or a special file is logged.
 
 A reader trusts only what `meta.json` names, and an entry file whose
 key differs from the one `meta.json` names, or that is missing or cut
