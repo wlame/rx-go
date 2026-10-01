@@ -19,6 +19,15 @@ import (
 // for its signature, and a signature whose count reaches its number of
 // clauses passes.
 //
+// One exception: a line that holds a fold letter (foldLetters) passes
+// every signature. Under (?i) Go's regexp matches k to the Kelvin sign
+// and s to the long s, and a keyword holds only the ASCII letter, so the
+// keywords alone would turn such a match away. The fold letters are
+// keywords of the same automaton with the id foldID, so finding them
+// costs no extra pass over the line. A letter cut in half by the end of
+// the line view is not in the view, and the anchor, which sees the same
+// view, cannot match through it either.
+//
 // A gate is never changed after it is built; the per-line counters live
 // in a gateScratch, one per goroutine.
 type gate struct {
@@ -28,7 +37,21 @@ type gate struct {
 	// need maps a signature index to its number of clauses; 0 for a
 	// signature without a gate.
 	need []int32
+	// gated lists the signatures with clauses, in index order: the
+	// signatures a fold letter lets through.
+	gated []int32
 }
+
+// foldLetters are the two letters outside ASCII that Go's
+// case-insensitive matching equates with ASCII letters: the Kelvin sign
+// (U+212A, UTF-8 E2 84 AA) with k, and the long s (U+017F, UTF-8 C5 BF)
+// with s. No other ASCII letter folds to a rune outside ASCII.
+var foldLetters = []string{"\u212a", "\u017f"}
+
+// foldID is the id the automaton reports for a fold letter. Clause ids
+// count from 0, so it is never one of them, and as the smallest id it
+// comes first in a state's sorted output.
+const foldID int32 = -1
 
 // newGate builds the gate of sigs; a signature's index in sigs is the
 // index the gate reports.
@@ -41,6 +64,9 @@ func newGate(sigs []*signatures.Signature) (*gate, error) {
 		// selection is at most the loaded signatures (a few thousand),
 		// so every count here is far inside an int32.
 		g.need[si] = int32(len(sig.Clauses))
+		if len(sig.Clauses) > 0 {
+			g.gated = append(g.gated, int32(si)) // #nosec G115 -- see above
+		}
 		for _, clause := range sig.Clauses {
 			id := int32(len(g.clauseSig))                // #nosec G115 -- see above
 			g.clauseSig = append(g.clauseSig, int32(si)) // #nosec G115 -- see above
@@ -52,8 +78,16 @@ func newGate(sigs []*signatures.Signature) (*gate, error) {
 			}
 		}
 	}
-	if len(keywords) == 0 {
+	if len(g.gated) == 0 {
 		return g, nil
+	}
+	// The fold letters join the keywords. A declared keyword that is a
+	// fold letter itself shares its entry, and reports both ids.
+	for _, letter := range foldLetters {
+		if _, seen := keywordIDs[letter]; !seen {
+			keywords = append(keywords, letter)
+		}
+		keywordIDs[letter] = append(keywordIDs[letter], foldID)
 	}
 	ids := make([][]int32, len(keywords))
 	for i, k := range keywords {
@@ -76,6 +110,9 @@ type gateScratch struct {
 	clauseStamp []uint32
 	sigStamp    []uint32
 	sigHits     []int32
+	// foldGen is the generation of the last line that held a fold
+	// letter: on that line every signature passes.
+	foldGen uint32
 	// passed lists the gated signatures that passed on the current line.
 	passed []int32
 }
@@ -101,6 +138,7 @@ func (g *gate) evaluate(view []byte, s *gateScratch) {
 		// The stamps wrapped around after 2^32 lines: forget them all.
 		clear(s.clauseStamp)
 		clear(s.sigStamp)
+		s.foldGen = 0
 		s.gen = 1
 	}
 	d := g.dfa
@@ -118,14 +156,25 @@ func (g *gate) evaluate(view []byte, s *gateScratch) {
 		// A keyword ends here. The same state reached again on the
 		// next byte ("aaaa" for the keyword "aaa") adds nothing.
 		lastHit = row
-		g.countClauses(d.outputOfRow(row), s)
+		if g.countClauses(d.outputOfRow(row), s) {
+			// A fold letter: every signature passes, and nothing
+			// later on the line can change that.
+			return
+		}
 	}
 }
 
 // countClauses counts each clause of out once per line for its
-// signature, and lists a signature when its last clause is seen.
-func (g *gate) countClauses(out []int32, s *gateScratch) {
+// signature, and lists a signature when its last clause is seen. It
+// returns true when out holds a fold letter, after listing every gated
+// signature as passed.
+func (g *gate) countClauses(out []int32, s *gateScratch) bool {
 	for _, clause := range out {
+		if clause == foldID {
+			s.foldGen = s.gen
+			s.passed = append(s.passed[:0], g.gated...)
+			return true
+		}
 		if s.clauseStamp[clause] == s.gen {
 			continue
 		}
@@ -140,12 +189,14 @@ func (g *gate) countClauses(out []int32, s *gateScratch) {
 			s.passed = append(s.passed, sig)
 		}
 	}
+	return false
 }
 
 // passes reports whether signature sig may be tested on the line last
-// evaluated: always for a signature without clauses, and for a gated
-// one when every clause had a member on the line.
+// evaluated: always for a signature without clauses or on a line that
+// holds a fold letter, and for a gated one when every clause had a
+// member on the line.
 func (g *gate) passes(sig int32, s *gateScratch) bool {
 	need := g.need[sig]
-	return need == 0 || (s.sigStamp[sig] == s.gen && s.sigHits[sig] == need)
+	return need == 0 || s.foldGen == s.gen || (s.sigStamp[sig] == s.gen && s.sigHits[sig] == need)
 }

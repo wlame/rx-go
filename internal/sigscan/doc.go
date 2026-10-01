@@ -16,7 +16,9 @@
 // runs one Aho-Corasick pass over the view that finds every keyword of
 // every selected signature (ac.go), and tests a signature's anchor only
 // when the line holds a member of every one of its keyword clauses (the
-// gate, gate.go). Signatures without clauses are tested on every line.
+// gate, gate.go), or when the line holds the Kelvin sign or the long s,
+// which a case-insensitive k or s matches. Signatures without clauses
+// are tested on every line.
 // Regex signatures give one finding per line (matchers.go); blocks are a
 // state machine over the following lines (block.go); runs track
 // consecutive qualifying lines (run.go).

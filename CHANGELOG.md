@@ -55,7 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-order mark at the start of the text, cut at
   `RX_SIGNATURES_LINE_BYTES`); one Aho-Corasick pass per line finds the
   keywords of every signature, and an anchor runs only on a line that
-  holds a member of each of its keyword clauses. Findings carry exact
+  holds a member of each of its keyword clauses, or on a line that holds
+  the Kelvin sign or the long s (which a `(?i)` `k` or `s` matches), so
+  a match through those letters is found, and masked when it is a
+  secret. Findings carry exact
   1-based line numbers and text offsets, the same for any number of
   workers, any chunk size and any storage of the text: blocks and runs
   that cross a chunk edge are finished across it. Each signature keeps

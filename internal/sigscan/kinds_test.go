@@ -276,9 +276,51 @@ func TestScan_GateIsPartOfTheMeaning(t *testing.T) {
 	gateFixture.run(t)
 }
 
+// foldFixture: under (?i) Go's regexp matches k to the Kelvin sign
+// (U+212A) and s to the long s (U+017F), which no keyword holds. A line
+// whose view holds either letter skips the gate, so every anchor is
+// tested on it: regex, block start and match run, declared keywords
+// included. A line of ASCII only still needs its keywords ("timeout
+// reached"), and a fold letter alone makes no finding ("nothing ſ here").
+var foldFixture = fixture{
+	name: "fold letters skip the gate",
+	def: regexSig("sel", `(?i)select`) + regexSig("kern", `(?i)kernel panic`) +
+		regexSig("declared", `timeout`, "keywords: [deadline]") +
+		kindSig("tb", "block", `start: '(?i)^traceback'`, `continue: '^\s'`) +
+		kindSig("df", "run", `match: '(?i)disk full'`, "min: 2"),
+	ids: []string{"sel", "kern", "declared", "tb", "df"},
+	text: lines(
+		"ſelect 1",
+		"Kernel panic",
+		"select 2",
+		"timeout reached",
+		"timeout reached K",
+		"Traceback (most recent call last):",
+		`  File "a.py"`,
+		"TracebacK (most recent call last):",
+		`  File "b.py"`,
+		"diſk full on /var",
+		"disK full on /var",
+		"nothing ſ here",
+	),
+	want: map[string][]lineSpan{
+		"sel":      {{1, 1}, {3, 3}},
+		"kern":     {{2, 2}},
+		"declared": {{5, 5}},
+		"tb":       {{6, 7}, {8, 9}},
+		"df":       {{10, 11}},
+	},
+}
+
+// A match made through the Kelvin sign or the long s is found: the
+// line skips the gate. A line of ASCII only still goes through it.
+func TestScan_FoldLettersSkipTheGate(t *testing.T) {
+	foldFixture.run(t)
+}
+
 // scenarioFixtures are every fixture of the scan's rules, for the
 // same-answer test.
 func scenarioFixtures() []fixture {
 	all := slices.Concat(regexFixtures, blockSimpleFixtures, blockOverlapFixtures, runFixtures, excerptFixtures)
-	return append(all, chainedExceptionFixture, gateFixture)
+	return append(all, chainedExceptionFixture, gateFixture, foldFixture)
 }

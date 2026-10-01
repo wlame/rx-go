@@ -13,7 +13,9 @@ import (
 
 // The gate agrees with a naive check on random keywords and lines: a
 // signature passes when every clause has a member in the line, compared
-// ASCII case-insensitively, overlapping and suffix keywords included.
+// ASCII case-insensitively, overlapping and suffix keywords included,
+// and every signature passes on a line that holds the Kelvin sign or
+// the long s. The list of passing signatures the walk reads agrees too.
 func TestGate_AgreesWithANaiveSearch(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 11))
 	alphabet := []string{"a", "b", "A", "B", "c", "\xc3\xa9", " "}
@@ -23,6 +25,17 @@ func TestGate_AgreesWithANaiveSearch(t *testing.T) {
 			b.WriteString(alphabet[r.IntN(len(alphabet))])
 		}
 		return b.String()
+	}
+	// line is a random line; one in eight holds a fold letter (whole,
+	// or only its first bytes, which is not the letter).
+	foldPieces := []string{"\u212a", "\u017f", "\xe2\x84", "\xc5"}
+	line := func() string {
+		l := word(0, 40)
+		if r.IntN(8) == 0 {
+			at := r.IntN(len(l) + 1)
+			l = l[:at] + foldPieces[r.IntN(len(foldPieces))] + l[at:]
+		}
+		return l
 	}
 	for round := range 200 {
 		var sigs []*signatures.Signature
@@ -43,7 +56,7 @@ func TestGate_AgreesWithANaiveSearch(t *testing.T) {
 		}
 		s := g.newScratch()
 		for range 50 {
-			line := word(0, 40)
+			line := line()
 			g.evaluate([]byte(line), s)
 			lowered := strings.Map(func(c rune) rune {
 				if 'A' <= c && c <= 'Z' {
@@ -51,16 +64,91 @@ func TestGate_AgreesWithANaiveSearch(t *testing.T) {
 				}
 				return c
 			}, line)
+			opened := strings.ContainsAny(line, "\u212a\u017f")
+			var wantPassed []int32
 			for si, sig := range sigs {
 				want := true
 				for _, clause := range sig.Clauses {
 					want = want && slices.ContainsFunc(clause, func(m string) bool { return strings.Contains(lowered, m) })
 				}
+				want = want || opened
 				if got := g.passes(int32(si), s); got != want {
 					t.Fatalf("round %d: line %q, clauses %q: gate %v, want %v", round, line, sig.Clauses, got, want)
 				}
+				if want {
+					wantPassed = append(wantPassed, int32(si))
+				}
+			}
+			if got := sortedPassed(s); !slices.Equal(got, wantPassed) {
+				t.Fatalf("round %d: line %q: passed %v, want %v", round, line, got, wantPassed)
 			}
 		}
+	}
+}
+
+// sortedPassed returns the gated signatures the gate listed as passing
+// on the last line evaluated, in index order.
+func sortedPassed(s *gateScratch) []int32 {
+	out := slices.Clone(s.passed)
+	slices.Sort(out)
+	return out
+}
+
+// A line whose view holds the Kelvin sign (U+212A) or the long s
+// (U+017F) opens the gate of every signature, since Go's (?i) matches k
+// and s to them and the keywords hold neither. The first bytes of such
+// a letter alone are not the letter, and a line of ASCII only still
+// needs its keywords. A keyword that is the Kelvin sign itself works as
+// any other.
+func TestGate_AFoldLetterOpensTheGateOfEverySignature(t *testing.T) {
+	sigs := []*signatures.Signature{
+		{Clauses: [][]string{{"select"}}},
+		{Clauses: [][]string{{"kernel"}, {"panic"}}},
+		{},
+		{Clauses: [][]string{{"\u212a"}, {"abc"}}},
+	}
+	g, err := newGate(sigs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := g.newScratch()
+	all := []bool{true, true, true, true}
+	cases := []struct {
+		line string
+		want []bool
+	}{
+		{"select 1", []bool{true, false, true, false}},
+		{"KERNEL PANIC abc", []bool{false, true, true, false}},
+		{"nothing", []bool{false, false, true, false}},
+		{"\u017felect 1", all},
+		{"\u212aernel panic", all},
+		{"x \u212a", all},
+		{"\u212a abc", all},
+		{"\xe2\x84 select \xaa", []bool{true, false, true, false}},
+		{"\xc5 kernel panic \xbf", []bool{false, true, true, false}},
+		{"select", []bool{true, false, true, false}},
+	}
+	for _, tc := range cases {
+		g.evaluate([]byte(tc.line), s)
+		var wantPassed []int32
+		for si, want := range tc.want {
+			if got := g.passes(int32(si), s); got != want {
+				t.Errorf("line %q: signature %d passes %v, want %v", tc.line, si, got, want)
+			}
+			if want && len(sigs[si].Clauses) > 0 {
+				wantPassed = append(wantPassed, int32(si))
+			}
+		}
+		if got := sortedPassed(s); !slices.Equal(got, wantPassed) {
+			t.Errorf("line %q: passed %v, want %v", tc.line, got, wantPassed)
+		}
+	}
+	// A fold letter seen 2^32 lines ago, at the generation the stamps
+	// start again from after they wrap around, opens nothing.
+	s.gen, s.foldGen = ^uint32(0), 1
+	g.evaluate([]byte("nothing"), s)
+	if g.passes(0, s) || len(s.passed) > 0 {
+		t.Errorf("after the stamps wrapped: passes %v, passed %v, want false and none", g.passes(0, s), s.passed)
 	}
 }
 

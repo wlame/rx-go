@@ -236,9 +236,10 @@ of all signatures at once.
 
 The gate is part of what a signature means: a line that fails it is
 not a finding of the signature, whatever the regex says. Derived
-keywords never fail a line the regex matches, with one exception (the
-Kelvin sign and the long s, under "Case" below), so for most
-signatures the gate only makes the scan faster.
+keywords never fail a line the regex matches (a line that holds the
+Kelvin sign or the long s skips the gate, under "Case" below), so for
+a signature without declared keywords the gate only makes the scan
+faster.
 
 **Derived keywords.** Without a `keywords` field, rx derives the
 clauses from the anchor regex:
@@ -287,10 +288,15 @@ outside ASCII that has another case, such as `é` in a case-insensitive
 (`(?i)`) anchor, gives no keyword: the clause is cut there.
 
 Under `(?i)`, Go's regexp also matches `k` to the Kelvin sign (U+212A)
-and `s` to the long s (U+017F); the gate does not. A line that matches
-a `(?i)` anchor only through one of these two characters is not found:
-`(?i)select` gives the keyword `select`, so the line `ſelect 1` is not
-a finding of that signature, though the regex alone would match it.
+and `s` to the long s (U+017F), and no keyword holds either character.
+So a line whose view holds one of them skips the gate: every anchor is
+tested on it, one with declared keywords too. `(?i)select` gives the
+keyword `select`, and the line `ſelect 1` is still a finding of that
+signature, as the regex alone would make it. The same rule holds for
+redaction: a redacting `(?i)key=(\w+)` masks the value of `Key=…`
+written with a Kelvin sign. The keyword pass finds the two characters
+itself, so the rule reads no byte twice; it costs anchor tests only on
+the rare lines that hold them.
 
 ## How a scan reads a file
 
@@ -383,7 +389,8 @@ Every excerpt is masked by every redacting signature rx has loaded,
 whether the scan selected it or not, default or opt-in: an `error-line`
 finding on a line that holds an AWS key shows the key masked, and the
 finding is marked masked. A redacting signature takes part only on a
-line that holds its keywords, and only where an excerpt is kept.
+line that passes its keyword gate (a line that holds the Kelvin sign or
+the long s passes every gate), and only where an excerpt is kept.
 
 **The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
 findings of each signature (10,000 by default), by line; their count

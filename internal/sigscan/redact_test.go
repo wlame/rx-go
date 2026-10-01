@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -326,6 +327,52 @@ func TestScan_EveryRedactorMasksEveryExcerpt(t *testing.T) {
 				t.Errorf("a line without a secret: excerpt %q masked=%v", f.Excerpt, f.Masked)
 			}
 			requireNoSecret(t, res, key[4:])
+		})
+	}
+}
+
+// A redactor whose (?i) anchor matches only through the Kelvin sign
+// (for k) or the long s (for s) still masks: such a line skips the
+// redactors' keyword gate as it skips the scan's. The secret stays
+// masked in another signature's excerpt whether the redactor is
+// selected or only given, and a selected redactor finds the line.
+func TestScan_RedactorMatchingThroughAFoldLetterMasks(t *testing.T) {
+	const keySecret, passSecret = "SECRET9876543210", "hunter2hunter2xyz"
+	sigs := loadSigs(t, sigFile(
+		regexSig("err", `ERROR`),
+		regexSig("key", `(?i)key=(\w+)`, "capture: 1", "redact: true"),
+		regexSig("pass", `(?i)password=(\S+)`, "capture: 1", "redact: true"),
+	), "err", "key", "pass")
+	plain, redactors := sigs[:1], sigs[1:]
+	text := lines("Key="+keySecret+" ERROR", "paſſword="+passSecret+" ERROR")
+	cases := []struct {
+		name     string
+		selected []*signatures.Signature
+	}{
+		{"redactors given, not selected", plain},
+		{"redactors selected", sigs},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := scanOne(t, text, tc.selected, Options{Redactors: redactors})
+			errs := res.BySignature["err"].Findings
+			if len(errs) != 2 {
+				t.Fatalf("err findings %v, want lines 1 and 2", spans(res, "err"))
+			}
+			for i, mask := range []string{"SECR************", "hunt************"} {
+				if f := errs[i]; !strings.Contains(f.Excerpt, mask) || !f.Masked {
+					t.Errorf("line %d: excerpt %q masked=%v, want %q", i+1, f.Excerpt, f.Masked, mask)
+				}
+			}
+			requireNoSecret(t, res, keySecret[4:], passSecret[4:])
+			if len(tc.selected) == len(sigs) {
+				if got := spans(res, "key"); !slices.Equal(got, []lineSpan{{1, 1}}) {
+					t.Errorf("key findings %v, want line 1", got)
+				}
+				if got := spans(res, "pass"); !slices.Equal(got, []lineSpan{{2, 2}}) {
+					t.Errorf("pass findings %v, want line 2", got)
+				}
+			}
 		})
 	}
 }

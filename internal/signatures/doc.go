@@ -21,7 +21,8 @@
 //
 // The keyword clauses (Signature.Clauses) are part of a signature's
 // meaning: a line is tested against the anchor only when every clause
-// has a member on the line. They come from a walk of the anchor's
-// regexp/syntax tree (keywords.go) or from the signature's own
-// `keywords` field.
+// has a member on the line, or when the line holds the Kelvin sign or
+// the long s (a case-insensitive k or s matches them, and no clause
+// holds them). They come from a walk of the anchor's regexp/syntax tree
+// (keywords.go) or from the signature's own `keywords` field.
 package signatures

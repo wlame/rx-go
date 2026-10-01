@@ -153,8 +153,9 @@ func concatItems(re *syntax.Regexp) []facts {
 // UTF-8, which the line does not hold as these bytes.
 //
 // A case-insensitive k or s also matches the Kelvin sign (U+212A) and
-// the long s (U+017F). The gate treats them as the ASCII letters only:
-// it is part of the signature's meaning, and the docs say so.
+// the long s (U+017F). The pieces keep only the ASCII letter: the scan
+// engine tests every anchor, without its gate, on a line that holds
+// either of those two runes, so a match through them is still found.
 func literalItems(re *syntax.Regexp) []facts {
 	folds := re.Flags&syntax.FoldCase != 0
 	var items []facts

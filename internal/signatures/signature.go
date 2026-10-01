@@ -81,8 +81,10 @@ type Signature struct {
 	// Clauses are the keyword clauses of the anchor, every literal
 	// lowered to ASCII lower case. A line is tested against the anchor
 	// only when every clause has a member on the line (compared ASCII
-	// case-insensitively). Nil means no gate: the signature is tested
-	// on every line (LinePass).
+	// case-insensitively), or when it holds the Kelvin sign or the long
+	// s, which a case-insensitive k or s matches and no clause holds.
+	// Nil means no gate: the signature is tested on every line
+	// (LinePass).
 	Clauses [][]string
 	// KeywordsDeclared is true when Clauses come from the signature's
 	// own `keywords` field rather than from its anchor regex.

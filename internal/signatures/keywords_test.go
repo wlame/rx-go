@@ -49,8 +49,9 @@ func TestDeriveClauses(t *testing.T) {
 			`(?:aa|bb|cc|dd|ee|ff|gg|hh)(?:ii|jj|kk|ll|mm|nn|oo|pp|qq)xyz`,
 			[][]string{{"iixyz", "jjxyz", "kkxyz", "llxyz", "mmxyz", "nnxyz", "ooxyz", "ppxyz", "qqxyz"}}},
 		{"no anchor text at all", `.*`, nil},
-		// The gate is ASCII case-insensitive by definition: the keyword
-		// of (?i)select is select, though the regex also matches ſelect.
+		// The keyword of (?i)select is select, though the regex also
+		// matches ſelect: the scan tests every anchor on a line that
+		// holds the long s or the Kelvin sign, so no clause needs them.
 		{"a case-insensitive s stays an ASCII keyword", `(?i)select`, [][]string{{"select"}}},
 	}
 	for _, tc := range cases {
@@ -77,9 +78,10 @@ func TestDeriveClauses_BadRegex(t *testing.T) {
 // compared ASCII case-insensitively.
 //
 // A case-insensitive k or s also matches the Kelvin sign (U+212A) and
-// the long s (U+017F), which ASCII folding never equates with them: the
-// gate is part of a signature's meaning and treats those letters as
-// ASCII only, so lines that hold either rune are not checked.
+// the long s (U+017F), which ASCII folding never equates with them. The
+// clauses hold the ASCII letters only, and the scan tests every anchor
+// on a line that holds either rune without looking at the clauses, so
+// such lines are not checked here.
 func FuzzDeriveClauses_Sound(f *testing.F) {
 	seeds := []struct{ regex, line string }{
 		{`(?i)\bdelete\s+from`, "x DELETE   FROM t"},
