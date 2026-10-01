@@ -12,9 +12,9 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/wlame/rx-go/internal/compressfile"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
-	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -38,7 +38,7 @@ func registerCompressHandlers(s *Server, api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/compress",
 		Summary:     "Compress file to seekable zstd format (background task)",
-		Description: "Creates a background task that encodes the file to .zst. Poll /v1/tasks/{id} for progress. The input path and the effective output path are both validated against --search-root.",
+		Description: "Creates a background task that encodes the file to .zst. The output holds the input's text: a gzip, bzip2, xz or zstd input is decompressed first. A compound archive (.tar.gz and its kin), a seekable zstd input without force, and an output path that is the input file are refused with 400. Poll /v1/tasks/{id} for progress. The input path and the effective output path are both validated against --search-root.",
 		Tags:        []string{"Operations"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity),
@@ -75,6 +75,13 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 	output, err = paths.ValidatePathWithinRoots(output)
 	if err != nil {
 		return nil, ClassifyPathError(err)
+	}
+	// Refuse a compound archive, a seekable input the request did not
+	// ask to re-encode, and an output that is the input, before the
+	// "already exists" rule and before a task is created: the caller
+	// gets the reason as a 400 rather than as a failed task.
+	if refusal := compressfile.Check(validated, output, req.Force); refusal != nil {
+		return nil, ErrBadRequest(fmt.Sprintf("%s: %s", req.InputPath, compressRefusal(refusal)))
 	}
 	if !req.Force {
 		if _, statErr := os.Stat(output); statErr == nil {
@@ -116,6 +123,7 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		FrameSizeBytes:   frameSizeBytes,
 		CompressionLevel: level,
 		BuildIndex:       req.BuildIndex == nil || *req.BuildIndex,
+		ReencodeSeekable: req.Force,
 		CLICommand:       compressCLICommand(validated, output, req),
 	}
 	go runDetached(mgr, taskID, "compress", logger, func() {
@@ -140,6 +148,9 @@ type compressJob struct {
 	FrameSizeBytes   int64
 	CompressionLevel int
 	BuildIndex       bool
+	// ReencodeSeekable lets a seekable zstd input through; the request's
+	// force sets it.
+	ReencodeSeekable bool
 	// CLICommand is the rx command that does what the request asked.
 	CLICommand string
 }
@@ -162,83 +173,59 @@ func compressCLICommand(input, output string, req rxtypes.CompressRequest) strin
 	return BuildCLICommand("compress", params)
 }
 
+// compressRefusal words a compressfile.Check error for the HTTP API:
+// the refusal of a seekable input names the request field that lifts it.
+func compressRefusal(err error) string {
+	if errors.Is(err, compressfile.ErrAlreadySeekable) {
+		return err.Error() + ` (set "force": true to re-encode it)`
+	}
+	return err.Error()
+}
+
 // runCompressTask does the actual encoding work in the background.
 // Updates the task as it progresses: running → (completed|failed).
+//
+// The encoding goes through compressfile.Compress, the function
+// `rx compress` calls, so a compressed input is written as its text
+// here exactly as on the command line.
 func runCompressTask(mgr *tasks.Manager, taskID string, job compressJob) {
 	mgr.MarkRunning(taskID)
 	start := time.Now()
 
-	src, err := os.Open(job.InputPath)
-	if err != nil {
-		mgr.Fail(taskID, fmt.Sprintf("open input: %v", err))
-		return
-	}
-	defer func() { _ = src.Close() }()
-
-	info, err := src.Stat()
-	if err != nil {
-		mgr.Fail(taskID, fmt.Sprintf("stat input: %v", err))
-		return
-	}
-
 	// Remove any pre-existing output so we don't mix data with a stale
-	// file. The earlier Force check already gated this.
+	// file. The earlier Force check already gated this, and the request
+	// was refused if the output is the input file.
 	if _, statErr := os.Stat(job.OutputPath); statErr == nil {
 		_ = os.Remove(job.OutputPath)
 	}
 
-	dst, err := os.Create(job.OutputPath)
-	if err != nil {
-		mgr.Fail(taskID, fmt.Sprintf("create output: %v", err))
-		return
-	}
-	defer func() { _ = dst.Close() }()
-
-	enc := seekable.NewEncoder(seekable.EncoderConfig{
-		FrameSize: int(job.FrameSizeBytes),
-		Level:     job.CompressionLevel,
+	written, err := compressfile.Compress(context.Background(), compressfile.Options{
+		InputPath:  job.InputPath,
+		OutputPath: job.OutputPath,
+		FrameSize:  int(job.FrameSizeBytes),
+		Level:      job.CompressionLevel,
 		// Single-worker is safer for unconfigured backgrounds — a
 		// follow-up can surface parallelism through an env knob.
-		Workers: 1,
+		Workers:          1,
+		ReencodeSeekable: job.ReencodeSeekable,
 	})
-	tbl, err := enc.Encode(context.Background(), src, info.Size(), dst)
 	if err != nil {
-		mgr.Fail(taskID, fmt.Sprintf("encode: %v", err))
+		mgr.Fail(taskID, err.Error())
 		return
 	}
-	if syncErr := dst.Sync(); syncErr != nil {
-		mgr.Fail(taskID, fmt.Sprintf("fsync output: %v", syncErr))
-		return
-	}
-
-	// Stat the produced file to read the compressed size.
-	outInfo, err := os.Stat(job.OutputPath)
-	if err != nil {
-		mgr.Fail(taskID, fmt.Sprintf("stat output: %v", err))
-		return
-	}
-	compressedSize := outInfo.Size()
-	decompressedSize := info.Size()
-	// compression_ratio is decompressed/compressed, so it reads >= 1 for
-	// data that actually shrank. The CLI and rx-python use the same
-	// convention.
-	var ratio float64
-	if compressedSize > 0 {
-		ratio = float64(decompressedSize) / float64(compressedSize)
-		ratio = float64(int(ratio*100)) / 100
-	}
-	frameCount := len(tbl.Frames)
-	elapsed := time.Since(start).Seconds()
 
 	result := rxtypes.CompressTaskResult{
 		Success:          true,
 		InputPath:        job.InputPath,
 		OutputPath:       job.OutputPath,
-		CompressedSize:   compressedSize,
-		DecompressedSize: decompressedSize,
-		CompressionRatio: ratio,
-		FrameCount:       frameCount,
-		TimeSeconds:      elapsed,
+		CompressedSize:   written.CompressedSize,
+		DecompressedSize: written.DecompressedSize,
+		// compression_ratio is decompressed/compressed, so it reads >= 1
+		// for data that actually shrank. The CLI and rx-python use the
+		// same convention.
+		CompressionRatio: written.Ratio(),
+		FrameCount:       written.FrameCount,
+		TimeSeconds:      time.Since(start).Seconds(),
 		CLICommand:       job.CLICommand,
 	}
 

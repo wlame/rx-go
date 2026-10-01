@@ -488,6 +488,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx compress` and `POST /v1/compress` write the text of a compressed
+  input. A gzip, bzip2, xz or plain zstd file used to be encoded as its
+  compressed bytes, so a trace of the output searched those bytes and
+  its line numbers and offsets meant nothing. Now the input is
+  decompressed on the fly and streamed into the encoder, a trace of the
+  output equals a trace of the decompressed file, and
+  `decompressed_size` is the size of the text. Both surfaces go through
+  one function and refuse the same inputs, nothing written: a compound
+  archive such as `.tar.gz` (`compound archives (tar.gz, etc.) are not
+  supported`), a file that is already seekable zstd unless `--force` /
+  `"force": true` asks to re-encode it with the new frame size and
+  level, and an output path that is the input file, which used to be
+  truncated before it was read. The HTTP API refuses them with `400`
+  before it creates a task. A corrupt or truncated input fails with the
+  decoder's error and leaves no partial output.
+
 - `rx compress --workers=N` holds one batch of N frames in memory
   instead of the whole input; the output is unchanged.
 
