@@ -50,9 +50,11 @@ var ErrIncompleteStream = errors.New("compressed stream ended early")
 //   - MatchRaw.Offset is the DECOMPRESSED byte offset (matches Python).
 //   - Line numbers are 1-indexed and refer to the decompressed stream.
 //
-// maxResults caps the number of returned matches. The worker stops
-// reading events after that many, terminating rg via context cancel.
-// Nil maxResults means "no limit".
+// maxResults caps the number of returned matches. After that many the
+// worker reads on only until rg has written the trailing context of the
+// last one (contextAfter lines), then stops rg via context cancel; a
+// match read in that time is returned as a context line, since it is a
+// line of that window. Nil maxResults means "no limit".
 func ProcessCompressed(
 	ctx context.Context,
 	path string,
@@ -157,6 +159,10 @@ func ProcessCompressed(
 	var outMatches []MatchRaw
 	var outContexts []ContextRaw
 	matchCount := 0
+	// lastWindowLine is 0 until the cap is reached, and then the last
+	// line of the window of the last match counted: the line after which
+	// the pass stops.
+	lastWindowLine := 0
 
 	streamErr := StreamEvents(childCtx, rgStdout, func(ev *RgEvent, parseErr error) error {
 		if parseErr != nil {
@@ -170,10 +176,14 @@ func ProcessCompressed(
 			if ev.Match == nil {
 				return nil
 			}
-			if maxResults != nil && matchCount >= *maxResults {
-				// Stop reading; we signal early termination via
-				// context cancel below.
-				return io.EOF
+			if lastWindowLine > 0 {
+				// Past the cap: a line of the last match's window.
+				outContexts = append(outContexts, ContextRaw{
+					Offset:     ev.Match.AbsoluteOffset,
+					LineNumber: ev.Match.LineNumber,
+					LineText:   trimTrailingNewline(ev.Match.Lines.Text),
+				})
+				return stopAfterWindow(ev.Match.LineNumber, lastWindowLine)
 			}
 			subs := make([]rxtypes.Submatch, len(ev.Match.Submatches))
 			for i, sm := range ev.Match.Submatches {
@@ -192,6 +202,10 @@ func ProcessCompressed(
 				IsCompressed: true,
 			})
 			matchCount++
+			if maxResults != nil && matchCount >= *maxResults {
+				lastWindowLine = ev.Match.LineNumber + contextAfter
+				return stopAfterWindow(ev.Match.LineNumber, lastWindowLine)
+			}
 		case RgEventContext:
 			if ev.Context == nil {
 				return nil
@@ -201,6 +215,9 @@ func ProcessCompressed(
 				LineNumber: ev.Context.LineNumber,
 				LineText:   trimTrailingNewline(ev.Context.Lines.Text),
 			})
+			if lastWindowLine > 0 {
+				return stopAfterWindow(ev.Context.LineNumber, lastWindowLine)
+			}
 		}
 		return nil
 	})
@@ -296,4 +313,15 @@ func isSubprocessCancelled(err error) bool {
 	return strings.Contains(msg, "signal: killed") ||
 		strings.Contains(msg, "signal: terminated") ||
 		strings.Contains(msg, "broken pipe")
+}
+
+// stopAfterWindow tells the event loop of a capped pass to stop once
+// rg has reported line lastWindowLine, the end of the last counted
+// match's window. io.EOF is the loop's "stop early" signal; nil reads
+// on.
+func stopAfterWindow(line, lastWindowLine int) error {
+	if line >= lastWindowLine {
+		return io.EOF
+	}
+	return nil
 }
