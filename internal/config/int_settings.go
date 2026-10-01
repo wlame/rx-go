@@ -156,7 +156,25 @@ var (
 	// scans of many files can set going; a scan past it waits for one
 	// to end. Its maximum bounds them whatever the environment asks for.
 	MaxSignatureScansSetting = IntSetting{Name: "RX_MAX_SIGNATURE_SCANS", Default: DefaultMaxSignatureScans, Min: 1, Max: 64}
+
+	// FindingsTextMaxBytesSetting is RX_FINDINGS_TEXT_MAX_BYTES: the
+	// most bytes of text (the lines of findings and the lines around
+	// them) one answer that carries findings may hold, summed over its
+	// findings in their order; the findings past it keep their place
+	// and lose their lines. A block finding can be thousands of lines
+	// of up to RX_MAX_LINE_TEXT_BYTES each, so the per-line cut alone
+	// does not bound an answer. Its maximum, 16 GiB, needs a 64-bit
+	// int, which every platform rx is built for has.
+	FindingsTextMaxBytesSetting = IntSetting{Name: "RX_FINDINGS_TEXT_MAX_BYTES", Default: DefaultFindingsTextMaxBytes, Min: 1 << 20, Max: 16 << 30}
 )
+
+// DefaultFindingsTextMaxBytes is the default of
+// RX_FINDINGS_TEXT_MAX_BYTES: 64 MiB.
+const DefaultFindingsTextMaxBytes = 64 << 20
+
+// FindingsTextMaxBytes returns RX_FINDINGS_TEXT_MAX_BYTES, from 1 MiB to
+// 16 GiB, or DefaultFindingsTextMaxBytes.
+func FindingsTextMaxBytes() int64 { return int64(FindingsTextMaxBytesSetting.Value()) }
 
 // DefaultSignaturesLineBytes is the default of RX_SIGNATURES_LINE_BYTES:
 // 64 KiB.
@@ -241,6 +259,7 @@ var IntSettings = []IntSetting{
 	SignaturesLineBytesSetting,
 	FindingsMaxPerSignatureSetting,
 	MaxSignatureScansSetting,
+	FindingsTextMaxBytesSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

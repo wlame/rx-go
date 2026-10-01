@@ -3,6 +3,7 @@ package trace
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -111,7 +112,7 @@ func TestEngine_RunWithOptions_IsRunResolvedOverItsWalk(t *testing.T) {
 		t.Fatalf("RunWithOptions: %v", err)
 	}
 	resolved, err := New().RunResolved(context.Background(), func(context.Context) (*SearchPlan, error) {
-		return expandPaths(paths, true), nil
+		return ExpandPaths(paths, true), nil
 	}, []string{"error"}, opts)
 	if err != nil {
 		t.Fatalf("RunResolved: %v", err)
@@ -147,5 +148,46 @@ func TestEngine_RunResolved_ChecksPatternsBeforeResolving(t *testing.T) {
 	}, []string{"error"}, Options{})
 	if !errors.Is(err, failure) {
 		t.Fatalf("error %v, want the resolver's", err)
+	}
+}
+
+// A search with no pattern reads no file: it answers the plan's files
+// with their ids, its walked directories and its skips, no match and no
+// chunk, so a caller that only wants the files of a search (a signature
+// scan over the same paths) numbers them as a search does.
+func TestEngine_RunResolved_NoPatternAnswersThePlanAlone(t *testing.T) {
+	dir := t.TempDir()
+	ordered := []string{filepath.Join(dir, "b.log"), filepath.Join(dir, "a.log")}
+	for _, p := range ordered {
+		if err := os.WriteFile(p, []byte("LINE 1 error\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := &SearchPlan{
+		Paths: []string{dir}, Files: classifiedFiles(t, ordered...), ScannedDirs: []string{dir},
+		Skipped: []rxtypes.SkippedFile{{Path: filepath.Join(dir, "c.bin"), Reason: "not a text file"}},
+	}
+	read := false
+	resp, err := New().RunResolved(context.Background(), func(context.Context) (*SearchPlan, error) {
+		return plan, nil
+	}, nil, Options{RequestID: "req-1", ContextBefore: 2, beforeRead: func() { read = true }})
+	if err != nil {
+		t.Fatalf("RunResolved: %v", err)
+	}
+	if read {
+		t.Error("a search with no pattern reached the read of its files")
+	}
+	wantFiles := map[string]string{"f1": ordered[0], "f2": ordered[1]}
+	if !maps.Equal(resp.Files, wantFiles) || len(resp.Patterns) != 0 || len(resp.Matches) != 0 || resp.Matches == nil {
+		t.Errorf("files %v patterns %v matches %v; want %v, none, []", resp.Files, resp.Patterns, resp.Matches, wantFiles)
+	}
+	if !slices.Equal(resp.ScannedFiles, ordered) || !slices.Equal(resp.SkipReasons, plan.Skipped) {
+		t.Errorf("scanned %v skipped %v", resp.ScannedFiles, resp.SkipReasons)
+	}
+	if resp.RequestID != "req-1" || len(resp.FileChunks) != 0 || resp.FileChunks == nil || resp.ContextLines == nil {
+		t.Errorf("request id %q, chunks %v, context %v", resp.RequestID, resp.FileChunks, resp.ContextLines)
+	}
+	if resp.BeforeContext == nil || *resp.BeforeContext != 2 || resp.AfterContext != nil {
+		t.Errorf("before %v after %v, want 2 and null", resp.BeforeContext, resp.AfterContext)
 	}
 }

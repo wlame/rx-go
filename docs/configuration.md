@@ -39,7 +39,7 @@ See [concepts/caching](concepts/caching.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_WORKERS` | smaller of `NumCPU` and `RX_MAX_SUBPROCESSES` | Number of ripgrep processes a trace runs at once. Takes precedence when set, from 1 to 256; a larger value is used as 256. |
+| `RX_WORKERS` | smaller of `NumCPU` and `RX_MAX_SUBPROCESSES` | Number of ripgrep processes a trace runs at once, and of goroutines a signature scan (`rx trace --signatures`) reads lines with (unset: the CPU count). Takes precedence when set, from 1 to 256; a larger value is used as 256. |
 | `RX_MAX_SUBPROCESSES` | `20` | Most chunks one file is split into, and the worker count when `RX_WORKERS` is unset. From 1 to 256. |
 | `RX_MIN_CHUNK_SIZE_MB` | `20` | Smallest chunk the parallel scanner carves: a file is split into `size / RX_MIN_CHUNK_SIZE_MB` chunks, so a file below twice this size is scanned as one. |
 | `RX_HIDDEN` | `false` | Include files and directories whose name starts with a dot. Off by default, as in `ripgrep`. The `--hidden` flag overrides it. |
@@ -128,6 +128,7 @@ from YAML files by the commands that use them
 | `RX_SIGNATURES_LINE_BYTES` | `65536` | How many bytes of each line a signature scan matches against: the line without its ending, cut here. A longer line is still counted at its full length, and the scan never holds more of it. From 1024 to 1048576. |
 | `RX_FINDINGS_MAX_PER_SIGNATURE` | `10000` | The most findings of one signature a scan of one file keeps: the first ones by line. The count of findings stays exact past it. From 100 to 1000000. |
 | `RX_MAX_SIGNATURE_SCANS` | `1` | How many signature scans run at once in `rx serve`. A scan past it waits, in the order it was started, until a running scan ends; a scan whose findings are all in the [findings cache](concepts/caching.md#findings) reads no file and does not wait. From 1 to 64. |
+| `RX_FINDINGS_TEXT_MAX_BYTES` | `67108864` | The most bytes of text one answer gives for its findings: the lines of each finding, and the lines asked for around it (`rx trace --signatures -B`, `-A`, `--context`), summed over the findings in their order, each line counted with one byte more for its line break. The finding at which it runs out, and every finding after it, keep their line numbers and offsets and lose their text (`lines_truncated: true`). Each line is cut at `RX_MAX_LINE_TEXT_BYTES` as well. From 1048576 (1 MiB) to 17179869184 (16 GiB). |
 
 ## Search-root sandbox
 
@@ -265,7 +266,7 @@ range:
 
 | Variable | Default | Minimum | Maximum | Unit |
 |---|---|---|---|---|
-| `RX_WORKERS` | unset | 1 | 256 | ripgrep processes |
+| `RX_WORKERS` | unset | 1 | 256 | ripgrep processes, signature scan goroutines |
 | `RX_MAX_SUBPROCESSES` | 20 | 1 | 256 | chunks per file, processes |
 | `RX_MIN_CHUNK_SIZE_MB` | 20 | 1 | 1048576 | MB (up to 1 TiB) |
 | `RX_LARGE_FILE_MB` | 50 | 1 | 1048576 | MB (up to 1 TiB) |
@@ -283,6 +284,7 @@ range:
 | `RX_SIGNATURES_LINE_BYTES` | 65536 | 1024 | 1048576 | bytes of each line a signature scan matches |
 | `RX_FINDINGS_MAX_PER_SIGNATURE` | 10000 | 100 | 1000000 | findings kept per signature and file |
 | `RX_MAX_SIGNATURE_SCANS` | 1 | 1 | 64 | signature scans running at once |
+| `RX_FINDINGS_TEXT_MAX_BYTES` | 67108864 | 1048576 | 17179869184 | bytes of findings' text in one answer (1 MiB to 16 GiB) |
 
 One rule applies to all of them:
 

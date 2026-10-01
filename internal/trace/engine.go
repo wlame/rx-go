@@ -120,7 +120,7 @@ func New() *Engine { return &Engine{} }
 //  7. Optionally writes new trace caches for large completed scans.
 //  8. Returns the response.
 //
-// It is RunResolved over the plan expandPaths makes of paths: every
+// It is RunResolved over the plan ExpandPaths makes of paths: every
 // path pinned, every directory walked, every file classified.
 //
 // Parity with rx-python/src/rx/trace.py::parse_paths is bit-for-bit
@@ -134,7 +134,7 @@ func (e *Engine) RunWithOptions(
 	opts Options,
 ) (*rxtypes.TraceResponse, error) {
 	expand := func(context.Context) (*SearchPlan, error) {
-		return expandPaths(paths, !opts.NoRecursive), nil
+		return ExpandPaths(paths, !opts.NoRecursive), nil
 	}
 	return e.RunResolved(ctx, expand, patterns, opts)
 }
@@ -235,18 +235,25 @@ func (e *Engine) RunResolved(
 			ContextLines: map[string][]rxtypes.ContextLine{},
 		}, nil
 	}
+	if len(patterns) == 0 {
+		// No pattern: nothing to match, so no file is read. The answer
+		// still lists the plan's files under the ids a search gives
+		// them, for a caller that scans the same files for signatures
+		// and reports its findings by those ids.
+		return planOnlyAnswer(plan, skips, opts, start), nil
+	}
 
 	// -------------------------------------------------------------------
 	// Phase 1: assign file IDs
 	// -------------------------------------------------------------------
 	// Each file is reported under the caller's spelling of its path, and
 	// read only through its pin (sources), which refuses a path that no
-	// longer leads to the file expandPaths checked.
+	// longer leads to the file ExpandPaths checked.
 	filePaths := make([]string, len(files))
 	fileIDs := make(map[string]string, len(files))
 	filePathToID := make(map[string]string, len(files))
 	sources := make(map[string]sandbox.Pinned, len(files))
-	// What each file is (filekind), decided once by expandPaths from
+	// What each file is (filekind), decided once by ExpandPaths from
 	// the file's own bytes.
 	kinds := make(map[string]filekind.Kind, len(files))
 	for i, file := range files {
@@ -264,7 +271,7 @@ func (e *Engine) RunResolved(
 	type fileBucket struct {
 		kind string // "regular" | "compressed" | "seekable" | "cached-regular" | "cached-seekable"
 		path string
-		// src is the file as expandPaths checked it. Every read of the
+		// src is the file as ExpandPaths checked it. Every read of the
 		// file goes through it.
 		src  sandbox.Pinned
 		size int64
@@ -768,6 +775,44 @@ func (e *Engine) RunResolved(
 // Helpers
 // ============================================================================
 
+// planOnlyAnswer is the answer of a search with no pattern over plan:
+// the plan's paths, its files under their ids (f1 for Files[0], …), the
+// files walked from its directories in scanned_files, its skips, no
+// match, no chunk and no context line. The context window asked for is
+// reported as a search reports it, for the caller that shows lines
+// around something else (signature findings) in the same answer.
+func planOnlyAnswer(plan *SearchPlan, skips *skipList, opts Options, start time.Time) *rxtypes.TraceResponse {
+	fileIDs := make(map[string]string, len(plan.Files))
+	filePaths := make([]string, len(plan.Files))
+	for i, file := range plan.Files {
+		fileIDs["f"+strconv.Itoa(i+1)] = file.src.Path()
+		filePaths[i] = file.src.Path()
+	}
+	resp := &rxtypes.TraceResponse{
+		RequestID:    opts.RequestID,
+		Path:         emptyIfNilStrings(append([]string(nil), plan.Paths...)),
+		Patterns:     map[string]string{},
+		Files:        fileIDs,
+		Matches:      []rxtypes.Match{},
+		ScannedFiles: emptyIfNilStrings(scannedFilesOutput(filePaths, plan.ScannedDirs)),
+		SkippedFiles: skips.paths(),
+		SkipReasons:  skips.reasons(),
+		MaxResults:   opts.MaxResults,
+		Time:         time.Since(start).Seconds(),
+		FileChunks:   map[string]int{},
+		ContextLines: map[string][]rxtypes.ContextLine{},
+	}
+	if opts.ContextBefore > 0 {
+		b := opts.ContextBefore
+		resp.BeforeContext = &b
+	}
+	if opts.ContextAfter > 0 {
+		a := opts.ContextAfter
+		resp.AfterContext = &a
+	}
+	return resp
+}
+
 // contextWithFile pairs a ContextLine with the fileID it belongs to —
 // Python threads these tuples through the same way.
 type contextWithFile struct {
@@ -808,7 +853,7 @@ func ClassifyForSearch(src sandbox.Pinned) (SearchFile, error) {
 	return SearchFile{src: src, kind: kind}, nil
 }
 
-// expandPaths turns the input paths into the plan of RunWithOptions:
+// ExpandPaths turns the input paths into the plan of RunWithOptions:
 // the files to read, the directories walked, and the paths skipped.
 //
 // recursive defaults to TRUE (Python
@@ -826,7 +871,7 @@ func ClassifyForSearch(src sandbox.Pinned) (SearchFile, error) {
 // refused, every file that cannot be opened, every file whose text is
 // not text (a binary file, a .tar.gz, UTF-16) and every subdirectory
 // that cannot be listed; the rest of a tree is still searched.
-func expandPaths(paths []string, recursive bool) *SearchPlan {
+func ExpandPaths(paths []string, recursive bool) *SearchPlan {
 	plan := &SearchPlan{Paths: paths}
 	skips := &skipList{}
 	for _, p := range paths {

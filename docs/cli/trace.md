@@ -8,6 +8,7 @@ parallel chunking.
 ```text
 rx trace [PATTERN] [PATH ...] [flags]
 rx trace -e <PATTERN> [-e <PATTERN> ...] [PATH ...] [flags]
+rx trace --signatures[=LIST] [-e <PATTERN> ...] [PATH ...] [flags]
 rx [PATTERN] [PATH ...] [flags]     # trace is the default subcommand
 ```
 
@@ -60,6 +61,7 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `-x`, `--line-regexp` | `bool` | `false` | Match only whole lines (ripgrep `-x`) |
 | `-F`, `--fixed-strings` | `bool` | `false` | Treat every pattern as literal text (ripgrep `-F`) |
 | `-P`, `--pcre2` | `bool` | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
+| `--signatures` | `string` | — | Scan the files for [signatures](../concepts/signatures.md) too: a selection such as `--signatures=traceback,sql`; a bare `--signatures` is the default set. Every positional is then a path. See [Signatures](#signatures) |
 
 `--debug` is still accepted so that old scripts keep working, but it
 does nothing, is not listed in `--help`, and prints a deprecation note on
@@ -83,9 +85,18 @@ rather than help it.
 
 ### Pattern and path resolution
 
-- With **no `-e` flag**: the first positional argument is the pattern.
-  All remaining positionals are paths.
+- With **no `-e` flag** and no `--signatures`: the first positional
+  argument is the pattern. All remaining positionals are paths.
 - With **one or more `-e` flags**: every positional argument is a path.
+- With **`--signatures`**: every positional argument is a path, and a
+  pattern, if any, goes with `-e`. A search with signatures may have no
+  pattern at all, so a word in the first place is read as a path:
+  `rx --signatures=traceback ERROR app.log` looks for a file named
+  `ERROR` (exit 3 when there is none). Write the pattern with `-e`:
+
+  ```bash
+  rx --signatures=traceback -e ERROR app.log
+  ```
 - With **no paths** and stdin is not a pipe: defaults to `.` (current
   directory).
 - With **`-` as a path**, or with no paths and a pipe on stdin: the
@@ -141,6 +152,127 @@ them and they may be written before or after the subcommand name:
 A path outside every configured root exits 4. A root that does not exist
 is a usage error and exits 2. With neither the flag nor the variable set
 there is no sandbox. See [Security](../concepts/security.md).
+
+## Signatures
+
+`--signatures` scans every text file the search covers for
+[signatures](../concepts/signatures.md) as well: tracebacks, secrets,
+SQL, runs of empty lines and the rest. The answer adds the findings to
+the matches.
+
+```bash
+rx --signatures app.log                              # the default set, no pattern
+rx trace --signatures=traceback,sql app.log /var/log/
+rx --signatures=all,-pii -e timeout app.log          # matches and findings
+```
+
+- The value is a [selection](../concepts/signatures.md#selection): ids,
+  groups, tags, `all`, `default`, and `-word` to remove one. It needs
+  `=`; a bare `--signatures` is `default`. An unknown word exits 2 with
+  up to five close names, before any file is read.
+- With the flag, every positional is a path (see above); patterns go
+  with `-e`. Without a pattern the search runs no ripgrep and has no
+  match.
+- Every text file is scanned, each with its own entry in the
+  [findings cache](../concepts/caching.md#findings): a second
+  run reads the findings from there and scans only the signatures it
+  lacks. A file that is not text, or cannot be read, is listed under
+  `Files skipped` with the reason, as for the search.
+- `--no-cache` skips the findings cache too: nothing is read from it or
+  written to it. Piped stdin is never cached.
+- `--max-results` caps the matches only; every finding is kept, up to
+  `RX_FINDINGS_MAX_PER_SIGNATURE` per signature and file.
+- `-B`, `-A` and `--context` (and the window of `--samples`) add the
+  same lines before the first line and after the last line of each
+  finding.
+- Log chains are not scanned: `rx logs trace` has no `--signatures`.
+
+### Human output
+
+After the matches part comes a count line and every finding, by file
+and then by line:
+
+```text
+Findings: 3 in 1 file (python-traceback 1, error-line 2)
+
+app.log:2  error-line  severity · medium
+  2: ERROR boom one
+
+app.log:4-6  python-traceback  traceback · high
+  4: Traceback (most recent call last):
+  5:   File "a.py", line 1
+  6: ValueError: bad
+```
+
+- The count line gives every finding of every file, the files that hold
+  one, and each signature's count in catalogue order; when the cap kept
+  fewer findings of a signature than it found, it says how many are
+  listed.
+- Each finding is `path:start[-end]  id  group · level`, then its lines,
+  numbered, `:` after a finding's own line and `-` after a line asked
+  for around it.
+- A finding longer than 20 lines prints 20 and the command for the rest:
+  `… 380 more lines: rx samples app.log --lines=24-403`.
+- `--color` colours the place, and the id and level by level (info
+  grey, low blue, medium yellow, high red, critical bright red).
+
+### JSON
+
+`--json` keeps every member of the answer and adds three:
+
+| Member | Shape |
+|---|---|
+| `signatures` | `{id: {name, group, level, kind}}` for every signature of the selection |
+| `findings` | `[Finding]`, ordered by file id, first line, last line, then signature id |
+| `finding_summary` | `{file_id: {state, signatures: {id: {count, stored}}}}` |
+
+A finding:
+
+| Field | Type | Notes |
+|---|---|---|
+| `signature` | string | the id |
+| `file` | string | the file's id in `files` (`f1`) |
+| `start_line`, `end_line` | int | 1-based, inclusive |
+| `start_offset`, `end_offset` | int | byte offsets in the text (decompressed for a compressed file), end exclusive |
+| `time_ms` | int or null | the time of the first line, or of the nearest earlier stamped line within `RX_TIMESTAMP_LOOKBACK_KB`, in milliseconds since the Unix epoch; a file whose timestamps carry no zone is read in `RX_LOG_TZ`, as `rx samples` reads it |
+| `excerpt` | string | the first line, masked, cut to 200 bytes |
+| `value_start`, `value_end` | int, optional | the value's bytes in the first line |
+| `masked` | bool, optional | true when anything in the excerpt or the lines was masked, or the signature redacts |
+| `lines` | [string] | the finding's lines, each without its line ending |
+| `before`, `after` | [string], optional | the lines `-B`, `-A` or `--context` asked for |
+| `lines_truncated` | bool, optional | the text budget ran out at or before this finding |
+
+`count` is every finding of the signature in the file, those past the
+cap included, and `stored` how many the answer lists. `state` is `full`
+when every signature of the default set has an answer for the file
+(cached or just scanned), `partial` otherwise. `cli_command` holds the
+whole command, the selection spelled out (`--signatures=default` for a
+bare flag); without `--signatures` it stays `null` and the answer has
+exactly the members it had before.
+
+### The text of a finding
+
+`lines`, `before` and `after` are read from the file when the answer is
+made, in one pass per file that seeks to each finding where the file
+allows it (a plain file, or a seekable zstd file with its frame table);
+a compressed stream is read from its start up to its last finding.
+
+- Each line holds at most `RX_MAX_LINE_TEXT_BYTES` bytes, cut on a
+  character boundary, and is valid UTF-8 (a byte that is not becomes
+  U+FFFD), as the excerpt is.
+- The text of all findings together is limited by
+  `RX_FINDINGS_TEXT_MAX_BYTES` (64 MiB), each line counted with one
+  byte more for its line break. The finding at which it runs
+  out and every finding after it keep their place and lose their text,
+  with `lines_truncated: true`; the human output says so and gives the
+  `rx samples` command.
+- Every value a redacting signature matches on a line is masked, by
+  every loaded redacting signature, in every line as in the excerpt.
+  For a `block` or `run` finding of a redacting signature, every line
+  after the first is replaced by `[masked, N bytes]` (N its length).
+  A line is masked before it is cut, so a secret the cut falls inside
+  is masked as a whole. The file itself stays readable through
+  `rx samples`.
 
 ## Examples
 

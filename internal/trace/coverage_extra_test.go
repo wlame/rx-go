@@ -391,7 +391,7 @@ func TestEngine_Run_SeekableZstd(t *testing.T) {
 	}
 }
 
-// TestEngine_Run_DirectoryRecursive covers expandPaths on a directory.
+// TestEngine_Run_DirectoryRecursive covers ExpandPaths on a directory.
 func TestEngine_Run_DirectoryRecursive(t *testing.T) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		t.Skip("rg not installed")

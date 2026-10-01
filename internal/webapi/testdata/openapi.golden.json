@@ -1182,6 +1182,141 @@
         ],
         "type": "object"
       },
+      "FileFindingSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "signatures": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FindingCount"
+            },
+            "description": "Findings counts of each selected signature, by id.",
+            "type": "object"
+          },
+          "state": {
+            "description": "full: every signature of the default set has an answer for the file; partial: some signatures have one; none: no signature has one.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "signatures"
+        ],
+        "type": "object"
+      },
+      "Finding": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "description": "Lines just after the last line, as many as were asked for and the file has.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "before": {
+            "description": "Lines just before the first line, as many as were asked for and the file has.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "end_line": {
+            "description": "Last line of the finding, 1-based, inclusive.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "end_offset": {
+            "description": "Byte offset in the text just past the last line and its line ending (exclusive).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "excerpt": {
+            "description": "The first line, with redacted values masked, cut to 200 bytes on a character boundary.",
+            "type": "string"
+          },
+          "file": {
+            "description": "Id of the file in the answer's files map; left out where an answer holds one file.",
+            "type": "string"
+          },
+          "lines": {
+            "description": "The finding's lines, first to last, each without its line ending; left out once the answer's text budget (RX_FINDINGS_TEXT_MAX_BYTES) is spent.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "lines_truncated": {
+            "description": "True when the answer's text budget ran out at or before this finding, so lines, before and after are left out.",
+            "type": "boolean"
+          },
+          "masked": {
+            "description": "True when a value in the excerpt or the lines was masked, or the signature redacts.",
+            "type": "boolean"
+          },
+          "signature": {
+            "description": "Id of the signature that matched.",
+            "type": "string"
+          },
+          "start_line": {
+            "description": "First line of the finding, 1-based.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "start_offset": {
+            "description": "Byte offset in the text where the first line starts.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "time_ms": {
+            "description": "Time of the first line in milliseconds since the Unix epoch (its own timestamp, or that of the nearest earlier stamped line within RX_TIMESTAMP_LOOKBACK_KB); null when there is none.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "value_end": {
+            "description": "End of the finding's value (exclusive), in bytes from the first line's first byte.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "value_start": {
+            "description": "Start of the finding's value, in bytes from the first line's first byte.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "signature",
+          "start_line",
+          "end_line",
+          "start_offset",
+          "end_offset",
+          "time_ms",
+          "excerpt"
+        ],
+        "type": "object"
+      },
+      "FindingCount": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "Findings of the signature in the file, those past RX_FINDINGS_MAX_PER_SIGNATURE included.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "stored": {
+            "description": "How many of them are kept: the first ones by line, at most RX_FINDINGS_MAX_PER_SIGNATURE.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "stored"
+        ],
+        "type": "object"
+      },
       "HealthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2073,6 +2208,34 @@
         ],
         "type": "object"
       },
+      "SignatureRef": {
+        "additionalProperties": false,
+        "properties": {
+          "group": {
+            "description": "The signature's group.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "regex, block, run or measure.",
+            "type": "string"
+          },
+          "level": {
+            "description": "info, low, medium, high or critical.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Short title of the signature.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "group",
+          "level",
+          "kind"
+        ],
+        "type": "object"
+      },
       "SkippedFile": {
         "additionalProperties": false,
         "properties": {
@@ -2432,6 +2595,20 @@
             },
             "type": "object"
           },
+          "finding_summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FileFindingSummary"
+            },
+            "description": "What the signature scan of each file found, by file id (rx trace --signatures only).",
+            "type": "object"
+          },
+          "findings": {
+            "description": "The findings of every scanned file, ordered by file id, first line, last line, then signature id (rx trace --signatures only).",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "type": "array"
+          },
           "matches": {
             "items": {
               "$ref": "#/components/schemas/Match"
@@ -2465,6 +2642,13 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "signatures": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SignatureRef"
+            },
+            "description": "Every signature of the selection, by id (rx trace --signatures only).",
+            "type": "object"
           },
           "skip_reasons": {
             "description": "Why each path of skipped_files was passed over or not searched in full, one entry per path in the same order.",

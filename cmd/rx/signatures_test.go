@@ -1,8 +1,9 @@
 package main
 
-// `rx signatures` reads signature files; no other command of this build
-// does. These tests run the binary, since its exit codes only exist
-// once the error reaches os.Exit.
+// `rx signatures`, and `rx` and `rx trace` with --signatures, read
+// signature files; no other command of this build does. These tests run
+// the binary, since its exit codes only exist once the error reaches
+// os.Exit.
 
 import (
 	"os"
@@ -107,5 +108,38 @@ func TestSignatures_CheckRunsTheExamples(t *testing.T) {
 	code, stdout, _ = runRxEnv(t, signatureEnv(t.TempDir()), "signatures", "show", "python-traceback")
 	if code != 0 || !strings.Contains(stdout, "# examples: 1 match, 1 no_match, all pass") {
 		t.Errorf("rx signatures show of a built-in: exit %d\n%s", code, stdout)
+	}
+}
+
+// A bare `rx --signatures=… PATH` reaches trace and scans the file; a
+// selection that cannot be resolved exits 2 with the word and the close
+// names; with --signatures a positional that looks like a pattern is a
+// path, and a missing one exits 3 naming it.
+func TestTraceSignatures_RoutingAndExitCodes(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "app.log")
+	text := "LINE 1\nTraceback (most recent call last):\n  File \"a.py\", line 1\nValueError: bad\n"
+	if err := os.WriteFile(log, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := append(signatureEnv(writeSignatureDir(t, "signatures: []\n")), "RX_CACHE_DIR="+t.TempDir())
+	cases := []struct {
+		label  string
+		args   []string
+		code   int
+		stdout string
+		stderr string
+	}{
+		{"bare rx with a selection", []string{"--signatures=traceback", log}, 0, "app.log:2-4  python-traceback  traceback · high", ""},
+		{"bare flag", []string{"--signatures", "--no-color", log}, 0, "Findings: 1 in 1 file (python-traceback 1)", ""},
+		{"unknown word", []string{"--signatures=nope", log}, 2, "", `unknown signature, group or tag "nope"`},
+		{"close names", []string{"trace", "--signatures=tracebak", log}, 2, "", "close names: traceback"},
+		{"a pattern-looking word is a path", []string{"--signatures=default", "ERROR", log}, 3, "", "ERROR"},
+	}
+	for _, tc := range cases {
+		code, stdout, stderr := runRxEnv(t, env, tc.args...)
+		if code != tc.code || !strings.Contains(stdout, tc.stdout) || !strings.Contains(stderr, tc.stderr) {
+			t.Errorf("%s: exit %d, want %d\nstdout: %s\nstderr: %s", tc.label, code, tc.code, stdout, stderr)
+		}
 	}
 }

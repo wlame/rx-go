@@ -100,6 +100,25 @@
       "expected": "rx trace /var/log/app.log --regexp=error"
     },
     {
+      "name": "trace with signatures and no pattern",
+      "endpoint": "trace",
+      "params": {
+        "path": ["/var/log/app.log"],
+        "signatures": "default"
+      },
+      "expected": "rx trace /var/log/app.log --signatures=default"
+    },
+    {
+      "name": "trace with a pattern and a selection of signatures",
+      "endpoint": "trace",
+      "params": {
+        "regexp": ["timeout"],
+        "path": ["/var/log/app.log"],
+        "signatures": "traceback,-tag:noisy"
+      },
+      "expected": "rx trace /var/log/app.log --regexp=timeout --signatures=traceback,-tag:noisy"
+    },
+    {
       "name": "samples by line",
       "endpoint": "samples",
       "params": { "path": "/var/log/app.log", "lines": "100" },

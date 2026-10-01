@@ -29,7 +29,7 @@ on an Apple-silicon Mac:
   "status": "ok",
   "ripgrep_available": true,
   "app_version": "dev",
-  "contract_version": "1.7",
+  "contract_version": "1.8",
   "features": [
     "file_tz",
     "line_timestamps",

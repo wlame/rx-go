@@ -619,6 +619,37 @@ disabled built-in says where it was disabled; a selection that ends up
 naming nothing is an error too, and so is one of more than 1,000
 words.
 
+## Signatures from the CLI
+
+`rx` and `rx trace` scan files for a selection with `--signatures`:
+
+```bash
+rx --signatures app.log                              # the default set
+rx trace --signatures=traceback,sql app.log /var/log/
+rx --signatures=all,-pii -e timeout app.log          # with a pattern
+```
+
+- With `--signatures`, every positional argument is a path; a pattern
+  goes with `-e`. `rx --signatures=traceback ERROR app.log` reads
+  `ERROR` as a file.
+- Every text file under the paths is scanned through the
+  [findings cache](caching.md#findings), each file with its own entries:
+  a second run answers from the cache and scans only what it lacks;
+  `--no-cache` reads and writes no entry.
+- The answer lists every finding with its lines read from the file at
+  that moment, masked as the excerpt is (see [How a scan reads a
+  file](#how-a-scan-reads-a-file)): every value a loaded redacting
+  signature matches on a line, and every line after the first of a
+  redacting block or run, which shows as `[masked, N bytes]`. Each line
+  is cut at `RX_MAX_LINE_TEXT_BYTES`, and the text of all findings
+  together stops at `RX_FINDINGS_TEXT_MAX_BYTES`; the findings past it
+  keep their place and say `lines_truncated`.
+- `--json` adds `signatures`, `findings` and `finding_summary` to the
+  trace answer; a trace without `--signatures` answers as before.
+
+The output, the JSON fields and the flags are on the
+[`rx trace`](../cli/trace.md#signatures) page.
+
 ## See also
 
 - [`rx signatures`](../cli/signatures.md) — list, show, check, template

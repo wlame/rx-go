@@ -93,6 +93,13 @@ type SkippedFile struct {
 // empty string, which JSON marshals as "" (not null). Python emits null
 // for an unset CLICommand, so we use a pointer to preserve that
 // distinction.
+//
+// Signatures, Findings and FindingSummary are the answer of a trace with
+// signatures (`rx trace --signatures`). A trace without them leaves the
+// three out of the JSON entirely, so its answer keeps the shape it had
+// before they existed: `omitzero` drops a nil map or slice, and keeps
+// an empty one, so a trace with signatures that found nothing still
+// answers `"findings": []`.
 type TraceResponse struct {
 	RequestID     string                   `json:"request_id"`
 	Path          []string                 `json:"path" nullable:"false"`
@@ -109,4 +116,12 @@ type TraceResponse struct {
 	BeforeContext *int                     `json:"before_context"`
 	AfterContext  *int                     `json:"after_context"`
 	CLICommand    *string                  `json:"cli_command"`
+
+	// Signatures describes every signature of the selection, by id.
+	Signatures map[string]SignatureRef `json:"signatures,omitzero" doc:"Every signature of the selection, by id (rx trace --signatures only)."`
+	// Findings are the findings of every scanned file, ordered by file
+	// id, first line, last line, then signature id (CompareFindings).
+	Findings []Finding `json:"findings,omitzero" nullable:"false" doc:"The findings of every scanned file, ordered by file id, first line, last line, then signature id (rx trace --signatures only)."`
+	// FindingSummary is what the scan of each file found, by file id.
+	FindingSummary map[string]FileFindingSummary `json:"finding_summary,omitzero" doc:"What the signature scan of each file found, by file id (rx trace --signatures only)."`
 }

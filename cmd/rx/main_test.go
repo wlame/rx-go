@@ -139,6 +139,8 @@ func TestPreprocessArgs_TruthTable(t *testing.T) {
 		{"hidden then subcommand", []string{"--hidden", "trace", "pat"}, []string{"--hidden", "trace", "pat"}},
 		{"hidden then bare pattern", []string{"--hidden", "error", "/var/log"}, []string{"trace", "--hidden", "error", "/var/log"}},
 		{"only flag", []string{"--json"}, []string{"trace", "--json"}},
+		{"signatures then path", []string{"--signatures=traceback", "app.log"}, []string{"trace", "--signatures=traceback", "app.log"}},
+		{"bare signatures then path", []string{"--signatures", "app.log"}, []string{"trace", "--signatures", "app.log"}},
 		{"short flag then pattern", []string{"-j", "err", "/var/log"}, []string{"trace", "-j", "err", "/var/log"}},
 		{"regex positional", []string{"error.*failed", "a.log"}, []string{"trace", "error.*failed", "a.log"}},
 		{"unknown first word (dropped command)", []string{"check", "pattern"}, []string{"trace", "check", "pattern"}},

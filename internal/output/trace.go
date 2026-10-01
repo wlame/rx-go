@@ -262,11 +262,14 @@ func writeTraceHeader(b *strings.Builder, resp *rxtypes.TraceResponse, c tracePa
 	fmt.Fprintf(b, "%sPath:%s %s%s%s\n",
 		c.grey, c.reset, c.boldCyan, Printable(strings.Join(resp.Path, ", ")), c.reset)
 
+	// A trace with signatures and no pattern (`rx --signatures FILE`)
+	// matched nothing: it has no pattern line and no match count.
+	hasPatterns := len(resp.Patterns) > 0
 	if len(resp.Patterns) == 1 {
 		for _, pattern := range resp.Patterns {
 			fmt.Fprintf(b, "%sPattern:%s %s%s%s\n", c.grey, c.reset, c.boldMagenta, pattern, c.reset)
 		}
-	} else {
+	} else if hasPatterns {
 		fmt.Fprintf(b, "%sPatterns (%d):%s\n", c.grey, len(resp.Patterns), c.reset)
 		for _, id := range SortedIDs(resp.Patterns) {
 			fmt.Fprintf(b, "  %s%s%s: %s%s%s\n",
@@ -299,7 +302,9 @@ func writeTraceHeader(b *strings.Builder, resp *rxtypes.TraceResponse, c tracePa
 			c.grey, c.reset, c.cyan, totalChunks, c.reset, c.grey, chunked, c.reset)
 	}
 
-	fmt.Fprintf(b, "%sMatches:%s %s%d%s\n", c.grey, c.reset, c.boldGreen, len(resp.Matches), c.reset)
+	if hasPatterns {
+		fmt.Fprintf(b, "%sMatches:%s %s%d%s\n", c.grey, c.reset, c.boldGreen, len(resp.Matches), c.reset)
+	}
 }
 
 // matchDisplayLine is the line number to print: the one the scan

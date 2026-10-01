@@ -33,19 +33,38 @@ import (
 //     a usage error, exit 2.
 func NewTraceCommand(out io.Writer) *cobra.Command {
 	var flags traceFlags
+	var signatureSelection string
 	cmd := &cobra.Command{
 		Use:   "trace [PATTERN] [PATH ...]",
 		Short: "Search files and directories for regex patterns",
 		Long: "Trace files and directories for regex patterns using ripgrep.\n" +
 			"If PATH is not specified, searches the current directory.\n" +
 			"Use '-' as PATH or pipe input to search stdin.\n" +
-			"For multiple patterns, use -e/--regexp multiple times.",
+			"For multiple patterns, use -e/--regexp multiple times.\n" +
+			"With --signatures, every positional is a PATH and patterns go with -e.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTrace(out, flags.params(cmd, args))
+			p := flags.params(cmd, args)
+			// Changed tells a given --signatures from an absent one;
+			// the value alone cannot, since a bare flag reads "default".
+			if cmd.Flags().Changed(signaturesFlag) {
+				p.signatures = &signatureSelection
+			}
+			return runTrace(commandContext(cmd), out, p)
 		},
 	}
 	bindTraceFlags(cmd, &flags)
+	bindSignaturesFlag(cmd, &signatureSelection)
 	return cmd
+}
+
+// commandContext is the context cobra runs cmd with (canceled by an
+// interrupt, see cmd/rx), or a context that is never canceled when the
+// command runs without one.
+func commandContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }
 
 // traceFlags holds the values of the flags `rx trace` and
@@ -145,10 +164,25 @@ func (f *traceFlags) params(cmd *cobra.Command, args []string) traceParams {
 		noIndex:        f.noIndex,
 		// recursive flag is advisory; actual behavior comes from
 		// noRecursive. It is passed through to keep the field in use.
-		recursive:   f.recursive,
-		noRecursive: f.noRecursive,
-		rgFlags:     trace.RipgrepArgs(selectedMatchingFlags(cmd)),
+		recursive:         f.recursive,
+		noRecursive:       f.noRecursive,
+		rgFlags:           trace.RipgrepArgs(selectedMatchingFlags(cmd)),
+		matchingFlagNames: selectedMatchingFlagNames(cmd),
 	}
+}
+
+// selectedMatchingFlagNames lists the long names of the matching flags
+// the command line set, in the order of trace.MatchingFlags, as the
+// equivalent command (cli_command) writes them.
+func selectedMatchingFlagNames(cmd *cobra.Command) []string {
+	selected := selectedMatchingFlags(cmd)
+	names := []string{}
+	for _, f := range trace.MatchingFlags {
+		if selected[f.Long] {
+			names = append(names, f.Long)
+		}
+	}
+	return names
 }
 
 // selectedMatchingFlags reads back which of trace.MatchingFlags the
@@ -192,8 +226,15 @@ type traceParams struct {
 	recursive   bool
 	noRecursive bool
 	// rgFlags are the ripgrep matching flags the user gave, already in
-	// ripgrep's spelling ("-i", "-w").
-	rgFlags []string
+	// ripgrep's spelling ("-i", "-w"); matchingFlagNames are the same
+	// flags by their long names ("ignore-case").
+	rgFlags           []string
+	matchingFlagNames []string
+	// signatures is the --signatures selection, nil when the flag was
+	// not given. With it, every positional is a path (see
+	// resolveTracePositionals) and the files are scanned for those
+	// signatures too.
+	signatures *string
 }
 
 // runTrace resolves positionals → [pattern, paths...], then dispatches
@@ -201,12 +242,16 @@ type traceParams struct {
 //
 // Positional-arg semantics (match Python):
 //  1. The first positional is always the PATTERN unless --regexp was
-//     already used (in which case it's the first PATH).
+//     already used (in which case it's the first PATH), or
+//     --signatures was given (then every positional is a PATH).
 //  2. All remaining positionals are PATHs.
 //  3. If no PATH is given and stdin is a pipe → read from stdin, which
 //     is spooled to a temporary file (see spoolStdinFor).
 //  4. If no PATH is given and stdin is a TTY → default to ".".
-func runTrace(out io.Writer, p traceParams) error {
+//
+// ctx is canceled by an interrupt; the search with signatures stops on
+// it. The search without them runs as it always has.
+func runTrace(ctx context.Context, out io.Writer, p traceParams) error {
 	patterns, filePaths, err := resolveTracePositionals(p)
 	if err != nil {
 		return err
@@ -224,13 +269,25 @@ func runTrace(out io.Writer, p traceParams) error {
 		spoolPath = spoolFile
 	}
 
-	// Ripgrep binary lookup. Missing rg is a 1 exit with clear error.
-	if _, rgErr := exec.LookPath("rg"); rgErr != nil {
-		return exitWithError(os.Stderr, ExitGenericError, "ripgrep (rg) is not installed or not on PATH")
+	// Ripgrep binary lookup. Missing rg is a 1 exit with clear error. A
+	// trace with signatures and no pattern runs no ripgrep.
+	if len(patterns) > 0 {
+		if _, rgErr := exec.LookPath("rg"); rgErr != nil {
+			return exitWithError(os.Stderr, ExitGenericError, "ripgrep (rg) is not installed or not on PATH")
+		}
 	}
 
-	if len(patterns) == 0 {
+	if len(patterns) == 0 && p.signatures == nil {
 		return exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
+	}
+
+	// The signatures load and the selection resolves before any file is
+	// checked or read, so a selection error is the whole answer (exit 2).
+	var selection *signatureSelection
+	if p.signatures != nil {
+		if selection, err = loadSignatureSelection(*p.signatures); err != nil {
+			return err
+		}
 	}
 
 	hookConfig, err := traceHookConfig(p)
@@ -300,7 +357,14 @@ func runTrace(out io.Writer, p traceParams) error {
 
 	opts := traceOptions(p, requestID, webhooks.firer)
 	opts.UncachedPaths = uncached
-	resp, err = engine.RunWithOptions(context.Background(), validated, patterns, opts)
+	if selection != nil {
+		resp, err = runSignatureTrace(ctx, engine, signatureTrace{
+			paths: validated, patterns: patterns, opts: opts, params: p,
+			selection: selection, spooled: uncached,
+		})
+	} else {
+		resp, err = engine.RunWithOptions(context.Background(), validated, patterns, opts)
+	}
 	if err != nil {
 		// A pattern ripgrep cannot compile is a usage error, and rg's own
 		// message ("regex parse error: ...") says more than we could.
@@ -313,7 +377,7 @@ func runTrace(out io.Writer, p traceParams) error {
 	if p.jsonOutput {
 		return writeTraceJSON(out, resp)
 	}
-	return writeTraceHuman(out, resp, p)
+	return writeTraceHuman(out, resp, p, selection.order())
 }
 
 // hookOverride turns a flag value into the pointer HookOverrides wants.
@@ -457,14 +521,23 @@ func requestIDOrNew(given string) string {
 
 // resolveTracePositionals turns [PATTERN, PATH...] + --regexp flags into
 // (patterns, paths) slices.
+//
+// The rule for the first positional: it is the pattern only when no
+// pattern came with -e/--regexp and --signatures was not given. With
+// --signatures a search can have no pattern at all (`rx --signatures
+// app.log` only scans for signatures), so a word in the first place
+// cannot be told from a path by its look; it is always a path, and a
+// pattern goes with -e. `rx --signatures=x ERROR app.log` therefore
+// reads ERROR as a file, and fails naming it when there is none.
 func resolveTracePositionals(p traceParams) ([]string, []string, error) {
 	// Copy --regexp values first (they become the base pattern list).
 	patterns := append([]string{}, p.regexps...)
 	explicit := append([]string{}, p.paths...)
 
-	// If no --regexp was given, the first positional is the pattern.
+	// If no --regexp was given, the first positional is the pattern,
+	// unless --signatures makes every positional a path.
 	args := p.args
-	if len(patterns) == 0 && len(args) > 0 {
+	if len(patterns) == 0 && len(args) > 0 && p.signatures == nil {
 		patterns = append(patterns, args[0])
 		args = args[1:]
 	}
@@ -606,13 +679,16 @@ func writeTraceJSON(out io.Writer, resp any) error {
 //
 // The layout is shared with rx-python byte for byte: a header block, the
 // match list as "file:line:offset [pattern]", and — when context was
-// asked for — the context section built by internal/output.
-func writeTraceHuman(out io.Writer, resp *rxtypes.TraceResponse, p traceParams) error {
+// asked for — the context section built by internal/output. A trace
+// with signatures adds the findings after them (output.FormatFindingsCLI),
+// their counts in signatureOrder, the selection's order.
+func writeTraceHuman(out io.Writer, resp *rxtypes.TraceResponse, p traceParams, signatureOrder []string) error {
 	colorize, err := shouldColorize(p.colorFlag, out)
 	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 	_, _ = fmt.Fprint(out, output.FormatTraceCLI(resp, traceFormatOptions(p, colorize)))
+	_, _ = fmt.Fprint(out, output.FormatFindingsCLI(resp, output.FindingsFormatOptions{Order: signatureOrder, Colorize: colorize}))
 	return nil
 }
 

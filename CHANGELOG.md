@@ -173,6 +173,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New dependency: `go.yaml.in/yaml/v3` v3.0.5, the YAML parser, under
   the MIT licence (the files ported from libyaml) and the Apache
   License 2.0 (the rest).
+- `rx trace --signatures[=LIST]` (and `rx --signatures …`): scan every
+  text file the search covers for a selection of signatures as well
+  (`--signatures=traceback,sql`, `--signatures=all,-pii`; a bare
+  `--signatures` is the default set), through the findings cache, one
+  entry per file. A pattern is optional and goes with `-e`; without one
+  the trace runs no ripgrep. A selection that cannot be resolved exits 2
+  with the word and up to five close names, before any file is read.
+  `--no-cache` skips the findings cache too, `--no-index` the line index
+  the text may be read with, `--max-results` caps the matches only, and
+  `-B`, `-A` and `--context` add lines before and after each finding. A
+  file that is not text or cannot be read is listed under the skipped
+  files with its reason. The human output adds, after the matches, a
+  count line (`Findings: 3 in 1 file (python-traceback 1, error-line
+  2)`) and each finding as `path:start-end  id  group · level` with its
+  lines numbered (20 at most, then `… 380 more lines: rx samples
+  app.log --lines=24-403`), coloured by level with `--color`. `--json`
+  adds `signatures` (`{id: {name, group, level, kind}}`), `findings`
+  (one `Finding` shape: `signature`, `file`, `start_line`, `end_line`,
+  `start_offset`, `end_offset`, `time_ms`, `excerpt`, and optional
+  `value_start`, `value_end`, `masked`, `lines`, `before`, `after`,
+  `lines_truncated`; ordered by file id, first line, last line and
+  signature id) and `finding_summary` (`{file_id: {state, signatures:
+  {id: {count, stored}}}}`), and `cli_command` spells the selection out
+  (`--signatures=default`). A finding's `time_ms` is an instant: in a
+  file whose timestamps carry no zone it is read in `RX_LOG_TZ`, as
+  `rx samples` reads it. A trace without `--signatures` answers exactly
+  as before. `rx logs trace` has no `--signatures`.
+- The lines of a finding are read from the file when the answer is made,
+  in one pass per file that seeks to each finding in a plain or seekable
+  file, each cut at `RX_MAX_LINE_TEXT_BYTES` and made valid UTF-8, and
+  masked as excerpts are: every value a loaded redacting signature
+  matches on the line, before the line is cut, so a secret the cut falls
+  inside is masked whole; every line after the first of a `block` or
+  `run` finding of a redacting signature becomes `[masked, N bytes]`.
+  `masked` is true when anything in the excerpt or the lines was masked.
+- `RX_FINDINGS_TEXT_MAX_BYTES` (default 67108864, 1 MiB to 16 GiB): the
+  most bytes of text the findings of one answer hold together, in their
+  order, each line counted with one byte more for its line break; the
+  finding at which it runs out and every one after it keep their place
+  and lose their lines (`lines_truncated: true`).
+- HTTP wire contract 1.8: the trace answer (`GET /v1/trace`) declares
+  the optional `signatures`, `findings` and `finding_summary` members and
+  the `Finding`, `SignatureRef`, `FileFindingSummary` and `FindingCount`
+  schemas. A trace answer without them is the 1.7 answer.
+
+### Changed
+
+- With `--signatures`, every positional argument of `rx` and
+  `rx trace` is a path and a pattern goes with `-e`:
+  `rx --signatures=traceback ERROR app.log` reads `ERROR` as a file.
+  Without the flag the first positional is still the pattern.
+- `RX_WORKERS` also sets how many goroutines a signature scan reads
+  lines with.
 
 ## [0.7.0] - 2026-10-10
 

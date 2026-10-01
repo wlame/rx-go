@@ -27,6 +27,8 @@ import (
 // here.
 var allowedLoadFiles = []string{
 	"internal/clicommand/signatures.go",
+	"internal/clicommand/trace.go",
+	"internal/clicommand/trace_signatures.go",
 }
 
 // loadSite is one place a file names signatures.Load or a function

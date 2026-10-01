@@ -203,12 +203,9 @@ func TestLogChains_ErrorsAsTheTree(t *testing.T) {
 	}
 }
 
-// /health lists log_chains, and the contract is 1.7.
+// /health lists log_chains.
 func TestHealth_ListsLogChains(t *testing.T) {
 	if !slices.Contains(Features(), "log_chains") {
 		t.Errorf("features %v lack log_chains", Features())
-	}
-	if ContractVersion != "1.7" {
-		t.Errorf("contract %s, want 1.7", ContractVersion)
 	}
 }

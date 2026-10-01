@@ -136,14 +136,14 @@ func TestEngine_Run_AllNullableSlices_NonNilForJSONParity(t *testing.T) {
 }
 
 // TestEngine_Run_EmptyInputPaths_ReturnsAllEmptySlices covers the
-// early-exit branch in RunWithOptions when expandPaths returns zero
+// early-exit branch in RunWithOptions when ExpandPaths returns zero
 // files. That branch constructs a minimal TraceResponse by hand; the
 // test pins down that every nullable slice is non-nil.
 func TestEngine_Run_EmptyInputPaths_ReturnsAllEmptySlices(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 
-	// Empty directory → expandPaths populates scannedDirs but NOT
+	// Empty directory → ExpandPaths populates scannedDirs but NOT
 	// filePaths or skipped. That triggers the early-exit branch with
 	// skipped == nil. Pre-fix this serialized as SkippedFiles: null.
 	dir := t.TempDir()

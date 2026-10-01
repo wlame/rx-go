@@ -1,6 +1,7 @@
 package clicommand
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -79,7 +80,7 @@ func TestTraceHooks_OnCompleteFiresOnce(t *testing.T) {
 	dir, _ := hookFixture(t)
 	rec := newHookRecorder(t)
 
-	err := runTrace(discardWriter{}, traceParams{
+	err := runTrace(context.Background(), discardWriter{}, traceParams{
 		args:           []string{"error", dir},
 		jsonOutput:     true,
 		hookOnComplete: rec.server.URL,
@@ -113,7 +114,7 @@ func TestTraceHooks_OnFileFiresPerFile(t *testing.T) {
 	dir, _ := hookFixture(t)
 	rec := newHookRecorder(t)
 
-	err := runTrace(discardWriter{}, traceParams{
+	err := runTrace(context.Background(), discardWriter{}, traceParams{
 		args:       []string{"error", dir},
 		jsonOutput: true,
 		hookOnFile: rec.server.URL,
@@ -148,7 +149,7 @@ func TestTraceHooks_OnMatchIsCappedByMaxResults(t *testing.T) {
 	dir, _ := hookFixture(t)
 	rec := newHookRecorder(t)
 
-	err := runTrace(discardWriter{}, traceParams{
+	err := runTrace(context.Background(), discardWriter{}, traceParams{
 		args:        []string{"error", dir},
 		jsonOutput:  true,
 		maxResults:  3,
@@ -178,7 +179,7 @@ func TestTraceHooks_OnMatchWithoutMaxResultsIsAUsageError(t *testing.T) {
 	dir, _ := hookFixture(t)
 	rec := newHookRecorder(t)
 
-	err := runTrace(discardWriter{}, traceParams{
+	err := runTrace(context.Background(), discardWriter{}, traceParams{
 		args:        []string{"error", dir},
 		jsonOutput:  true,
 		hookOnMatch: rec.server.URL,
@@ -208,7 +209,7 @@ func TestTraceHooks_EnvironmentConfiguresAndDisables(t *testing.T) {
 	t.Setenv("RX_HOOK_ON_COMPLETE_URL", fromEnv.server.URL)
 	t.Setenv("RX_DISABLE_CUSTOM_HOOKS", "true")
 
-	err := runTrace(discardWriter{}, traceParams{
+	err := runTrace(context.Background(), discardWriter{}, traceParams{
 		args:           []string{"error", dir},
 		jsonOutput:     true,
 		hookOnComplete: fromFlag.server.URL,

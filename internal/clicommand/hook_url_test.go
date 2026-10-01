@@ -2,6 +2,7 @@ package clicommand
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func TestTrace_RefusesInternalHookURLFlag(t *testing.T) {
 			p.args = []string{file}
 
 			var buf bytes.Buffer
-			err := runTrace(&buf, p)
+			err := runTrace(context.Background(), &buf, p)
 			if err == nil {
 				t.Fatalf("runTrace: got nil error, want a rejection")
 			}
@@ -96,7 +97,7 @@ func TestTrace_AcceptsPublicHookURLFlag(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runTrace(&buf, traceParams{
+	err := runTrace(context.Background(), &buf, traceParams{
 		regexps:        []string{"error"},
 		args:           []string{file},
 		hookOnComplete: "https://example.com/hook",
