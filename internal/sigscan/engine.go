@@ -196,8 +196,10 @@ func (e *engine) compileRedactors(selected, given []*signatures.Signature) error
 type excerpter struct {
 	e  *engine
 	gs *gateScratch
-	// values is reused from excerpt to excerpt.
+	// values and masked are reused from excerpt to excerpt: the line's
+	// values to mask, and the masked text before it is cut.
 	values []span
+	masked []byte
 }
 
 func newExcerpter(e *engine) *excerpter {
@@ -231,7 +233,9 @@ func (x *excerpter) build(dst, view []byte) ([]byte, bool) {
 		return appendExcerpt(dst, view), false
 	}
 	slices.SortStableFunc(x.values, func(a, b span) int { return cmp.Compare(a[0], b[0]) })
-	return appendRedactedExcerpt(dst, view, x.values)
+	var masked bool
+	dst, x.masked, masked = appendRedactedExcerpt(dst, x.masked, view, x.values)
+	return dst, masked
 }
 
 // compileSig turns one loaded signature into what the walk runs.

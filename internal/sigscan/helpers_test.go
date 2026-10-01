@@ -84,6 +84,7 @@ func scanOne(t testing.TB, text string, sigs []*signatures.Signature, opts Optio
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireValidExcerpts(t, res)
 	return res
 }
 

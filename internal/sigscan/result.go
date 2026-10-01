@@ -70,9 +70,10 @@ type Finding struct {
 	// when it starts at most Options.LookbackBytes before. Nil when
 	// there is none, and in a file without timestamps.
 	TimeMS *int64
-	// Excerpt is the first line's view cut to 200 bytes on a UTF-8
-	// boundary, with every value a redacting signature matches on it
-	// masked (Options.Redactors).
+	// Excerpt is the first line's view with every value a redacting
+	// signature matches on it masked (Options.Redactors), each byte that
+	// is not UTF-8 then replaced by U+FFFD, cut to 200 bytes on a
+	// character boundary: always valid UTF-8.
 	Excerpt string
 	// ValueStart and ValueEnd are bytes in the first line, counted from
 	// the line's first byte in the text: the value of a regex signature

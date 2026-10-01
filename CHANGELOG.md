@@ -63,7 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workers, any chunk size and any storage of the text: blocks and runs
   that cross a chunk edge are finished across it. Each signature keeps
   its first `RX_FINDINGS_MAX_PER_SIGNATURE` findings by line with an
-  exact count; an excerpt is the first line cut to 200 bytes. For a
+  exact count; an excerpt is the first line cut to 200 bytes, always
+  valid UTF-8 (each byte that is not becomes U+FFFD, after masking). For a
   signature with `redact: true` every secret on that line is masked
   before the excerpt is kept: the value of every match of its anchor
   (the `capture` group, or the whole match when the group took no part)

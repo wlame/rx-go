@@ -157,6 +157,7 @@ func scanVariant(t *testing.T, v variant, text []byte, sigs []*signatures.Signat
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireValidExcerpts(t, res)
 	return res
 }
 

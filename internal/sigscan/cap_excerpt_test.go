@@ -2,6 +2,7 @@ package sigscan
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -260,4 +261,70 @@ func TestScan_RedactValueSpanIsTheFirstMatch(t *testing.T) {
 			t.Errorf("%s: value span %d-%d, want %v", id, deref(f.ValueStart), deref(f.ValueEnd), want)
 		}
 	}
+}
+
+// requireValidExcerpts fails when an excerpt is not valid UTF-8: the
+// scan replaces every byte that is not, so every carrier of an excerpt
+// holds the same text.
+func requireValidExcerpts(t testing.TB, res *Result) {
+	t.Helper()
+	for id, r := range res.BySignature {
+		for _, f := range r.Findings {
+			if !utf8.ValidString(f.Excerpt) {
+				t.Errorf("%s at line %d: the excerpt %q is not valid UTF-8", id, f.StartLine, f.Excerpt)
+			}
+		}
+	}
+}
+
+// An excerpt is valid UTF-8: each byte that is not becomes U+FFFD, after
+// masking (a byte before a secret moves no mask) and before the 200-byte
+// cut, which never splits a replacement. Value spans stay byte positions
+// in the line.
+func TestScan_ExcerptIsValidUTF8(t *testing.T) {
+	sigs := loadSigs(t, sigFile(
+		regexSig("key", `key=(AKIA[A-Z0-9]{16})`, "capture: 1", "redact: true"),
+		regexSig("err", `ERROR`),
+		measureSig("bin", "binary", ""),
+	), "key", "err", "bin")
+	fits := "ERROR" + strings.Repeat("a", 192) + "\xff" + "tail" // 197 bytes, then a replacement: 200
+	over := "ERROR" + strings.Repeat("a", 193) + "\xff" + "tail" // 198 bytes: the replacement does not fit
+	res := scanOne(t, textHead+lines(
+		"bad \xff\xfe byte",
+		"\xffkey=AKIAIOSFODNN7EXAMPLE end",
+		"key=AKIAIOSFODNN7EXAMPLE\xff",
+		fits,
+		over,
+		"ERROR"+strings.Repeat("\xff", 65)+"key=AKIAIOSFODNN7EXAMPLE",
+	), sigs, Options{})
+	requireValidExcerpts(t, res)
+	excerpts := map[string]string{}
+	for id, r := range res.BySignature {
+		for _, f := range r.Findings {
+			excerpts[fmt.Sprintf("%s/%d", id, f.StartLine)] = f.Excerpt
+		}
+	}
+	want := map[string]string{
+		"bin/10": "bad \uFFFD\uFFFD byte",
+		"key/11": "\uFFFDkey=AKIA************ end",
+		"key/12": "key=AKIA************\uFFFD",
+		"err/13": "ERROR" + strings.Repeat("a", 192) + "\uFFFD",
+		"err/14": "ERROR" + strings.Repeat("a", 193),
+	}
+	for k, w := range want {
+		if excerpts[k] != w {
+			t.Errorf("%s: excerpt %q, want %q", k, excerpts[k], w)
+		}
+	}
+	f := res.BySignature["key"].Findings[0]
+	if *f.ValueStart != 5 || *f.ValueEnd != 25 || !f.Masked {
+		t.Errorf("value span %d-%d masked %v, want 5-25 masked: positions in the line, not in the excerpt", *f.ValueStart, *f.ValueEnd, f.Masked)
+	}
+	// Line 15: the replacements fill the excerpt before the secret, so
+	// the excerpt of the ERROR finding holds no mask and is not marked.
+	last := res.BySignature["err"].Findings[2]
+	if last.Excerpt != "ERROR"+strings.Repeat("\uFFFD", 65) || last.Masked {
+		t.Errorf("line 15: excerpt %q masked %v, want 65 replacements and no mask", last.Excerpt, last.Masked)
+	}
+	requireNoSecret(t, res, "AKIAIOSFODNN7EXAMPLE")
 }

@@ -262,7 +262,7 @@ func eightValues(n int) string {
 // value (2 kept) is a prefix of a 23-character one (4 kept).
 func TestRedaction_JoinedRunKeepsTheLeast(t *testing.T) {
 	view := []byte("x=SKabcdefgh y=SKabcdefghijklmnopqrstu")
-	excerpt, _ := appendRedactedExcerpt(nil, view, redactMatches(regexp.MustCompile(`=(SK\w+)`), 1, view))
+	excerpt, _, _ := appendRedactedExcerpt(nil, nil, view, redactMatches(regexp.MustCompile(`=(SK\w+)`), 1, view))
 	got := string(excerpt)
 	if want := "x=SK******** y=SK************"; got != want {
 		t.Errorf("excerpt %q, want %q", got, want)
@@ -291,7 +291,7 @@ func TestRedaction_FailsClosed(t *testing.T) {
 	cases[tooMany.String()] = "************"
 	for line, want := range cases {
 		view := []byte(line)
-		excerpt, _ := appendRedactedExcerpt(nil, view, redactMatches(re, 1, view))
+		excerpt, _, _ := appendRedactedExcerpt(nil, nil, view, redactMatches(re, 1, view))
 		if got := string(excerpt); got != want {
 			t.Errorf("line %.40q…: excerpt %q, want %q", line, got, want)
 		}

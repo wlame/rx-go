@@ -68,15 +68,18 @@ func redactMatches(re *regexp.Regexp, capture int, view []byte) []span {
 }
 
 // appendRedactedExcerpt appends the excerpt of a line with secrets on
-// it: the view masked as redaction describes, cut to excerptBytes on a
-// UTF-8 boundary. values are the line's match values (redactMatches of
-// every redacting signature, in order). masked reports whether a mask is
-// in the excerpt.
-func appendRedactedExcerpt(dst, view []byte, values []span) (out []byte, masked bool) {
-	start := len(dst)
+// it: the view masked as redaction describes, then made valid UTF-8 and
+// cut to excerptBytes (appendValidText). Masking works on the line's
+// own bytes, so a byte that is not UTF-8 moves no mask, and a masked
+// byte never comes back. values are the line's match values
+// (redactMatches of every redacting signature, in order); scratch is a
+// buffer for the masked text, returned for reuse. masked reports
+// whether a mask is in the excerpt.
+func appendRedactedExcerpt(dst, scratch, view []byte, values []span) (out, scratchOut []byte, masked bool) {
 	r := redaction{view: view, values: values}
-	out = cutOnRuneBoundary(r.appendTo(dst, excerptBytes+utf8.UTFMax), start)
-	return out, r.masked && start+r.firstMask < len(out)
+	scratch = r.appendTo(scratch[:0], excerptBytes+utf8.UTFMax)
+	out, used := appendValidText(dst, scratch)
+	return out, scratch, r.masked && r.firstMask < used
 }
 
 // redaction masks one line. It is a pure function of the view and the

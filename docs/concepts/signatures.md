@@ -462,7 +462,12 @@ start until the walk agrees with the chunk's own; so a finding is never
 cut or doubled by an edge.
 
 **Excerpt and redaction.** A finding's excerpt is its first line's view,
-cut to 200 bytes on a UTF-8 character boundary. For a signature with
+cut to 200 bytes on a UTF-8 character boundary. It is always valid
+UTF-8: each byte that is not part of a UTF-8 character becomes U+FFFD
+(`�`), after masking and before the cut, so a `binary` finding's
+excerpt shows replacement characters, and every output and the cache
+hold the same text. The file itself stays readable byte for byte
+through `rx samples`. For a signature with
 `redact: true`, every secret on that line is masked in the excerpt
 before the excerpt is kept: the value of every match of the anchor (the
 `capture` group of a regex signature, or the whole match when the group
