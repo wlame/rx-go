@@ -48,6 +48,9 @@ type tuning struct {
 	batchLines     int
 	// open opens the file; nil means its pin's Open.
 	open func(paths.Pinned) (fileReader, int64, error)
+	// rewalkLine, when set, is called for each line the merge walks
+	// again (tests).
+	rewalkLine func()
 }
 
 // defaultTuning is what Scan uses.
@@ -431,7 +434,7 @@ func (s *scanRun) runChunks(ctx context.Context, plans []chunkPlan, src chunkSou
 		}()
 	}
 
-	m := newMerger(s.e, func(res *chunkResult, fn func(*line) bool) error {
+	m := newMerger(ctx, s.e, s.tune.rewalkLine, func(res *chunkResult, fn func(*line) bool) error {
 		cur, done := src.rewalkCursor(res.span)
 		defer done()
 		return walkFrom(cur, res.span.start, res.span.limit, s.e.lineBytes, fn)
@@ -565,7 +568,7 @@ func (s *scanRun) runStream(ctx context.Context, r io.ReaderAt, size int64, form
 		}()
 	}
 
-	m := newMerger(s.e, func(res *chunkResult, fn func(*line) bool) error {
+	m := newMerger(ctx, s.e, s.tune.rewalkLine, func(res *chunkResult, fn func(*line) bool) error {
 		walkBatch(res.span.batch, s.e.lineBytes, fn)
 		return nil
 	})

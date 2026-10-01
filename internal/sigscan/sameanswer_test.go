@@ -356,3 +356,22 @@ func TestScan_EmptyText(t *testing.T) {
 		})
 	}
 }
+
+// Every fixture of the scan's rules gives its findings, and the same
+// answer on every chunking and storage.
+func TestScan_EveryScenarioFixtureAcrossChunking(t *testing.T) {
+	variants := append(chunkVariants(), storageVariants()...)
+	for _, fx := range scenarioFixtures() {
+		t.Run(fx.name, func(t *testing.T) {
+			sigs := loadSigs(t, sigFile(fx.def), fx.ids...)
+			text := []byte(fx.text)
+			ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, text, sigs, fx.opts)
+			fx.check(t, ref)
+			for _, v := range variants {
+				t.Run(v.name, func(t *testing.T) {
+					requireSameFindings(t, ref, scanVariant(t, v, text, sigs, fx.opts))
+				})
+			}
+		})
+	}
+}

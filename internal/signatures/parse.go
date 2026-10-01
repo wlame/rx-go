@@ -287,8 +287,11 @@ type sigParser struct {
 	regexKindFields []pair
 	keywords        *pair
 	examples        *pair
-	groupLine       int
-	given           map[string]bool
+	// redactAt is where `redact: true` was given, for a refusal that
+	// names its line; nil when the signature does not redact.
+	redactAt  *yaml.Node
+	groupLine int
+	given     map[string]bool
 	// anchor is the source of the compiled anchor regex, for the
 	// keyword walk; hasAnchor is true for a kind that has one (regex,
 	// block, run with match), even when it failed to compile.
@@ -324,7 +327,7 @@ var signatureFields = map[string]func(p *sigParser, field pair){
 	"links":       readLinks,
 	"metadata":    readMetadata,
 	"default":     func(p *sigParser, f pair) { p.sig.Default = p.flag(f) },
-	"redact":      func(p *sigParser, f pair) { p.sig.Redact = p.flag(f) },
+	"redact":      readRedact,
 	"keywords":    func(p *sigParser, f pair) { p.keywords = &f },
 	"examples":    func(p *sigParser, f pair) { p.examples = &f },
 	"regex":       addKind,
@@ -508,8 +511,27 @@ func (p *sigParser) finish() {
 		p.fail(newFieldError(p.kinds[1].keyAt, "two kinds (%s and %s): give exactly one of regex, block, run or measure",
 			p.kinds[0].key, p.kinds[1].key))
 	}
+	p.checkRedact()
 	p.readKeywords()
 	p.readExamples()
+}
+
+// readRedact reads `redact` and keeps where it was given.
+func readRedact(p *sigParser, f pair) {
+	p.sig.Redact = p.flag(f)
+	if p.sig.Redact {
+		p.redactAt = f.keyAt
+	}
+}
+
+// checkRedact refuses `redact: true` on a blank or same run: such a run
+// has no anchor, so nothing on its lines is a value to mask, and a
+// finding marked masked with nothing masked would mislead.
+func (p *sigParser) checkRedact() {
+	if p.redactAt == nil || p.sig.Run == nil || (!p.sig.Run.Blank && !p.sig.Run.Same) {
+		return
+	}
+	p.fail(newFieldError(p.redactAt, "redact: a blank or same run has no anchor match to mask; remove redact"))
 }
 
 // readKind reads the definition of the signature's one kind.

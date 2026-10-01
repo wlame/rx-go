@@ -222,16 +222,16 @@ func (b *blockWalker) sameState(o *blockWalker) bool {
 }
 
 // anchorExcerpt builds the excerpt of an anchor line into dst. For a
-// redacting signature the anchor's first match is the value: it is
-// masked in the excerpt and its span returned; otherwise vs and ve are
-// -1.
+// redacting signature every match of the anchor on the line is masked,
+// and the first one's span is returned as the value; otherwise vs and ve
+// are -1.
 func anchorExcerpt(dst []byte, cs *compiledSig, anchor *regexp.Regexp, view []byte) ([]byte, int, int) {
 	if !cs.redact {
 		return appendExcerpt(dst, view, nil), -1, -1
 	}
-	vs, ve := anchorSpan(anchor, view)
-	if vs < 0 {
+	masks := redactSpans(anchor, 0, view)
+	if len(masks) == 0 {
 		return appendExcerpt(dst, view, nil), -1, -1
 	}
-	return appendExcerpt(dst, view, view[vs:ve]), vs, ve
+	return appendExcerpt(dst, view, masks), masks[0][0], masks[0][1]
 }

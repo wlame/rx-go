@@ -392,6 +392,8 @@ func TestLoad_SignatureRefusals(t *testing.T) {
 		{"a measure float that is not a number", header + "    measure: {name: density, z: .nan}\n", 11, "z"},
 		{"run without min", header + "    run: {blank: true}\n", 11, "min"},
 		{"run with two qualifiers", header + "    run: {blank: true, same: true, min: 3}\n", 11, "exactly one"},
+		{"redact on a blank run", header + "    run: {blank: true, min: 3}\n    redact: true\n", 12, "redact"},
+		{"redact on a same run", header + "    redact: true\n    run: {same: true, min: 3}\n", 11, "redact"},
 		{"states without a start rule", header + "    block:\n      states:\n        - {state: body, regex: 'x', next: body}\n", 13, "start"},
 		{"states naming a missing state", header + "    block:\n      states:\n        - {state: start, regex: 'x', next: nowhere}\n", 13, `"nowhere"`},
 		{"a link that is not http", header + "    regex: 'x'\n    links: ['javascript:alert(1)']\n", 12, "link"},

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -361,5 +362,90 @@ func TestScan_EmptySelectionReadsNothing(t *testing.T) {
 	res, err := scanFile(context.Background(), writeFile(t, "app.log", []byte("ERROR\n")), nil, Options{}, tune)
 	if err != nil || len(res.BySignature) != 0 || counter != nil {
 		t.Fatalf("result %v, error %v, file opened %v", res, err, counter != nil)
+	}
+}
+
+// A cancel during a replay that never converges ends the scan within a
+// few thousand lines of the replay, not after a whole chunk. Every line
+// starts a two-line block, so a block carried across an odd chunk edge
+// keeps the merge's walk and the chunk's own walk out of step to the
+// end of the chunk.
+func TestScan_CancelStopsALongReplay(t *testing.T) {
+	sigs := loadSigs(t, sigFile(kindSig("pairs", "block", `start: '^L'`, "lines: 1")), "pairs")
+	var b strings.Builder
+	for i := range 60001 {
+		fmt.Fprintf(&b, "L%d\n", i)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var replayed atomic.Int64
+	tune := defaultTuning()
+	tune.chunkLines = 20001
+	tune.rewalkLine = func() {
+		if replayed.Add(1) == 1 {
+			cancel()
+		}
+	}
+	res, err := scanFile(ctx, writeFile(t, "app.log", []byte(b.String())), sigs, Options{Workers: 2}, tune)
+	if !errors.Is(err, context.Canceled) || res != nil {
+		t.Fatalf("result %v, error %v, want context.Canceled", res != nil, err)
+	}
+	if n := replayed.Load(); n > replayCheckLines+1 {
+		t.Errorf("the replay walked %d lines after the cancel, want at most %d", n, replayCheckLines+1)
+	}
+}
+
+// shortLineText is n lines of at most about 100 bytes, with blocks of
+// up to 5 lines and runs, from a fixed seed: every line fits in a
+// 512-byte frame with room to spare.
+func shortLineText(n int) string {
+	r := rand.New(rand.NewPCG(3, 5))
+	pieces := [][]string{
+		{"INFO ok request handled"}, {"ERROR code=1 boom"}, {"ERROR code=2", "ERROR code=3"}, {"", "", ""},
+		{"Traceback (most recent call last):", "  File \"a.py\", line 1", "ValueError: v"},
+		{"BEGIN", "a", "b", "END"}, {"BEGIN", "1", "2", "3", "4", "5"}, {"HEAD", "h1"}, {"same", "same"},
+	}
+	var b strings.Builder
+	for written := 0; written < n; {
+		for _, l := range pieces[r.IntN(len(pieces))] {
+			b.WriteString(l + "\n")
+			written++
+		}
+	}
+	return b.String()
+}
+
+// A seekable file is read once, plus at each chunk edge the frames the
+// chunk before decodes to finish its last line and the frames the merge
+// decodes again to finish a block crossing the edge: here at most 4
+// frames an edge (a line spans at most 2 frames of 512 bytes; a block
+// is at most 6 lines, under 600 bytes), far less than a chunk's 16
+// frames.
+func TestScan_ByteBudgetOfSeekable(t *testing.T) {
+	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
+	path := filepath.Join(t.TempDir(), "app.log.zst")
+	seekablefile.Write(t, path, seekablefile.SplitEvery([]byte(shortLineText(20000)), 512))
+	file := classify(t, path)
+	table := file.Kind().Table
+	var frames, largest int64
+	for _, f := range table.Frames {
+		frames += f.CompressedSize
+		largest = max(largest, f.CompressedSize)
+	}
+	var counter *counting.ReaderAt
+	tune := defaultTuning()
+	tune.framesPerChunk = 16
+	tune.open = countingOpen(&counter)
+	res, err := scanFile(context.Background(), file, sigs, Options{Workers: 4, LineBytes: mixedLineBytes}, tune)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := int64(table.NumFrames/16 + 1)
+	budget := frames + edges*4*largest
+	if got := counter.Load(); got > budget || got < frames {
+		t.Errorf("read %d bytes of %d bytes of frames (%d edges, largest frame %d), budget %d", got, frames, edges, largest, budget)
+	}
+	if res.BySignature["begin-end"].Count == 0 {
+		t.Error("the fixture has no block to carry across an edge")
 	}
 }

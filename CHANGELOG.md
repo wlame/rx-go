@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error, an unknown top-level key or a limit (1 MiB per file, 1,000 user
   signatures, 4 KiB per regex, 10,000 nodes of alias expansion,
   `max_lines` 10,000) refuses the whole file; a bad regex, an unknown
-  field, a missing or second kind, an unknown group or a duplicate id
+  field, a missing or second kind, an unknown group, a duplicate id or
+  `redact: true` on a `blank` or `same` run (nothing there to mask)
   refuses that signature. Only the commands that use signatures read
   the files. The docs page Concepts / Signatures describes the model and
   the file format.
@@ -59,8 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workers, any chunk size and any storage of the text: blocks and runs
   that cross a chunk edge are finished across it. Each signature keeps
   its first `RX_FINDINGS_MAX_PER_SIGNATURE` findings by line with an
-  exact count; an excerpt is the first line cut to 200 bytes, with a
-  redacted value masked before it is kept. The commands that scan come
+  exact count; an excerpt is the first line cut to 200 bytes. For a
+  signature with `redact: true` every match of its anchor on that line
+  (the `capture` group, or the whole match when the group took no part)
+  is masked by its position, and every other copy of a masked value on
+  the line too, before the excerpt is kept. The commands that scan come
   next.
 - `rx signatures`, `show` and `check` run every signature's examples:
   a `match` text that gives no finding, or a `no_match` text that gives

@@ -1,5 +1,7 @@
 package sigscan
 
+import "context"
+
 // The merge takes the chunk results in text order and builds the answer
 // a walk of the whole text in one piece would give.
 //
@@ -32,8 +34,14 @@ package sigscan
 // The cap is applied here, in text order: the first Cap findings of a
 // signature are stored, and every finding is counted.
 
+// replayCheckLines is how many lines a replay walks between two looks
+// at the scan's context, so a cancel ends a long replay soon.
+const replayCheckLines = 1024
+
 // merger holds the state of the merge between chunks.
 type merger struct {
+	// ctx is the scan's context: a replay stops when it is canceled.
+	ctx  context.Context
 	e    *engine
 	sigs []sigMerge
 	// base is the number of lines before the next chunk.
@@ -45,6 +53,9 @@ type merger struct {
 	// until fn returns false.
 	rewalk  func(res *chunkResult, fn func(l *line) bool) error
 	scratch *gateScratch
+	// onRewalkLine, when set, is called for each line a replay walks
+	// (tests).
+	onRewalkLine func()
 }
 
 // sigMerge is the merge's state for one signature.
@@ -60,8 +71,9 @@ type sigMerge struct {
 	hasRun bool
 }
 
-func newMerger(e *engine, rewalk func(res *chunkResult, fn func(l *line) bool) error) *merger {
-	return &merger{e: e, sigs: make([]sigMerge, len(e.sigs)), rewalk: rewalk, scratch: e.gate.newScratch()}
+func newMerger(ctx context.Context, e *engine, onRewalkLine func(), rewalk func(res *chunkResult, fn func(l *line) bool) error) *merger {
+	return &merger{ctx: ctx, e: e, sigs: make([]sigMerge, len(e.sigs)), rewalk: rewalk, scratch: e.gate.newScratch(),
+		onRewalkLine: onRewalkLine}
 }
 
 // add merges the next chunk, in text order.
@@ -297,7 +309,19 @@ func (m *merger) replayBlocks(res *chunkResult, sigs []int32) error {
 	}
 	active := len(reps)
 	idx := int64(0)
+	var canceled error
 	err := m.rewalk(res, func(l *line) bool {
+		// A replay that does not converge walks a whole chunk on this
+		// goroutine; looking at the context every replayCheckLines lines
+		// lets a cancel end it soon.
+		if idx%replayCheckLines == replayCheckLines-1 {
+			if canceled = m.ctx.Err(); canceled != nil {
+				return false
+			}
+		}
+		if m.onRewalkLine != nil {
+			m.onRewalkLine()
+		}
 		m.e.gate.evaluate(l.view, m.scratch)
 		for _, rp := range reps {
 			if rp.done {
@@ -323,6 +347,9 @@ func (m *merger) replayBlocks(res *chunkResult, sigs []int32) error {
 	})
 	if err != nil {
 		return err
+	}
+	if canceled != nil {
+		return canceled
 	}
 	for _, rp := range reps {
 		if rp.done {

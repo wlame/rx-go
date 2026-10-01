@@ -79,7 +79,7 @@ A file holds three keys at its top, all optional: `signatures`,
 | `links` | no | `[]` | `http` or `https` URLs, shown, never fetched |
 | `metadata` | no | `{}` | a map of text to text, shown, never interpreted |
 | `default` | no | `true` | `false`: the signature runs only when a selection names it |
-| `redact` | no | `false` | mask the value of every finding in every output |
+| `redact` | no | `false` | mask the value of every finding in every output; refused on a `blank` or `same` run, which has no value |
 | `keywords` | no | derived | literals for the [keyword gate](#keywords-and-the-gate) |
 | `examples` | no (yes for built-ins) | — | `match:` and `no_match:` lists of texts; each text is one or more lines |
 
@@ -361,10 +361,13 @@ cut or doubled by an edge.
 
 **Excerpt and redaction.** A finding's excerpt is its first line's view,
 cut to 200 bytes on a UTF-8 character boundary. For a signature with
-`redact: true` the value (the `capture` group of a regex signature, or
-the anchor's first match of a block or a run) is masked in the excerpt
-before it is kept, wherever it occurs on the line: its first 4
-characters stay and the rest becomes `*`, at most 12 of them
+`redact: true`, every match of the anchor on that line is masked in the
+excerpt, by its position, before the excerpt is kept: the `capture`
+group of a regex signature (the whole match when the group took no part
+in it), or the whole match of a block's or a run's anchor. Every other
+copy of a masked value on the line is masked too, so a secret echoed
+later without its `key=` is hidden as well. A mask keeps the first 4
+characters and turns the rest into `*`, at most 12 of them
 (`AKIA************`). The unmasked value is never kept.
 
 **The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
