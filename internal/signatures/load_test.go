@@ -394,6 +394,8 @@ func TestLoad_SignatureRefusals(t *testing.T) {
 		{"run with two qualifiers", header + "    run: {blank: true, same: true, min: 3}\n", 11, "exactly one"},
 		{"redact on a blank run", header + "    run: {blank: true, min: 3}\n    redact: true\n", 12, "redact"},
 		{"redact on a same run", header + "    redact: true\n    run: {same: true, min: 3}\n", 11, "redact"},
+		{"redact on a measure without a value", header + "    measure: {name: long-line}\n    redact: true\n", 12, "redact"},
+		{"a duration that is not whole milliseconds", header + "    measure: {name: time-backwards, tolerance: 1500us}\n", 11, "tolerance"},
 		{"states without a start rule", header + "    block:\n      states:\n        - {state: body, regex: 'x', next: body}\n", 13, "start"},
 		{"states naming a missing state", header + "    block:\n      states:\n        - {state: start, regex: 'x', next: nowhere}\n", 13, `"nowhere"`},
 		{"a link that is not http", header + "    regex: 'x'\n    links: ['javascript:alert(1)']\n", 12, "link"},
@@ -901,5 +903,20 @@ func TestCatalogue_Redactors(t *testing.T) {
 	disabling := writeSignatureFile(t, t.TempDir(), "off.yml", "disable: [aws-access-key]\n")
 	if got := loadFiles(disabling).Redactors(); len(got) != 0 {
 		t.Errorf("a disabled built-in redacts: %v", got)
+	}
+}
+
+// redact: true loads on the measures that find a value on a line,
+// entropy and base64-run, whose value is masked like a regex value.
+func TestLoad_RedactOnValueMeasures(t *testing.T) {
+	body := "signatures:\n" +
+		"  - id: tokens\n    name: T\n    group: secret\n    description: T.\n    redact: true\n    measure: {name: entropy}\n" +
+		"  - id: blobs\n    name: B\n    group: secret\n    description: B.\n    redact: true\n    measure: {name: base64-run}\n"
+	cat := loadFiles(writeSignatureFile(t, t.TempDir(), "values.yml", body))
+	requireNoErrors(t, cat)
+	for _, id := range []string{"tokens", "blobs"} {
+		if !mustLookup(t, cat, id).Redact {
+			t.Errorf("%s does not redact", id)
+		}
 	}
 }

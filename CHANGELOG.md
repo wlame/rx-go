@@ -87,6 +87,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whether the file has an index or not. Every chunking and every
   compressed copy give the same times. A scan reads the head of the
   file once more for the format.
+- The signature scan runs the measures `entropy` (tokens of
+  `[A-Za-z0-9+/=_-]` of `min_length` bytes or more whose Shannon
+  entropy reaches `base64`, or `hex` for hex digits only; UUIDs and
+  digit-only tokens skipped; the first token is the value),
+  `base64-run` (a run of base64 bytes with up to two `=`, found by a
+  byte scan; the run is the value), `binary` (runs of lines that hold a
+  NUL byte or bytes that are not UTF-8) and `unprefixed` (runs of lines
+  without a timestamp of their own, nothing when stamped lines are under
+  `min_share` of the file). With `redact: true` an `entropy` or
+  `base64-run` signature masks its value and every excerpt of a line
+  that holds one; `redact: true` on any other measure refuses the
+  signature (`redact: the measure long-line finds no value to mask`).
+  A measure duration finer than a millisecond (`1500us`) refuses the
+  signature.
 - `rx signatures`, `show` and `check` run every signature's examples:
   a `match` text that gives no finding, or a `no_match` text that gives
   one, refuses the signature with its file, line and id

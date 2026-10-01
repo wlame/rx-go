@@ -79,7 +79,7 @@ A file holds three keys at its top, all optional: `signatures`,
 | `links` | no | `[]` | `http` or `https` URLs, shown, never fetched |
 | `metadata` | no | `{}` | a map of text to text, shown, never interpreted |
 | `default` | no | `true` | `false`: the signature runs only when a selection names it |
-| `redact` | no | `false` | mask the value of every finding in every output; refused on a `blank` or `same` run, which has no value |
+| `redact` | no | `false` | mask the value of every finding in every output; refused on a `blank` or `same` run and on a measure other than `entropy` and `base64-run`, which have no value |
 | `keywords` | no | derived | literals for the [keyword gate](#keywords-and-the-gate) |
 | `examples` | no (yes for built-ins) | — | `match:` and `no_match:` lists of texts; each text is one or more lines |
 
@@ -186,8 +186,9 @@ measure: {name: long-line, factor: 50, min_bytes: 4096}
 
 `name` is one of the measures below; every other key is one of its
 parameters. A parameter left out takes its default. A duration is a
-number and a unit: `500ms`, `60s`, `5m`, `2h` or `1d`, at most `3650d`;
-a negative or longer one refuses the signature.
+number and a unit: `500ms`, `60s`, `5m`, `2h` or `1d`, at most `3650d`,
+in whole milliseconds; a negative, longer or finer one refuses the
+signature.
 
 | Measure | Parameter | Default | Range |
 |---|---|---|---|
@@ -223,6 +224,37 @@ What each measure finds:
 | `density` | consecutive time buckets with a burst of lines: at least `factor` × the median count, a modified z-score over `z` and at least `min_count` lines (`auto` aims at about 1,000 buckets over the file's span) |
 | `time-gap` | a silence of at least `max(min_gap, factor × the median interval)` between two stamped lines |
 | `time-backwards` | a line stamped earlier than the stamped line before it by more than `tolerance` |
+
+How each measure decides, in detail:
+
+- **`entropy`** cuts the line view into tokens, the longest runs of
+  `A-Z a-z 0-9 + / = _ -`, and keeps those of `min_length` bytes or
+  more. A UUID (`8-4-4-4-12` hex digits) and a token of digits only are
+  skipped. A token of hex digits only needs `hex` bits per byte of
+  Shannon entropy, any other `base64`. The first token that reaches its
+  threshold is the finding's value; one finding per line. A random
+  40-character key has about 5.3 bits per byte; a run of English words
+  joined by `_` about 4.4.
+- **`base64-run`** finds, by a scan of the bytes, a longest run of the
+  base64 alphabet (`A-Z a-z 0-9 + /`) followed by up to two `=` of
+  padding, `min_length` bytes or longer, padding included. The first
+  such run is the finding's value; one finding per line. A run lies
+  inside one line, so a chunk edge never cuts it.
+- **`binary`** counts a line whose view holds a NUL byte or bytes that
+  are not UTF-8 (a character that the end of a long line's view cuts in
+  two is not counted); consecutive such lines are one finding. A file
+  with a NUL byte in its first 8 KiB is not text and is not scanned at
+  all, so this measure finds NUL bytes only after them.
+- **`unprefixed`** counts a line that has no timestamp of its own, as the
+  file's timestamp format reads it (see Times below); `min` or more
+  consecutive such lines are one finding. When fewer than `min_share` of
+  the file's lines have a timestamp, or the file has no timestamp
+  format, the measure finds nothing: there, lines without one are the
+  rule.
+
+With `redact: true`, `entropy` and `base64-run` mask their value as a
+regex signature masks its own, and they mask every excerpt of a line
+that holds such a value, as every redacting signature does.
 
 ## Keywords and the gate
 

@@ -122,6 +122,9 @@ type chunkResult struct {
 	// none): the merge carries it to settle the pending times of the
 	// chunks after it.
 	lastStamp stampRef
+	// stamped is how many of the chunk's lines have a timestamp of
+	// their own (the unprefixed measure's share).
+	stamped int64
 }
 
 // chunkSpan places a chunk's lines in the text: they start at start
@@ -212,6 +215,12 @@ func (w *walk) line(l *line) bool {
 	for _, si := range e.lineAnchored {
 		w.anchorLine(si, l, idx)
 	}
+	for _, si := range e.valueSigs {
+		addValueFinding(e.sigs[si], l, idx, &w.sinks[si], &w.exBuf, w.ex, w.times.at(l.start))
+	}
+	if l.stamped {
+		w.res.stamped++
+	}
 	if len(e.runs) > 0 {
 		same := e.hasSame && idx > 0 && keysEqual(w.prevView, w.prevLen, l.view, l.length)
 		for _, si := range e.runs {
@@ -278,6 +287,23 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 		}
 		// Every secret on the line is masked, by every redacting
 		// signature, whatever signature made the finding.
+		var masked bool
+		*exBuf, masked = ex.build((*exBuf)[:0], l.view)
+		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.redact
+	}
+	out.add(cs, &f)
+}
+
+// addValueFinding runs a value measure on line l and adds a finding of
+// its first value to out, with the time tm; the value span is the
+// value, and the excerpt is built only when out stores the finding.
+func addValueFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byte, ex *excerpter, tm timeRef) {
+	v, ok := cs.value.next(l.view, 0)
+	if !ok {
+		return
+	}
+	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, vs: v[0] + l.shift, ve: v[1] + l.shift, tm: tm}
+	if out.storing() {
 		var masked bool
 		*exBuf, masked = ex.build((*exBuf)[:0], l.view)
 		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.redact

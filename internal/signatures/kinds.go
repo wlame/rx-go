@@ -389,6 +389,12 @@ func (p *sigParser) paramValue(spec paramSpec, n *yaml.Node) (float64, bool) {
 		p.fail(newFieldError(n, "%s: %s", spec.name, perr.Error()))
 		return 0, false
 	}
+	if d%time.Millisecond != 0 {
+		// Timestamps are read to the millisecond, so a finer duration
+		// would be cut silently.
+		p.fail(newFieldError(n, "%s: %s is not a whole number of milliseconds", spec.name, text))
+		return 0, false
+	}
 	seconds := d.Seconds()
 	if seconds < spec.min || seconds > spec.max {
 		p.fail(newFieldError(n, "%s: %s is out of range %s to %s", spec.name, text,

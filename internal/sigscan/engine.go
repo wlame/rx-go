@@ -24,6 +24,9 @@ type engine struct {
 	// clause: their anchor is tested on every line.
 	lineAnchored []int32
 	blocks, runs []int32
+	// valueSigs are the value measures (entropy, base64-run): tested on
+	// every line, one finding per line.
+	valueSigs []int32
 	// hasSame is true when a `same` run is selected: the walk then
 	// keeps each line's view to compare the next line with.
 	hasSame bool
@@ -42,10 +45,22 @@ type engine struct {
 }
 
 // redactor is a redacting signature as an excerpt is masked by it: its
-// anchor, and which group of a match is the value.
+// anchor, and which group of a match is the value; or, for a value
+// measure, the matcher of its values.
 type redactor struct {
 	re      *regexp.Regexp
 	capture int
+	values  valueMatcher
+}
+
+// appendValues appends to dst the values the redactor masks on view:
+// the value of every match of its anchor, or every value its measure
+// finds, at most maxRedactMatches + 1 of them.
+func (r redactor) appendValues(dst []span, view []byte) []span {
+	if r.values != nil {
+		return appendValues(dst, r.values, view, maxRedactMatches)
+	}
+	return append(dst, redactMatches(r.re, r.capture, view)...)
 }
 
 // compiledSig is one signature as the scan runs it.
@@ -57,6 +72,11 @@ type compiledSig struct {
 	regex  *regexMatcher
 	block  *blockProgram
 	run    *runProgram
+	// value is the matcher of a value measure (entropy, base64-run).
+	value valueMatcher
+	// minShare is the unprefixed measure's min_share: its runs count
+	// only when stamped lines are at least this share of the file.
+	minShare float64
 }
 
 // compile builds the engine of a selection. A signature id given twice
@@ -83,12 +103,16 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 			return nil, err
 		}
 		e.sigs = append(e.sigs, cs)
-		switch cs.kind {
-		case signatures.KindBlock:
+		// A measure is run by the machinery of the kind it is compiled
+		// to (measures.go), so it is listed by what it was given.
+		switch {
+		case cs.block != nil:
 			e.blocks = append(e.blocks, cs.idx)
-		case signatures.KindRun:
+		case cs.run != nil:
 			e.runs = append(e.runs, cs.idx)
 			e.hasSame = e.hasSame || cs.run.mode == runSame
+		case cs.value != nil:
+			e.valueSigs = append(e.valueSigs, cs.idx)
 		}
 		if sig.Anchor() != nil && sig.LinePass() {
 			e.lineAnchored = append(e.lineAnchored, cs.idx)
@@ -106,22 +130,30 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	return e, nil
 }
 
-// compileRedactors keeps every redacting signature with an anchor, the
-// selected ones first, each id once, and builds their keyword gate.
+// compileRedactors keeps every redacting signature with something to
+// mask, an anchor or a value measure's values, the selected ones first,
+// each id once, and builds their keyword gate (a value measure has no
+// keywords, so it masks every line it finds a value on).
 func (e *engine) compileRedactors(selected, given []*signatures.Signature) error {
 	seen := map[string]bool{}
 	var sigs []*signatures.Signature
 	for _, sig := range slices.Concat(selected, given) {
-		if !sig.Redact || sig.Anchor() == nil || seen[sig.ID] {
+		if !sig.Redact || seen[sig.ID] {
+			continue
+		}
+		r := redactor{re: sig.Anchor()}
+		if sig.Regex != nil {
+			r.capture = sig.Regex.Capture
+		}
+		if sig.Measure != nil {
+			r.values = newValueMatcher(sig.Measure.Params)
+		}
+		if r.re == nil && r.values == nil {
 			continue
 		}
 		seen[sig.ID] = true
 		sigs = append(sigs, sig)
-		capture := 0
-		if sig.Regex != nil {
-			capture = sig.Regex.Capture
-		}
-		e.redactors = append(e.redactors, redactor{re: sig.Anchor(), capture: capture})
+		e.redactors = append(e.redactors, r)
 	}
 	if len(sigs) == 0 {
 		return nil
@@ -167,7 +199,7 @@ func (x *excerpter) build(dst, view []byte) ([]byte, bool) {
 			break // already more than can be followed: the line is masked whole
 		}
 		if x.e.redactGate.passes(int32(i), x.gs) { // #nosec G115 -- at most the loaded signatures
-			x.values = append(x.values, redactMatches(r.re, r.capture, view)...)
+			x.values = r.appendValues(x.values, view)
 		}
 	}
 	if len(x.values) == 0 {
@@ -198,17 +230,11 @@ func compileSig(idx int32, sig *signatures.Signature) (*compiledSig, error) {
 	case signatures.KindRun:
 		cs.run = compileRun(sig.Run)
 	default:
-		return nil, fmt.Errorf("signature %s: the measure %s cannot be scanned by this build", sig.ID, measureName(sig))
+		if err := compileMeasure(cs, sig); err != nil {
+			return nil, err
+		}
 	}
 	return cs, nil
-}
-
-// measureName is the name of a measure signature's measure.
-func measureName(sig *signatures.Signature) string {
-	if sig.Measure == nil {
-		return "(none)"
-	}
-	return sig.Measure.Name
 }
 
 // everyLineRegex reports whether re matches every line: the empty

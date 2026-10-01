@@ -18,6 +18,12 @@ const (
 	runBlank
 	// runSame: the line equals the line before it (view and length).
 	runSame
+	// runBinary: the line view holds a NUL byte or bytes that are not
+	// UTF-8 (the binary measure).
+	runBinary
+	// runUnprefixed: the line has no timestamp of its own, in a file
+	// with a timestamp format (the unprefixed measure).
+	runUnprefixed
 )
 
 // runProgram is a run signature as the walk runs it.
@@ -97,6 +103,10 @@ func (r *runWalker) step(l *line, idx int64, sameAsPrevious bool, out sink) {
 		qualifies = r.qualifiedAt == idx
 	case runBlank:
 		qualifies = isBlank(l.view)
+	case runBinary:
+		qualifies = holdsBinary(l.view, int64(len(l.view)) < l.length)
+	case runUnprefixed:
+		qualifies = r.times.src != nil && !l.stamped
 	case runSame:
 		if !sameAsPrevious {
 			r.end(out)

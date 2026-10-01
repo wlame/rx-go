@@ -70,6 +70,9 @@ type merger struct {
 	// lastStamp is the last stamped line of the text before the next
 	// chunk.
 	lastStamp stampRef
+	// stamped is how many lines merged so far have a timestamp of their
+	// own.
+	stamped int64
 }
 
 // sigMerge is the merge's state for one signature.
@@ -120,11 +123,12 @@ func (m *merger) add(res *chunkResult) error {
 		case cs.block != nil && !replayed[idx]:
 			m.take(idx, sc.findings, sc.count)
 			m.sigs[si].carry = carried(sc.open, res.lines)
-		case cs.regex != nil:
+		case cs.regex != nil, cs.value != nil:
 			m.take(idx, sc.findings, sc.count)
 		}
 	}
 	m.base += res.lines
+	m.stamped += res.stamped
 	if m.e.hasSame {
 		m.lastView, m.lastLen = res.lastView, res.lastLen
 	}
@@ -172,6 +176,23 @@ func (m *merger) finish() {
 		b.open, b.st = true, *ms.carry
 		b.close(m.storeSink(si, m.base+1, true))
 		ms.carry = nil
+	}
+	m.dropUnprefixedBelowShare()
+}
+
+// dropUnprefixedBelowShare empties the result of an unprefixed measure
+// when the file's stamped lines are under its min_share: in such a file
+// lines without a timestamp are the rule, not a finding. The share is
+// known only once every line is merged.
+func (m *merger) dropUnprefixedBelowShare() {
+	for _, si := range m.e.runs {
+		cs := m.e.sigs[si]
+		if cs.run.mode != runUnprefixed {
+			continue
+		}
+		if m.base == 0 || float64(m.stamped) < cs.minShare*float64(m.base) {
+			m.sigs[si].stored, m.sigs[si].count = nil, 0
+		}
 	}
 }
 

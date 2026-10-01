@@ -524,14 +524,25 @@ func readRedact(p *sigParser, f pair) {
 	}
 }
 
-// checkRedact refuses `redact: true` on a blank or same run: such a run
-// has no anchor, so nothing on its lines is a value to mask, and a
-// finding marked masked with nothing masked would mislead.
+// redactableMeasures are the measures that find a value on a line, a
+// span masked like a regex value: the only measures `redact` applies to.
+var redactableMeasures = map[string]bool{"entropy": true, "base64-run": true}
+
+// checkRedact refuses `redact: true` where nothing is a value to mask: a
+// blank or same run, which has no anchor, and a measure other than the
+// value measures (entropy, base64-run). A finding marked masked with
+// nothing masked would mislead.
 func (p *sigParser) checkRedact() {
-	if p.redactAt == nil || p.sig.Run == nil || (!p.sig.Run.Blank && !p.sig.Run.Same) {
+	if p.redactAt == nil {
 		return
 	}
-	p.fail(newFieldError(p.redactAt, "redact: a blank or same run has no anchor match to mask; remove redact"))
+	switch {
+	case p.sig.Run != nil && (p.sig.Run.Blank || p.sig.Run.Same):
+		p.fail(newFieldError(p.redactAt, "redact: a blank or same run has no anchor match to mask; remove redact"))
+	case p.sig.Measure != nil && !redactableMeasures[p.sig.Measure.Name]:
+		p.fail(newFieldError(p.redactAt, "redact: the measure %s finds no value to mask (only entropy and base64-run do); remove redact",
+			p.sig.Measure.Name))
+	}
 }
 
 // readKind reads the definition of the signature's one kind.

@@ -334,5 +334,6 @@ func TestScan_FoldLettersSkipTheGate(t *testing.T) {
 // same-answer test.
 func scenarioFixtures() []fixture {
 	all := slices.Concat(regexFixtures, blockSimpleFixtures, blockOverlapFixtures, runFixtures, excerptFixtures)
-	return append(all, chainedExceptionFixture, gateFixture, foldFixture, timeFixture, replayTimeFixture)
+	all = append(all, chainedExceptionFixture, gateFixture, foldFixture, timeFixture, replayTimeFixture)
+	return append(all, binaryFixture, entropyFixture, base64Fixture, unprefixedFixture)
 }
