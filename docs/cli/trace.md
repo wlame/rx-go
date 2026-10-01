@@ -256,8 +256,10 @@ For each match, also prints the 2 preceding and 5 following lines. In
 `--json`, `context_lines` maps each match, keyed `pattern:file:offset`
 (`"p1:f1:60"`), to its window in file order, the matched line included;
 each entry is `{relative_line_number, absolute_line_number, line_text,
-absolute_offset}`. Without a context flag every window is just the
-matched line. Over HTTP there is no context window; see
+absolute_offset}`. A window holds at most `--before` lines ahead of its
+match and at most `--after` lines past it, each bound on its own, and a
+line in that range that matches too is part of it. Without a context
+flag every window is just the matched line. Over HTTP there is no context window; see
 [`GET /v1/trace`](../api/endpoints/trace.md).
 
 ### Bypass the cache
