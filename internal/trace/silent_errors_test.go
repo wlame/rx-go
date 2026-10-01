@@ -62,7 +62,7 @@ func TestRemapBatchEvents_ReportsAnUnreadableStream(t *testing.T) {
 	out := []byte(`{"type":"begin","data":{}}` + "\n" + tooLong + "\n")
 	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: 100}}}
 
-	_, _, err := remapBatchEvents(context.Background(), out, segments, []string{"p1"})
+	_, _, err := remapBatchEvents(context.Background(), out, wholeStream(segments), []string{"p1"})
 
 	if err == nil {
 		t.Error("remapBatchEvents returned no error for a stream it could not read")
