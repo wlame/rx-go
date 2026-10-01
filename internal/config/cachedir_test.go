@@ -71,6 +71,7 @@ func TestCacheSubdirectories(t *testing.T) {
 	}{
 		{"index", GetIndexCacheDir, filepath.Join(base, "indexes")},
 		{"trace", GetTraceCacheDir, filepath.Join(base, "trace_cache")},
+		{"findings", GetFindingsCacheDir, filepath.Join(base, "findings")},
 		{"frontend", GetFrontendCacheDir, filepath.Join(base, "frontend")},
 	}
 	for _, tc := range cases {
@@ -104,6 +105,7 @@ func TestAllHelpersShareBase(t *testing.T) {
 	for _, path := range []string{
 		GetIndexCacheDir(),
 		GetTraceCacheDir(),
+		GetFindingsCacheDir(),
 		GetFrontendCacheDir(),
 	} {
 		if !hasPrefix(path, base) {

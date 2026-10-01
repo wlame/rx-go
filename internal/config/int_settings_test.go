@@ -134,6 +134,7 @@ func TestIntSettings_GettersReadTheirSetting(t *testing.T) {
 		{ChainOverlapSecondsSetting, func() int { return int(ChainOverlapMs() / 1000) }},
 		{SignaturesLineBytesSetting, SignaturesLineBytes},
 		{FindingsMaxPerSignatureSetting, FindingsMaxPerSignature},
+		{MaxSignatureScansSetting, MaxSignatureScans},
 	}
 	if len(cases) != len(IntSettings) {
 		t.Fatalf("%d getters tested, %d settings declared", len(cases), len(IntSettings))

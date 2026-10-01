@@ -149,6 +149,13 @@ var (
 	// the most findings of one signature a scan of one file keeps, the
 	// first ones by line. The count of findings stays exact past it.
 	FindingsMaxPerSignatureSetting = IntSetting{Name: "RX_FINDINGS_MAX_PER_SIGNATURE", Default: DefaultFindingsMaxPerSignature, Min: 100, Max: 1_000_000}
+
+	// MaxSignatureScansSetting is RX_MAX_SIGNATURE_SCANS: how many
+	// signature scans run at once in `rx serve`. Each reads a whole
+	// file on every worker, so the limit bounds the disk and CPU that
+	// scans of many files can set going; a scan past it waits for one
+	// to end. Its maximum bounds them whatever the environment asks for.
+	MaxSignatureScansSetting = IntSetting{Name: "RX_MAX_SIGNATURE_SCANS", Default: DefaultMaxSignatureScans, Min: 1, Max: 64}
 )
 
 // DefaultSignaturesLineBytes is the default of RX_SIGNATURES_LINE_BYTES:
@@ -166,6 +173,13 @@ const DefaultFindingsMaxPerSignature = 10000
 // FindingsMaxPerSignature returns RX_FINDINGS_MAX_PER_SIGNATURE, from
 // 100 to 1000000 findings, or DefaultFindingsMaxPerSignature.
 func FindingsMaxPerSignature() int { return FindingsMaxPerSignatureSetting.Value() }
+
+// DefaultMaxSignatureScans is the default of RX_MAX_SIGNATURE_SCANS.
+const DefaultMaxSignatureScans = 1
+
+// MaxSignatureScans returns RX_MAX_SIGNATURE_SCANS, from 1 to 64 scans,
+// or DefaultMaxSignatureScans.
+func MaxSignatureScans() int { return MaxSignatureScansSetting.Value() }
 
 // DefaultChainOverlapSeconds is the default of RX_CHAIN_OVERLAP_SECONDS.
 const DefaultChainOverlapSeconds = 60
@@ -226,6 +240,7 @@ var IntSettings = []IntSetting{
 	ChainOverlapSecondsSetting,
 	SignaturesLineBytesSetting,
 	FindingsMaxPerSignatureSetting,
+	MaxSignatureScansSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

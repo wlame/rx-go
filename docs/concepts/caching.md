@@ -1,12 +1,15 @@
 # Caching
 
-`rx` caches two kinds of artifacts on disk:
+`rx` caches three kinds of artifacts on disk:
 
 - **Line indexes** — produced by `rx index`, `rx compress`, and by the
   first `rx samples` lookup in a large or compressed file; consumed by
   `rx trace`, `rx samples`, and the HTTP endpoints
 - **Trace results** — produced by `rx trace`, consumed by subsequent
   `rx trace` calls with the same file, patterns and matching flags
+- **Findings** — produced by signature scans, one entry per file and
+  [signature](signatures.md); a later scan of the file reads the
+  signatures it holds and scans only the others
 
 Caches live under `~/.cache/rx/` (or `$RX_CACHE_DIR/rx/`, or
 `$XDG_CACHE_HOME/rx/`), named after the source path and, for a trace,
@@ -48,6 +51,10 @@ a missing cache directory gracefully return "no cache".
 ├── trace_cache/                            — trace-result caches
 │   └── <patterns_hash16>/
 │       └── <path_hash16>_<basename>.json
+├── findings/                               — findings of signature scans
+│   └── <basename>_<path_hash16>/
+│       ├── meta.json
+│       └── <signature-id>.json
 └── frontend/                               — rx-viewer SPA (checked daily)
     ├── index.html
     ├── assets/
@@ -162,6 +169,76 @@ with its version) it ran with; a later `--analyze` request with another
 window or another detector set rebuilds the index. See
 [analyzers](analyzers.md).
 
+### `findings/`
+
+Each scanned file has a directory, named as its line index is
+(`<basename>_<hash16>`, the base name sanitized and cut the same way).
+It holds:
+
+- `meta.json` — the file's identity (the fields the line index
+  records: `source_size_bytes`, `source_mtime_ns`, `source_inode`,
+  `source_device`, `source_ctime_ns`, `source_fingerprint`), the cache
+  format `version` (1) and, per signature, its `key`, its `count` (the
+  findings in the file, past the cap too), how many are `stored`, and
+  when it was scanned (`scanned_at`, UTC);
+- `<signature-id>.json` — one entry: its `key`, its `findings` (lines,
+  text offsets, `time_ms`, the excerpt with every secret masked, the
+  value span, `masked`) and, for a `density` measure, its bucket
+  `series`; a signature whose id is `meta` gets `meta.signature.json`;
+- `.lock` — the file a writing process locks.
+
+A signature checked with no findings is an entry with `count: 0`. No
+unmasked value of a redacting signature is ever written: every excerpt
+is masked by every loaded redacting signature before it is stored.
+
+**Current entries.** An entry is current when `meta.json` still
+describes the file (the identity check below) and the entry's key is
+the one the signature has now. The key is a hash of what decides the
+signature's findings and nothing else.
+
+| Change | Effect |
+|---|---|
+| the file (its size, mtime, inode, device, ctime or fingerprint) | every entry of the file is stale |
+| a signature's matching part: kind, anchor and every regex, keywords, `not`, `capture`, `entropy`, `validate`, the block, run or measure parameters, `redact` | its entry is stale in every file |
+| any redacting signature (one with `redact: true`, selected or not) added, removed or changed | every entry is stale (excerpts are masked by all of them) |
+| the engine's version, or a measure's version | the affected entries are stale |
+| `RX_SIGNATURES_LINE_BYTES`, `RX_FINDINGS_MAX_PER_SIGNATURE`, `RX_TIMESTAMP_LOOKBACK_KB`, `RX_LOG_TZ` | every entry is stale |
+| a signature's name, description, group, tags, level, links, metadata, examples, `default` | nothing: read from the catalogue when the answer is made |
+| `RX_WORKERS`, the chunk sizes | nothing: they never change a finding |
+| the cache format version | the directory counts as absent |
+
+A stale entry is overwritten the next time its signature is scanned;
+nothing prunes the directories of deleted files, as for `indexes/`. The
+findings cache does not depend on the line index: deleting an index
+keeps the findings.
+
+**Full, partial, none.** A file whose every signature of the default set
+(every loaded signature without `default: false`) has a current entry
+is *full*; one with at least one current entry is *partial*; one with
+none is *none*. An opt-in signature never makes a file partial, and
+the count shown for a file is the sum of `count` over all its current
+entries, opt-in ones included. Reading the state reads `meta.json`
+only: it compares the identity by the file's stat (size, mtime, inode,
+device, ctime) and leaves the fingerprint, which needs a read of the
+file, to the scan.
+
+**A scan.** A scan splits the signatures asked for into those with a
+current entry, read from the cache, and the others, which it scans in
+one pass over the file. It takes the file's identity before it reads
+the cache and again after the scan: when the file changed meanwhile the
+scan answers and writes nothing, and when the file got shorter (a log
+truncated in place) or its path leads to another file the scan fails
+with an error that names it, since its answer could point past the end
+of the file. A forced scan scans every signature asked for and replaces
+their entries; a scan without the cache reads and writes nothing, and
+piped input is never cached. A canceled or failed scan writes nothing.
+
+In one process one scan of a file runs at a time: a second request for
+the file waits for the first, then scans only what is still missing.
+At most `RX_MAX_SIGNATURE_SCANS` scans read files at once; the others
+wait their turn, and a scan answered wholly from the cache does not
+wait.
+
 ### `frontend/`
 
 The `rx-viewer` SPA is extracted here on first `rx serve` start. The
@@ -177,9 +254,9 @@ details.
 
 ### Source identity (default)
 
-An index or trace cache entry is valid only while its source file is
-still the file the entry was built from. Each entry records, and each
-load compares:
+An index, trace cache or findings entry is valid only while its source
+file is still the file the entry was built from. Each entry records, and
+each load compares:
 
 - the file size (`source_size_bytes`)
 - the mtime, in nanoseconds since the Unix epoch (`source_mtime_ns`)
@@ -195,8 +272,8 @@ text (`source_modified_at`, `source_changed_at`) for a person reading
 the file. That text is never compared.
 
 Any difference → the entry is **stale**, and the caller rebuilds the
-index or scans the file again. The index and the trace cache use the
-same check.
+index or scans the file again. The index, the trace cache and the
+findings cache use the same check.
 
 A trace cache entry records the file as it was when the scan was
 planned, not when it finished. A log that grows during a scan is read
@@ -298,6 +375,33 @@ whatever the file's size, and read the file without an index when it
 cannot be rebuilt; `GET /v1/index` answers `404` for it as for a
 missing one; a trace leaves a match it cannot number cheaply at `-1`.
 
+### The findings cache
+
+A findings cache directory is written in a fixed order, under an
+advisory lock (`flock` on its `.lock` file) that keeps other processes
+from writing it at the same time:
+
+1. each new `<signature-id>.json`, by temporary file and rename;
+2. `meta.json` read again: an entry another process added since this
+   scan read the cache is kept, when `meta.json` still describes the same
+   file;
+3. `meta.json`, by temporary file and rename: the commit point;
+4. every entry file `meta.json` does not name is removed, and every
+   temporary file left by a crash.
+
+A reader trusts only what `meta.json` names, and an entry file whose
+key differs from the one `meta.json` names, or that is missing or cut
+short, counts as missing: that signature is scanned again. So a crash
+between steps 1 and 3 leaves the old answer readable, and two processes
+that add different signatures to one file keep both. A lock another
+process holds for more than 10 seconds is given up on: the scan answers
+and writes nothing. On a filesystem that cannot lock (some network
+filesystems) the writer goes on without the lock; step 2 still keeps
+the other writer's entries, but two writes at the same instant may lose
+one entry, which costs a scan and never a wrong answer. A `meta.json`
+that cannot be read or parsed is logged at Warn level as
+`findings_cache_unreadable` and treated as absent.
+
 ## When the cache cannot be written
 
 A cache directory that is read-only, or an `RX_CACHE_DIR` that names a
@@ -313,7 +417,8 @@ the same:
   an error that starts `cannot store the line index:` and names the
   cause; `rx index` exits `1`.
 - `rx trace` scans and logs one Warn line per process,
-  `trace_cache_write_failed`, with the cause. A cache directory under a
+  `trace_cache_write_failed`, with the cause. A signature scan answers
+  and logs one Warn line per process, `findings_cache_write_failed`. A cache directory under a
   regular file holds no entries, so looking one up is an ordinary miss;
   `trace_cache_unreadable` is only for an entry that exists and cannot
   be read or parsed.

@@ -63,6 +63,13 @@ func GetTraceCacheDir() string {
 	return filepath.Join(GetCacheBase(), "trace_cache")
 }
 
+// GetFindingsCacheDir returns {base}/findings — where the findings of
+// signature scans live, one directory per scanned file. The commands
+// and routes pass it to internal/findings, which reads no environment.
+func GetFindingsCacheDir() string {
+	return filepath.Join(GetCacheBase(), "findings")
+}
+
 // GetFrontendCacheDir returns {base}/frontend — where the rx-viewer SPA
 // gets unpacked.
 func GetFrontendCacheDir() string {

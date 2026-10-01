@@ -1,6 +1,7 @@
 package index
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -95,6 +96,15 @@ func IdentityFromInfo(path string, info os.FileInfo) SourceIdentity {
 // was.
 func IdentityFromOpenFile(f *os.File, info os.FileInfo) SourceIdentity {
 	fp, err := fingerprintOpenFile(f)
+	return identityOf(info, fp, err)
+}
+
+// IdentityFromReaderAt is IdentityFromOpenFile for a file read through
+// r, which a caller may wrap (to count the bytes read, for one); info
+// is the stat of that file. It reads at most the two 64 KiB windows of
+// the fingerprint, by position.
+func IdentityFromReaderAt(r io.ReaderAt, info os.FileInfo) SourceIdentity {
+	fp, err := fingerprintReaderAt(r, info.Size())
 	return identityOf(info, fp, err)
 }
 

@@ -55,8 +55,20 @@ func fingerprintOpenFile(f *os.File) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	size := info.Size()
+	fp, err := fingerprintReaderAt(f, info.Size())
+	if err != nil {
+		return "", fmt.Errorf("fingerprint of %s: %w", f.Name(), err)
+	}
+	return fp, nil
+}
 
+// fingerprintReaderAt is the fingerprint of a file of size bytes read
+// through r: the size, the first fingerprintWindow bytes and, when the
+// file is longer, the last fingerprintWindow bytes. It reads at most
+// 2 × fingerprintWindow bytes, by position (io.NewSectionReader uses
+// ReadAt). io.CopyN fails on a short read, so a file that is shorter
+// than size by now gets no fingerprint.
+func fingerprintReaderAt(r io.ReaderAt, size int64) (string, error) {
 	h := sha256.New()
 	// The size goes in first so that a prefix which happens to repeat
 	// cannot produce the same digest at two different lengths.
@@ -64,16 +76,16 @@ func fingerprintOpenFile(f *os.File) (string, error) {
 
 	head := min(size, fingerprintWindow)
 	if head > 0 {
-		if _, err := io.CopyN(h, io.NewSectionReader(f, 0, head), head); err != nil {
-			return "", fmt.Errorf("fingerprint head of %s: %w", f.Name(), err)
+		if _, err := io.CopyN(h, io.NewSectionReader(r, 0, head), head); err != nil {
+			return "", fmt.Errorf("head: %w", err)
 		}
 	}
 	// Only read a tail window when the file is long enough for it to
 	// cover bytes the head window did not.
 	if size > fingerprintWindow {
-		tail := io.NewSectionReader(f, size-fingerprintWindow, fingerprintWindow)
+		tail := io.NewSectionReader(r, size-fingerprintWindow, fingerprintWindow)
 		if _, err := io.CopyN(h, tail, fingerprintWindow); err != nil {
-			return "", fmt.Errorf("fingerprint tail of %s: %w", f.Name(), err)
+			return "", fmt.Errorf("tail: %w", err)
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

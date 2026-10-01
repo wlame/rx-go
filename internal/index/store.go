@@ -152,6 +152,12 @@ func cacheFilename(absPath string) string {
 	return fmt.Sprintf("%s_%s.json", safe, hash16)
 }
 
+// SafeBasename is a base name with every character that is not a
+// letter, a digit, '.', '_' or '-' replaced by '_': the form the cache
+// file names of the line index use, so another cache can name its
+// entries the same way.
+func SafeBasename(name string) string { return safeBasename(name) }
+
 // safeBasename replicates Python's sanitization:
 //
 //	''.join(c if c.isalnum() or c in '._-' else '_' for c in basename)

@@ -129,6 +129,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   most findings of one signature a scan of one file keeps, the first by
   line, with the count kept exact past it. Out-of-range values follow
   the rule of every integer setting.
+- The findings cache: the findings of a signature scan are kept in
+  `<cache>/findings/`, beside `indexes/` and `trace_cache/`, one
+  directory per file (`<basename>_<path hash>`) with `meta.json` (the
+  file's identity, as the line index records it, and per signature its
+  key, count, stored findings and scan time) and one
+  `<signature-id>.json` per signature (its findings with their times,
+  masked excerpts, value spans and `masked` flags, and a density
+  measure's bucket series). A later scan of the file answers every
+  signature with a current entry from the cache, equal field by field,
+  and scans only the others, in one pass. An entry is stale when the
+  file changes (size, mtime, inode, device, ctime or fingerprint), when
+  its signature's matching part changes (not its name, description,
+  group or other descriptive fields), when any redacting signature
+  changes, and when `RX_SIGNATURES_LINE_BYTES`,
+  `RX_FINDINGS_MAX_PER_SIGNATURE`, `RX_TIMESTAMP_LOOKBACK_KB` or
+  `RX_LOG_TZ` changes. A file is full when every signature of the
+  default set has a current entry, partial with at least one, none
+  without; reading that reads only `meta.json`. Entries are written
+  before `meta.json`, the commit point, under an advisory lock of the
+  directory; a writer reads `meta.json` again first and keeps what
+  another process added, and removes entry files `meta.json` does not
+  name. A file that changes during a scan is answered and not cached,
+  one that gets shorter or is replaced fails the scan with an error that
+  names it, and a canceled or failed scan writes nothing. One scan of a
+  file runs at a time in a process; a second waits and scans what is
+  still missing. The commands that scan come next.
+- `RX_MAX_SIGNATURE_SCANS` (default 1, 1 to 64): how many signature
+  scans read files at once in `rx serve`; later ones wait their turn,
+  and a scan answered from the cache does not wait.
 - New dependency: `go.yaml.in/yaml/v3` v3.0.5, the YAML parser, under
   the MIT licence (the files ported from libyaml) and the Apache
   License 2.0 (the rest).
