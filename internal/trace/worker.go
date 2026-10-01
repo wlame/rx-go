@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -96,7 +95,11 @@ func (NoopHookFirer) OnMatch(context.Context, string, MatchInfo) {}
 // accept point, with no cross-worker coordination and no post-merge
 // dedup pass.
 type MatchRaw struct {
-	Offset     int64
+	Offset int64
+	// End is where the line ends in the file's text: the offset one past
+	// its last byte, its line break included, which is where the next
+	// line starts. Context windows link lines through it.
+	End        int64
 	LineNumber int
 	// AbsoluteLine is the line's number in the whole file when the
 	// scanner knew it, and 0 when it did not. The chunked path leaves
@@ -116,6 +119,7 @@ type MatchRaw struct {
 // ContextRaw mirrors MatchRaw for context lines.
 type ContextRaw struct {
 	Offset       int64
+	End          int64 // see MatchRaw.End
 	LineNumber   int
 	AbsoluteLine int // see MatchRaw.AbsoluteLine; 0 when unknown
 	LineText     string
@@ -131,6 +135,7 @@ type ContextRaw struct {
 func matchAsContext(m MatchRaw) ContextRaw {
 	return ContextRaw{
 		Offset:       m.Offset,
+		End:          m.End,
 		LineNumber:   m.LineNumber,
 		AbsoluteLine: m.AbsoluteLine,
 		LineText:     m.LineText,
@@ -248,6 +253,36 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	rgArgs = append(rgArgs, filterIncompatibleRgArgs(rgExtraArgs)...)
 	rgArgs = append(rgArgs, "-") // read from stdin
 
+	// Open the source file. ReadAt is goroutine-safe and doesn't move
+	// a shared cursor, so we can stream in one goroutine while parsing
+	// events in another.
+	src, err := os.Open(task.FilePath)
+	if err != nil {
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: open %s: %w", task.FilePath, err)
+	}
+	defer func() { _ = src.Close() }()
+
+	// ripgrep only sees the bytes it is given, so a match near the start
+	// of the chunk would lose the lines before it that lie in the chunk
+	// before. The chunk's input therefore starts contextBefore lines
+	// early, and ends contextAfter lines late (see feedChunk). Those
+	// lines belong to the neighboring chunks: they serve as context
+	// here and are never reported as this chunk's matches.
+	leadIn, err := readLinesBefore(src, task.Offset, contextBefore)
+	if err != nil {
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: read the lines before the chunk: %w", err)
+	}
+	input := chunkInput{
+		task:      task,
+		leadIn:    leadIn,
+		leadStart: task.Offset - int64(len(leadIn)),
+		// ripgrep numbers the lines of its own input, the lead-in's
+		// first. Discounting the lead-in's lines gives the chunk-relative
+		// number, which is 1 for the chunk's first line and 0 or below
+		// for the lines before it.
+		leadLines: bytes.Count(leadIn, newlineBytes),
+	}
+
 	rgCmd := exec.CommandContext(ctx, "rg", rgArgs...)
 	// Separate the subprocess cost from the rest of the request, so a
 	// slow scan can be told apart from slow bookkeeping around it.
@@ -273,70 +308,33 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: rg start: %w", startErr)
 	}
 
-	// Open the source file. ReadAt is goroutine-safe and doesn't move
-	// a shared cursor, so we can stream in one goroutine while parsing
-	// events in another.
-	src, err := os.Open(task.FilePath)
-	if err != nil {
-		_ = rgStdin.Close()
-		_ = rgStdout.Close()
-		_ = rgCmd.Wait()
-		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: open %s: %w", task.FilePath, err)
-	}
-	defer func() { _ = src.Close() }()
-
-	// Feed chunk bytes → rg stdin in a goroutine. io.Copy + io.LimitReader
-	// wrapping an *os.File offset by SectionReader gives us:
-	//  - ReadAt-backed reads (no shared cursor)
-	//  - Exact byte-count limit (task.Count)
-	//  - Automatic EOF when the range is exhausted
-	section := io.NewSectionReader(src, task.Offset, task.Count)
-
 	// errgroup here lets us surface stdin-copy errors alongside the
 	// event-parse errors. Both must finish before we Wait() on rg.
 	g, gctx := errgroup.WithContext(ctx)
 
-	// Goroutine 1: pump chunk bytes into rg stdin, counting newlines on
-	// the way past. The count costs nothing extra — these bytes are
-	// already in hand — and it is what lets the engine report absolute
-	// line numbers for a chunked file without reading it twice.
+	// Goroutine 1: pump the chunk's input into rg stdin, counting the
+	// chunk's own newlines on the way past. The count costs nothing
+	// extra — these bytes are already in hand — and it is what lets the
+	// engine report absolute line numbers for a chunked file without
+	// reading it twice.
 	//
-	// Both counters are written here and read after g.Wait() below,
-	// which is the happens-before edge that makes plain variables safe.
-	var (
-		newlines int64
-		copied   int64
-	)
+	// fed is written here and read after g.Wait() below, which is the
+	// happens-before edge that makes a plain variable safe.
+	var fed chunkFeed
 	g.Go(func() error {
 		defer func() { _ = rgStdin.Close() }()
-		// 64 KB copy buffer is a good tradeoff — larger wastes memory
-		// per concurrent worker; smaller makes more syscalls.
-		buf := make([]byte, 64*1024)
-		for {
-			n, readErr := section.Read(buf)
-			if n > 0 {
-				newlines += int64(bytes.Count(buf[:n], newlineBytes))
-				copied += int64(n)
-				if _, writeErr := rgStdin.Write(buf[:n]); writeErr != nil {
-					// rg exits early on cancellation, which surfaces
-					// here as a broken pipe. That is a clean shutdown,
-					// not a failure.
-					if isBrokenPipe(writeErr) || gctx.Err() != nil {
-						return nil
-					}
-					return fmt.Errorf("stdin copy: %w", writeErr)
-				}
-			}
-			if readErr != nil {
-				if errors.Is(readErr, io.EOF) {
-					return nil
-				}
-				if gctx.Err() != nil {
-					return nil
-				}
-				return fmt.Errorf("stdin copy: %w", readErr)
-			}
+		var feedErr error
+		fed, feedErr = feedChunk(src, input, contextAfter, rgStdin)
+		// A canceled scan stops on purpose, and rg exiting early
+		// surfaces as a broken pipe. Both are a clean shutdown, not a
+		// failure.
+		if feedErr == nil || gctx.Err() != nil {
+			return nil
 		}
+		if errors.Is(feedErr, errRipgrepStoppedReading) && isBrokenPipe(feedErr) {
+			return nil
+		}
+		return fmt.Errorf("stdin copy: %w", feedErr)
 	})
 
 	// Goroutine 2: parse rg --json events and collect matches.
@@ -361,23 +359,29 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 				if ev.Match == nil {
 					return nil
 				}
-				// rg's absolute_offset is relative to its OWN input
-				// (i.e. chunk-local). Translate to file-absolute by
-				// adding the chunk's starting byte in the source file.
-				absOff := task.Offset + ev.Match.AbsoluteOffset
+				// rg's absolute_offset is relative to its OWN input,
+				// which starts with the lead-in. input.fileOffset turns
+				// it into a position in the file.
+				absOff := input.fileOffset(ev.Match.AbsoluteOffset)
+				line := MatchRaw{
+					Offset:     absOff,
+					End:        absOff + int64(ev.Match.Lines.Size),
+					LineNumber: input.chunkLine(ev.Match.LineNumber),
+					LineText:   trimTrailingNewline(ev.Match.Lines.Text),
+				}
 				// Dedup filter: only keep matches whose absolute start
 				// offset falls within THIS chunk's assigned half-open
-				// range [task.Offset, task.EndOffset()). Matches at or
-				// past the next chunk's start belong to that chunk —
-				// rg may legitimately report such matches because we
-				// feed it a byte stream that ends on a newline
-				// boundary aligned for the NEXT chunk's start.
+				// range [task.Offset, task.EndOffset()). A match in the
+				// lead-in or the tail belongs to the chunk beside this
+				// one, which reports it; here it is only a line of the
+				// windows around this chunk's matches.
 				//
 				// This invariant is local to each worker — a duplicate
 				// match would be a chunker bug, not something this
 				// filter needs to patch at merge time. rx-python
 				// applies the same rule.
-				if absOff < task.Offset || absOff >= task.EndOffset() {
+				if !input.owns(absOff) {
+					mu.contexts = append(mu.contexts, matchAsContext(line))
 					gate.reached(ev.Match.LineNumber)
 					return nil
 				}
@@ -389,15 +393,11 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 						End:   sm.End,
 					}
 				}
-				mu.matches = append(mu.matches, MatchRaw{
-					Offset:     absOff,
-					LineNumber: ev.Match.LineNumber,
-					LineText:   trimTrailingNewline(ev.Match.Lines.Text),
-					Submatches: subs,
-					// pattern IDs are the FULL set — engine.identify
-					// narrows this down post-hoc per Python parity.
-					PatternIDs: append([]string(nil), patternOrder...),
-				})
+				line.Submatches = subs
+				// pattern IDs are the FULL set — engine.identify
+				// narrows this down post-hoc per Python parity.
+				line.PatternIDs = append([]string(nil), patternOrder...)
+				mu.matches = append(mu.matches, line)
 				// Charge the shared cap as soon as the match's window
 				// is read (at once without -A), so the worker that
 				// spends the last of it stops every sibling within a
@@ -408,16 +408,14 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 					return nil
 				}
 				gate.reached(ev.Context.LineNumber)
-				// Same range-containment dedup as the match branch —
-				// context lines reported by rg outside THIS chunk's
-				// assigned range belong to an adjacent chunk's output.
-				absOff := task.Offset + ev.Context.AbsoluteOffset
-				if absOff < task.Offset || absOff >= task.EndOffset() {
-					return nil
-				}
+				// A context line is kept wherever it lies: one in the
+				// lead-in or the tail is what completes the window of a
+				// match next to the chunk's edge.
+				absOff := input.fileOffset(ev.Context.AbsoluteOffset)
 				mu.contexts = append(mu.contexts, ContextRaw{
 					Offset:     absOff,
-					LineNumber: ev.Context.LineNumber,
+					End:        absOff + int64(ev.Context.Lines.Size),
+					LineNumber: input.chunkLine(ev.Context.LineNumber),
 					LineText:   trimTrailingNewline(ev.Context.Lines.Text),
 				})
 			default:
@@ -449,8 +447,8 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 	result := ChunkResult{
 		Matches:  mu.matches,
 		Contexts: mu.contexts,
-		Newlines: newlines,
-		Complete: copied == task.Count,
+		Newlines: fed.newlines,
+		Complete: fed.copied == task.Count,
 		Elapsed:  elapsed,
 	}
 

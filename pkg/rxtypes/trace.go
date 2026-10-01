@@ -18,7 +18,9 @@ type Submatch struct {
 // newlines as they read, so a file split across chunks is numbered as
 // one file. A scan cut short by a max_results cap can leave a line
 // unnumbered, and AbsoluteLineNumber is then -1 while
-// RelativeLineNumber holds the number ripgrep gave it inside its chunk.
+// RelativeLineNumber holds its number counted from the first line of
+// its chunk: 0 or below for a line read just before the chunk to
+// complete a window.
 type ContextLine struct {
 	RelativeLineNumber int    `json:"relative_line_number"`
 	AbsoluteLineNumber int    `json:"absolute_line_number"`

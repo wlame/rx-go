@@ -180,6 +180,7 @@ func ProcessCompressed(
 				// Past the cap: a line of the last match's window.
 				outContexts = append(outContexts, ContextRaw{
 					Offset:     ev.Match.AbsoluteOffset,
+					End:        ev.Match.AbsoluteOffset + int64(ev.Match.Lines.Size),
 					LineNumber: ev.Match.LineNumber,
 					LineText:   trimTrailingNewline(ev.Match.Lines.Text),
 				})
@@ -195,6 +196,7 @@ func ProcessCompressed(
 			}
 			outMatches = append(outMatches, MatchRaw{
 				Offset:       ev.Match.AbsoluteOffset, // already decompressed-stream-relative
+				End:          ev.Match.AbsoluteOffset + int64(ev.Match.Lines.Size),
 				LineNumber:   ev.Match.LineNumber,
 				LineText:     trimTrailingNewline(ev.Match.Lines.Text),
 				Submatches:   subs,
@@ -212,6 +214,7 @@ func ProcessCompressed(
 			}
 			outContexts = append(outContexts, ContextRaw{
 				Offset:     ev.Context.AbsoluteOffset,
+				End:        ev.Context.AbsoluteOffset + int64(ev.Context.Lines.Size),
 				LineNumber: ev.Context.LineNumber,
 				LineText:   trimTrailingNewline(ev.Context.Lines.Text),
 			})
