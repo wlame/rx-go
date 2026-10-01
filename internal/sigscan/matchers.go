@@ -1,10 +1,7 @@
 package sigscan
 
 import (
-	"bytes"
-	"cmp"
 	"regexp"
-	"slices"
 	"unicode/utf8"
 )
 
@@ -13,8 +10,8 @@ const (
 	// excerptBytes is the most bytes of the first line an excerpt
 	// keeps; it is cut on a UTF-8 boundary at or below this.
 	excerptBytes = 200
-	// maskKeepChars is how many characters of a redacted value stay
-	// readable at its start.
+	// maskKeepChars is the most characters of a redacted value that stay
+	// readable at its start (a quarter of a shorter value's).
 	maskKeepChars = 4
 	// maskMaxStars is the most '*' that replace the rest of a redacted
 	// value.
@@ -68,144 +65,32 @@ func (m *regexMatcher) confirm(view []byte, wantSpan bool) (ok bool, vs, ve int)
 	return true, vs, ve
 }
 
-// maskValue returns the masked form of a redacted value: its first
-// maskKeepChars characters, then one '*' for each further character,
-// at most maskMaxStars. A byte that is not UTF-8 counts as one
+// keepChars is how many characters of a value of n characters its mask
+// keeps: a quarter of them, at most maskKeepChars (20 characters keep
+// 4, 8 keep 2, 4 keep 1, 3 keep none).
+func keepChars(n int) int {
+	return min(n/4, maskKeepChars)
+}
+
+// keptBytes is how many bytes at the start of value its mask keeps: its
+// first keepChars characters. A byte that is not UTF-8 counts as one
 // character.
-func maskValue(value []byte) []byte {
-	keep := 0
-	for chars := 0; keep < len(value) && chars < maskKeepChars; chars++ {
-		_, size := utf8.DecodeRune(value[keep:])
-		keep += size
+func keptBytes(value []byte) int {
+	keep := keepChars(utf8.RuneCount(value))
+	n := 0
+	for range keep {
+		_, size := utf8.DecodeRune(value[n:])
+		n += size
 	}
-	stars := min(utf8.RuneCount(value[keep:]), maskMaxStars)
-	out := make([]byte, 0, keep+stars)
-	out = append(out, value[:keep]...)
-	return append(out, bytes.Repeat([]byte{'*'}, stars)...)
+	return n
 }
 
-// span is a byte range [start, end) of a line view.
-type span [2]int
-
-// maxCopiedValues bounds how many distinct masked values redactSpans
-// looks for copies of on one line.
-const maxCopiedValues = 8
-
-// redactSpans returns what a redacting signature masks on a line view,
-// sorted, without overlaps:
-//
-//   - for every match of re, its group `capture` when the group took
-//     part in the match, else the whole match: masked by position;
-//   - every other copy of such a value on the line (a password echoed
-//     later without its `password=`), for the first maxCopiedValues
-//     values longer than the characters a mask keeps.
-//
-// Spans that overlap are joined into one, which masks a little more
-// than each would alone and never leaves part of a value visible.
-//
-// Only the matches that can reach the excerpt are taken: every match
-// after the first adds at least one byte to the excerpt (its own first
-// character, or the byte before it, since two matches never touch at
-// an empty one), so at most excerptBytes + utf8.UTFMax + 1 of them can
-// show. Copies are looked for in the whole view, at most
-// maxCopiedValues times.
-//
-// Go note: FindAllSubmatchIndex returns, for each match, the start and
-// end of the match and then of each group, -1 for a group that took no
-// part.
-func redactSpans(re *regexp.Regexp, capture int, view []byte) []span {
-	matches := re.FindAllSubmatchIndex(view, excerptBytes+utf8.UTFMax+1)
-	spans := make([]span, 0, len(matches))
-	for _, loc := range matches {
-		if vs := loc[2*capture]; vs >= 0 {
-			spans = append(spans, span{vs, loc[2*capture+1]})
-			continue
-		}
-		spans = append(spans, span{loc[0], loc[1]})
-	}
-	return joinSpans(append(spans, valueCopies(view, spans)...))
-}
-
-// valueCopies returns every occurrence on view of the values under
-// spans (overlapping ones included), for the first maxCopiedValues
-// distinct values a mask changes.
-func valueCopies(view []byte, spans []span) []span {
-	var copies []span
-	seen := map[string]bool{}
-	for _, sp := range spans {
-		value := view[sp[0]:sp[1]]
-		if utf8.RuneCount(value) <= maskKeepChars || seen[string(value)] {
-			continue
-		}
-		if len(seen) == maxCopiedValues {
-			break
-		}
-		seen[string(value)] = true
-		for from := 0; from < len(view); {
-			i := bytes.Index(view[from:], value)
-			if i < 0 {
-				break
-			}
-			copies = append(copies, span{from + i, from + i + len(value)})
-			from += i + 1
-		}
-	}
-	return copies
-}
-
-// joinSpans sorts spans and joins those that overlap.
-func joinSpans(spans []span) []span {
-	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a[0], b[0]) })
-	out := spans[:0]
-	for _, sp := range spans {
-		if n := len(out); n > 0 && sp[0] < out[n-1][1] {
-			out[n-1][1] = max(out[n-1][1], sp[1])
-			continue
-		}
-		out = append(out, sp)
-	}
-	return out
-}
-
-// appendExcerpt appends the excerpt of a line view to dst: the view
-// with each of masks (sorted, from redactSpans) replaced by its masked
-// form, cut to excerptBytes on a UTF-8 boundary. Masking goes by
-// position, so a copy of a value elsewhere on the line that is not a
-// match stays as it is, and an overlapping copy cannot shift a mask.
-//
-// Masking comes first, so the cut never leaves part of an unmasked
-// value, and the work is bounded by the excerpt: the view is copied only
-// until the excerpt is full.
-//
-// SECURITY: the bytes of a masked span are never copied into dst
-// beyond the characters its mask keeps; a redacting signature's finding
-// carries only this excerpt.
-func appendExcerpt(dst, view []byte, masks []span) []byte {
+// appendExcerpt appends the excerpt of a line view to dst, nothing
+// masked: the view cut to excerptBytes on a UTF-8 boundary. A redacting
+// signature's excerpt is appendRedactedExcerpt's.
+func appendExcerpt(dst, view []byte) []byte {
 	start := len(dst)
-	// want is a few bytes more than the excerpt, so the cut can find a
-	// UTF-8 boundary.
-	want := excerptBytes + utf8.UTFMax
-	pos := 0
-	for _, m := range masks {
-		from := max(m[0], pos)
-		if from >= m[1] {
-			continue // empty, or inside the span masked before it
-		}
-		room := want - (len(dst) - start)
-		if room <= 0 {
-			break
-		}
-		dst = append(dst, view[pos:min(from, pos+room)]...)
-		if from-pos >= room {
-			pos = from
-			break
-		}
-		dst = append(dst, maskValue(view[from:m[1]])...)
-		pos = m[1]
-	}
-	if room := want - (len(dst) - start); room > 0 && pos < len(view) {
-		dst = append(dst, view[pos:min(len(view), pos+room)]...)
-	}
+	dst = append(dst, view[:min(len(view), excerptBytes+utf8.UTFMax)]...)
 	return cutOnRuneBoundary(dst, start)
 }
 

@@ -361,14 +361,24 @@ cut or doubled by an edge.
 
 **Excerpt and redaction.** A finding's excerpt is its first line's view,
 cut to 200 bytes on a UTF-8 character boundary. For a signature with
-`redact: true`, every match of the anchor on that line is masked in the
-excerpt, by its position, before the excerpt is kept: the `capture`
-group of a regex signature (the whole match when the group took no part
-in it), or the whole match of a block's or a run's anchor. Every other
-copy of a masked value on the line is masked too, so a secret echoed
-later without its `key=` is hidden as well. A mask keeps the first 4
-characters and turns the rest into `*`, at most 12 of them
-(`AKIA************`). The unmasked value is never kept.
+`redact: true`, every secret on that line is masked in the excerpt
+before the excerpt is kept: the value of every match of the anchor (the
+`capture` group of a regex signature, or the whole match when the group
+took no part in it; the whole match of a block's or a run's anchor), and
+every other copy of such a value on the line, so a secret echoed later
+without its `key=` is hidden as well. Copies that overlap are masked as
+one. A mask keeps a quarter of the value's characters, at most 4 (a
+20-character key shows 4, an 8-character value 2, a 3-character value
+none), and turns the rest into `*`, at most 12 of them
+(`AKIA************`).
+
+Redaction fails closed. A line whose secrets cannot all be followed
+within its bounds (more than 8 distinct values, or a value longer than
+256 bytes) shows only its text before the first secret, at most 256
+bytes, and is masked from there on; a line with more than 64 distinct
+values or 4,096 matches is masked whole. The unmasked value is never
+kept. Masking is per signature: another signature's excerpt of the same
+line shows that line as that signature sees it.
 
 **The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
 findings of each signature (10,000 by default), by line; their count

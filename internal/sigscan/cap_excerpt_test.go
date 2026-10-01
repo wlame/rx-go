@@ -221,3 +221,43 @@ var excerptFixtures = []fixture{
 	one("redaction of an overlapping copy", regexSig("ov", `^\w{8}(\w{16})`, "capture: 1", "redact: true"),
 		lines("SECRETXYSECRETXYSECRETXY"), lineSpan{1, 1}).withValue(8, 24),
 }
+
+// A run of copies of one value before a secret no longer hides the
+// secret: masks are built along the line until the excerpt is full,
+// whatever number of matches the copies join (regex, block and run).
+func TestScan_RedactAPaddedSecret(t *testing.T) {
+	const key = "9f86d081884c7d659a2feaa0c55ad015"
+	sigs := loadSigs(t, sigFile(
+		regexSig("hex-value", `[0-9a-f]{32}`, "redact: true"),
+		kindSig("hex-block", "block", `start: '[0-9a-f]{32}'`, "lines: 1")+"    redact: true\n",
+		kindSig("hex-run", "run", `match: '[0-9a-f]{32}'`, "min: 2")+"    redact: true\n",
+	), "hex-value", "hex-block", "hex-run")
+	line := `{"pad":"` + strings.Repeat("0", 8000) + `","key":"` + key + `"}`
+	res := scanOne(t, lines(line, line), sigs, Options{})
+	want := `{"pad":"0000************","key":"9f86************"}`
+	for _, id := range []string{"hex-value", "hex-block", "hex-run"} {
+		if f := res.BySignature[id].Findings[0]; f.Excerpt != want || !f.Masked {
+			t.Errorf("%s: excerpt %q, want %q", id, f.Excerpt, want)
+		}
+	}
+	requireNoSecret(t, res, key[4:])
+}
+
+// The value span of a redacting block or run is the anchor's first
+// match, and of a regex signature its first match's capture span,
+// however the masks of overlapping copies join.
+func TestScan_RedactValueSpanIsTheFirstMatch(t *testing.T) {
+	sigs := loadSigs(t, sigFile(
+		regexSig("hex-value", `x([0-9a-f]{32})`, "capture: 1", "redact: true"),
+		kindSig("hex-block", "block", `start: '[0-9a-f]{32}'`, "lines: 1")+"    redact: true\n",
+		kindSig("hex-run", "run", `match: '[0-9a-f]{32}'`, "min: 2")+"    redact: true\n",
+	), "hex-value", "hex-block", "hex-run")
+	line := "x" + strings.Repeat("0", 40)
+	res := scanOne(t, lines(line, line), sigs, Options{})
+	for id, want := range map[string][2]int{"hex-value": {1, 33}, "hex-block": {1, 33}, "hex-run": {1, 33}} {
+		f := res.BySignature[id].Findings[0]
+		if deref(f.ValueStart) != want[0] || deref(f.ValueEnd) != want[1] {
+			t.Errorf("%s: value span %d-%d, want %v", id, deref(f.ValueStart), deref(f.ValueEnd), want)
+		}
+	}
+}

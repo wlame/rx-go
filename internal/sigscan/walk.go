@@ -248,13 +248,13 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 		if vs >= 0 {
 			f.vs, f.ve = vs+l.shift, ve+l.shift
 		}
-		var masks []span
 		if cs.redact {
-			// Every match of the anchor is masked, not only the one that
-			// made the finding: a second secret on the line is a secret too.
-			masks = redactSpans(cs.regex.re, cs.regex.capture, l.view)
+			// Every secret on the line is masked, not only the value of
+			// the match that made the finding (redaction).
+			*exBuf = appendRedactedExcerpt((*exBuf)[:0], l.view, redactMatches(cs.regex.re, cs.regex.capture, l.view))
+		} else {
+			*exBuf = appendExcerpt((*exBuf)[:0], l.view)
 		}
-		*exBuf = appendExcerpt((*exBuf)[:0], l.view, masks)
 		f.excerpt, f.hasEx = *exBuf, true
 	}
 	out.add(cs, &f)

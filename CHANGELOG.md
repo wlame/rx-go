@@ -61,10 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that cross a chunk edge are finished across it. Each signature keeps
   its first `RX_FINDINGS_MAX_PER_SIGNATURE` findings by line with an
   exact count; an excerpt is the first line cut to 200 bytes. For a
-  signature with `redact: true` every match of its anchor on that line
+  signature with `redact: true` every secret on that line is masked
+  before the excerpt is kept: the value of every match of its anchor
   (the `capture` group, or the whole match when the group took no part)
-  is masked by its position, and every other copy of a masked value on
-  the line too, before the excerpt is kept. The commands that scan come
+  and every other copy of such a value on the line. A mask keeps a
+  quarter of the value's characters, at most 4, and the rest becomes
+  `*` (at most 12). Masking takes linear time and fails closed: a line
+  with more than 8 distinct values or a value over 256 bytes shows only
+  its text before the first secret, and one with more than 64 distinct
+  values or 4,096 matches is masked whole. The commands that scan come
   next.
 - `rx signatures`, `show` and `check` run every signature's examples:
   a `match` text that gives no finding, or a `no_match` text that gives

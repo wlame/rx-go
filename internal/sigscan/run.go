@@ -126,7 +126,7 @@ func (r *runWalker) begin(l *line, idx int64, out sink) {
 				r.cur.ve += l.shift
 			}
 		} else {
-			r.cur.excerpt = appendExcerpt(r.cur.excerpt, l.view, nil)
+			r.cur.excerpt = appendExcerpt(r.cur.excerpt, l.view)
 		}
 	}
 }

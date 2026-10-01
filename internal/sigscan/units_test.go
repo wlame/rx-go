@@ -165,16 +165,22 @@ func TestShannonEntropy(t *testing.T) {
 	}
 }
 
-// The mask keeps 4 characters and replaces the rest with at most 12
-// '*'.
+// The mask keeps a quarter of the value's characters, at most 4, and
+// replaces the rest with '*', at most 12.
 func TestMaskValue(t *testing.T) {
 	for value, want := range map[string]string{
-		"abc":                  "abc",
-		"abcdef":               "abcd**",
-		"AKIAIOSFODNN7EXAMPLE": "AKIA************",
-		"ééééé":                "éééé*",
+		"a":                     "*",
+		"abc":                   "***",
+		"abcd":                  "a***",
+		"abcdef":                "a*****",
+		"abcdefgh":              "ab******",
+		"AKIAIOSFODNN7EXAMPLE":  "AKIA************",
+		"AKIAIOSFODNN7EXAMPLE1": "AKIA************",
+		"ééééé":                 "é****",
+		"éééééééé":              "éé******",
 	} {
-		if got := string(maskValue([]byte(value))); got != want {
+		masked := appendRedactedExcerpt(nil, []byte(value), []span{{0, len(value)}})
+		if got := string(masked); got != want {
 			t.Errorf("mask(%q) = %q, want %q", value, got, want)
 		}
 	}
