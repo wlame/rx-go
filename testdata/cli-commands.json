@@ -64,6 +64,42 @@
       "expected": "rx trace /var/log/app.log --regexp=error --max-results=10 --request-id=01936c8e-7b2a-7000-8000-000000000001 --hook-on-file=https://hooks.example.com/file --hook-on-match='https://hooks.example.com/match?team=ops&env=prod' --hook-on-complete=https://hooks.example.com/done"
     },
     {
+      "name": "trace with a context window",
+      "endpoint": "trace",
+      "params": { "regexp": ["error"], "path": ["/var/log/app.log"], "context": 3 },
+      "expected": "rx trace /var/log/app.log --regexp=error --context=3"
+    },
+    {
+      "name": "trace with a cap, before and after windows over a context, and the accelerators and recursion off",
+      "endpoint": "trace",
+      "params": {
+        "regexp": ["error"],
+        "path": ["/var/log"],
+        "max_results": 10,
+        "context": 2,
+        "before_context": 0,
+        "after_context": 5,
+        "no_cache": true,
+        "no_index": true,
+        "no_recursive": true
+      },
+      "expected": "rx trace /var/log --regexp=error --max-results=10 --context=2 --before=0 --after=5 --no-cache --no-index --no-recursive"
+    },
+    {
+      "name": "trace leaves out a context window and switches equal to the defaults",
+      "endpoint": "trace",
+      "params": {
+        "regexp": ["error"],
+        "path": ["/var/log/app.log"],
+        "context": 0,
+        "before_context": 0,
+        "no_cache": false,
+        "no_index": false,
+        "no_recursive": false
+      },
+      "expected": "rx trace /var/log/app.log --regexp=error"
+    },
+    {
       "name": "samples by line",
       "endpoint": "samples",
       "params": { "path": "/var/log/app.log", "lines": "100" },

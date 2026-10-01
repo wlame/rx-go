@@ -29,7 +29,7 @@ on an Apple-silicon Mac:
   "status": "ok",
   "ripgrep_available": true,
   "app_version": "dev",
-  "contract_version": "1.3",
+  "contract_version": "1.4",
   "go_version": "go1.26.2",
   "os_info": {
     "compiler": "gc",

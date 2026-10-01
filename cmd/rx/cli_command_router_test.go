@@ -207,6 +207,46 @@ func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 		requireSameAnswer(t, answer, f.runRenderedJSON(t, requireRunnableCommand(t, rendered)))
 	})
 
+	t.Run("trace with a context window and the accelerators off", func(t *testing.T) {
+		answer := f.get(t, "/v1/trace", url.Values{
+			"path":           {f.logPath},
+			"regexp":         {"ERROR"},
+			"context":        {"2"},
+			"before_context": {"1"},
+			"no_cache":       {"true"},
+			"no_index":       {"true"},
+		})
+		rendered, _ := answer["cli_command"].(string)
+		want := "rx trace " + f.logPath + " --regexp=ERROR --context=2 --before=1 --no-cache --no-index"
+		if rendered != want {
+			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
+		}
+		requireSameAnswer(t, answer, f.runRenderedJSON(t, requireRunnableCommand(t, rendered)))
+	})
+
+	t.Run("trace a directory without recursion", func(t *testing.T) {
+		dir := filepath.Join(f.root, "logs")
+		if err := os.MkdirAll(filepath.Join(dir, "older"), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		for _, name := range []string{"current.log", filepath.Join("older", "rotated.log")} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte("LINE 1 ERROR found\n"), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		}
+		answer := f.get(t, "/v1/trace", url.Values{
+			"path":         {dir},
+			"regexp":       {"ERROR"},
+			"no_recursive": {"true"},
+		})
+		rendered, _ := answer["cli_command"].(string)
+		want := "rx trace " + dir + " --regexp=ERROR --no-recursive"
+		if rendered != want {
+			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
+		}
+		requireSameAnswer(t, answer, f.runRenderedJSON(t, requireRunnableCommand(t, rendered)))
+	})
+
 	t.Run("samples", func(t *testing.T) {
 		answer := f.get(t, "/v1/samples", url.Values{
 			"path":           {f.logPath},
