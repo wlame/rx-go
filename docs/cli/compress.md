@@ -227,15 +227,18 @@ arbitrary frames.
 
 ### Parallel encoding
 
-With `--workers > 1`, `rx` uses a producer/consumer pipeline:
+With `--workers > 1`, `rx` encodes in batches:
 
-- The producer reads the source file in frame-size chunks
-- A pool of `--workers` encoder goroutines picks up chunks and encodes
-  them in parallel
-- A single writer goroutine serializes frame output in order
+- It reads `--workers` frames of text from the source, each running on
+  to the end of the line it stopped in
+- It compresses the frames of the batch in parallel, one goroutine and
+  one encoder per frame
+- It writes them in order, then reads the next batch
 
-Frame-size granularity is preserved. Inter-frame ordering is preserved.
-The seek table is computed from the final frame layout.
+Only one batch is in memory at a time, whatever the size of the input.
+Frame boundaries and their order do not depend on the worker count, so
+the output is the same for any `--workers`. The seek table is computed
+from the final frame layout.
 
 ### Output layout
 
