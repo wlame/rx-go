@@ -80,7 +80,7 @@ type CompressRequest struct {
 	FrameSize        string  `json:"frame_size,omitempty" required:"false" default:"4M" doc:"Target frame size: bytes, or a number with B, K, KB, M, MB, G or GB."`
 	CompressionLevel int     `json:"compression_level,omitempty" required:"false" default:"3" minimum:"1" maximum:"22" doc:"zstd compression level."`
 	BuildIndex       *bool   `json:"build_index,omitempty" required:"false" default:"true" doc:"Build the line index of the compressed file after compressing it."`
-	Force            bool    `json:"force,omitempty" required:"false" default:"false" doc:"Overwrite the output file if it exists."`
+	Force            bool    `json:"force,omitempty" required:"false" default:"false" doc:"Overwrite the output file if it exists, and re-encode an input that is already seekable zstd (refused otherwise)."`
 }
 
 // CompressTaskResult is the result of a completed POST /v1/compress
