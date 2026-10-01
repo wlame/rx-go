@@ -90,7 +90,7 @@ func keptBytes(value []byte) int {
 // boundary (appendValidText). A line with secrets on it is masked first
 // (appendRedactedExcerpt).
 func appendExcerpt(dst, view []byte) []byte {
-	out, _ := appendValidText(dst, view[:min(len(view), excerptBytes+utf8.UTFMax)])
+	out, _ := appendValidText(dst, view[:min(len(view), excerptBytes+utf8.UTFMax)], excerptBytes)
 	return out
 }
 
@@ -98,19 +98,20 @@ func appendExcerpt(dst, view []byte) []byte {
 // valid UTF-8 character becomes in an excerpt.
 var replacementChar = []byte(string(utf8.RuneError))
 
-// appendValidText appends text to dst as valid UTF-8, at most
-// excerptBytes bytes of it: each byte that is not part of a valid UTF-8
-// character becomes U+FFFD, and the cut falls on a character boundary,
-// never inside a character or a replacement. It returns the result and
-// how many bytes of text went into it. So every carrier of an excerpt
-// (an answer, the cache, JSON) holds the same string: JSON would
-// otherwise replace such bytes in some of them only.
+// appendValidText appends text to dst as valid UTF-8, at most limit
+// bytes of it (excerptBytes for an excerpt): each byte that is not part
+// of a valid UTF-8 character becomes U+FFFD, and the cut falls on a
+// character boundary, never inside a character or a replacement. It
+// returns the result and how many bytes of text went into it. So every
+// carrier of an excerpt or a line (an answer, the cache, JSON) holds
+// the same string: JSON would otherwise replace such bytes in some of
+// them only.
 //
-// text holds at least excerptBytes + utf8.UTFMax bytes, or all there is:
-// a replacement never takes less room than the byte it replaces, so the
-// excerpt is full before a character that the end of text cuts short
+// text holds at least limit + utf8.UTFMax bytes, or all there is: a
+// replacement never takes less room than the byte it replaces, so the
+// result is full before a character that the end of text cuts short
 // could be read as invalid.
-func appendValidText(dst, text []byte) ([]byte, int) {
+func appendValidText(dst, text []byte, limit int) ([]byte, int) {
 	start, i := len(dst), 0
 	for i < len(text) {
 		r, size := utf8.DecodeRune(text[i:])
@@ -118,7 +119,7 @@ func appendValidText(dst, text []byte) ([]byte, int) {
 		if r == utf8.RuneError && size == 1 {
 			piece = replacementChar
 		}
-		if len(dst)-start+len(piece) > excerptBytes {
+		if len(dst)-start+len(piece) > limit {
 			break
 		}
 		dst = append(dst, piece...)

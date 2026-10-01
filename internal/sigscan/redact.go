@@ -78,7 +78,7 @@ func redactMatches(re *regexp.Regexp, capture int, view []byte) []span {
 func appendRedactedExcerpt(dst, scratch, view []byte, values []span) (out, scratchOut []byte, masked bool) {
 	r := redaction{view: view, values: values}
 	scratch = r.appendTo(scratch[:0], excerptBytes+utf8.UTFMax)
-	out, used := appendValidText(dst, scratch)
+	out, used := appendValidText(dst, scratch, excerptBytes)
 	return out, scratch, r.masked && r.firstMask < used
 }
 

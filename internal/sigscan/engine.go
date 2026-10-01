@@ -38,11 +38,10 @@ type engine struct {
 	// full[i] is set by the merge once signature i has Cap findings
 	// stored: a worker then only counts that signature's findings.
 	full []atomic.Bool
-	// redactors are every redacting signature of the scan (the selected
-	// ones and Options.Redactors), and redactGate their keyword gate
-	// (nil when there is none): every excerpt is masked by all of them.
-	redactors  []redactor
-	redactGate *gate
+	// redact holds every redacting signature of the scan (the selected
+	// ones and Options.Redactors) and their keyword gate: every excerpt
+	// is masked by all of them.
+	redact redactorSet
 	// gapLimit is how many candidates a time-gap keeper holds after it
 	// compacts: max(Cap, maxGapCandidates), or a test's tuning.
 	gapLimit int
@@ -149,17 +148,29 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	}
 	e.gate = g
 	e.full = make([]atomic.Bool, len(e.sigs))
-	if err := e.compileRedactors(unique, opts.Redactors); err != nil {
+	redact, err := compileRedactors(unique, opts.Redactors)
+	if err != nil {
 		return nil, err
 	}
+	e.redact = redact
 	return e, nil
+}
+
+// redactorSet is a set of redacting signatures as text is masked by
+// them: each one's redactor, and their keyword gate (nil when the set
+// is empty). It is built once and only read afterwards; the per-line
+// gate counters live in a gateScratch of each goroutine.
+type redactorSet struct {
+	redactors []redactor
+	gate      *gate
 }
 
 // compileRedactors keeps every redacting signature with something to
 // mask, an anchor or a value measure's values, the selected ones first,
 // each id once, and builds their keyword gate (a value measure has no
 // keywords, so it masks every line it finds a value on).
-func (e *engine) compileRedactors(selected, given []*signatures.Signature) error {
+func compileRedactors(selected, given []*signatures.Signature) (redactorSet, error) {
+	var set redactorSet
 	seen := map[string]bool{}
 	var sigs []*signatures.Signature
 	for _, sig := range slices.Concat(selected, given) {
@@ -178,17 +189,47 @@ func (e *engine) compileRedactors(selected, given []*signatures.Signature) error
 		}
 		seen[sig.ID] = true
 		sigs = append(sigs, sig)
-		e.redactors = append(e.redactors, r)
+		set.redactors = append(set.redactors, r)
 	}
 	if len(sigs) == 0 {
-		return nil
+		return set, nil
 	}
 	g, err := newGate(sigs)
 	if err != nil {
-		return err
+		return redactorSet{}, err
 	}
-	e.redactGate = g
-	return nil
+	set.gate = g
+	return set, nil
+}
+
+// newScratch returns gate counters for one goroutine, nil for an empty
+// set.
+func (s redactorSet) newScratch() *gateScratch {
+	if s.gate == nil {
+		return nil
+	}
+	return s.gate.newScratch()
+}
+
+// appendLineValues appends to dst the values every redactor masks on
+// view, in the order the redactors come: a redactor runs only on a line
+// that passes its keyword gate. It stops adding once dst holds more
+// than maxRedactMatches values, since the line is then masked whole.
+// gs is the caller's gate counters (newScratch).
+func (s redactorSet) appendLineValues(dst []span, view []byte, gs *gateScratch) []span {
+	if s.gate == nil {
+		return dst
+	}
+	s.gate.evaluate(view, gs)
+	for i, r := range s.redactors {
+		if len(dst) > maxRedactMatches {
+			break // already more than can be followed: the line is masked whole
+		}
+		if s.gate.passes(int32(i), gs) { // #nosec G115 -- at most the loaded signatures
+			dst = r.appendValues(dst, view)
+		}
+	}
+	return dst
 }
 
 // excerpter builds the excerpts of one goroutine, which owns its gate
@@ -203,11 +244,7 @@ type excerpter struct {
 }
 
 func newExcerpter(e *engine) *excerpter {
-	x := &excerpter{e: e}
-	if e.redactGate != nil {
-		x.gs = e.redactGate.newScratch()
-	}
-	return x
+	return &excerpter{e: e, gs: e.redact.newScratch()}
 }
 
 // build appends the excerpt of a line view to dst with every value a
@@ -216,19 +253,7 @@ func newExcerpter(e *engine) *excerpter {
 // its keyword gate; the values of all of them are masked together, so
 // the bounds and the fail-closed rules apply to their union.
 func (x *excerpter) build(dst, view []byte) ([]byte, bool) {
-	if x.e.redactGate == nil {
-		return appendExcerpt(dst, view), false
-	}
-	x.e.redactGate.evaluate(view, x.gs)
-	x.values = x.values[:0]
-	for i, r := range x.e.redactors {
-		if len(x.values) > maxRedactMatches {
-			break // already more than can be followed: the line is masked whole
-		}
-		if x.e.redactGate.passes(int32(i), x.gs) { // #nosec G115 -- at most the loaded signatures
-			x.values = r.appendValues(x.values, view)
-		}
-	}
+	x.values = x.e.redact.appendLineValues(x.values[:0], view, x.gs)
 	if len(x.values) == 0 {
 		return appendExcerpt(dst, view), false
 	}
