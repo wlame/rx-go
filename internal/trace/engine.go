@@ -790,6 +790,11 @@ func (f SearchFile) Path() string { return f.src.Path() }
 // whether its text is text (Kind.IsText; Kind.NotText says why not).
 func (f SearchFile) Kind() filekind.Kind { return f.kind }
 
+// Pinned is the pin every read of the file goes through: a reader of
+// the file opens it with Pinned().Open, which refuses a path that leads
+// elsewhere by then.
+func (f SearchFile) Pinned() sandbox.Pinned { return f.src }
+
 // ClassifyForSearch decides what the file src leads to, through its pin,
 // as a search decides it before reading: filekind.OfPinnedForReading,
 // which probes with the window the search reads with. The error says

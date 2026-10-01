@@ -45,6 +45,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rx signatures template` prints a commented file with one signature
   of each kind.
 - `RX_SIGNATURES_PATH`: where the signature files are.
+- The signature scan engine: one pass over a file's text, in parallel,
+  for a selection of signatures at once. A plain or seekable zstd file
+  is read in line-aligned chunks (about eight per worker, at least
+  4 MiB each); a gzip, bzip2, xz or zstd stream is decoded once and
+  handed to the workers in batches of whole lines. Every line is
+  matched as its view (without its `\n` or `\r\n`, without a UTF-8
+  byte-order mark at the start of the text, cut at
+  `RX_SIGNATURES_LINE_BYTES`); one Aho-Corasick pass per line finds the
+  keywords of every signature, and an anchor runs only on a line that
+  holds a member of each of its keyword clauses. Findings carry exact
+  1-based line numbers and text offsets, the same for any number of
+  workers, any chunk size and any storage of the text: blocks and runs
+  that cross a chunk edge are finished across it. Each signature keeps
+  its first `RX_FINDINGS_MAX_PER_SIGNATURE` findings by line with an
+  exact count; an excerpt is the first line cut to 200 bytes, with a
+  redacted value masked before it is kept. The commands that scan come
+  next.
 - `RX_SIGNATURES_LINE_BYTES` (default 65536, 1024 to 1048576): how many
   bytes of each line a signature scan matches against; a longer line is
   cut there for matching and still counted at its full length.

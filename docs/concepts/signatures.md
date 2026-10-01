@@ -292,6 +292,85 @@ a `(?i)` anchor only through one of these two characters is not found:
 `(?i)select` gives the keyword `select`, so the line `ſelect 1` is not
 a finding of that signature, though the regex alone would match it.
 
+## How a scan reads a file
+
+A scan reads the file's text once, in parallel, for every selected
+signature at the same time:
+
+- a plain file, or a seekable zstd file, is cut into chunks of whole
+  lines, about eight per worker and at least 4 MiB each, read by
+  `RX_WORKERS` workers at once;
+- a gzip, bzip2, xz or zstd stream is decoded once, by one reader that
+  hands batches of whole lines (about 4 MiB each) to the workers.
+
+The findings are the same whatever the number of workers, the chunk
+sizes and the way the file is stored: a plain file and its compressed
+copies give identical findings, field by field.
+
+**The line view.** Every matcher sees a line as its view: the line
+without its ending (`\n` or `\r\n`), cut at `RX_SIGNATURES_LINE_BYTES`
+bytes (64 KiB by default). A UTF-8 byte-order mark at the start of the
+text is not part of line 1's view, so `^Traceback` matches a first line
+that starts with one; offsets still count its 3 bytes. A longer line is
+matched on its view and counted at its full length, and the scan never
+holds more of it than the view. A line is **blank** when its view is
+empty or holds only spaces and tabs, so a `\r\n` line is blank.
+
+**Numbers.** A finding's lines are 1-based line numbers in the text, the
+numbers `rx samples --lines=` takes. Its offsets are byte positions in
+the text (the decompressed text of a compressed file), the end offset
+exclusive: it is where the line after the finding starts, or the end of
+the text after a last line without a line break.
+
+**Regex signatures.** For each line, one pass finds the keywords of every
+signature (the gate above); the anchor of a signature runs only on a
+line that passes its gate, then `not`. The first match on the line
+decides the value (its `capture` group), `entropy` (Shannon entropy of
+the value, in bits per byte) and `validate`:
+
+| `validate` | The value passes when it is |
+|---|---|
+| `luhn` | digits that pass the Luhn checksum, spaces and dashes between them skipped, at least two |
+| `iban` | an IBAN: a country code that issues them, two check digits, that country's length (spaces skipped), and the ISO 13616 checksum (modulo 97) |
+| `ipv4` | four decimal numbers 0 to 255, without leading zeros |
+| `ipv6` | an IPv6 address, an IPv4-mapped form and a zone included |
+
+A signature gives at most one finding per line.
+
+**Blocks.** The gate applies to the start line only: the lines of an
+open block are tried against the rules of its state, whatever keywords
+they hold. While a block is open, every line goes to it; only a line
+the block refused (it closed before the line) may start another block
+of the same signature, and the line that closed a block by `end` or
+`max_lines` may not. When a block closes, its trailing blank lines are
+dropped; it is then a finding if it still has `min_lines` lines, and
+either way it owned the lines it took. The end of the text closes an
+open block.
+
+**Runs.** A `match` line passes the gate, matches and does not match
+`not`. A `blank` line is blank. A `same` run is a group of consecutive
+equal lines, the first of them included: two lines are equal when
+their views and their full lengths are. A run is a finding when it has
+`min` lines or more.
+
+**Chunk edges.** A block or a run may cross the edge between two
+chunks. The scan joins a run's two halves, and finishes a block that
+crosses into the next chunk by walking that chunk's lines again from its
+start until the walk agrees with the chunk's own; so a finding is never
+cut or doubled by an edge.
+
+**Excerpt and redaction.** A finding's excerpt is its first line's view,
+cut to 200 bytes on a UTF-8 character boundary. For a signature with
+`redact: true` the value (the `capture` group of a regex signature, or
+the anchor's first match of a block or a run) is masked in the excerpt
+before it is kept, wherever it occurs on the line: its first 4
+characters stay and the rest becomes `*`, at most 12 of them
+(`AKIA************`). The unmasked value is never kept.
+
+**The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
+findings of each signature (10,000 by default), by line; their count
+stays exact past it.
+
 ## Examples
 
 ```yaml
