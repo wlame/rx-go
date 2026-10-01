@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -176,6 +177,28 @@ func TestScan_StateFullPartialNone(t *testing.T) {
 	want := all.BySignature["err-line"].Count + all.BySignature["opt-in-sql"].Count
 	if sum.State != StateFull || sum.Count != want {
 		t.Errorf("summary %+v, want full with %d findings", sum, want)
+	}
+}
+
+// A file with a current entry for every signature of the default set is
+// full though no opt-in signature was scanned: a missing opt-in
+// signature never keeps a file from full.
+func TestScan_DefaultSetWithoutOptInIsFull(t *testing.T) {
+	cat := loadCatalogue(t, defErrLine, defNever, defOptIn)
+	file := classify(t, writeLog(t, t.TempDir(), "app.log", sampleLog()))
+	s := newScheduler(1)
+	opts := testOptions(t)
+	got := mustScan(t, s, file, cat, pick(t, cat, "err-line", "never-found"), opts)
+	if got.State != StateFull {
+		t.Errorf("state %s, want full", got.State)
+	}
+	sum, err := s.summary(file.Pinned(), cat, opts)
+	if err != nil || sum == nil || sum.State != StateFull || sum.Count != got.BySignature["err-line"].Count {
+		t.Errorf("summary %+v (%v), want full with err-line's count", sum, err)
+	}
+	read, err := s.read(file, cat, pick(t, cat, "opt-in-sql"), opts)
+	if err != nil || read.State != StateFull || !slices.Equal(read.Missing, []string{"opt-in-sql"}) {
+		t.Errorf("read of the opt-in signature: %+v (%v), want full with it missing", read, err)
 	}
 }
 
@@ -676,9 +699,9 @@ func TestSummary_ReadsOnlyMetaJSON(t *testing.T) {
 	rec.sourceBytes.Store(0)
 
 	var opened []string
-	s.openCache = func(name string) (*os.File, error) {
-		opened = append(opened, filepath.Base(name))
-		return os.Open(name)
+	s.openCache = func(root *os.Root, name string) (io.ReadCloser, error) {
+		opened = append(opened, name)
+		return openCacheFile(root, name)
 	}
 	sum, err := s.summary(file.Pinned(), cat, opts)
 	if err != nil {

@@ -2,15 +2,19 @@ package findings
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -60,11 +64,35 @@ const (
 // longer than lockWait.
 var errLockTimeout = errors.New("another process holds the findings cache directory")
 
-// cacheDir is the directory of the file at path inside the findings
-// cache dir: "<safe_basename>_<sha256(abs path)[:16]>", named as the
-// line index names its files (the same sanitizing, the base name cut so
-// the name fits in index.MaxCacheFileNameBytes).
-func cacheDir(dir, path string) string {
+// errUnsafeEntry reports a symbolic link, or a file of another kind,
+// where the findings cache keeps a directory or a regular file. The
+// cache never follows, writes through or deletes through such an entry:
+// the call treats it as a miss and writes nothing there.
+var errUnsafeEntry = errors.New("not a plain directory or regular file of the findings cache (a symbolic link?)")
+
+// unsafeWarned is set once an unsafe cache entry has been logged, so a
+// planted link gives one warning per process, not one per request.
+var unsafeWarned atomic.Bool
+
+// warnUnsafe logs the first unsafe cache entry of the process.
+func warnUnsafe(path string) {
+	// Go note: CompareAndSwap lets exactly one caller through.
+	if unsafeWarned.CompareAndSwap(false, true) {
+		slog.Default().Warn("findings_cache_unsafe_entry", "path", path,
+			"note", "a symbolic link or special file in the findings cache is never followed; "+
+				"that file's findings are not cached. Later cases are not logged")
+	}
+}
+
+// maxIDBytes is the longest signature id the loader accepts.
+const maxIDBytes = 64
+
+// entryDirName is the name of the directory of the file at path inside
+// the findings cache: "<safe_basename>_<sha256(abs path)[:16]>", named as
+// the line index names its files (the same sanitizing, the base name cut
+// so the name fits in index.MaxCacheFileNameBytes). It is one path
+// component: the sanitizing leaves no separator.
+func entryDirName(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
@@ -72,15 +100,141 @@ func cacheDir(dir, path string) string {
 	sum := sha256.Sum256([]byte(abs))
 	hash16 := hex.EncodeToString(sum[:8])
 	base := index.TrimCacheNamePart(index.SafeBasename(filepath.Base(abs)), index.MaxCacheFileNameBytes-len("_")-len(hash16))
-	return filepath.Join(dir, base+"_"+hash16)
+	return base + "_" + hash16
 }
 
-// entryName is the file name of a signature's entry.
-func entryName(id string) string {
-	if id+entrySuffix == metaName {
-		return metaEntryName
+// cacheDir is the path of the file's directory inside the findings
+// cache dir.
+func cacheDir(dir, path string) string {
+	return filepath.Join(dir, entryDirName(path))
+}
+
+// entryName is the file name of a signature's entry, and false for an id
+// that is not one the loader accepts (kebab-case [a-z0-9-], 1 to 64
+// bytes): such an id is never cached, whatever reached this package.
+func entryName(id string) (string, bool) {
+	if !validID(id) {
+		return "", false
 	}
-	return id + entrySuffix
+	if id+entrySuffix == metaName {
+		return metaEntryName, true
+	}
+	return id + entrySuffix, true
+}
+
+// validID reports whether id is 1 to maxIDBytes bytes of a-z, 0-9 and
+// '-': a name with no separator, no dot and no NUL.
+func validID(id string) bool {
+	if id == "" || len(id) > maxIDBytes {
+		return false
+	}
+	for i := range len(id) {
+		c := id[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+// openEntryDir opens the directory name of the findings cache dir base
+// as an *os.Root: every file operation of the cache goes through it, and
+// a root refuses a path that leaves it. With create, the cache dir and
+// the directory are made when missing.
+//
+// SECURITY: the directory must be a plain directory. A symbolic link in
+// its place (another local user who can write a shared cache dir could
+// plant one toward a directory of yours) is refused with errUnsafeEntry
+// and logged, never followed: the cache would otherwise write its files
+// there and remove the ones it does not know. The directory is checked
+// by Lstat, opened, and the opened directory compared with the one
+// Lstat saw, so a swap between the two is refused too.
+//
+// A directory that does not exist (without create) is errAbsent.
+func openEntryDir(base, name string, create bool) (*os.Root, error) {
+	if create {
+		if err := os.MkdirAll(base, 0o750); err != nil {
+			return nil, err
+		}
+	}
+	baseRoot, err := os.OpenRoot(base)
+	if err != nil {
+		if index.IsNoCacheEntry(err) {
+			return nil, errAbsent
+		}
+		return nil, err
+	}
+	// Go note: defer closes the cache dir's handle when openEntryDir
+	// returns; the directory's own root stays open for the caller.
+	defer func() { _ = baseRoot.Close() }()
+	if create {
+		// mkdirat never follows a link: an existing entry of any kind,
+		// a link included, gives fs.ErrExist and is checked below.
+		if mkErr := baseRoot.Mkdir(name, 0o750); mkErr != nil && !errors.Is(mkErr, fs.ErrExist) {
+			return nil, mkErr
+		}
+	}
+	seen, err := baseRoot.Lstat(name)
+	if err != nil {
+		if index.IsNoCacheEntry(err) {
+			return nil, errAbsent
+		}
+		return nil, err
+	}
+	path := filepath.Join(base, name)
+	if !seen.IsDir() { // the Lstat of a link is not a directory
+		warnUnsafe(path)
+		return nil, errUnsafeEntry
+	}
+	dir, err := baseRoot.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := dir.Stat(".")
+	if err != nil || !os.SameFile(seen, opened) {
+		_ = dir.Close()
+		warnUnsafe(path)
+		return nil, errUnsafeEntry
+	}
+	return dir, nil
+}
+
+// openRegular opens name in the directory root when it is a regular
+// file, with flag (os.O_RDONLY or os.O_RDWR).
+//
+// SECURITY: an *os.Root follows a symbolic link that stays inside it,
+// even with O_NOFOLLOW, so the entry is checked by Lstat first: a link
+// or a special file (a named pipe, whose open would wait for a writer)
+// is refused with errUnsafeEntry and logged. O_NONBLOCK keeps the open
+// from waiting if the entry is swapped for a pipe after the check, and
+// the opened file must be the one Lstat saw.
+func openRegular(root *os.Root, name string, flag int) (*os.File, error) {
+	seen, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(root.Name(), name)
+	if !seen.Mode().IsRegular() {
+		warnUnsafe(path)
+		return nil, errUnsafeEntry
+	}
+	f, err := root.OpenFile(name, flag|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(seen, opened) {
+		_ = f.Close()
+		warnUnsafe(path)
+		return nil, errUnsafeEntry
+	}
+	return f, nil
+}
+
+// openCacheFile opens a cache file of the directory root for reading
+// (openRegular): what scheduler.openCache does outside tests.
+func openCacheFile(root *os.Root, name string) (io.ReadCloser, error) {
+	return openRegular(root, name, os.O_RDONLY)
 }
 
 // metaFile is meta.json: the identity of the file the entries describe
@@ -213,11 +367,12 @@ func maxEntryBytes(capSetting int) int64 {
 // directory that cannot hold one): an ordinary miss.
 var errAbsent = errors.New("no cache file")
 
-// readJSON decodes the JSON file at path into v, through open, reading
-// at most limit bytes. A file that is not there is errAbsent; a larger
-// one, or one that does not parse, is an error.
-func readJSON(open func(string) (*os.File, error), path string, limit int64, v any) error {
-	f, err := open(path)
+// readJSON decodes the cache file name of the directory root into v,
+// opened through open, reading at most limit bytes. A file that is not
+// there is errAbsent; a larger one, or one that does not parse, is an
+// error; a link or a special file is errUnsafeEntry.
+func readJSON(open func(*os.Root, string) (io.ReadCloser, error), root *os.Root, name string, limit int64, v any) error {
+	f, err := open(root, name)
 	if err != nil {
 		if index.IsNoCacheEntry(err) {
 			return errAbsent
@@ -231,27 +386,34 @@ func readJSON(open func(string) (*os.File, error), path string, limit int64, v a
 	// from a longer one.
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return fmt.Errorf("read %s: %w", name, err)
 	}
 	if int64(len(data)) > limit {
-		return fmt.Errorf("%s is larger than %d bytes", path, limit)
+		return fmt.Errorf("%s is larger than %d bytes", name, limit)
 	}
 	if err := json.Unmarshal(data, v); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return fmt.Errorf("parse %s: %w", name, err)
 	}
 	return nil
 }
 
-// writeJSONAtomic writes v as JSON to name in dir: a temporary file of
-// its own in dir (tmpPrefix, created with O_EXCL and mode 0600), then a
-// rename over the name, so a reader sees the old file or the new one,
-// never part of one. A failure removes the temporary file.
-func writeJSONAtomic(dir, name string, v any) (err error) {
+// tmpAttempts bounds the tries for a free temporary name (8 random
+// bytes each, so a second try is already rare).
+const tmpAttempts = 8
+
+// writeJSONAtomic writes v as JSON to name in the directory root: a
+// temporary file of its own (tmpPrefix and 16 random hex digits,
+// created with O_EXCL and mode 0600, which never opens an existing file
+// or link), then a rename over the name. A reader sees the old file or
+// the new one, never part of one, and a rename replaces a link of that
+// name rather than writing through it. A failure removes the temporary
+// file.
+func writeJSONAtomic(root *os.Root, name string, v any) (err error) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", name, err)
 	}
-	tmp, err := os.CreateTemp(dir, tmpPrefix+"*")
+	tmp, tmpName, err := createTemp(root)
 	if err != nil {
 		return err
 	}
@@ -260,20 +422,41 @@ func writeJSONAtomic(dir, name string, v any) (err error) {
 	// fails after creating it.
 	defer func() {
 		if err != nil {
-			_ = os.Remove(tmp.Name())
+			_ = root.Remove(tmpName)
 		}
 	}()
 	if _, err = tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write %s: %w", tmp.Name(), err)
+		return fmt.Errorf("write %s: %w", tmpName, err)
 	}
 	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", tmp.Name(), err)
+		return fmt.Errorf("close %s: %w", tmpName, err)
 	}
-	if err = os.Rename(tmp.Name(), filepath.Join(dir, name)); err != nil {
-		return fmt.Errorf("rename %s: %w", tmp.Name(), err)
+	if err = root.Rename(tmpName, name); err != nil {
+		return fmt.Errorf("rename %s: %w", tmpName, err)
 	}
 	return nil
+}
+
+// createTemp creates a new temporary file in the directory root.
+func createTemp(root *os.Root) (*os.File, string, error) {
+	var lastErr error
+	for range tmpAttempts {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, "", err
+		}
+		name := tmpPrefix + hex.EncodeToString(b[:])
+		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return f, name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, "", err
+		}
+		lastErr = err
+	}
+	return nil, "", lastErr
 }
 
 // dirLock is a held lock on a cache directory.
@@ -285,17 +468,24 @@ type dirLock struct {
 	held bool
 }
 
-// lockDirectory takes the advisory lock of a cache directory (flock on
-// its lockName file, created when missing and never removed, since
-// removing a lock file lets two processes lock two files). The lock
-// stops other processes, and other schedulers of this process, from
-// writing the directory meanwhile; it is released when the process
-// ends, whatever way it ends.
+// lockDirectory takes the advisory lock of the cache directory root
+// (flock on its lockName file, created when missing and never removed,
+// since removing a lock file lets two processes lock two files). The
+// lock stops other processes, and other schedulers of this process,
+// from writing the directory meanwhile; it is released when the process
+// ends, whatever way it ends. A lock file that is a link or a special
+// file is errUnsafeEntry: nothing is written.
 //
 // It polls without blocking, so it can stop when ctx is canceled and
 // after lockWait.
-func lockDirectory(ctx context.Context, dir string) (*dirLock, error) {
-	f, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR|os.O_CREATE, 0o600)
+func lockDirectory(ctx context.Context, root *os.Root) (*dirLock, error) {
+	// O_CREATE with O_EXCL makes a new lock file and never opens an
+	// existing entry; an existing one is opened only when it is a
+	// regular file (openRegular).
+	f, err := root.OpenFile(lockName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		f, err = openRegular(root, lockName, os.O_RDWR)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -339,27 +529,30 @@ func (l *dirLock) release() {
 	_ = l.f.Close()
 }
 
-// removeUnnamed removes from a cache directory every entry file that
-// meta does not name and, when the writer holds the lock, every
+// removeUnnamed removes from the cache directory root every entry file
+// that meta does not name and, when the writer holds the lock, every
 // temporary file (one left by a crash: under the lock no other writer
 // has one open). It leaves meta.json, the lock file and any name it
-// does not know. Removal is best effort: a file that stays is never
-// read, since meta.json does not name it.
-func removeUnnamed(dir string, meta *metaFile, lockHeld bool) {
-	entries, err := os.ReadDir(dir)
+// does not know. A removal unlinks the name itself: a link is removed,
+// never what it points at. Removal is best effort: a file that stays is
+// never read, since meta.json does not name it.
+func removeUnnamed(root *os.Root, meta *metaFile, lockHeld bool) {
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return
 	}
 	named := map[string]bool{metaName: true, lockName: true}
 	for id := range meta.Signatures {
-		named[entryName(id)] = true
+		if name, ok := entryName(id); ok {
+			named[name] = true
+		}
 	}
 	for _, e := range entries {
 		name := e.Name()
 		temporary := strings.HasPrefix(name, tmpPrefix)
 		orphan := strings.HasSuffix(name, entrySuffix) && !temporary && !named[name]
 		if (temporary && lockHeld) || orphan {
-			_ = os.Remove(filepath.Join(dir, name))
+			_ = root.Remove(name)
 		}
 	}
 }

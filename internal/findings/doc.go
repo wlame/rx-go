@@ -40,6 +40,11 @@
 // holds an advisory lock on the directory's .lock file, which makes it
 // one step for other processes.
 //
+// Every operation goes through the file's directory opened as an
+// *os.Root, and nothing in the cache tree is followed as a symbolic
+// link: a directory, meta.json, entry or lock file that is a link (or a
+// special file) is a miss, never read, written or deleted through.
+//
 // # Concurrency
 //
 // Within a process, one scan of a file runs at a time: a second caller

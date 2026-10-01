@@ -42,8 +42,9 @@ type scheduler struct {
 	// beforeMeta, when set, runs after the entry files are written and
 	// before meta.json; an error stops the write there, as a crash would.
 	beforeMeta func() error
-	// openCache opens a cache file for reading (os.Open).
-	openCache func(name string) (*os.File, error)
+	// openCache opens a cache file of a cache directory for reading
+	// (openCacheFile, which refuses a link or a special file).
+	openCache func(root *os.Root, name string) (io.ReadCloser, error)
 	// now is the clock of scanned_at (time.Now).
 	now func() time.Time
 }
@@ -53,7 +54,7 @@ type scheduler struct {
 func newScheduler(maxScans int) *scheduler {
 	return &scheduler{
 		slots: newSlotLimiter(maxScans), files: &fileLocks{},
-		scanFile: sigscan.Scan, openCache: os.Open, now: time.Now,
+		scanFile: sigscan.Scan, openCache: openCacheFile, now: time.Now,
 	}
 }
 
@@ -136,11 +137,11 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 	if opts.Dir == "" {
 		return nil, errNoCacheDir
 	}
-	dir := cacheDir(opts.Dir, file.Path())
+	dirName := entryDirName(file.Path())
 	// One scan of a file at a time in this scheduler; the lock is taken
 	// before the cache is read, so a caller that waited sees what the
 	// one before it wrote and scans only what is still missing.
-	unlock, err := s.files.lock(ctx, dir)
+	unlock, err := s.files.lock(ctx, filepath.Join(opts.Dir, dirName))
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +153,7 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 		return nil, fmt.Errorf("%s: %w", file.Path(), err)
 	}
 	scope := newKeyScope(cat, opts)
-	view := s.loadView(dir, start, scope, cat, sel, opts.Scan.Cap)
+	view := s.loadView(opts.Dir, dirName, start, scope, cat, sel, opts.Scan.Cap)
 	missing := sel
 	if !opts.Force {
 		missing = view.missing(sel)
@@ -178,7 +179,9 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 	}
 	fresh := freshEntries(missing, res, s.scannedAt())
 	if unchanged {
-		if err := s.commit(ctx, dir, file.Path(), start, scope, missing, fresh); err != nil {
+		// An unsafe directory or lock file was logged where it was
+		// found; any other failure is logged here, once per process.
+		if err := s.commit(ctx, opts.Dir, dirName, file.Path(), start, scope, missing, fresh); err != nil && !errors.Is(err, errUnsafeEntry) {
 			warnWriteFailed(file.Path(), err)
 		}
 	}
@@ -199,9 +202,15 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	if opts.Dir == "" {
 		return nil, errNoCacheDir
 	}
-	dir := cacheDir(opts.Dir, file.Path())
+	root, err := openEntryDir(opts.Dir, entryDirName(file.Path()), false)
+	if err != nil {
+		// Absent, unsafe (logged) or unreadable: a miss.
+		return newAnswer(cat, sel, nil, nil), nil
+	}
+	// Go note: defer closes the directory when read returns.
+	defer func() { _ = root.Close() }()
 	scope := newKeyScope(cat, opts)
-	meta, err := s.readMeta(dir)
+	meta, err := s.readMeta(root)
 	if err != nil {
 		// Absent, or unreadable (readMeta logged it): a miss.
 		return newAnswer(cat, sel, nil, nil), nil
@@ -210,7 +219,7 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	// that scanned a changed file wrote its entries after the change,
 	// so if any entry read here came from it, the check below sees the
 	// change and drops them all.
-	view := s.viewOf(dir, meta, scope, cat, sel, opts.Scan.Cap)
+	view := s.viewOf(root, meta, scope, cat, sel, opts.Scan.Cap)
 	now, err := s.identityOf(file.Pinned())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", file.Path(), err)
@@ -229,8 +238,16 @@ func (s *scheduler) summary(file paths.Pinned, cat *signatures.Catalogue, opts S
 	if file.IsZero() {
 		return nil, errors.New("findings: summary of no file")
 	}
-	meta, err := s.readMeta(cacheDir(opts.Dir, file.Path()))
-	if errors.Is(err, errAbsent) {
+	root, err := openEntryDir(opts.Dir, entryDirName(file.Path()), false)
+	if errors.Is(err, errAbsent) || errors.Is(err, errUnsafeEntry) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	meta, err := s.readMeta(root)
+	if errors.Is(err, errAbsent) || errors.Is(err, errUnsafeEntry) {
 		return nil, nil
 	}
 	if err != nil {
@@ -363,13 +380,19 @@ func (v cacheView) missing(sel []*signatures.Signature) []*signatures.Signature 
 }
 
 // loadView reads the cache of a file whose identity is start.
-func (s *scheduler) loadView(dir string, start index.SourceIdentity, scope keyScope, cat *signatures.Catalogue,
+func (s *scheduler) loadView(base, dirName string, start index.SourceIdentity, scope keyScope, cat *signatures.Catalogue,
 	sel []*signatures.Signature, capSetting int) cacheView {
-	meta, err := s.readMeta(dir)
-	if err != nil || !meta.identity().Equal(start) {
-		return cacheView{entries: map[string]cachedEntry{}, current: map[string]bool{}}
+	empty := cacheView{entries: map[string]cachedEntry{}, current: map[string]bool{}}
+	root, err := openEntryDir(base, dirName, false)
+	if err != nil {
+		return empty
 	}
-	return s.viewOf(dir, meta, scope, cat, sel, capSetting)
+	defer func() { _ = root.Close() }()
+	meta, err := s.readMeta(root)
+	if err != nil || !meta.identity().Equal(start) {
+		return empty
+	}
+	return s.viewOf(root, meta, scope, cat, sel, capSetting)
 }
 
 // viewOf is the view of a meta.json already read: the current ids, and
@@ -378,17 +401,18 @@ func (s *scheduler) loadView(dir string, start index.SourceIdentity, scope keySc
 // stores). An entry file that is missing, cannot be parsed or does not
 // agree counts as missing, never as an error: a writer may be replacing
 // it, and a scan writes it again.
-func (s *scheduler) viewOf(dir string, meta *metaFile, scope keyScope, cat *signatures.Catalogue,
+func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue,
 	sel []*signatures.Signature, capSetting int) cacheView {
 	view := cacheView{meta: meta, entries: map[string]cachedEntry{}, current: currentInMeta(meta, scope, cat)}
 	for _, sig := range sel {
 		summary, named := meta.Signatures[sig.ID]
-		if !named || summary.Key != scope.key(sig) {
+		name, cacheable := entryName(sig.ID)
+		if !named || !cacheable || summary.Key != scope.key(sig) {
 			delete(view.current, sig.ID)
 			continue
 		}
 		var entry entryFile
-		err := readJSON(s.openCache, filepath.Join(dir, entryName(sig.ID)), maxEntryBytes(capSetting), &entry)
+		err := readJSON(s.openCache, root, name, maxEntryBytes(capSetting), &entry)
 		if err != nil || entry.Key != summary.Key || len(entry.Findings) != summary.Stored || int64(summary.Stored) > summary.Count {
 			delete(view.current, sig.ID)
 			continue
@@ -412,15 +436,16 @@ func currentInMeta(meta *metaFile, scope keyScope, cat *signatures.Catalogue) ma
 	return current
 }
 
-// readMeta reads meta.json of a cache directory. A file that is absent
-// or of another version is errAbsent; one that cannot be read or parsed
-// is logged and returned as an error.
-func (s *scheduler) readMeta(dir string) (*metaFile, error) {
+// readMeta reads meta.json of the cache directory root. A file that is
+// absent or of another version is errAbsent; a link or a special file is
+// errUnsafeEntry (logged where it was found); one that cannot be read or
+// parsed is logged and returned as an error.
+func (s *scheduler) readMeta(root *os.Root) (*metaFile, error) {
 	var meta metaFile
-	path := filepath.Join(dir, metaName)
-	err := readJSON(s.openCache, path, maxMetaBytes, &meta)
-	if errors.Is(err, errAbsent) {
-		return nil, errAbsent
+	path := filepath.Join(root.Name(), metaName)
+	err := readJSON(s.openCache, root, metaName, maxMetaBytes, &meta)
+	if errors.Is(err, errAbsent) || errors.Is(err, errUnsafeEntry) {
+		return nil, err
 	}
 	if err != nil {
 		slog.Default().Warn("findings_cache_unreadable", "path", path, "error", err.Error())
@@ -456,12 +481,16 @@ func (s *scheduler) readMeta(dir string) (*metaFile, error) {
 // counts as missing). Entries of another process that this process sees
 // as stale (other settings) are kept as they are: they are overwritten
 // when this process scans that signature.
-func (s *scheduler) commit(ctx context.Context, dir, sourcePath string, start index.SourceIdentity, scope keyScope,
+func (s *scheduler) commit(ctx context.Context, base, dirName, sourcePath string, start index.SourceIdentity, scope keyScope,
 	scanned []*signatures.Signature, fresh map[string]cachedEntry) error {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	// Every operation below goes through root, the file's directory,
+	// checked to be a plain directory and not a link (openEntryDir).
+	root, err := openEntryDir(base, dirName, true)
+	if err != nil {
 		return err
 	}
-	lock, err := lockDirectory(ctx, dir)
+	defer func() { _ = root.Close() }()
+	lock, err := lockDirectory(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -469,9 +498,13 @@ func (s *scheduler) commit(ctx context.Context, dir, sourcePath string, start in
 
 	meta := newMeta(sourcePath, start)
 	for _, sig := range scanned {
+		name, cacheable := entryName(sig.ID)
+		if !cacheable {
+			continue // an id no loader gives; its findings are answered, not cached
+		}
 		e := fresh[sig.ID]
 		key := scope.key(sig)
-		if err := writeJSONAtomic(dir, entryName(sig.ID), entryOf(key, e.result)); err != nil {
+		if err := writeJSONAtomic(root, name, entryOf(key, e.result)); err != nil {
 			return err
 		}
 		meta.Signatures[sig.ID] = metaEntry{Key: key, Count: e.result.Count, Stored: len(e.result.Findings), ScannedAt: e.scannedAt}
@@ -481,17 +514,17 @@ func (s *scheduler) commit(ctx context.Context, dir, sourcePath string, start in
 			return err
 		}
 	}
-	if other, err := s.readMeta(dir); err == nil && other.identity().Equal(start) {
+	if other, err := s.readMeta(root); err == nil && other.identity().Equal(start) {
 		for id, summary := range other.Signatures {
 			if _, replaced := meta.Signatures[id]; !replaced {
 				meta.Signatures[id] = summary
 			}
 		}
 	}
-	if err := writeJSONAtomic(dir, metaName, meta); err != nil {
+	if err := writeJSONAtomic(root, metaName, meta); err != nil {
 		return err
 	}
-	removeUnnamed(dir, meta, lock.held)
+	removeUnnamed(root, meta, lock.held)
 	return nil
 }
 
@@ -540,7 +573,9 @@ func newAnswer(cat *signatures.Catalogue, sel []*signatures.Signature, entries m
 
 // stateOf measures the current ids against cat's default set: none
 // without a current id, full when every default signature is current,
-// partial otherwise. An opt-in signature never makes a file partial.
+// partial otherwise. A missing opt-in signature never keeps a file
+// from full; a file with only opt-in entries is partial (it was scanned,
+// not with the default set).
 func stateOf(cat *signatures.Catalogue, current map[string]bool) State {
 	if len(current) == 0 {
 		return StateNone

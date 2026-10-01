@@ -18,7 +18,9 @@ type State string
 const (
 	// StateFull: every signature of the default set has a current entry.
 	StateFull State = "full"
-	// StatePartial: at least one current entry, and not full.
+	// StatePartial: at least one current entry, opt-in signatures
+	// included, and not full. A missing opt-in signature never keeps a
+	// file from full.
 	StatePartial State = "partial"
 	// StateNone: no current entry.
 	StateNone State = "none"

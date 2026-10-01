@@ -213,12 +213,14 @@ nothing prunes the directories of deleted files, as for `indexes/`. The
 findings cache does not depend on the line index: deleting an index
 keeps the findings.
 
-**Full, partial, none.** A file whose every signature of the default set
-(every loaded signature without `default: false`) has a current entry
-is *full*; one with at least one current entry is *partial*; one with
-none is *none*. An opt-in signature never makes a file partial, and
-the count shown for a file is the sum of `count` over all its current
-entries, opt-in ones included. Reading the state reads `meta.json`
+**Full, partial, none.** A file is *full* when every signature of the
+default set (every loaded signature without `default: false`) has a
+current entry; *partial* when it has at least one current entry, opt-in
+signatures included, and is not full; *none* when it has no current
+entry. A missing opt-in signature never keeps a file from full, but a
+file scanned only with opt-in signatures is partial: it was scanned,
+not with the defaults. The count shown for a file is the sum of `count`
+over all its current entries, opt-in ones included. Reading the state reads `meta.json`
 only: it compares the identity by the file's stat (size, mtime, inode,
 device, ctime) and leaves the fingerprint, which needs a read of the
 file, to the scan.
@@ -389,6 +391,19 @@ from writing it at the same time:
 3. `meta.json`, by temporary file and rename: the commit point;
 4. every entry file `meta.json` does not name is removed, and every
    temporary file left by a crash.
+
+Every operation on the cache goes through the per-file directory opened
+as a root that cannot be left, and nothing in the cache tree is
+followed as a symbolic link. A per-file directory that is a link (to
+anywhere, inside the cache or out), or a `meta.json`, an entry file or
+a `.lock` that is a link or a special file, is never read, written or
+deleted through: that file's findings are scanned and not cached, an
+entry that is a link counts as missing (a later write replaces the link
+with a file of the cache), and the first such case of a process is
+logged at Warn level as `findings_cache_unsafe_entry` with its path. A
+removal removes a link itself, never what it points at. Another local
+user who can write a shared `RX_CACHE_DIR` can so make rx scan again,
+never make it write or delete a file outside the cache.
 
 A reader trusts only what `meta.json` names, and an entry file whose
 key differs from the one `meta.json` names, or that is missing or cut

@@ -212,6 +212,18 @@ output, and the file it leads to is never written.
 Without this, an unauthenticated `rx serve` would expose an
 arbitrary-file-write primitive to any client that can reach the socket.
 
+The findings cache keeps the same discipline inside the cache directory,
+which another local user may be able to write when `RX_CACHE_DIR` is
+shared. Each file's directory under `findings/` is opened as a root
+that cannot be left, after a check that it is a plain directory and not
+a symbolic link; its files are opened only when they are regular files
+(checked before the open and again on the opened handle), written by a
+temporary file made with `O_EXCL` and a rename, and removed by name. A
+link anywhere in that tree is never followed, written through or
+deleted through: the scan answers without the cache and logs
+`findings_cache_unsafe_entry` once. See
+[caching](caching.md#the-findings-cache).
+
 ### Symlink behavior
 
 Symlinks are **followed once** at startup. If you configure

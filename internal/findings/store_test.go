@@ -18,14 +18,19 @@ func TestReadJSON_RefusesAFileOverTheLimit(t *testing.T) {
 	if err := os.WriteFile(path, []byte(doc+strings.Repeat(" ", 100)), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
 	var v entryFile
-	if err := readJSON(os.Open, path, int64(len(doc)+5), &v); err == nil || !strings.Contains(err.Error(), "larger than") {
+	if err := readJSON(openCacheFile, root, "entry.json", int64(len(doc)+5), &v); err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Errorf("over the limit: %v", err)
 	}
-	if err := readJSON(os.Open, path, 1<<10, &v); err != nil || v.Key != "abc" {
+	if err := readJSON(openCacheFile, root, "entry.json", 1<<10, &v); err != nil || v.Key != "abc" {
 		t.Errorf("within the limit: %v, %+v", err, v)
 	}
-	if err := readJSON(os.Open, filepath.Join(dir, "none.json"), 1<<10, &v); !errors.Is(err, errAbsent) {
+	if err := readJSON(openCacheFile, root, "none.json", 1<<10, &v); !errors.Is(err, errAbsent) {
 		t.Errorf("a missing file: %v", err)
 	}
 }
