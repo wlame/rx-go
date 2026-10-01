@@ -229,7 +229,7 @@ func (w *walk) newTimeWalkers(n int) {
 	}
 	w.gapOf = make([]*gapWalker, n)
 	for _, si := range e.gaps {
-		w.gapOf[si] = newGapWalker(e.sigs[si], w.ex, max(e.cap, maxGapCandidates))
+		w.gapOf[si] = newGapWalker(e.sigs[si], w.ex, e.gapLimit)
 	}
 	w.densityOf = make([]*densityWalker, n)
 	for _, si := range e.densities {

@@ -286,9 +286,10 @@ format they find nothing.
   intervals of the file, kept to three significant digits (exact under
   a second; 61,234 ms counts as 61,200). Until the median is known, a
   scan keeps every interval of at least `min_gap`, at most 65,536 of
-  them (or `RX_FINDINGS_MAX_PER_SIGNATURE`, when larger): a file with
-  more such silences keeps only the longest ones, and reports only
-  silences longer than the longest one it dropped.
+  them in each chunk (or `RX_FINDINGS_MAX_PER_SIGNATURE`, when larger):
+  a file with more such silences keeps only the longest ones, the same
+  ones however the file is cut, and reports only silences longer than
+  the longest one it dropped, so its count is then a lower bound.
 - **`density`** counts every line, from the first stamped line on, in
   the time bucket of its own timestamp or, for a line without one, of
   the last stamped line before it. The bucket is `bucket`, or with

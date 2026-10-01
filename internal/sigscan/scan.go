@@ -46,11 +46,22 @@ type tuning struct {
 	chunkLines     int
 	framesPerChunk int
 	batchLines     int
+	// gapLimit sets how many candidates a time-gap keeper holds after
+	// it compacts; 0 means max(Cap, maxGapCandidates).
+	gapLimit int
 	// open opens the file; nil means its pin's Open.
 	open func(paths.Pinned) (fileReader, int64, error)
 	// rewalkLine, when set, is called for each line the merge walks
 	// again (tests).
 	rewalkLine func()
+}
+
+// gapLimitFor is the time-gap keeper limit of a scan whose cap is cap.
+func (t tuning) gapLimitFor(cap int) int {
+	if t.gapLimit > 0 {
+		return t.gapLimit
+	}
+	return max(cap, maxGapCandidates)
 }
 
 // defaultTuning is what Scan uses.
@@ -132,6 +143,7 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	e.gapLimit = tune.gapLimitFor(e.cap)
 	s := newScanRun(e, opts, tune, size)
 	var m *merger
 	switch {
@@ -174,6 +186,7 @@ func scanBytes(ctx context.Context, text []byte, sigs []*signatures.Signature, o
 	if err != nil {
 		return nil, err
 	}
+	e.gapLimit = defaultTuning().gapLimitFor(e.cap)
 	s := newScanRun(e, opts, defaultTuning(), int64(len(text)))
 	m, err := s.runPlain(ctx, bytes.NewReader(text), int64(len(text)))
 	if err != nil {

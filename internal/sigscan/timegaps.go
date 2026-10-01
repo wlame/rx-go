@@ -23,9 +23,10 @@ import (
 // that holds it. At most maxGapCandidates (or the cap, when it is
 // larger) candidates are kept: past that, only the longest silences are
 // kept, dropping every candidate of the shortest length kept so far, so
-// what is kept does not depend on the order the chunks are merged in.
+// what is kept does not depend on the order the chunks are merged in,
+// nor on where the file is cut: the merge takes each chunk's cutoff.
 // Such a file then reports only silences longer than the longest one
-// dropped.
+// dropped, and its count is a lower bound.
 //
 // Across chunks: a chunk reports its first stamped line (and, for
 // time-gap, the line just before it, when that line is in the chunk),
@@ -207,7 +208,16 @@ type gapMerge struct {
 // add merges a chunk whose first line has index base. carry is the last
 // stamped line before the chunk and lastLine the line just before the
 // chunk.
+//
+// The chunk's keeper may have compacted and dropped every candidate at
+// or below its cutoff; the merge takes that cutoff first, so a shorter
+// candidate of another chunk (the edge pair included) is dropped here
+// as it would be in one chunk. A chunk's cutoff is never above the
+// cutoff of the whole file (the (limit+1)-th longest of a part is at
+// most that of the whole), so what is kept is the same however the
+// file is cut.
 func (gm *gapMerge) add(edge *gapEdge, base int64, carry stampRef, lastLine lineRef) {
+	gm.kept.raise(edge.kept.cutoff)
 	if f := edge.first; f != nil && carry.ok {
 		delta := f.line.ms - carry.ms
 		gm.intervals.add(delta)
@@ -259,6 +269,29 @@ func (k *gapKeeper) accepts(delta int64) bool {
 	return delta > k.cutoff
 }
 
+// raise lifts the cutoff to cutoff, when that is higher, and drops the
+// candidates at or below it.
+func (k *gapKeeper) raise(cutoff int64) {
+	if cutoff <= k.cutoff {
+		return
+	}
+	k.cutoff = cutoff
+	k.dropAtOrBelowCutoff()
+}
+
+// dropAtOrBelowCutoff drops the candidates at or below the cutoff,
+// keeping the others in line order.
+func (k *gapKeeper) dropAtOrBelowCutoff() {
+	kept := k.items[:0]
+	for _, c := range k.items {
+		if c.delta > k.cutoff {
+			kept = append(kept, c)
+		}
+	}
+	clear(k.items[len(kept):])
+	k.items = kept
+}
+
 // add keeps c when it is longer than the cutoff.
 func (k *gapKeeper) add(c gapCandidate) {
 	if !k.accepts(c.delta) {
@@ -284,14 +317,7 @@ func (k *gapKeeper) compact() {
 	}
 	slices.Sort(deltas)
 	k.cutoff = max(k.cutoff, deltas[len(deltas)-k.limit-1])
-	kept := k.items[:0]
-	for _, c := range k.items {
-		if c.delta > k.cutoff {
-			kept = append(kept, c)
-		}
-	}
-	clear(k.items[len(kept):])
-	k.items = kept
+	k.dropAtOrBelowCutoff()
 }
 
 // intervalCounts counts intervals between stamped lines by their value

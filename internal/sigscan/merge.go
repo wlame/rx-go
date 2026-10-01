@@ -105,7 +105,7 @@ func newMerger(ctx context.Context, e *engine, onRewalkLine func(), rewalk func(
 		m.sigs[si].long = &longLineMerge{spec: *e.sigs[si].long}
 	}
 	for _, si := range e.gaps {
-		m.sigs[si].gap = &gapMerge{spec: *e.sigs[si].gap, kept: gapKeeper{limit: max(e.cap, maxGapCandidates), cutoff: -1}}
+		m.sigs[si].gap = &gapMerge{spec: *e.sigs[si].gap, kept: gapKeeper{limit: e.gapLimit, cutoff: -1}}
 	}
 	for _, si := range e.densities {
 		m.sigs[si].density = &densityMerge{spec: *e.sigs[si].density, hist: densityHist{grid: e.sigs[si].density.grid}}

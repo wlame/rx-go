@@ -43,6 +43,9 @@ type engine struct {
 	// (nil when there is none): every excerpt is masked by all of them.
 	redactors  []redactor
 	redactGate *gate
+	// gapLimit is how many candidates a time-gap keeper holds after it
+	// compacts: max(Cap, maxGapCandidates), or a test's tuning.
+	gapLimit int
 	// times reads the lines' timestamps; nil when the file has no
 	// timestamp format. Scan sets it once it has read the head of the
 	// file, before any walk starts.
@@ -91,7 +94,8 @@ type compiledSig struct {
 }
 
 // compile builds the engine of a selection. A signature id given twice
-// is scanned once. A measure is refused: this engine has none.
+// is scanned once. Each measure is compiled to the machinery it runs on
+// (measures.go).
 func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	e := &engine{lineBytes: opts.LineBytes, cap: opts.Cap}
 	if e.lineBytes <= 0 {

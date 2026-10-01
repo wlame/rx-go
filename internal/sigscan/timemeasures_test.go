@@ -335,3 +335,40 @@ func TestIntervalCountsStepBackIsZero(t *testing.T) {
 		t.Errorf("median %d, want 0", got)
 	}
 }
+
+// gapCutoffText: lines a second apart, six gaps of 120 s, then one of
+// 90 s and one of 200 s. With a keeper of 3 the six equal gaps compact
+// away together and raise the cutoff to 120 s, so the 90 s gap is
+// dropped too: one finding, the 200 s gap (lines 17-18).
+var gapCutoffText = func() string {
+	seconds := rangeSeconds(0, 9)
+	for i := 1; i <= 6; i++ {
+		seconds = append(seconds, 9+120*i)
+	}
+	return secondsLog(append(seconds, 729+90, 729+90+200), nil)
+}()
+
+// A chunk whose keeper compacted hands its cutoff to the merge: a later
+// chunk's shorter gap is dropped there as it is in one chunk, on every
+// chunking and storage, and when the cut falls right after the chunk
+// that compacted.
+func TestScan_TimeGapKeeperCutoffCrossesChunks(t *testing.T) {
+	sigs := loadSigs(t, sigFile(measureSig("gap", "time-gap", "min_gap: 10s, factor: 2")), "gap")
+	text := []byte(gapCutoffText)
+	refTune := defaultTuning()
+	refTune.gapLimit = 3
+	ref := scanVariant(t, variant{name: "reference", tune: refTune, workers: 1}, text, sigs, Options{})
+	if got := spans(ref, "gap"); !slices.Equal(got, []lineSpan{{17, 18}}) {
+		t.Fatalf("one chunk: %v, want lines 17-18", got)
+	}
+	split := refTune
+	split.chunkLines = 16
+	variants := append([]variant{{name: "split after the compacted chunk", tune: split, workers: 2}},
+		append(chunkVariants(), storageVariants()...)...)
+	for _, v := range variants {
+		v.tune.gapLimit = 3
+		t.Run(v.name, func(t *testing.T) {
+			requireSameFindings(t, ref, scanVariant(t, v, text, sigs, Options{}))
+		})
+	}
+}
