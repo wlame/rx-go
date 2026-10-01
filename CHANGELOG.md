@@ -95,7 +95,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte scan; the run is the value), `binary` (runs of lines that hold a
   NUL byte or bytes that are not UTF-8) and `unprefixed` (runs of lines
   without a timestamp of their own, nothing when stamped lines are under
-  `min_share` of the file). With `redact: true` an `entropy` or
+  `min_share` of the file), `long-line` (a line of `min_bytes` or more
+  whose length is at least `factor` times the lower median length of
+  the `window` lines on each side, windows reaching across chunk edges)
+  and `json-block` (a line that is only `{` or `[` through its matching
+  closer at the same indent, by a string-aware bracket count; the old
+  `json-blob-multiline` detector's cases give the same ranges, and a
+  block still open at `max_lines` or at the end of the text is a
+  finding of the lines it holds). With `redact: true` an `entropy` or
   `base64-run` signature masks its value and every excerpt of a line
   that holds one; `redact: true` on any other measure refuses the
   signature (`redact: the measure long-line finds no value to mask`).

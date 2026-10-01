@@ -86,11 +86,17 @@ type sigMerge struct {
 	// indexes.
 	run    runPiece
 	hasRun bool
+	// long is a long-line measure's merge.
+	long *longLineMerge
 }
 
 func newMerger(ctx context.Context, e *engine, onRewalkLine func(), rewalk func(res *chunkResult, fn func(l *line) bool) error) *merger {
-	return &merger{ctx: ctx, e: e, sigs: make([]sigMerge, len(e.sigs)), rewalk: rewalk, scratch: e.gate.newScratch(),
+	m := &merger{ctx: ctx, e: e, sigs: make([]sigMerge, len(e.sigs)), rewalk: rewalk, scratch: e.gate.newScratch(),
 		onRewalkLine: onRewalkLine, ex: newExcerpter(e)}
+	for _, si := range e.longLines {
+		m.sigs[si].long = &longLineMerge{spec: *e.sigs[si].long}
+	}
+	return m
 }
 
 // add merges the next chunk, in text order.
@@ -125,6 +131,8 @@ func (m *merger) add(res *chunkResult) error {
 			m.sigs[si].carry = carried(sc.open, res.lines)
 		case cs.regex != nil, cs.value != nil:
 			m.take(idx, sc.findings, sc.count)
+		case cs.long != nil:
+			m.sigs[si].long.add(m, idx, sc, m.base, res.lines)
 		}
 	}
 	m.base += res.lines
@@ -159,6 +167,12 @@ func (m *merger) settleTimes(res *chunkResult) {
 		if sc.open != nil {
 			sc.open.tm.settle(sc.open.startOff, carry, lookback)
 		}
+		if sc.long != nil {
+			for i := range sc.long.cands {
+				c := &sc.long.cands[i]
+				c.tm.settle(c.start, carry, lookback)
+			}
+		}
 	}
 }
 
@@ -176,6 +190,9 @@ func (m *merger) finish() {
 		b.open, b.st = true, *ms.carry
 		b.close(m.storeSink(si, m.base+1, true))
 		ms.carry = nil
+	}
+	for _, si := range m.e.longLines {
+		m.sigs[si].long.decide(m.e.sigs[si], m.storeSink(si, 1, true), true)
 	}
 	m.dropUnprefixedBelowShare()
 }

@@ -16,7 +16,11 @@ import (
 //   - entropy and base64-run find a value on one line, as a regex
 //     signature does (valueMatcher, addValueFinding);
 //   - binary and unprefixed find runs of qualifying lines, as a run
-//     signature does (runBinary, runUnprefixed in run.go).
+//     signature does (runBinary, runUnprefixed in run.go);
+//   - json-block is a block, opened and closed by a bracket count
+//     instead of regexes (jsonblock.go);
+//   - long-line decides each line against the lengths around it, with
+//     a merge of its own across chunk edges (longline.go).
 //
 // compileMeasure refuses any other measure.
 
@@ -68,6 +72,10 @@ func compileMeasure(cs *compiledSig, sig *signatures.Signature) error {
 	case signatures.UnprefixedParams:
 		cs.run = &runProgram{mode: runUnprefixed, min: int64(p.Min)}
 		cs.minShare = p.MinShare
+	case signatures.JSONBlockParams:
+		cs.block = compileJSONBlock(p)
+	case signatures.LongLineParams:
+		cs.long = &longLineSpec{window: int64(p.Window), factor: int64(p.Factor), minBytes: int64(p.MinBytes)}
 	default:
 		return fmt.Errorf("signature %s: the measure %s cannot be scanned by this build", sig.ID, sig.Measure.Name)
 	}

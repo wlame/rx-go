@@ -31,6 +31,9 @@ type blockProgram struct {
 	// whatever they hold; rules is then unused.
 	lines              int
 	minLines, maxLines int
+	// json marks a json-block measure: opened and closed by a bracket
+	// count (jsonblock.go) instead of anchor and rules.
+	json bool
 }
 
 // compileBlock turns a BlockSpec into a program: state names become
@@ -95,6 +98,11 @@ type blockState struct {
 	masked  bool
 	// tm is the start line's time.
 	tm timeRef
+	// A json-block's bracket count, its opener's indent, and the closer
+	// it waits for.
+	depth  int
+	indent int
+	closer byte
 }
 
 // blockWalker runs one block signature over consecutive lines. Blocks
@@ -124,6 +132,9 @@ func newBlockWalker(cs *compiledSig, ex *excerpter, times *timeTracker) *blockWa
 // before it, and the line may then be tested as a new start.
 func (b *blockWalker) feed(l *line, idx int64, out sink) bool {
 	p := b.prog
+	if p.json {
+		return b.feedJSON(l, idx, out)
+	}
 	closeAfter := false
 	if p.lines > 0 {
 		b.st.remaining--
@@ -169,6 +180,10 @@ func (b *blockWalker) join(l *line, idx int64) {
 // has checked the keyword gate.
 func (b *blockWalker) tryOpen(l *line, idx int64, out sink) {
 	p := b.prog
+	if p.json {
+		b.tryOpenJSON(l, idx, out)
+		return
+	}
 	if !p.anchor.Match(l.view) || (p.not != nil && p.not.Match(l.view)) {
 		return
 	}

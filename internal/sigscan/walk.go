@@ -148,6 +148,9 @@ type sigChunk struct {
 	// final chunk, which closed it).
 	open *blockState
 	runs runEdges
+	// long is a long-line measure's lengths and candidates at the
+	// chunk's edges.
+	long *longLineEdge
 }
 
 // walk runs every selected signature over the lines of one chunk, in
@@ -169,6 +172,8 @@ type walk struct {
 	// times follows the chunk's stamped lines and gives each finding
 	// the time of its first line.
 	times timeTracker
+	// longOf are the long-line measures' walkers, by signature index.
+	longOf []*longLineWalker
 }
 
 // newWalk returns a walk for one chunk. gs is the goroutine's gate
@@ -185,6 +190,12 @@ func newWalk(e *engine, gs *gateScratch) *walk {
 	}
 	for _, si := range e.runs {
 		w.runOf[si] = newRunWalker(e.sigs[si], w.ex, &w.times)
+	}
+	if len(e.longLines) > 0 {
+		w.longOf = make([]*longLineWalker, n)
+		for _, si := range e.longLines {
+			w.longOf[si] = newLongLineWalker(e.sigs[si], w.ex)
+		}
 	}
 	return w
 }
@@ -217,6 +228,9 @@ func (w *walk) line(l *line) bool {
 	}
 	for _, si := range e.valueSigs {
 		addValueFinding(e.sigs[si], l, idx, &w.sinks[si], &w.exBuf, w.ex, w.times.at(l.start))
+	}
+	for _, si := range e.longLines {
+		w.longOf[si].line(l, idx, &w.times, &w.sinks[si])
 	}
 	if l.stamped {
 		w.res.stamped++
@@ -336,6 +350,9 @@ func (w *walk) finish(final bool) *chunkResult {
 	}
 	for _, si := range w.e.runs {
 		res.sigs[si].runs = w.runOf[si].edges(w.prevView, &w.sinks[si])
+	}
+	for _, si := range w.e.longLines {
+		res.sigs[si].long = w.longOf[si].finish()
 	}
 	for si := range w.sinks {
 		sc := &res.sigs[si]

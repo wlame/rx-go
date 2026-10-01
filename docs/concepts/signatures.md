@@ -227,6 +227,23 @@ What each measure finds:
 
 How each measure decides, in detail:
 
+- **`long-line`** compares a line's full length (without its ending)
+  with its neighbors: the `window` lines before it and the `window`
+  lines after it, fewer at the start and the end of the text. The line
+  is long when its length is at least `min_bytes` and at least `factor`
+  times the median of their lengths; the median of an even count is the
+  lower of the two middle values. A text of one line has no long line.
+  The windows reach across chunk edges: every chunking gives the same
+  findings.
+- **`json-block`** opens on a line that is only `{` or `[` (spaces and
+  tabs around it allowed) and counts brackets on the following lines,
+  outside JSON strings (a backslash in a string escapes the next
+  character). It closes on the line where the count comes back to zero,
+  when that line ends with the matching `}` or `]` at the opener's
+  indent; a balance anywhere else, or more closers than openers,
+  abandons it without a finding. It is a block in every other way: it
+  owns its lines, `max_lines` closes it as a finding of that many lines,
+  and the end of the text closes it.
 - **`entropy`** cuts the line view into tokens, the longest runs of
   `A-Z a-z 0-9 + / = _ -`, and keeps those of `min_length` bytes or
   more. A UUID (`8-4-4-4-12` hex digits) and a token of digits only are

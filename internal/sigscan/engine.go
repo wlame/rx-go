@@ -27,6 +27,8 @@ type engine struct {
 	// valueSigs are the value measures (entropy, base64-run): tested on
 	// every line, one finding per line.
 	valueSigs []int32
+	// longLines are the long-line measures.
+	longLines []int32
 	// hasSame is true when a `same` run is selected: the walk then
 	// keeps each line's view to compare the next line with.
 	hasSame bool
@@ -77,6 +79,8 @@ type compiledSig struct {
 	// minShare is the unprefixed measure's min_share: its runs count
 	// only when stamped lines are at least this share of the file.
 	minShare float64
+	// long is a long-line measure's parameters.
+	long *longLineSpec
 }
 
 // compile builds the engine of a selection. A signature id given twice
@@ -113,8 +117,12 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 			e.hasSame = e.hasSame || cs.run.mode == runSame
 		case cs.value != nil:
 			e.valueSigs = append(e.valueSigs, cs.idx)
+		case cs.long != nil:
+			e.longLines = append(e.longLines, cs.idx)
 		}
-		if sig.Anchor() != nil && sig.LinePass() {
+		// A json-block has no anchor and no keywords: its opener is
+		// tried on every line, as an anchor without keywords is.
+		if (sig.Anchor() != nil && sig.LinePass()) || (cs.block != nil && cs.block.json) {
 			e.lineAnchored = append(e.lineAnchored, cs.idx)
 		}
 	}
