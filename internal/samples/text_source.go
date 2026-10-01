@@ -296,14 +296,7 @@ func (s *seekableText) size() (int64, error) {
 // lines of context ahead of it; frame 0 starts at line 1 and needs no
 // skipping.
 func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
-	holding := sort.Search(len(s.table.Frames), func(i int) bool {
-		return s.table.Frames[i].DecompressedEnd() > offset
-	})
-	if holding == len(s.table.Frames) {
-		// Past the end of the text: the pass reads the last frame to
-		// the end and leaves the offset unanswered.
-		holding = len(s.table.Frames) - 1
-	}
+	holding := s.frameHolding(offset)
 	if holding == 0 {
 		return s.cursorFrom(0, nil, 0, 1), nil
 	}
@@ -314,6 +307,16 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 		start--
 	}
 	return s.cursorAtFrame(start)
+}
+
+// frameHolding returns the frame whose text holds offset, or the last
+// frame for an offset past the end of the text (a pass then reads the
+// last frame to the end and leaves the offset unanswered).
+func (s *seekableText) frameHolding(offset int64) int {
+	holding := sort.Search(len(s.table.Frames), func(i int) bool {
+		return s.table.Frames[i].DecompressedEnd() > offset
+	})
+	return min(holding, len(s.table.Frames)-1)
 }
 
 // frameBeforeLine returns the frame a read for `line` starts in: the
