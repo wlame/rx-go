@@ -26,23 +26,21 @@ import (
 // the last one; its time is that first line's own timestamp.
 //
 // Bucket sizes. An explicit bucket is used as it is. `auto` picks the
-// smallest of 1s, 2s, 5s, 10s, 15s, 30s, 1m, 2m, 5m, 10m, 15m, 30m, 1h,
-// 2h, 3h, 6h, 12h and 1d that cuts the span (latest minus earliest
+// smallest size of the divisor chain 1s, 5s, 15s, 30s, 1m, 5m, 15m,
+// 30m, 1h, 3h, 6h, 12h, 1d that cuts the span (latest minus earliest
 // time) into at most 1,000 buckets. A series never has more than
 // maxSeriesBuckets buckets: past that, the bucket doubles until it fits
 // (an explicit 1s over years, or more than about 179 years at 1d).
 //
 // Across chunks. The span, and so the bucket of auto, is known only at
-// the end, so each chunk counts in slots of its own granularity, which
-// the merge adds up. The granularities form a chain where each divides
-// the next, and each divides the final bucket of any longer span: for
-// auto, the greatest common divisor of the ladder sizes from the one
-// the span picks upwards (1s, 5s, 15s, 30s, 1m, 5m, 15m, 30m, 1h, 3h,
-// 6h, 12h, 1d, then doubling days); for an explicit bucket, the bucket
-// doubled as often as the span needs. Slots of a finer granularity are
-// therefore whole parts of a coarser one, and regrouping them gives
-// exactly the counts a single walk would give. A slot also keeps its
-// first and last line, so the finding of a burst needs no second read.
+// the end, so each chunk counts in slots of the bucket its own span
+// would pick, which the merge adds up. Each size of the chain divides
+// the next (and 1d each doubling of it), and an explicit bucket only
+// doubles, so the bucket of a chunk's span divides the bucket of any
+// longer span: slots of a finer bucket are whole parts of a coarser
+// one, and regrouping them gives exactly the counts a single walk would
+// give. A slot also keeps its first and last line, so the finding of a
+// burst needs no second read.
 
 // densityTargetBuckets is how many buckets auto aims at over the span.
 const densityTargetBuckets = 1000
@@ -50,15 +48,11 @@ const densityTargetBuckets = 1000
 // maxSeriesBuckets is the most buckets a density series holds.
 const maxSeriesBuckets = 1 << 16
 
-// densityLadder are the bucket sizes auto picks from, in milliseconds.
-var densityLadder = millis(time.Second, 2*time.Second, 5*time.Second, 10*time.Second, 15*time.Second, 30*time.Second,
-	time.Minute, 2*time.Minute, 5*time.Minute, 10*time.Minute, 15*time.Minute, 30*time.Minute,
-	time.Hour, 2*time.Hour, 3*time.Hour, 6*time.Hour, 12*time.Hour, 24*time.Hour)
-
-// densityLevels[i] is the greatest common divisor of densityLadder[i:]:
-// the coarsest slot that divides every bucket auto can pick for a span
-// at least as long as one that picks densityLadder[i].
-var densityLevels = suffixGCDs(densityLadder)
+// densityLadder are the bucket sizes auto picks from, in milliseconds:
+// a divisor chain, each size a whole multiple of the one before.
+var densityLadder = millis(time.Second, 5*time.Second, 15*time.Second, 30*time.Second,
+	time.Minute, 5*time.Minute, 15*time.Minute, 30*time.Minute,
+	time.Hour, 3*time.Hour, 6*time.Hour, 12*time.Hour, 24*time.Hour)
 
 // millis converts durations to milliseconds.
 func millis(ds ...time.Duration) []int64 {
@@ -67,26 +61,6 @@ func millis(ds ...time.Duration) []int64 {
 		out[i] = d.Milliseconds()
 	}
 	return out
-}
-
-// suffixGCDs returns, for each i, the greatest common divisor of
-// values[i:].
-func suffixGCDs(values []int64) []int64 {
-	out := make([]int64, len(values))
-	g := int64(0)
-	for i := len(values) - 1; i >= 0; i-- {
-		g = gcd(g, values[i])
-		out[i] = g
-	}
-	return out
-}
-
-// gcd is the greatest common divisor of two non-negative numbers.
-func gcd(a, b int64) int64 {
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
 }
 
 // floorDiv divides rounding toward minus infinity, so that slot numbers
@@ -134,21 +108,10 @@ func (g densityGrid) bucket(span int64) int64 {
 	return b
 }
 
-// level returns the slot granularity of a span: it divides the bucket
-// of that span and of every longer one, and every level of a shorter
-// span divides it.
+// level returns the slot granularity of a span: the bucket that span
+// would pick, which divides the bucket of every longer span.
 func (g densityGrid) level(span int64) int64 {
-	b := g.bucket(span)
-	if g.explicit != 0 {
-		return b
-	}
-	i := ladderIndex(span)
-	if b != densityLadder[i] {
-		// Doubled past the ladder: whole days, each level twice the one
-		// before.
-		return b
-	}
-	return densityLevels[i]
+	return g.bucket(span)
 }
 
 // densitySlot is the lines of one slot of time.

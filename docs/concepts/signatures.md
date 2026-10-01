@@ -292,9 +292,10 @@ format they find nothing.
 - **`density`** counts every line, from the first stamped line on, in
   the time bucket of its own timestamp or, for a line without one, of
   the last stamped line before it. The bucket is `bucket`, or with
-  `auto` the smallest of 1s, 2s, 5s, 10s, 15s, 30s, 1m, 2m, 5m, 10m,
-  15m, 30m, 1h, 2h, 3h, 6h, 12h and 1d that cuts the file's span (its
-  latest time minus its earliest) into at most 1,000 buckets; buckets
+  `auto` the smallest of 1s, 5s, 15s, 30s, 1m, 5m, 15m, 30m, 1h, 3h,
+  6h, 12h and 1d (each a whole multiple of the one before) that cuts
+  the file's span (its latest time minus its earliest) into at most
+  1,000 buckets; buckets
   start at multiples of their size since 1970. A series holds at most
   65,536 buckets: past that, the bucket doubles until it fits. A bucket
   is a burst when it holds at least `min_count` lines, at least

@@ -214,9 +214,11 @@ func TestScan_TimeMeasuresWithoutTimestamps(t *testing.T) {
 }
 
 // The bucket of a density series: an explicit one as it is, auto the
-// smallest ladder size that cuts the span into at most 1,000 buckets,
-// and either doubled while the series would pass maxSeriesBuckets; and
-// the slot level divides the bucket of every longer span.
+// smallest size of the divisor chain (1s, 5s, 15s, 30s, 1m, 5m, 15m,
+// 30m, 1h, 3h, 6h, 12h, 1d) that cuts the span into at most 1,000
+// buckets, and either doubled while the series would pass
+// maxSeriesBuckets; and the slot level divides the bucket of every
+// longer span.
 func TestDensityGrid(t *testing.T) {
 	day := (24 * time.Hour).Milliseconds()
 	cases := []struct {
@@ -227,7 +229,10 @@ func TestDensityGrid(t *testing.T) {
 		{densityGrid{}, 0, 1000},
 		{densityGrid{}, 3_599_000, 5000},
 		{densityGrid{}, 1000 * 60_000, 60_000},
-		{densityGrid{}, 1000*60_000 + 1, 120_000},
+		{densityGrid{}, 1000*60_000 + 1, 300_000},
+		{densityGrid{}, 1_500_000, 5000},
+		{densityGrid{}, 9_000_000, 15_000},
+		{densityGrid{}, 7_000_000_000, 10_800_000},
 		{densityGrid{}, 2000 * day, day},
 		{densityGrid{}, 70_000 * day, 2 * day},
 		{densityGrid{explicit: 7000}, 3_600_000, 7000},
