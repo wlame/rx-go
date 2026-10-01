@@ -161,12 +161,10 @@ type timeTracker struct {
 // observe reads the own timestamp of line l, records it on the line for
 // the measures (l.stamped, l.ms), and makes l the last stamped line
 // when it has one. It is called for every line, in order, before any
-// finding of the line is made.
+// finding of the line is made, in a file with a timestamp format: a
+// line comes from the splitter with stamped false, which is the answer
+// in a file without one.
 func (t *timeTracker) observe(l *line) {
-	l.stamped, l.ms = false, 0
-	if t == nil || t.src == nil {
-		return
-	}
 	if ms, ok := t.src.stampOf(l); ok {
 		l.stamped, l.ms = true, ms
 		t.last = stampRef{ms: ms, start: l.start, ok: true}

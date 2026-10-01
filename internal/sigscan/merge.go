@@ -445,7 +445,9 @@ func (m *merger) replayBlocks(res *chunkResult, sigs []int32) error {
 		if m.onRewalkLine != nil {
 			m.onRewalkLine()
 		}
-		times.observe(l)
+		if times.src != nil {
+			times.observe(l)
+		}
 		m.e.gate.evaluate(l.view, m.scratch)
 		for _, rp := range reps {
 			if rp.done {

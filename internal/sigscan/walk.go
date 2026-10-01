@@ -241,7 +241,9 @@ func (w *walk) newTimeWalkers(n int) {
 // timestamp, the gate, then only the signatures the line can concern.
 func (w *walk) line(l *line) bool {
 	e := w.e
-	w.times.observe(l)
+	if e.times != nil {
+		w.times.observe(l)
+	}
 	e.gate.evaluate(l.view, w.gs)
 	idx := w.idx
 	// An open block takes the line first; only a line it refused may
