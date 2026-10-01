@@ -61,6 +61,30 @@ func IdentityFromInfo(path string, info os.FileInfo) SourceIdentity {
 	return id
 }
 
+// Equal reports whether id and other record the same file in the same
+// state: every field equal, and a field missing from one missing from
+// the other too. Two stats of one unchanged file give equal identities;
+// a write, a replacement or a growth between them does not.
+func (id SourceIdentity) Equal(other SourceIdentity) bool {
+	return id.SizeBytes == other.SizeBytes &&
+		id.ModifiedAt == other.ModifiedAt &&
+		equalPointees(id.Inode, other.Inode) &&
+		equalPointees(id.ChangedAt, other.ChangedAt) &&
+		equalPointees(id.Fingerprint, other.Fingerprint)
+}
+
+// equalPointees reports whether a and b are both nil or point at equal
+// values.
+//
+// Go note: [T comparable] makes this one function for every type whose
+// values == can compare (uint64 and string here).
+func equalPointees[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 // MatchesFile reports whether the file at path is still the file id
 // describes. A file that cannot be stated does not match.
 //

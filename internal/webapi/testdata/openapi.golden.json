@@ -1145,6 +1145,14 @@
           "path": {
             "type": "string"
           },
+          "progress": {
+            "description": "Share of the task's input read so far, from 0 to 1. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "result": {
             "anyOf": [
               {
@@ -1180,6 +1188,7 @@
           "started_at",
           "completed_at",
           "error",
+          "progress",
           "result"
         ],
         "type": "object"
@@ -1966,6 +1975,16 @@
               }
             },
             "description": "OK"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "The file's line index is being built and did not finish within the server's wait (RX_SAMPLES_WAIT_SECONDS). The body names the build's task: poll GET /v1/tasks/{task_id} until it ends, then send the same request again."
           },
           "400": {
             "content": {

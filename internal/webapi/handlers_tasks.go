@@ -54,6 +54,7 @@ func projectTaskState(t *tasks.Task) rxtypes.TaskStatusResponse {
 		Status:    string(t.Status),
 		Path:      t.Path,
 		Operation: t.Operation,
+		Progress:  t.Progress(),
 		Result:    t.Result,
 	}
 	if !t.StartedAt.IsZero() {
