@@ -6,9 +6,13 @@ import (
 	"testing"
 )
 
+// An empty RX_CACHE_DIR or XDG_CACHE_HOME counts as unset in
+// GetCacheBase, so the tests "unset" one with t.Setenv(name, ""), which
+// restores the variable when the test ends.
+
 func TestGetCacheBase_Default(t *testing.T) {
-	os.Unsetenv("RX_CACHE_DIR")
-	os.Unsetenv("XDG_CACHE_HOME")
+	t.Setenv("RX_CACHE_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("no home dir on this platform")
@@ -33,7 +37,7 @@ func TestGetCacheBase_RXCacheDirTakesPriority(t *testing.T) {
 
 func TestGetCacheBase_XDGCacheHome(t *testing.T) {
 	tmp := t.TempDir()
-	os.Unsetenv("RX_CACHE_DIR")
+	t.Setenv("RX_CACHE_DIR", "")
 	t.Setenv("XDG_CACHE_HOME", tmp)
 	got := GetCacheBase()
 	want := filepath.Join(tmp, "rx")
@@ -81,8 +85,8 @@ func TestCacheSubdirectories(t *testing.T) {
 func TestGetCacheBase_FallbackWithNoHome(t *testing.T) {
 	// Hard to exercise because os.UserHomeDir is hard to fail deterministically.
 	// Instead, verify that the default path construction is well-formed.
-	os.Unsetenv("RX_CACHE_DIR")
-	os.Unsetenv("XDG_CACHE_HOME")
+	t.Setenv("RX_CACHE_DIR", "")
+	t.Setenv("XDG_CACHE_HOME", "")
 	got := GetCacheBase()
 	if got == "" {
 		t.Error("expected non-empty path")
