@@ -120,27 +120,31 @@ vuln:
 
 # ── tests ────────────────────────────────────────────────────────────────
 
+# Every go test run below goes through scripts/test-isolated-home.sh: it
+# runs the tests under a throwaway HOME and fails when one of them wrote an
+# rx cache file there instead of into its package's own RX_CACHE_DIR.
+
 # Run the unit tests (e.g. just test -run TestTrace ./internal/trace/)
 test *args:
-    go test {{args}} ./...
+    ./scripts/test-isolated-home.sh go test {{args}} ./...
 
 # Run the tests with the race detector — mandatory before merge
 test-race:
-    go test -race -count=1 ./...
+    ./scripts/test-isolated-home.sh go test -race -count=1 ./...
 
 # Hunt flaky tests by repeating a package (e.g. just test-repeat ./internal/trace/)
 test-repeat pkg='./...':
-    go test -race -count=10 {{pkg}}
+    ./scripts/test-isolated-home.sh go test -race -count=10 {{pkg}}
 
 # Benchmarks. Not a CI gate; for local before/after comparison.
 bench *args:
-    go test -run='^$' -bench=. -benchmem {{args}} ./...
+    ./scripts/test-isolated-home.sh go test -run='^$' -bench=. -benchmem {{args}} ./...
 
 # Tests with the coverage floor
 cover:
     #!/usr/bin/env bash
     set -euo pipefail
-    go test -race -coverprofile=cover.out -covermode=atomic ./...
+    ./scripts/test-isolated-home.sh go test -race -coverprofile=cover.out -covermode=atomic ./...
     total=$(go tool cover -func=cover.out | awk '/^total:/ {gsub(/%/,"",$3); print $3}')
     echo "total coverage: ${total}%  (floor: {{coverage_min}}%)"
     awk -v t="$total" -v m="{{coverage_min}}" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' \
