@@ -32,6 +32,13 @@
 // the count stays exact. The answer is the same for any number of
 // workers, any chunk size, and any storage of the text.
 //
+// Every finding has the time of its first line, or of the nearest
+// earlier stamped line within Options.LookbackBytes (times.go). The
+// scan reads the file's timestamp format and each line's timestamp with
+// the index's own functions, never a stored index; the merge carries the
+// last stamped line from chunk to chunk to settle the findings whose
+// chunk had no stamp before them.
+//
 // The package never reads the environment: every setting comes through
 // Options.
 package sigscan

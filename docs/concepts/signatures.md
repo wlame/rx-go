@@ -392,6 +392,23 @@ finding is marked masked. A redacting signature takes part only on a
 line that passes its keyword gate (a line that holds the Kelvin sign or
 the long s passes every gate), and only where an excerpt is kept.
 
+**Times.** Every finding has a time: the timestamp of its first line,
+or else that of the nearest earlier line with one, when that line
+starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB before the finding's first
+line (the rule of [effective timestamps](timestamps.md#effective-timestamps));
+otherwise none, and none in a file without timestamps. A traceback two
+lines after a stamped line takes that line's time. The scan reads the
+file's timestamp format from the head of its text, and each line's
+timestamp, with the functions an index build uses, but it never reads a
+stored index: a finding's time is the time the index records for the
+same line, whether the file has an index or not. A time is milliseconds
+since the Unix epoch in the file's own frame, as the index keeps it:
+the UTC instant for a file whose timestamps carry zones, the wall clock
+as written for one whose timestamps carry none. A chunk that holds no
+stamped line before a finding takes the last stamped line of the chunks
+before it, by the same distance rule, so every chunking gives the same
+time.
+
 **The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
 findings of each signature (10,000 by default), by line; their count
 stays exact past it.

@@ -29,8 +29,12 @@ type Options struct {
 	// first ones by line; 0 or less means DefaultCap. Count stays exact
 	// past it.
 	Cap int
-	// LookbackBytes is how far back a finding without a timestamp of
-	// its own looks for one (RX_TIMESTAMP_LOOKBACK_KB in bytes).
+	// LookbackBytes is how far back, in bytes of text, a finding whose
+	// first line has no timestamp of its own takes the timestamp of an
+	// earlier line (RX_TIMESTAMP_LOOKBACK_KB in bytes): the nearest
+	// stamped line counts when it starts at most this many bytes before
+	// the finding's first line. 0 or less keeps only a line's own
+	// timestamp, as the setting's 0 does.
 	LookbackBytes int
 	// Redactors are the loaded signatures with `redact: true`, selected
 	// or not (signatures.Catalogue.Redactors): every excerpt of every
@@ -56,8 +60,13 @@ type Options struct {
 type Finding struct {
 	StartLine, EndLine     int64
 	StartOffset, EndOffset int64
-	// TimeMS is the time of the finding's first line, or nil when it is
-	// not known.
+	// TimeMS is the time of the finding's first line, in milliseconds
+	// since the Unix epoch in the file's own frame, as an index records
+	// it (the UTC instant for a file whose timestamps carry zones, the
+	// wall clock read as UTC for one whose timestamps carry none): the
+	// line's own timestamp, or that of the nearest earlier stamped line
+	// when it starts at most Options.LookbackBytes before. Nil when
+	// there is none, and in a file without timestamps.
 	TimeMS *int64
 	// Excerpt is the first line's view cut to 200 bytes on a UTF-8
 	// boundary, with every value a redacting signature matches on it
@@ -97,6 +106,7 @@ type SignatureResult struct {
 type Result struct {
 	BySignature map[string]*SignatureResult
 	// BytesRead is how many bytes of the file the scan read, as stored
-	// on disk: the whole file, plus what was read twice at chunk edges.
+	// on disk: the whole file, plus what was read twice at chunk edges,
+	// plus the head of the file read for its timestamp format.
 	BytesRead int64
 }

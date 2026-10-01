@@ -126,6 +126,12 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 	// file is closed whatever happens below.
 	defer func() { _ = fr.Close() }()
 	r := &countingReaderAt{r: fr}
+	// The timestamp format is read from the head of the text through
+	// the same counting reader, so BytesRead includes the head read.
+	e.times, err = detectTimes(r, size, kind, mtimeOf(file.Pinned()), opts.LookbackBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	s := newScanRun(e, opts, tune, size)
 	var m *merger
 	switch {
@@ -146,9 +152,25 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 	return &Result{BySignature: m.result(), BytesRead: r.n.Load()}, nil
 }
 
-// scanBytes scans text held in memory as a plain file.
+// mtimeOf is the modification time of a pinned file, in nanoseconds
+// since the Unix epoch, as the pin saw it (the time an index of the file
+// records); 0 for a pin without file information.
+func mtimeOf(pin paths.Pinned) int64 {
+	info := pin.Info()
+	if info == nil {
+		return 0
+	}
+	return info.ModTime().UnixNano()
+}
+
+// scanBytes scans text held in memory as a plain file, whose mtime is
+// taken as the Unix epoch.
 func scanBytes(ctx context.Context, text []byte, sigs []*signatures.Signature, opts Options) (*Result, error) {
 	e, err := compile(sigs, opts)
+	if err != nil {
+		return nil, err
+	}
+	e.times, err = detectTimes(bytes.NewReader(text), int64(len(text)), filekind.Kind{}, 0, opts.LookbackBytes)
 	if err != nil {
 		return nil, err
 	}

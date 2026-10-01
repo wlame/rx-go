@@ -35,6 +35,10 @@ type engine struct {
 	// (nil when there is none): every excerpt is masked by all of them.
 	redactors  []redactor
 	redactGate *gate
+	// times reads the lines' timestamps; nil when the file has no
+	// timestamp format. Scan sets it once it has read the head of the
+	// file, before any walk starts.
+	times *timeSource
 }
 
 // redactor is a redacting signature as an excerpt is masked by it: its

@@ -21,6 +21,11 @@ type line struct {
 	// a first line that starts with a byte-order mark, else 0. A value
 	// span in the view plus shift is a position in the line.
 	shift int
+	// stamped and ms are the line's own timestamp, in the file's frame
+	// (timeTracker.observe fills them before the line is matched;
+	// stamped is false in a file without timestamps).
+	stamped bool
+	ms      int64
 }
 
 // rawFinding is a finding as a walk reports it: line indexes relative
@@ -35,6 +40,8 @@ type rawFinding struct {
 	// masked says the finding's text is masked: its signature redacts,
 	// or a redactor masked something in the excerpt.
 	masked bool
+	// tm is the time of the finding's first line.
+	tm timeRef
 }
 
 // sink receives the findings of one signature from a walk.
@@ -54,6 +61,7 @@ func toFinding(cs *compiledSig, f *rawFinding, lineBase int64) Finding {
 	out := Finding{
 		StartLine: lineBase + f.startIdx, EndLine: lineBase + f.endIdx,
 		StartOffset: f.startOff, EndOffset: f.endOff,
+		TimeMS: f.tm.pointer(),
 		Masked: f.masked,
 	}
 	if f.hasEx {
@@ -71,9 +79,12 @@ func toFinding(cs *compiledSig, f *rawFinding, lineBase int64) Finding {
 // of the signature (full), the chunk only counts.
 type chunkSink struct {
 	findings []Finding
-	count    int64
-	cap      int
-	full     *atomic.Bool
+	// pending are the indexes in findings of those whose time the merge
+	// decides (timePending), in order.
+	pending []int32
+	count   int64
+	cap     int
+	full    *atomic.Bool
 }
 
 func (s *chunkSink) storing() bool  { return len(s.findings) < s.cap && !s.full.Load() }
@@ -85,6 +96,9 @@ func (s *chunkSink) add(cs *compiledSig, f *rawFinding) {
 		// Line numbers stay chunk-relative (0-based) until the merge
 		// knows how many lines come before the chunk.
 		s.findings = append(s.findings, toFinding(cs, f, 0))
+		if f.tm.state == timePending {
+			s.pending = append(s.pending, int32(len(s.findings)-1)) // #nosec G115 -- at most Cap findings
+		}
 	}
 }
 
@@ -104,6 +118,10 @@ type chunkResult struct {
 	// span says where the chunk's lines lie, so the merge can walk them
 	// again.
 	span chunkSpan
+	// lastStamp is the chunk's last stamped line (ok false when it has
+	// none): the merge carries it to settle the pending times of the
+	// chunks after it.
+	lastStamp stampRef
 }
 
 // chunkSpan places a chunk's lines in the text: they start at start
@@ -119,7 +137,9 @@ type sigChunk struct {
 	// findings are the chunk's first findings (chunk-relative lines),
 	// count all of them. For a run, only those that touch neither edge.
 	findings []Finding
-	count    int64
+	// pending are the indexes in findings whose time the merge decides.
+	pending []int32
+	count   int64
 	// open is the block still open after the chunk's last line, with
 	// chunk-relative line indexes (nil when none, and always nil for a
 	// final chunk, which closed it).
@@ -143,6 +163,9 @@ type walk struct {
 	prevView []byte
 	prevLen  int64
 	res      *chunkResult
+	// times follows the chunk's stamped lines and gives each finding
+	// the time of its first line.
+	times timeTracker
 }
 
 // newWalk returns a walk for one chunk. gs is the goroutine's gate
@@ -150,23 +173,24 @@ type walk struct {
 func newWalk(e *engine, gs *gateScratch) *walk {
 	n := len(e.sigs)
 	w := &walk{e: e, gs: gs, blockOf: make([]*blockWalker, n), runOf: make([]*runWalker, n), sinks: make([]chunkSink, n),
-		res: &chunkResult{sigs: make([]sigChunk, n)}, ex: newExcerpter(e)}
+		res: &chunkResult{sigs: make([]sigChunk, n)}, ex: newExcerpter(e), times: timeTracker{src: e.times}}
 	for i := range w.sinks {
 		w.sinks[i] = chunkSink{cap: e.cap, full: &e.full[i]}
 	}
 	for _, si := range e.blocks {
-		w.blockOf[si] = newBlockWalker(e.sigs[si], w.ex)
+		w.blockOf[si] = newBlockWalker(e.sigs[si], w.ex, &w.times)
 	}
 	for _, si := range e.runs {
-		w.runOf[si] = newRunWalker(e.sigs[si], w.ex)
+		w.runOf[si] = newRunWalker(e.sigs[si], w.ex, &w.times)
 	}
 	return w
 }
 
-// line handles one line. It is the per-line path of a scan: the gate,
-// then only the signatures the line can concern.
+// line handles one line. It is the per-line path of a scan: the line's
+// timestamp, the gate, then only the signatures the line can concern.
 func (w *walk) line(l *line) bool {
 	e := w.e
+	w.times.observe(l)
 	e.gate.evaluate(l.view, w.gs)
 	idx := w.idx
 	// An open block takes the line first; only a line it refused may
@@ -235,19 +259,19 @@ func matchesRun(p *runProgram, view []byte) bool {
 
 // confirmRegex runs a regex signature on a line.
 func (w *walk) confirmRegex(cs *compiledSig, l *line, idx int64) {
-	addRegexFinding(cs, l, idx, &w.sinks[cs.idx], &w.exBuf, w.ex)
+	addRegexFinding(cs, l, idx, &w.sinks[cs.idx], &w.exBuf, w.ex, w.times.at(l.start))
 }
 
 // addRegexFinding confirms a regex signature on line l and adds the
-// finding to out. The excerpt and value span are built only when out
-// stores the finding.
-func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byte, ex *excerpter) {
+// finding to out, with the time tm. The excerpt and value span are
+// built only when out stores the finding.
+func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byte, ex *excerpter, tm timeRef) {
 	store := out.storing()
 	ok, vs, ve := cs.regex.confirm(l.view, store)
 	if !ok {
 		return
 	}
-	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, vs: -1, ve: -1}
+	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, vs: -1, ve: -1, tm: tm}
 	if store {
 		if vs >= 0 {
 			f.vs, f.ve = vs+l.shift, ve+l.shift
@@ -267,6 +291,7 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 func (w *walk) finish(final bool) *chunkResult {
 	res := w.res
 	res.lines, res.final = w.idx, final
+	res.lastStamp = w.times.last
 	if w.e.hasSame && w.idx > 0 {
 		res.lastView, res.lastLen = bytes.Clone(w.prevView), w.prevLen
 	}
@@ -287,7 +312,8 @@ func (w *walk) finish(final bool) *chunkResult {
 		res.sigs[si].runs = w.runOf[si].edges(w.prevView, &w.sinks[si])
 	}
 	for si := range w.sinks {
-		res.sigs[si].findings, res.sigs[si].count = w.sinks[si].findings, w.sinks[si].count
+		sc := &res.sigs[si]
+		sc.findings, sc.pending, sc.count = w.sinks[si].findings, w.sinks[si].pending, w.sinks[si].count
 	}
 	return res
 }

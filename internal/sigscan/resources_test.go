@@ -18,9 +18,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/testutil/counting"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
+	"github.com/wlame/rx-go/internal/trace"
 )
 
 // countingOpen returns an open seam that counts every byte the scan
@@ -36,6 +38,23 @@ func countingOpen(counter **counting.ReaderAt) func(paths.Pinned) (fileReader, i
 	}
 }
 
+// headReadBytes is how many bytes of file the timestamp-format detection
+// reads, counted by a reader of its own: the head read every scan makes
+// before it walks the text.
+func headReadBytes(t *testing.T, file trace.SearchFile) int64 {
+	t.Helper()
+	f, size, err := openPinned(file.Pinned())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	counter := counting.NewReaderAt(f)
+	if _, _, err := index.DetectTimeFormat(counter, size, file.Kind()); err != nil {
+		t.Fatal(err)
+	}
+	return counter.Load()
+}
+
 // readerAtCloser joins a reader and the file it reads.
 type readerAtCloser struct {
 	io.ReaderAt
@@ -45,7 +64,7 @@ type readerAtCloser struct {
 // A scan of an N-byte file reads at most N bytes plus the
 // chunk overlaps: the rest of the line at each chunk edge (and one
 // small read past it), and the lines a block crossing an edge is walked
-// again for.
+// again for; plus the head read for the timestamp format.
 func TestScan_ByteBudget(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	var b strings.Builder
@@ -70,8 +89,9 @@ func TestScan_ByteBudget(t *testing.T) {
 	// BEGIN block's 5, plus the line that refuses it).
 	edges := int64(len(text)) / tune.chunkBytes
 	perEdge := int64(1103+256) + int64(6*1103+256)
-	budget := int64(len(text)) + edges*perEdge
-	if got := counter.Load(); got > budget || got < int64(len(text)) {
+	head := headReadBytes(t, file)
+	budget := int64(len(text)) + edges*perEdge + head
+	if got := counter.Load(); got > budget || got < int64(len(text))+head {
 		t.Errorf("read %d bytes of a %d-byte file, budget %d", got, len(text), budget)
 	}
 	if res.BytesRead != counter.Load() {
@@ -79,7 +99,8 @@ func TestScan_ByteBudget(t *testing.T) {
 	}
 }
 
-// A stream is read once: the scan reads each byte of a gzip file once.
+// A stream is read once: the scan reads each byte of a gzip file once,
+// besides the head it reads first for the timestamp format.
 func TestScan_ByteBudgetOfAStream(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	path := filepath.Join(t.TempDir(), "app.log.gz")
@@ -92,12 +113,14 @@ func TestScan_ByteBudgetOfAStream(t *testing.T) {
 	tune := defaultTuning()
 	tune.batchLines = 100
 	tune.open = countingOpen(&counter)
-	if _, err := scanFile(context.Background(), classify(t, path), sigs, Options{Workers: 4, LineBytes: mixedLineBytes}, tune); err != nil {
+	file := classify(t, path)
+	if _, err := scanFile(context.Background(), file, sigs, Options{Workers: 4, LineBytes: mixedLineBytes}, tune); err != nil {
 		t.Fatal(err)
 	}
 	info, _ := os.Stat(path)
-	if got := counter.Load(); got != info.Size() {
-		t.Errorf("read %d bytes of a %d-byte gzip file, want each byte once", got, info.Size())
+	head := headReadBytes(t, file)
+	if got := counter.Load(); got != info.Size()+head {
+		t.Errorf("read %d bytes of a %d-byte gzip file, want each byte once and the %d bytes of the head read", got, info.Size(), head)
 	}
 }
 
@@ -420,7 +443,7 @@ func shortLineText(n int) string {
 // decodes again to finish a block crossing the edge: here at most 4
 // frames an edge (a line spans at most 2 frames of 512 bytes; a block
 // is at most 6 lines, under 600 bytes), far less than a chunk's 16
-// frames.
+// frames; plus the frames of the head read for the timestamp format.
 func TestScan_ByteBudgetOfSeekable(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	path := filepath.Join(t.TempDir(), "app.log.zst")
@@ -441,8 +464,9 @@ func TestScan_ByteBudgetOfSeekable(t *testing.T) {
 		t.Fatal(err)
 	}
 	edges := int64(table.NumFrames/16 + 1)
-	budget := frames + edges*4*largest
-	if got := counter.Load(); got > budget || got < frames {
+	head := headReadBytes(t, file)
+	budget := frames + edges*4*largest + head
+	if got := counter.Load(); got > budget || got < frames+head {
 		t.Errorf("read %d bytes of %d bytes of frames (%d edges, largest frame %d), budget %d", got, frames, edges, largest, budget)
 	}
 	if res.BySignature["begin-end"].Count == 0 {

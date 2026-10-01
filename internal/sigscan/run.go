@@ -48,6 +48,8 @@ type runPiece struct {
 	hasEx            bool
 	vs, ve           int
 	masked           bool
+	// tm is the first line's time.
+	tm timeRef
 }
 
 // lines is the number of lines in the piece.
@@ -68,8 +70,10 @@ type runWalker struct {
 	cs   *compiledSig
 	prog *runProgram
 	ex   *excerpter
-	open bool
-	cur  runPiece
+	// times gives a run the time of its first line (the walk's tracker).
+	times *timeTracker
+	open  bool
+	cur   runPiece
 	// qualifiedAt is the index of the last line a `match` run's regex
 	// confirmed; the walk sets it before step.
 	qualifiedAt int64
@@ -79,8 +83,8 @@ type runWalker struct {
 	hasLeading bool
 }
 
-func newRunWalker(cs *compiledSig, ex *excerpter) *runWalker {
-	return &runWalker{cs: cs, prog: cs.run, ex: ex, qualifiedAt: -1}
+func newRunWalker(cs *compiledSig, ex *excerpter, times *timeTracker) *runWalker {
+	return &runWalker{cs: cs, prog: cs.run, ex: ex, times: times, qualifiedAt: -1}
 }
 
 // step takes line l (index idx). sameAsPrevious says the line equals
@@ -121,7 +125,8 @@ func (r *runWalker) step(l *line, idx int64, sameAsPrevious bool, out sink) {
 // excerpt now, from its first line; a `same` run when it has a second.
 func (r *runWalker) begin(l *line, idx int64, out sink) {
 	r.open = true
-	r.cur = runPiece{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, excerpt: r.cur.excerpt[:0], vs: -1, ve: -1}
+	r.cur = runPiece{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, excerpt: r.cur.excerpt[:0], vs: -1, ve: -1,
+		tm: r.times.at(l.start)}
 	if r.prog.mode != runSame {
 		r.buildExcerpt(l.view, l, out)
 	}
@@ -169,7 +174,7 @@ func (r *runWalker) end(out sink) {
 // emitPiece hands a run to a sink as a finding.
 func emitPiece(cs *compiledSig, p *runPiece, out sink) {
 	out.add(cs, &rawFinding{startIdx: p.startIdx, endIdx: p.endIdx, startOff: p.startOff, endOff: p.endOff,
-		excerpt: p.excerpt, hasEx: p.hasEx, vs: p.vs, ve: p.ve, masked: p.masked})
+		excerpt: p.excerpt, hasEx: p.hasEx, vs: p.vs, ve: p.ve, masked: p.masked, tm: p.tm})
 }
 
 // clonePiece copies a piece so it outlives the walker's buffers.

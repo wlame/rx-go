@@ -33,6 +33,15 @@ import "context"
 //
 // The cap is applied here, in text order: the first Cap findings of a
 // signature are stored, and every finding is counted.
+//
+// Times: the merge carries the last stamped line of the text merged so
+// far (lastStamp). A chunk's findings whose first line had no stamped
+// line before it in the chunk are pending; before anything else, the
+// merge settles them from lastStamp by the lookback rule (times.go),
+// together with the chunk's edge runs and open block, which may become
+// findings later. The replay walks the chunk again with a tracker that
+// starts from lastStamp, so the blocks it finishes get their times
+// directly.
 
 // replayCheckLines is how many lines a replay walks between two looks
 // at the scan's context, so a cancel ends a long replay soon.
@@ -58,6 +67,9 @@ type merger struct {
 	onRewalkLine func()
 	// ex builds the excerpts of the blocks a replay finds.
 	ex *excerpter
+	// lastStamp is the last stamped line of the text before the next
+	// chunk.
+	lastStamp stampRef
 }
 
 // sigMerge is the merge's state for one signature.
@@ -85,6 +97,7 @@ func (m *merger) add(res *chunkResult) error {
 		// nothing, and its edges are not edges of any line.
 		return nil
 	}
+	m.settleTimes(res)
 	replayed := make(map[int32]bool)
 	var replay []int32
 	for _, si := range m.e.blocks {
@@ -115,7 +128,34 @@ func (m *merger) add(res *chunkResult) error {
 	if m.e.hasSame {
 		m.lastView, m.lastLen = res.lastView, res.lastLen
 	}
+	if res.lastStamp.ok {
+		m.lastStamp = res.lastStamp
+	}
 	return nil
+}
+
+// settleTimes decides the pending times of a chunk's findings, edge
+// runs and open blocks from the last stamped line before the chunk.
+func (m *merger) settleTimes(res *chunkResult) {
+	if m.e.times == nil {
+		return
+	}
+	carry, lookback := m.lastStamp, m.e.times.lookback
+	for si := range res.sigs {
+		sc := &res.sigs[si]
+		for _, i := range sc.pending {
+			f := &sc.findings[i]
+			tm := timeRef{state: timePending}
+			tm.settle(f.StartOffset, carry, lookback)
+			f.TimeMS = tm.pointer()
+		}
+		sc.pending = nil
+		sc.runs.leading.tm.settle(sc.runs.leading.startOff, carry, lookback)
+		sc.runs.trailing.tm.settle(sc.runs.trailing.startOff, carry, lookback)
+		if sc.open != nil {
+			sc.open.tm.settle(sc.open.startOff, carry, lookback)
+		}
+	}
 }
 
 // finish closes what is still open at the end of the text.
@@ -128,7 +168,7 @@ func (m *merger) finish() {
 		if ms.carry == nil {
 			continue
 		}
-		b := newBlockWalker(m.e.sigs[si], m.ex)
+		b := newBlockWalker(m.e.sigs[si], m.ex, nil)
 		b.open, b.st = true, *ms.carry
 		b.close(m.storeSink(si, m.base+1, true))
 		ms.carry = nil
@@ -300,10 +340,13 @@ type replay struct {
 // replayBlocks walks chunk res again for the block signatures that
 // enter it inside an open block, and merges their findings.
 func (m *merger) replayBlocks(res *chunkResult, sigs []int32) error {
+	// The replay's tracker starts from the stamps of the whole text
+	// before the chunk, so nothing it finds is pending.
+	times := &timeTracker{src: m.e.times, last: m.lastStamp, settled: true}
 	reps := make([]*replay, len(sigs))
 	for i, si := range sigs {
 		cs := m.e.sigs[si]
-		rp := &replay{si: si, truth: newBlockWalker(cs, m.ex), own: newBlockWalker(cs, m.ex),
+		rp := &replay{si: si, truth: newBlockWalker(cs, m.ex, times), own: newBlockWalker(cs, m.ex, times),
 			trueSink: m.storeSink(si, m.base+1, true), ownSink: &countSink{}}
 		rp.truth.open, rp.truth.st, rp.truth.joinedAt = true, *m.sigs[si].carry, -1
 		m.sigs[si].carry = nil
@@ -324,6 +367,7 @@ func (m *merger) replayBlocks(res *chunkResult, sigs []int32) error {
 		if m.onRewalkLine != nil {
 			m.onRewalkLine()
 		}
+		times.observe(l)
 		m.e.gate.evaluate(l.view, m.scratch)
 		for _, rp := range reps {
 			if rp.done {

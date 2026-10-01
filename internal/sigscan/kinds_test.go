@@ -46,6 +46,8 @@ type fixture struct {
 	// value is the value span of the first finding of ids[0];
 	// the zero value is not checked.
 	value [2]int
+	// timed checks every finding's time against oracleTime.
+	timed bool
 }
 
 // one is a fixture of a single signature, whose id is read from def.
@@ -78,6 +80,16 @@ func (fx fixture) check(t *testing.T, res *Result) {
 		f := res.BySignature[fx.ids[0]].Findings[0]
 		if f.ValueStart == nil || *f.ValueStart != fx.value[0] || *f.ValueEnd != fx.value[1] {
 			t.Errorf("value span %v-%v, want %v", deref(f.ValueStart), deref(f.ValueEnd), fx.value)
+		}
+	}
+	if fx.timed {
+		for _, id := range fx.ids {
+			for _, f := range res.BySignature[id].Findings {
+				want := oracleTime(t, fx.text, f.StartOffset, int64(fx.opts.LookbackBytes))
+				if got := derefTime(f.TimeMS); got != want {
+					t.Errorf("%s at line %d: time %d, want %d", id, f.StartLine, got, want)
+				}
+			}
 		}
 	}
 }
@@ -322,5 +334,5 @@ func TestScan_FoldLettersSkipTheGate(t *testing.T) {
 // same-answer test.
 func scenarioFixtures() []fixture {
 	all := slices.Concat(regexFixtures, blockSimpleFixtures, blockOverlapFixtures, runFixtures, excerptFixtures)
-	return append(all, chainedExceptionFixture, gateFixture, foldFixture)
+	return append(all, chainedExceptionFixture, gateFixture, foldFixture, timeFixture, replayTimeFixture)
 }

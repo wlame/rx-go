@@ -76,6 +76,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every loaded redacting signature, selected or not, so a finding of a
   signature that does not redact never shows a secret either. The commands that scan come
   next.
+- Every finding of a signature scan has a time: the timestamp of its
+  first line, or else that of the nearest earlier line with one when
+  that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` before it (the
+  rule of `line_timestamps`); none past that, and none in a file
+  without timestamps. The scan reads the file's timestamp format from
+  the head of its text, and each line's timestamp, with the functions
+  an index build uses, and never reads a stored index: a finding's time
+  is the time the index records for that line, in the file's own frame,
+  whether the file has an index or not. Every chunking and every
+  compressed copy give the same times. A scan reads the head of the
+  file once more for the format.
 - `rx signatures`, `show` and `check` run every signature's examples:
   a `match` text that gives no finding, or a `no_match` text that gives
   one, refuses the signature with its file, line and id

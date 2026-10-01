@@ -93,6 +93,8 @@ type blockState struct {
 	hasEx   bool
 	vs, ve  int
 	masked  bool
+	// tm is the start line's time.
+	tm timeRef
 }
 
 // blockWalker runs one block signature over consecutive lines. Blocks
@@ -102,16 +104,19 @@ type blockWalker struct {
 	cs   *compiledSig
 	prog *blockProgram
 	ex   *excerpter
-	open bool
-	st   blockState
+	// times gives a block the time of its start line; it is the walk's
+	// (or the replay's) tracker, nil where no block starts.
+	times *timeTracker
+	open  bool
+	st    blockState
 	// joinedAt is the index of the last line an open block joined: such
 	// a line is never tested as a new start, even when the block closed
 	// after it.
 	joinedAt int64
 }
 
-func newBlockWalker(cs *compiledSig, ex *excerpter) *blockWalker {
-	return &blockWalker{cs: cs, prog: cs.block, ex: ex, joinedAt: -1 << 62}
+func newBlockWalker(cs *compiledSig, ex *excerpter, times *timeTracker) *blockWalker {
+	return &blockWalker{cs: cs, prog: cs.block, ex: ex, times: times, joinedAt: -1 << 62}
 }
 
 // feed offers line l (index idx) to the open block. It reports whether
@@ -167,7 +172,8 @@ func (b *blockWalker) tryOpen(l *line, idx int64, out sink) {
 	if !p.anchor.Match(l.view) || (p.not != nil && p.not.Match(l.view)) {
 		return
 	}
-	st := blockState{startIdx: idx, startOff: l.start, lines: 1, lastIdx: idx, lastEnd: l.next, remaining: p.lines, vs: -1, ve: -1}
+	st := blockState{startIdx: idx, startOff: l.start, lines: 1, lastIdx: idx, lastEnd: l.next, remaining: p.lines, vs: -1, ve: -1,
+		tm: b.times.at(l.start)}
 	closeAfter := false
 	if p.lines == 0 {
 		rule := p.rules[0][0]
@@ -200,7 +206,7 @@ func (b *blockWalker) close(out sink) {
 		return
 	}
 	out.add(b.cs, &rawFinding{startIdx: st.startIdx, endIdx: st.lastIdx, startOff: st.startOff, endOff: st.lastEnd,
-		excerpt: st.excerpt, hasEx: st.hasEx, vs: st.vs, ve: st.ve, masked: st.masked})
+		excerpt: st.excerpt, hasEx: st.hasEx, vs: st.vs, ve: st.ve, masked: st.masked, tm: st.tm})
 }
 
 // finishAtEnd closes an open block at the end of the text.

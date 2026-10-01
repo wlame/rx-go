@@ -105,7 +105,7 @@ without one looks back for it:
 |---|---|---|
 | `RX_LOG_TZ` | `UTC` | The zone a file's timestamps were written in when they carry none. A query with a zone is turned into the file's wall-clock time with it, and `time_format.assumed_zone` reports it. |
 | `RX_QUERY_TZ` | unset | The zone a time query is read in when it carries none. Unset reads such a query in the file's own frame: as the file's wall clock, or at the offset of the first timestamp of a file whose timestamps carry zones, so a time copied from a line finds that line. `local` reads it in the zone of the rx process. |
-| `RX_TIMESTAMP_LOOKBACK_KB` | `64` | How far back, in KiB, a line without a timestamp of its own looks for the line whose timestamp it carries in `line_timestamps`: the nearest earlier line with one, when that line starts at most this far before it. In a ready log chain the look back continues into the parts before ([`GET /v1/logs/samples`](api/endpoints/logs-samples.md#timestamps-across-a-part-edge)). `0` gives such a line none; at most `1024`. |
+| `RX_TIMESTAMP_LOOKBACK_KB` | `64` | How far back, in KiB, a line without a timestamp of its own looks for the line whose timestamp it carries in `line_timestamps`, and a signature finding whose first line has none for its time: the nearest earlier line with one, when that line starts at most this far before it. In a ready log chain the look back continues into the parts before ([`GET /v1/logs/samples`](api/endpoints/logs-samples.md#timestamps-across-a-part-edge)). `0` gives such a line none; at most `1024`. |
 
 ## Log chains
 
