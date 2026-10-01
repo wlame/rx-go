@@ -13,8 +13,8 @@ import (
 // silent break rather than a new feature. `RX_FRONTEND_VERSION` and
 // `RX_FRONTEND_URL` override the check for an operator who knows better.
 //
-// rx-python declares the same two constants; they must be changed
-// together.
+// rx-python declares the same two constants and keeps its own window
+// while it is paused.
 // The viewer is a 0.x product, where a minor bump is allowed to break
 // compatibility, so the window is one minor line wide rather than one
 // major.
@@ -25,7 +25,7 @@ import (
 // Both backends and the viewer's release checklist carry the same rule.
 const (
 	MinViewerVersion          = "0.2.0"
-	MaxViewerVersionExclusive = "0.4.0"
+	MaxViewerVersionExclusive = "0.5.0"
 )
 
 // viewerVersionCompatible reports whether a viewer release may be
