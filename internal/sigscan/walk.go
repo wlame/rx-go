@@ -125,6 +125,9 @@ type chunkResult struct {
 	// stamped is how many of the chunk's lines have a timestamp of
 	// their own (the unprefixed measure's share).
 	stamped int64
+	// lastLine is the chunk's last line, as the start of a time-gap
+	// finding (ok false without a time-gap measure).
+	lastLine lineRef
 }
 
 // chunkSpan places a chunk's lines in the text: they start at start
@@ -151,6 +154,10 @@ type sigChunk struct {
 	// long is a long-line measure's lengths and candidates at the
 	// chunk's edges.
 	long *longLineEdge
+	// back, gap and density are the time measures' edges.
+	back    *backFirst
+	gap     *gapEdge
+	density *densityEdge
 }
 
 // walk runs every selected signature over the lines of one chunk, in
@@ -174,6 +181,15 @@ type walk struct {
 	times timeTracker
 	// longOf are the long-line measures' walkers, by signature index.
 	longOf []*longLineWalker
+	// The time measures' walkers, by signature index; nil in a file
+	// without a timestamp format, where they find nothing.
+	backOf    []*backWalker
+	gapOf     []*gapWalker
+	densityOf []*densityWalker
+	// prevStart and prevTm are the previous line's start and the time
+	// a finding starting there would have, for time-gap.
+	prevStart int64
+	prevTm    timeRef
 }
 
 // newWalk returns a walk for one chunk. gs is the goroutine's gate
@@ -197,7 +213,28 @@ func newWalk(e *engine, gs *gateScratch) *walk {
 			w.longOf[si] = newLongLineWalker(e.sigs[si], w.ex)
 		}
 	}
+	if e.times != nil {
+		w.newTimeWalkers(n)
+	}
 	return w
+}
+
+// newTimeWalkers makes the walkers of the time measures, for a file
+// with a timestamp format.
+func (w *walk) newTimeWalkers(n int) {
+	e := w.e
+	w.backOf = make([]*backWalker, n)
+	for _, si := range e.backs {
+		w.backOf[si] = &backWalker{cs: e.sigs[si], spec: *e.sigs[si].back, ex: w.ex}
+	}
+	w.gapOf = make([]*gapWalker, n)
+	for _, si := range e.gaps {
+		w.gapOf[si] = newGapWalker(e.sigs[si], w.ex, max(e.cap, maxGapCandidates))
+	}
+	w.densityOf = make([]*densityWalker, n)
+	for _, si := range e.densities {
+		w.densityOf[si] = newDensityWalker(e.sigs[si], w.ex)
+	}
 }
 
 // line handles one line. It is the per-line path of a scan: the line's
@@ -232,6 +269,9 @@ func (w *walk) line(l *line) bool {
 	for _, si := range e.longLines {
 		w.longOf[si].line(l, idx, &w.times, &w.sinks[si])
 	}
+	if e.times != nil {
+		w.timeMeasures(l, idx)
+	}
 	if l.stamped {
 		w.res.stamped++
 	}
@@ -241,14 +281,35 @@ func (w *walk) line(l *line) bool {
 			w.runOf[si].step(l, idx, same, &w.sinks[si])
 		}
 	}
-	if e.hasSame {
-		if idx == 0 {
-			w.res.firstView, w.res.firstLen = bytes.Clone(l.view), l.length
-		}
+	if e.hasSame && idx == 0 {
+		w.res.firstView, w.res.firstLen = bytes.Clone(l.view), l.length
+	}
+	if e.hasSame || len(e.gaps) > 0 {
 		w.prevView, w.prevLen = append(w.prevView[:0], l.view...), l.length
+	}
+	if len(e.gaps) > 0 {
+		w.prevStart, w.prevTm = l.start, w.times.at(l.start)
 	}
 	w.idx++
 	return true
+}
+
+// timeMeasures runs the time measures on line l: they look at stamped
+// lines (density counts every line from the first stamped one on).
+func (w *walk) timeMeasures(l *line, idx int64) {
+	e := w.e
+	for _, si := range e.backs {
+		w.backOf[si].line(l, idx, &w.sinks[si])
+	}
+	if len(e.gaps) > 0 {
+		before := prevLine{view: w.prevView, start: w.prevStart, tm: w.prevTm}
+		for _, si := range e.gaps {
+			w.gapOf[si].line(l, idx, &before, &w.sinks[si])
+		}
+	}
+	for _, si := range e.densities {
+		w.densityOf[si].line(l, idx, &w.times, &w.sinks[si])
+	}
 }
 
 // anchorLine tests signature si's anchor on a line that passed its
@@ -308,6 +369,26 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 	out.add(cs, &f)
 }
 
+// finishTimeMeasures hands the time measures' edges to the result,
+// and, for time-gap, the chunk's last line: it may be the line just
+// before the next chunk's first stamped line.
+func (w *walk) finishTimeMeasures(res *chunkResult) {
+	e := w.e
+	for _, si := range e.backs {
+		res.sigs[si].back = w.backOf[si].first
+	}
+	for _, si := range e.gaps {
+		res.sigs[si].gap = &w.gapOf[si].edge
+	}
+	for _, si := range e.densities {
+		res.sigs[si].density = &w.densityOf[si].edge
+	}
+	if len(e.gaps) > 0 && w.idx > 0 {
+		last := prevLine{view: w.prevView, start: w.prevStart, tm: w.prevTm}
+		res.lastLine = last.ref(w.idx-1, w.ex, &w.sinks[e.gaps[0]])
+	}
+}
+
 // addValueFinding runs a value measure on line l and adds a finding of
 // its first value to out, with the time tm; the value span is the
 // value, and the excerpt is built only when out stores the finding.
@@ -353,6 +434,9 @@ func (w *walk) finish(final bool) *chunkResult {
 	}
 	for _, si := range w.e.longLines {
 		res.sigs[si].long = w.longOf[si].finish()
+	}
+	if w.e.times != nil {
+		w.finishTimeMeasures(res)
 	}
 	for si := range w.sinks {
 		sc := &res.sigs[si]

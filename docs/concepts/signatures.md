@@ -269,6 +269,51 @@ How each measure decides, in detail:
   format, the measure finds nothing: there, lines without one are the
   rule.
 
+The three time measures read the file's timestamps as the scan does
+for a finding's time (see Times below); in a file without a timestamp
+format they find nothing.
+
+- **`time-backwards`** compares each stamped line with the stamped line
+  before it: a line stamped earlier by more than `tolerance` is a
+  finding.
+- **`time-gap`** looks at the interval between each two consecutive
+  stamped lines, a step back counted as 0. An interval of at least
+  `min_gap` and at least `factor` times the median interval is a
+  silence. Its finding runs from the line just before the later stamped
+  line (the earlier stamped line, or a line without a timestamp after
+  it, such as the last line of a traceback) to that stamped line, and
+  takes the time of its first line. The median is taken over all the
+  intervals of the file, kept to three significant digits (exact under
+  a second; 61,234 ms counts as 61,200). Until the median is known, a
+  scan keeps every interval of at least `min_gap`, at most 65,536 of
+  them (or `RX_FINDINGS_MAX_PER_SIGNATURE`, when larger): a file with
+  more such silences keeps only the longest ones, and reports only
+  silences longer than the longest one it dropped.
+- **`density`** counts every line, from the first stamped line on, in
+  the time bucket of its own timestamp or, for a line without one, of
+  the last stamped line before it. The bucket is `bucket`, or with
+  `auto` the smallest of 1s, 2s, 5s, 10s, 15s, 30s, 1m, 2m, 5m, 10m,
+  15m, 30m, 1h, 2h, 3h, 6h, 12h and 1d that cuts the file's span (its
+  latest time minus its earliest) into at most 1,000 buckets; buckets
+  start at multiples of their size since 1970. A series holds at most
+  65,536 buckets: past that, the bucket doubles until it fits. A bucket
+  is a burst when it holds at least `min_count` lines, at least
+  `factor` times the median count, and its modified z-score
+  `0.6745 × (count − median) / MAD` is over `z`. The median and the MAD
+  (the median of the absolute deviations from it) are taken over the
+  buckets that hold a line, so the empty buckets of a log that sleeps at
+  night do not make every busy bucket a burst; when the MAD is 0, a
+  count above the median is a burst by the z-score, and the median
+  itself is not. Consecutive burst buckets are one finding, from the
+  first line counted in any of them to the last, with the time of that
+  first line. The series of every bucket's count over the span (the
+  bucket size, the start of the first bucket, the counts) is kept with
+  the findings, for a chart.
+
+Every chunking and every compressed copy give the same findings and
+the same series: each chunk reports its first and last stamped lines
+and its counts, and the merge pairs and adds them in text order.
+
 With `redact: true`, `entropy` and `base64-run` mask their value as a
 regex signature masks its own, and they mask every excerpt of a line
 that holds such a value, as every redacting signature does.

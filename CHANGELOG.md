@@ -102,7 +102,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closer at the same indent, by a string-aware bracket count; the old
   `json-blob-multiline` detector's cases give the same ranges, and a
   block still open at `max_lines` or at the end of the text is a
-  finding of the lines it holds). With `redact: true` an `entropy` or
+  finding of the lines it holds), and the time measures `time-backwards`
+  (a line stamped more than `tolerance` before the stamped line before
+  it), `time-gap` (a silence of at least `min_gap` and `factor` times the
+  median interval between consecutive stamped lines, found as the line
+  before it and the stamped line after it) and `density` (bursts of
+  lines per time bucket by count, `factor` times the median and a
+  modified z-score, the bucket `auto` picking about 1,000 buckets over
+  the span; the bucket series is kept with the findings, at most 65,536
+  buckets). With `redact: true` an `entropy` or
   `base64-run` signature masks its value and every excerpt of a line
   that holds one; `redact: true` on any other measure refuses the
   signature (`redact: the measure long-line finds no value to mask`).

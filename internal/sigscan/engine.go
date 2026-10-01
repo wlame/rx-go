@@ -29,6 +29,9 @@ type engine struct {
 	valueSigs []int32
 	// longLines are the long-line measures.
 	longLines []int32
+	// backs, gaps and densities are the time-backwards, time-gap and
+	// density measures: they look at the lines' timestamps only.
+	backs, gaps, densities []int32
 	// hasSame is true when a `same` run is selected: the walk then
 	// keeps each line's view to compare the next line with.
 	hasSame bool
@@ -81,6 +84,10 @@ type compiledSig struct {
 	minShare float64
 	// long is a long-line measure's parameters.
 	long *longLineSpec
+	// back, gap and density are the time measures' parameters.
+	back    *backSpec
+	gap     *gapSpec
+	density *densitySpec
 }
 
 // compile builds the engine of a selection. A signature id given twice
@@ -119,6 +126,12 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 			e.valueSigs = append(e.valueSigs, cs.idx)
 		case cs.long != nil:
 			e.longLines = append(e.longLines, cs.idx)
+		case cs.back != nil:
+			e.backs = append(e.backs, cs.idx)
+		case cs.gap != nil:
+			e.gaps = append(e.gaps, cs.idx)
+		case cs.density != nil:
+			e.densities = append(e.densities, cs.idx)
 		}
 		// A json-block has no anchor and no keywords: its opener is
 		// tried on every line, as an anchor without keywords is.

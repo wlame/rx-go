@@ -20,9 +20,14 @@ import (
 //   - json-block is a block, opened and closed by a bracket count
 //     instead of regexes (jsonblock.go);
 //   - long-line decides each line against the lengths around it, with
-//     a merge of its own across chunk edges (longline.go).
+//     a merge of its own across chunk edges (longline.go);
+//   - time-gap and time-backwards compare each stamped line with the
+//     stamped line before it (timegaps.go), and density counts the
+//     lines in time buckets (density.go); the merge pairs and adds up
+//     what the chunks report at their edges.
 //
-// compileMeasure refuses any other measure.
+// In a file without a timestamp format the time measures find nothing,
+// and density keeps no series.
 
 // The version of each measure's code. A version enters the key of every
 // cached finding of a signature that uses the measure, so a change that
@@ -76,6 +81,13 @@ func compileMeasure(cs *compiledSig, sig *signatures.Signature) error {
 		cs.block = compileJSONBlock(p)
 	case signatures.LongLineParams:
 		cs.long = &longLineSpec{window: int64(p.Window), factor: int64(p.Factor), minBytes: int64(p.MinBytes)}
+	case signatures.TimeBackwardsParams:
+		cs.back = &backSpec{tolerance: p.Tolerance.Milliseconds()}
+	case signatures.TimeGapParams:
+		cs.gap = &gapSpec{minGap: p.MinGap.Milliseconds(), factor: p.Factor}
+	case signatures.DensityParams:
+		cs.density = &densitySpec{grid: densityGrid{explicit: p.Bucket.Milliseconds()}, factor: p.Factor, z: p.Z,
+			minCount: int64(p.MinCount)}
 	default:
 		return fmt.Errorf("signature %s: the measure %s cannot be scanned by this build", sig.ID, sig.Measure.Name)
 	}

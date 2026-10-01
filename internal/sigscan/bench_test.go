@@ -28,6 +28,16 @@ var benchCatalogue = sigFile(
 // benchIDs are the ids of benchCatalogue.
 var benchIDs = []string{"error-line", "sql-statement", "connection-failure", "api-key", "http-5xx", "tb", "java", "blanks", "repeats"}
 
+// benchMeasures are the nine measures with their defaults.
+var benchMeasures = sigFile(
+	measureSig("long", "long-line", ""), measureSig("bin", "binary", ""), measureSig("ent", "entropy", ""),
+	measureSig("json", "json-block", ""), measureSig("bare", "unprefixed", ""), measureSig("b64", "base64-run", ""),
+	measureSig("burst", "density", ""), measureSig("gap", "time-gap", ""), measureSig("back", "time-backwards", ""),
+)
+
+// benchMeasureIDs are the ids of benchMeasures.
+var benchMeasureIDs = []string{"long", "bin", "ent", "json", "bare", "b64", "burst", "gap", "back"}
+
 // writeBenchLog writes about size bytes of a synthetic log (timestamped
 // lines at mixed levels, some SQL and HTTP lines, a traceback now and
 // then, blank and repeated runs) and returns its path and line count.
@@ -70,6 +80,27 @@ func writePlainB(b *testing.B, path string, body func(io.Writer)) {
 	if t.Failed() {
 		b.Fatal("cannot write the benchmark log")
 	}
+}
+
+// BenchmarkScanMeasures measures the pass with the nine measures beside
+// the signatures of BenchmarkScan, on the same log, whose timestamps
+// fall anywhere in one hour: about half of its stamped lines step back,
+// so time-backwards stores its cap in every chunk.
+func BenchmarkScanMeasures(b *testing.B) {
+	sigs := append(loadSigs(b, benchCatalogue, benchIDs...), loadSigs(b, benchMeasures, benchMeasureIDs...)...)
+	path, lines := writeBenchLog(b, 256<<20)
+	file := classify(b, path)
+	b.SetBytes(file.Pinned().Info().Size())
+	b.ReportAllocs()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for b.Loop() {
+		if _, err := scanFile(context.Background(), file, sigs, Options{}, defaultTuning()); err != nil {
+			b.Fatal(err)
+		}
+	}
+	runtime.ReadMemStats(&after)
+	b.ReportMetric(float64(after.Mallocs-before.Mallocs)/float64(b.N)/float64(lines), "allocs/line")
 }
 
 // BenchmarkScan measures the one Go pass on a generated 256 MB log:

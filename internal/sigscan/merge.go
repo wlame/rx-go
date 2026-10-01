@@ -73,6 +73,9 @@ type merger struct {
 	// stamped is how many lines merged so far have a timestamp of their
 	// own.
 	stamped int64
+	// lastLine is the last line merged so far, as the start of a
+	// time-gap finding.
+	lastLine lineRef
 }
 
 // sigMerge is the merge's state for one signature.
@@ -88,6 +91,11 @@ type sigMerge struct {
 	hasRun bool
 	// long is a long-line measure's merge.
 	long *longLineMerge
+	// gap and density are the time-gap and density measures' merges,
+	// and series density's buckets once the merge is finished.
+	gap     *gapMerge
+	density *densityMerge
+	series  *Series
 }
 
 func newMerger(ctx context.Context, e *engine, onRewalkLine func(), rewalk func(res *chunkResult, fn func(l *line) bool) error) *merger {
@@ -95,6 +103,12 @@ func newMerger(ctx context.Context, e *engine, onRewalkLine func(), rewalk func(
 		onRewalkLine: onRewalkLine, ex: newExcerpter(e)}
 	for _, si := range e.longLines {
 		m.sigs[si].long = &longLineMerge{spec: *e.sigs[si].long}
+	}
+	for _, si := range e.gaps {
+		m.sigs[si].gap = &gapMerge{spec: *e.sigs[si].gap, kept: gapKeeper{limit: max(e.cap, maxGapCandidates), cutoff: -1}}
+	}
+	for _, si := range e.densities {
+		m.sigs[si].density = &densityMerge{spec: *e.sigs[si].density, hist: densityHist{grid: e.sigs[si].density.grid}}
 	}
 	return m
 }
@@ -133,7 +147,17 @@ func (m *merger) add(res *chunkResult) error {
 			m.take(idx, sc.findings, sc.count)
 		case cs.long != nil:
 			m.sigs[si].long.add(m, idx, sc, m.base, res.lines)
+		case cs.back != nil:
+			m.mergeBackwards(idx, sc, m.base)
+		case cs.gap != nil && sc.gap != nil:
+			m.sigs[si].gap.add(sc.gap, m.base, m.lastStamp, m.lastLine)
+		case cs.density != nil && sc.density != nil:
+			m.sigs[si].density.add(sc.density, m.base, m.lastStamp)
 		}
+	}
+	if res.lastLine.ok {
+		m.lastLine = res.lastLine
+		m.lastLine.idx += m.base
 	}
 	m.base += res.lines
 	m.stamped += res.stamped
@@ -173,7 +197,17 @@ func (m *merger) settleTimes(res *chunkResult) {
 				c.tm.settle(c.start, carry, lookback)
 			}
 		}
+		if sc.gap != nil {
+			if f := sc.gap.first; f != nil {
+				f.before.tm.settle(f.before.start, carry, lookback)
+			}
+			for i := range sc.gap.kept.items {
+				from := &sc.gap.kept.items[i].from
+				from.tm.settle(from.start, carry, lookback)
+			}
+		}
 	}
+	res.lastLine.tm.settle(res.lastLine.start, carry, lookback)
 }
 
 // finish closes what is still open at the end of the text.
@@ -193,6 +227,12 @@ func (m *merger) finish() {
 	}
 	for _, si := range m.e.longLines {
 		m.sigs[si].long.decide(m.e.sigs[si], m.storeSink(si, 1, true), true)
+	}
+	for _, si := range m.e.gaps {
+		m.sigs[si].gap.finish(m.e.sigs[si], m.storeSink(si, 1, true))
+	}
+	for _, si := range m.e.densities {
+		m.sigs[si].series = m.sigs[si].density.finish(m.e.sigs[si], m.storeSink(si, 1, true))
 	}
 	m.dropUnprefixedBelowShare()
 }
@@ -221,7 +261,7 @@ func (m *merger) result() map[string]*SignatureResult {
 		if findings == nil {
 			findings = []Finding{}
 		}
-		out[cs.sig.ID] = &SignatureResult{Findings: findings, Count: m.sigs[si].count}
+		out[cs.sig.ID] = &SignatureResult{Findings: findings, Count: m.sigs[si].count, Series: m.sigs[si].series}
 	}
 	return out
 }

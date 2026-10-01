@@ -63,17 +63,24 @@ func TestCheckExamples_BuiltinsPass(t *testing.T) {
 	}
 }
 
-// A measure cannot be scanned by this engine: its examples refuse it,
-// rather than pass unchecked.
-func TestCheckExamples_MeasureIsRefused(t *testing.T) {
-	body := "signatures:\n  - id: bursts\n    name: Bursts\n    group: time\n    description: Test.\n" +
+// A measure's examples run through the engine like any other: an
+// entropy signature whose examples hold is loaded, and a density
+// signature whose match example has no burst is refused.
+func TestCheckExamples_MeasuresRunTheirExamples(t *testing.T) {
+	body := "signatures:\n" +
+		"  - id: tokens\n    name: Tokens\n    group: secret\n    description: Test.\n" +
+		"    measure: {name: entropy}\n    examples:\n      match: ['key " + entropyToken + "']\n      no_match: ['plain words only']\n" +
+		"  - id: bursts\n    name: Bursts\n    group: time\n    description: Test.\n" +
 		"    measure: {name: density}\n    examples:\n      match: ['x']\n"
 	path := filepath.Join(t.TempDir(), "team.yml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cat := signatures.Load(signatures.LoadOptions{Paths: []string{path}, CheckExamples: CheckExamples})
-	if errs := cat.Errors(); len(errs) != 1 || !strings.Contains(errs[0].Message, "measure density") {
-		t.Fatalf("errors %v, want the measure refused", errs)
+	if _, ok := cat.Lookup("tokens"); !ok {
+		t.Errorf("the entropy signature was refused: %v", cat.Errors())
+	}
+	if errs := cat.Errors(); len(errs) != 1 || errs[0].ID != "bursts" || !strings.Contains(errs[0].Message, "match example 1 gives no finding") {
+		t.Fatalf("errors %v, want the density signature refused by its example", errs)
 	}
 }
