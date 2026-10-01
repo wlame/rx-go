@@ -67,21 +67,28 @@ func redactMatches(re *regexp.Regexp, capture int, view []byte) []span {
 	return values
 }
 
-// appendRedactedExcerpt appends the excerpt of a redacting signature's
-// line: the view masked as redaction describes, cut to excerptBytes on
-// a UTF-8 boundary. values are the line's match values (redactMatches).
-func appendRedactedExcerpt(dst, view []byte, values []span) []byte {
+// appendRedactedExcerpt appends the excerpt of a line with secrets on
+// it: the view masked as redaction describes, cut to excerptBytes on a
+// UTF-8 boundary. values are the line's match values (redactMatches of
+// every redacting signature, in order). masked reports whether a mask is
+// in the excerpt.
+func appendRedactedExcerpt(dst, view []byte, values []span) (out []byte, masked bool) {
 	start := len(dst)
 	r := redaction{view: view, values: values}
-	return cutOnRuneBoundary(r.appendTo(dst, excerptBytes+utf8.UTFMax), start)
+	out = cutOnRuneBoundary(r.appendTo(dst, excerptBytes+utf8.UTFMax), start)
+	return out, r.masked && start+r.firstMask < len(out)
 }
 
 // redaction masks one line. It is a pure function of the view and the
-// match values; steps counts the automaton steps, for the work bound.
+// match values; steps counts the automaton steps, for the work bound,
+// and masked says a mask was written, the first at firstMask in the
+// output.
 type redaction struct {
-	view   []byte
-	values []span
-	steps  int
+	view      []byte
+	values    []span
+	steps     int
+	masked    bool
+	firstMask int
 }
 
 // maskedRun is a run of the view to mask: [start, end), of which the
@@ -99,7 +106,7 @@ func (r *redaction) appendTo(dst []byte, want int) []byte {
 	case len(distinct) == 0:
 		return append(dst, r.view[:min(len(r.view), want)]...)
 	case tooMany:
-		return appendRuns(dst, r.view, want, []maskedRun{{start: 0, end: len(r.view)}})
+		return r.appendRuns(dst, want, []maskedRun{{start: 0, end: len(r.view)}})
 	case !withinBounds(distinct):
 		return r.appendFailClosed(dst, want, distinct, firstStart)
 	}
@@ -107,7 +114,7 @@ func (r *redaction) appendTo(dst []byte, want int) []byte {
 	for i, v := range distinct {
 		scans[i] = newCopyScan(r.view, v, len(r.view), &r.steps)
 	}
-	return appendScans(dst, r.view, want, scans)
+	return r.appendScans(dst, want, scans)
 }
 
 // distinctValues returns the line's distinct non-empty values, in the
@@ -163,20 +170,21 @@ func (r *redaction) appendFailClosed(dst []byte, want int, distinct [][]byte, fi
 			cut = min(cut, s)
 		}
 	}
-	return appendRuns(dst, r.view, want, []maskedRun{{start: cut, end: len(r.view), keepEnd: cut}})
+	return r.appendRuns(dst, want, []maskedRun{{start: cut, end: len(r.view), keepEnd: cut}})
 }
 
 // appendScans writes the view with the runs of the scans masked, in
 // order: the scan whose next run starts first is taken, and a run that
 // overlaps the one before is joined to it.
-func appendScans(dst, view []byte, want int, scans []*copyScan) []byte {
+func (r *redaction) appendScans(dst []byte, want int, scans []*copyScan) []byte {
+	view := r.view
 	start, pos := len(dst), 0
 	var cur maskedRun
 	has := false
 	for len(dst)-start < want {
 		next, ok := firstRun(scans)
 		if has && (!ok || next.start >= cur.end) {
-			dst, pos = appendRun(dst, view, pos, cur, want-(len(dst)-start))
+			dst, pos = r.appendRun(dst, start, pos, cur, want-(len(dst)-start))
 			has = false
 		}
 		if !ok {
@@ -214,13 +222,14 @@ func firstRun(scans []*copyScan) (maskedRun, bool) {
 
 // appendRuns writes the view with the given runs (sorted, apart)
 // masked.
-func appendRuns(dst, view []byte, want int, runs []maskedRun) []byte {
+func (r *redaction) appendRuns(dst []byte, want int, runs []maskedRun) []byte {
+	view := r.view
 	start, pos := len(dst), 0
 	for _, run := range runs {
 		if len(dst)-start >= want {
 			return dst
 		}
-		dst, pos = appendRun(dst, view, pos, run, want-(len(dst)-start))
+		dst, pos = r.appendRun(dst, start, pos, run, want-(len(dst)-start))
 	}
 	if room := want - (len(dst) - start); room > 0 && pos < len(view) {
 		dst = append(dst, view[pos:min(len(view), pos+room)]...)
@@ -231,12 +240,16 @@ func appendRuns(dst, view []byte, want int, runs []maskedRun) []byte {
 // appendRun writes the text from pos to the run (at most room bytes),
 // then the run masked: its bytes before keepEnd, then one '*' per
 // further character, at least one and at most maskMaxStars. It returns
-// the position after the run.
-func appendRun(dst, view []byte, pos int, run maskedRun, room int) ([]byte, int) {
+// the position after the run. start is where the output began.
+func (r *redaction) appendRun(dst []byte, start, pos int, run maskedRun, room int) ([]byte, int) {
+	view := r.view
 	if run.start-pos >= room {
 		return append(dst, view[pos:pos+room]...), run.start
 	}
 	dst = append(dst, view[pos:run.start]...)
+	if !r.masked {
+		r.masked, r.firstMask = true, len(dst)-start
+	}
 	keepEnd := max(run.start, min(run.keepEnd, run.end-1))
 	for keepEnd > run.start && !utf8.RuneStart(view[keepEnd]) {
 		keepEnd--

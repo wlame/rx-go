@@ -882,3 +882,24 @@ func TestParseDuration(t *testing.T) {
 		}
 	}
 }
+
+// Redactors are every active signature that redacts, opt-in ones too,
+// in catalogue order; a disabled built-in is not one.
+func TestCatalogue_Redactors(t *testing.T) {
+	dir := t.TempDir()
+	body := "signatures:\n" +
+		"  - id: opt-in-secret\n    name: S\n    group: secret\n    description: S.\n    default: false\n    redact: true\n    regex: 'tok_[a-z]{8}'\n" +
+		"  - id: plain-one\n    name: P\n    group: severity\n    description: P.\n    regex: 'ERROR'\n"
+	cat := loadFiles(writeSignatureFile(t, dir, "team.yml", body))
+	var ids []string
+	for _, s := range cat.Redactors() {
+		ids = append(ids, s.ID)
+	}
+	if !slices.Equal(ids, []string{"aws-access-key", "opt-in-secret"}) {
+		t.Errorf("redactors %v, want the built-in key and the opt-in secret", ids)
+	}
+	disabling := writeSignatureFile(t, t.TempDir(), "off.yml", "disable: [aws-access-key]\n")
+	if got := loadFiles(disabling).Redactors(); len(got) != 0 {
+		t.Errorf("a disabled built-in redacts: %v", got)
+	}
+}

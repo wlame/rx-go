@@ -47,6 +47,7 @@ type runPiece struct {
 	excerpt          []byte
 	hasEx            bool
 	vs, ve           int
+	masked           bool
 }
 
 // lines is the number of lines in the piece.
@@ -66,6 +67,7 @@ func (p *runPiece) lines() int64 { return p.endIdx - p.startIdx + 1 }
 type runWalker struct {
 	cs   *compiledSig
 	prog *runProgram
+	ex   *excerpter
 	open bool
 	cur  runPiece
 	// qualifiedAt is the index of the last line a `match` run's regex
@@ -77,8 +79,8 @@ type runWalker struct {
 	hasLeading bool
 }
 
-func newRunWalker(cs *compiledSig) *runWalker {
-	return &runWalker{cs: cs, prog: cs.run, qualifiedAt: -1}
+func newRunWalker(cs *compiledSig, ex *excerpter) *runWalker {
+	return &runWalker{cs: cs, prog: cs.run, ex: ex, qualifiedAt: -1}
 }
 
 // step takes line l (index idx). sameAsPrevious says the line equals
@@ -98,6 +100,10 @@ func (r *runWalker) step(l *line, idx int64, sameAsPrevious bool, out sink) {
 			return
 		}
 		r.extend(l, idx)
+		// Every line of a group equals its first, so the excerpt is built
+		// from the group's second line: a group of one line is never a
+		// finding, and a file of distinct lines builds no excerpt.
+		r.buildExcerpt(l.view, l, out)
 		return
 	}
 	if !qualifies {
@@ -111,24 +117,30 @@ func (r *runWalker) step(l *line, idx int64, sameAsPrevious bool, out sink) {
 	r.extend(l, idx)
 }
 
-// begin opens a run on line l.
+// begin opens a run on line l. A `match` or `blank` run builds its
+// excerpt now, from its first line; a `same` run when it has a second.
 func (r *runWalker) begin(l *line, idx int64, out sink) {
 	r.open = true
 	r.cur = runPiece{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, excerpt: r.cur.excerpt[:0], vs: -1, ve: -1}
-	// The excerpt is built for every run that may be kept: a run's fate
-	// is known only when it ends, possibly in a later chunk.
-	if out.mayStore() {
-		r.cur.hasEx = true
-		if r.prog.mode == runMatch {
-			r.cur.excerpt, r.cur.vs, r.cur.ve = anchorExcerpt(r.cur.excerpt, r.cs, r.prog.match, l.view)
-			if r.cur.vs >= 0 {
-				r.cur.vs += l.shift
-				r.cur.ve += l.shift
-			}
-		} else {
-			r.cur.excerpt = appendExcerpt(r.cur.excerpt, l.view)
-		}
+	if r.prog.mode != runSame {
+		r.buildExcerpt(l.view, l, out)
 	}
+}
+
+// buildExcerpt builds the open run's excerpt from view, a line equal to
+// its first (l, when given, is that line), once, when the run may be
+// kept: a run's fate is known only when it ends, possibly in a later
+// chunk. Every redactor masks it (excerpter.build).
+func (r *runWalker) buildExcerpt(view []byte, l *line, out sink) {
+	if r.cur.hasEx || !out.mayStore() {
+		return
+	}
+	r.cur.hasEx = true
+	if r.prog.mode == runMatch {
+		r.cur.excerpt, r.cur.masked, r.cur.vs, r.cur.ve = anchorExcerpt(r.cur.excerpt, r.ex, r.cs, r.prog.match, l)
+		return
+	}
+	r.cur.excerpt, r.cur.masked = r.ex.build(r.cur.excerpt, view)
 }
 
 // extend adds line l to the open run.
@@ -157,7 +169,7 @@ func (r *runWalker) end(out sink) {
 // emitPiece hands a run to a sink as a finding.
 func emitPiece(cs *compiledSig, p *runPiece, out sink) {
 	out.add(cs, &rawFinding{startIdx: p.startIdx, endIdx: p.endIdx, startOff: p.startOff, endOff: p.endOff,
-		excerpt: p.excerpt, hasEx: p.hasEx, vs: p.vs, ve: p.ve})
+		excerpt: p.excerpt, hasEx: p.hasEx, vs: p.vs, ve: p.ve, masked: p.masked})
 }
 
 // clonePiece copies a piece so it outlives the walker's buffers.
@@ -183,10 +195,15 @@ type runEdges struct {
 }
 
 // edges reports the walker's edge runs after the chunk's last line.
-func (r *runWalker) edges() runEdges {
+// lastView is that line's view: a `same` run still open has not built
+// its excerpt when it has one line, and its lines equal the last.
+func (r *runWalker) edges(lastView []byte, out sink) runEdges {
 	e := runEdges{leading: r.leading, hasLeading: r.hasLeading}
 	if !r.open {
 		return e
+	}
+	if r.prog.mode == runSame {
+		r.buildExcerpt(lastView, nil, out)
 	}
 	if r.cur.startIdx == 0 {
 		e.leading, e.hasLeading, e.whole = clonePiece(r.cur), true, true

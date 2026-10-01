@@ -377,8 +377,13 @@ within its bounds (more than 8 distinct values, or a value longer than
 256 bytes) shows only its text before the first secret, at most 256
 bytes, and is masked from there on; a line with more than 64 distinct
 values or 4,096 matches is masked whole. The unmasked value is never
-kept. Masking is per signature: another signature's excerpt of the same
-line shows that line as that signature sees it.
+kept.
+
+Every excerpt is masked by every redacting signature rx has loaded,
+whether the scan selected it or not, default or opt-in: an `error-line`
+finding on a line that holds an AWS key shows the key masked, and the
+finding is marked masked. A redacting signature takes part only on a
+line that holds its keywords, and only where an excerpt is kept.
 
 **The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
 findings of each signature (10,000 by default), by line; their count

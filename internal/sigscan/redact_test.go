@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/wlame/rx-go/internal/signatures"
 )
 
 // redactCatalogue redacts secrets of one shape in every way a
@@ -162,25 +164,43 @@ func requireHidden(t *testing.T, res *Result, ids, secrets []string) {
 	}
 }
 
+// plainCatalogue are signatures that do not redact, on the same lines:
+// their excerpts are masked by the redacting ones all the same.
+var plainCatalogue = sigFile(
+	regexSig("plain-user", `user=`),
+	regexSig("plain-any", `\S+`),
+	kindSig("plain-blk", "block", `start: 'key='`, "lines: 1"),
+)
+
+// plainIDs are the ids of plainCatalogue.
+var plainIDs = []string{"plain-user", "plain-any", "plain-blk"}
+
 // No byte of a planted secret beyond the part its mask keeps appears in
 // any result: lines with several secrets, bare and overlapping copies
 // before and after them, zero padding before a hex secret, a secret at
 // the excerpt's cut, more than 8 distinct secrets and secrets over 256
-// bytes, in UTF-8 text (fixed seeds).
+// bytes, in UTF-8 text (fixed seeds). Every signature's excerpt is
+// masked by every redacting one, selected or only given as a redactor,
+// so no result of any signature shows any secret.
 func TestScan_RedactionNeverLeaksAPlantedSecret(t *testing.T) {
-	sigs := loadSigs(t, redactCatalogue, redactIDs...)
+	redacting := loadSigs(t, redactCatalogue, redactIDs...)
+	plain := loadSigs(t, plainCatalogue, plainIDs...)
+	allIDs := append(append([]string{}, redactIDs...), plainIDs...)
 	for seed := uint64(1); seed <= 4; seed++ {
 		m := &secretMaker{r: rand.New(rand.NewPCG(seed, seed*31))}
 		var ls []string
 		for range 150 {
 			ls = append(ls, m.line())
 		}
-		res := scanOne(t, lines(ls...), sigs, Options{})
-		requireHidden(t, res, []string{"cap", "bare", "blk", "rn"}, m.planted)
-		requireHidden(t, res, []string{"hex"}, m.hexes)
+		secrets := append(append([]string{}, m.planted...), m.hexes...)
+		res := scanOne(t, lines(ls...), append(append([]*signatures.Signature{}, redacting...), plain...), Options{Redactors: redacting})
+		requireHidden(t, res, allIDs, secrets)
 		if res.BySignature["cap"].Count < 150 {
 			t.Fatalf("seed %d: %d findings of cap, the lines lost their secrets", seed, res.BySignature["cap"].Count)
 		}
+		// The redacting signatures given only as redactors, not selected.
+		res = scanOne(t, lines(ls...), plain, Options{Redactors: redacting})
+		requireHidden(t, res, plainIDs, secrets)
 	}
 }
 
@@ -241,7 +261,8 @@ func eightValues(n int) string {
 // value (2 kept) is a prefix of a 23-character one (4 kept).
 func TestRedaction_JoinedRunKeepsTheLeast(t *testing.T) {
 	view := []byte("x=SKabcdefgh y=SKabcdefghijklmnopqrstu")
-	got := string(appendRedactedExcerpt(nil, view, redactMatches(regexp.MustCompile(`=(SK\w+)`), 1, view)))
+	excerpt, _ := appendRedactedExcerpt(nil, view, redactMatches(regexp.MustCompile(`=(SK\w+)`), 1, view))
+	got := string(excerpt)
 	if want := "x=SK******** y=SK************"; got != want {
 		t.Errorf("excerpt %q, want %q", got, want)
 	}
@@ -269,8 +290,42 @@ func TestRedaction_FailsClosed(t *testing.T) {
 	cases[tooMany.String()] = "************"
 	for line, want := range cases {
 		view := []byte(line)
-		if got := string(appendRedactedExcerpt(nil, view, redactMatches(re, 1, view))); got != want {
+		excerpt, _ := appendRedactedExcerpt(nil, view, redactMatches(re, 1, view))
+		if got := string(excerpt); got != want {
 			t.Errorf("line %.40q…: excerpt %q, want %q", line, got, want)
 		}
+	}
+}
+
+// An excerpt is masked by every redacting signature given, whether it
+// is selected or not: an error line, a block and a run of repeated
+// lines holding an AWS key keep it masked, and their findings say so;
+// a finding with nothing masked says it is not.
+func TestScan_EveryRedactorMasksEveryExcerpt(t *testing.T) {
+	const key = "AKIAIOSFODNN7EXAMPLE"
+	sigs := loadSigs(t, sigFile(
+		regexSig("err", `ERROR`),
+		kindSig("blk", "block", `start: '^BEGIN'`, `end: '^END'`),
+		kindSig("rep", "run", "same: true", "min: 2"),
+	), "err", "blk", "rep", "aws-access-key")
+	plain, aws := sigs[:3], sigs[3]
+	text := lines("ERROR upload failed for key "+key, "BEGIN "+key, "END", "dup "+key, "dup "+key, "ERROR plain")
+	for name, selected := range map[string][]*signatures.Signature{
+		"redactor not selected": plain,
+		"redactor selected":     sigs,
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := scanOne(t, text, selected, Options{Redactors: []*signatures.Signature{aws}})
+			for _, id := range []string{"err", "blk", "rep"} {
+				f := res.BySignature[id].Findings[0]
+				if !strings.Contains(f.Excerpt, "AKIA************") || !f.Masked {
+					t.Errorf("%s: excerpt %q masked=%v, want the key masked", id, f.Excerpt, f.Masked)
+				}
+			}
+			if f := res.BySignature["err"].Findings[1]; f.Excerpt != "ERROR plain" || f.Masked {
+				t.Errorf("a line without a secret: excerpt %q masked=%v", f.Excerpt, f.Masked)
+			}
+			requireNoSecret(t, res, key[4:])
+		})
 	}
 }

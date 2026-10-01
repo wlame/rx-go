@@ -32,6 +32,9 @@ type rawFinding struct {
 	hasEx            bool
 	// vs and ve are the value span in the first line (-1: none).
 	vs, ve int
+	// masked says the finding's text is masked: its signature redacts,
+	// or a redactor masked something in the excerpt.
+	masked bool
 }
 
 // sink receives the findings of one signature from a walk.
@@ -51,7 +54,7 @@ func toFinding(cs *compiledSig, f *rawFinding, lineBase int64) Finding {
 	out := Finding{
 		StartLine: lineBase + f.startIdx, EndLine: lineBase + f.endIdx,
 		StartOffset: f.startOff, EndOffset: f.endOff,
-		Masked: cs.redact,
+		Masked: f.masked,
 	}
 	if f.hasEx {
 		out.Excerpt = string(f.excerpt)
@@ -135,6 +138,7 @@ type walk struct {
 	openBlocks []int32
 	idx        int64
 	exBuf      []byte
+	ex         *excerpter
 	// The previous line's view and length, for `same` runs.
 	prevView []byte
 	prevLen  int64
@@ -146,15 +150,15 @@ type walk struct {
 func newWalk(e *engine, gs *gateScratch) *walk {
 	n := len(e.sigs)
 	w := &walk{e: e, gs: gs, blockOf: make([]*blockWalker, n), runOf: make([]*runWalker, n), sinks: make([]chunkSink, n),
-		res: &chunkResult{sigs: make([]sigChunk, n)}}
+		res: &chunkResult{sigs: make([]sigChunk, n)}, ex: newExcerpter(e)}
 	for i := range w.sinks {
 		w.sinks[i] = chunkSink{cap: e.cap, full: &e.full[i]}
 	}
 	for _, si := range e.blocks {
-		w.blockOf[si] = newBlockWalker(e.sigs[si])
+		w.blockOf[si] = newBlockWalker(e.sigs[si], w.ex)
 	}
 	for _, si := range e.runs {
-		w.runOf[si] = newRunWalker(e.sigs[si])
+		w.runOf[si] = newRunWalker(e.sigs[si], w.ex)
 	}
 	return w
 }
@@ -231,13 +235,13 @@ func matchesRun(p *runProgram, view []byte) bool {
 
 // confirmRegex runs a regex signature on a line.
 func (w *walk) confirmRegex(cs *compiledSig, l *line, idx int64) {
-	addRegexFinding(cs, l, idx, &w.sinks[cs.idx], &w.exBuf)
+	addRegexFinding(cs, l, idx, &w.sinks[cs.idx], &w.exBuf, w.ex)
 }
 
 // addRegexFinding confirms a regex signature on line l and adds the
 // finding to out. The excerpt and value span are built only when out
 // stores the finding.
-func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byte) {
+func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byte, ex *excerpter) {
 	store := out.storing()
 	ok, vs, ve := cs.regex.confirm(l.view, store)
 	if !ok {
@@ -248,14 +252,11 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 		if vs >= 0 {
 			f.vs, f.ve = vs+l.shift, ve+l.shift
 		}
-		if cs.redact {
-			// Every secret on the line is masked, not only the value of
-			// the match that made the finding (redaction).
-			*exBuf = appendRedactedExcerpt((*exBuf)[:0], l.view, redactMatches(cs.regex.re, cs.regex.capture, l.view))
-		} else {
-			*exBuf = appendExcerpt((*exBuf)[:0], l.view)
-		}
-		f.excerpt, f.hasEx = *exBuf, true
+		// Every secret on the line is masked, by every redacting
+		// signature, whatever signature made the finding.
+		var masked bool
+		*exBuf, masked = ex.build((*exBuf)[:0], l.view)
+		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.redact
 	}
 	out.add(cs, &f)
 }
@@ -283,7 +284,7 @@ func (w *walk) finish(final bool) *chunkResult {
 		res.sigs[si].open = &st
 	}
 	for _, si := range w.e.runs {
-		res.sigs[si].runs = w.runOf[si].edges()
+		res.sigs[si].runs = w.runOf[si].edges(w.prevView, &w.sinks[si])
 	}
 	for si := range w.sinks {
 		res.sigs[si].findings, res.sigs[si].count = w.sinks[si].findings, w.sinks[si].count

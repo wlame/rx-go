@@ -56,6 +56,8 @@ type merger struct {
 	// onRewalkLine, when set, is called for each line a replay walks
 	// (tests).
 	onRewalkLine func()
+	// ex builds the excerpts of the blocks a replay finds.
+	ex *excerpter
 }
 
 // sigMerge is the merge's state for one signature.
@@ -73,7 +75,7 @@ type sigMerge struct {
 
 func newMerger(ctx context.Context, e *engine, onRewalkLine func(), rewalk func(res *chunkResult, fn func(l *line) bool) error) *merger {
 	return &merger{ctx: ctx, e: e, sigs: make([]sigMerge, len(e.sigs)), rewalk: rewalk, scratch: e.gate.newScratch(),
-		onRewalkLine: onRewalkLine}
+		onRewalkLine: onRewalkLine, ex: newExcerpter(e)}
 }
 
 // add merges the next chunk, in text order.
@@ -126,7 +128,7 @@ func (m *merger) finish() {
 		if ms.carry == nil {
 			continue
 		}
-		b := newBlockWalker(m.e.sigs[si])
+		b := newBlockWalker(m.e.sigs[si], m.ex)
 		b.open, b.st = true, *ms.carry
 		b.close(m.storeSink(si, m.base+1, true))
 		ms.carry = nil
@@ -301,7 +303,7 @@ func (m *merger) replayBlocks(res *chunkResult, sigs []int32) error {
 	reps := make([]*replay, len(sigs))
 	for i, si := range sigs {
 		cs := m.e.sigs[si]
-		rp := &replay{si: si, truth: newBlockWalker(cs), own: newBlockWalker(cs),
+		rp := &replay{si: si, truth: newBlockWalker(cs, m.ex), own: newBlockWalker(cs, m.ex),
 			trueSink: m.storeSink(si, m.base+1, true), ownSink: &countSink{}}
 		rp.truth.open, rp.truth.st, rp.truth.joinedAt = true, *m.sigs[si].carry, -1
 		m.sigs[si].carry = nil

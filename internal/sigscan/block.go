@@ -87,10 +87,12 @@ type blockState struct {
 	// trailing blank lines are dropped. The start line always counts.
 	lastIdx int64
 	lastEnd int64
-	// The start line's excerpt and value span, when they were built.
+	// The start line's excerpt and value span, when they were built,
+	// and whether a mask is in the excerpt.
 	excerpt []byte
 	hasEx   bool
 	vs, ve  int
+	masked  bool
 }
 
 // blockWalker runs one block signature over consecutive lines. Blocks
@@ -99,6 +101,7 @@ type blockState struct {
 type blockWalker struct {
 	cs   *compiledSig
 	prog *blockProgram
+	ex   *excerpter
 	open bool
 	st   blockState
 	// joinedAt is the index of the last line an open block joined: such
@@ -107,8 +110,8 @@ type blockWalker struct {
 	joinedAt int64
 }
 
-func newBlockWalker(cs *compiledSig) *blockWalker {
-	return &blockWalker{cs: cs, prog: cs.block, joinedAt: -1 << 62}
+func newBlockWalker(cs *compiledSig, ex *excerpter) *blockWalker {
+	return &blockWalker{cs: cs, prog: cs.block, ex: ex, joinedAt: -1 << 62}
 }
 
 // feed offers line l (index idx) to the open block. It reports whether
@@ -179,11 +182,7 @@ func (b *blockWalker) tryOpen(l *line, idx int64, out sink) {
 	}
 	if out.mayStore() {
 		st.hasEx = true
-		st.excerpt, st.vs, st.ve = anchorExcerpt(b.st.excerpt[:0], b.cs, p.anchor, l.view)
-		if st.vs >= 0 {
-			st.vs += l.shift
-			st.ve += l.shift
-		}
+		st.excerpt, st.masked, st.vs, st.ve = anchorExcerpt(b.st.excerpt[:0], b.ex, b.cs, p.anchor, l)
 	}
 	b.open, b.st, b.joinedAt = true, st, idx
 	if closeAfter || p.maxLines <= 1 {
@@ -201,7 +200,7 @@ func (b *blockWalker) close(out sink) {
 		return
 	}
 	out.add(b.cs, &rawFinding{startIdx: st.startIdx, endIdx: st.lastIdx, startOff: st.startOff, endOff: st.lastEnd,
-		excerpt: st.excerpt, hasEx: st.hasEx, vs: st.vs, ve: st.ve})
+		excerpt: st.excerpt, hasEx: st.hasEx, vs: st.vs, ve: st.ve, masked: st.masked})
 }
 
 // finishAtEnd closes an open block at the end of the text.
@@ -221,17 +220,19 @@ func (b *blockWalker) sameState(o *blockWalker) bool {
 	return !b.open || b.st.startIdx == o.st.startIdx
 }
 
-// anchorExcerpt builds the excerpt of an anchor line into dst. For a
-// redacting signature every secret on the line is masked (redaction),
-// and the anchor's first match is returned as the value; otherwise vs
-// and ve are -1.
-func anchorExcerpt(dst []byte, cs *compiledSig, anchor *regexp.Regexp, view []byte) ([]byte, int, int) {
-	if !cs.redact {
-		return appendExcerpt(dst, view), -1, -1
+// anchorExcerpt builds the excerpt of an anchor line l into dst,
+// masked by every redactor (excerpter.build), and reports whether it
+// holds a mask. The finding is marked masked when its own signature
+// redacts, too. For a redacting signature the anchor's first match is
+// the value (vs, ve, counted from the line's first byte); otherwise they
+// are -1.
+func anchorExcerpt(dst []byte, ex *excerpter, cs *compiledSig, anchor *regexp.Regexp, l *line) (excerpt []byte, masked bool, vs, ve int) {
+	excerpt, masked = ex.build(dst, l.view)
+	vs, ve = -1, -1
+	if cs.redact {
+		if loc := anchor.FindIndex(l.view); loc != nil {
+			vs, ve = loc[0]+l.shift, loc[1]+l.shift
+		}
 	}
-	values := redactMatches(anchor, 0, view)
-	if len(values) == 0 {
-		return appendExcerpt(dst, view), -1, -1
-	}
-	return appendRedactedExcerpt(dst, view, values), values[0][0], values[0][1]
+	return excerpt, masked || cs.redact, vs, ve
 }

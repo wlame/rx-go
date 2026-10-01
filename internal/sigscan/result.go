@@ -1,5 +1,7 @@
 package sigscan
 
+import "github.com/wlame/rx-go/internal/signatures"
+
 // EngineVersion is the version of the scan engine. It enters the key
 // of every cached finding, so a change that can change any answer of
 // the engine bumps it.
@@ -30,6 +32,13 @@ type Options struct {
 	// LookbackBytes is how far back a finding without a timestamp of
 	// its own looks for one (RX_TIMESTAMP_LOOKBACK_KB in bytes).
 	LookbackBytes int
+	// Redactors are the loaded signatures with `redact: true`, selected
+	// or not (signatures.Catalogue.Redactors): every excerpt of every
+	// finding is masked by all of them and by the selected redacting
+	// signatures, so no excerpt shows a value one of them matches on its
+	// line. A signature here that does not redact, or that has no anchor
+	// (a measure), masks nothing.
+	Redactors []*signatures.Signature
 	// Progress, when set, is called as the file is read with the bytes
 	// of the file read so far and the file's size, both as stored on
 	// disk (compressed bytes for a compressed file). Calls never overlap
@@ -51,7 +60,8 @@ type Finding struct {
 	// not known.
 	TimeMS *int64
 	// Excerpt is the first line's view cut to 200 bytes on a UTF-8
-	// boundary, with the value masked when the signature redacts.
+	// boundary, with every value a redacting signature matches on it
+	// masked (Options.Redactors).
 	Excerpt string
 	// ValueStart and ValueEnd are bytes in the first line, counted from
 	// the line's first byte in the text: the value of a regex signature
@@ -59,8 +69,9 @@ type Finding struct {
 	// default), and the anchor's first match of a redacting block or
 	// match run. Nil otherwise.
 	ValueStart, ValueEnd *int
-	// Masked is true when the signature redacts: the excerpt holds the
-	// value masked, and every output masks the finding's text.
+	// Masked is true when the finding's text is masked: its signature
+	// redacts, or a redacting signature (Options.Redactors, or a selected
+	// one) masked a value in the excerpt.
 	Masked bool
 }
 

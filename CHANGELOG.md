@@ -69,7 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `*` (at most 12). Masking takes linear time and fails closed: a line
   with more than 8 distinct values or a value over 256 bytes shows only
   its text before the first secret, and one with more than 64 distinct
-  values or 4,096 matches is masked whole. The commands that scan come
+  values or 4,096 matches is masked whole. Every excerpt is masked by
+  every loaded redacting signature, selected or not, so a finding of a
+  signature that does not redact never shows a secret either. The commands that scan come
   next.
 - `rx signatures`, `show` and `check` run every signature's examples:
   a `match` text that gives no finding, or a `no_match` text that gives

@@ -59,6 +59,20 @@ func (c *Catalogue) DefaultSet() []*Signature {
 	return out
 }
 
+// Redactors returns every active signature with `redact: true`, opt-in
+// ones included, in catalogue order. A scan masks every excerpt by all
+// of them, selected or not (sigscan.Options.Redactors); a built-in a
+// user file disabled is not among them.
+func (c *Catalogue) Redactors() []*Signature {
+	var out []*Signature
+	for _, s := range c.signatures {
+		if s.Redact {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // Lookup returns the active signature with the given id.
 func (c *Catalogue) Lookup(id string) (*Signature, bool) {
 	s, ok := c.byID[id]

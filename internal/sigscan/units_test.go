@@ -179,7 +179,7 @@ func TestMaskValue(t *testing.T) {
 		"ééééé":                 "é****",
 		"éééééééé":              "éé******",
 	} {
-		masked := appendRedactedExcerpt(nil, []byte(value), []span{{0, len(value)}})
+		masked, _ := appendRedactedExcerpt(nil, []byte(value), []span{{0, len(value)}})
 		if got := string(masked); got != want {
 			t.Errorf("mask(%q) = %q, want %q", value, got, want)
 		}
