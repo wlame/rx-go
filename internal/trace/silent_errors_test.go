@@ -60,9 +60,9 @@ func TestSaveScannedFile_FailureWarnsOnce(t *testing.T) {
 func TestRemapBatchEvents_ReportsAnUnreadableStream(t *testing.T) {
 	tooLong := strings.Repeat("x", 17*1024*1024)
 	out := []byte(`{"type":"begin","data":{}}` + "\n" + tooLong + "\n")
-	locs := []frameLoc{{frameIdx: 0, info: seekable.FrameInfo{DecompressedSize: 100}}}
+	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: 100}}}
 
-	_, _, err := remapBatchEvents(context.Background(), out, locs, []string{"p1"})
+	_, _, err := remapBatchEvents(context.Background(), out, segments, []string{"p1"})
 
 	if err == nil {
 		t.Error("remapBatchEvents returned no error for a stream it could not read")

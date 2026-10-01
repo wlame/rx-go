@@ -381,8 +381,9 @@ decompressed; without one the match keeps
 !!! warning "Compressed file paths"
     `rx trace` reads `.gz`, `.bz2`, `.xz` and plain `.zst` files in
     single-worker mode — a compressed stream has no byte ranges to
-    split. A seekable `.zst` written by [`rx compress`](compress.md) is
-    scanned frame-parallel. Offsets are positions in the decompressed
+    split. A seekable `.zst`, written by [`rx compress`](compress.md)
+    or by another seekable encoder, is scanned frame-parallel, each
+    line whole even where a frame boundary cuts it. Offsets are positions in the decompressed
     text either way. See [concepts/compression](../concepts/compression.md).
 
 !!! note "Regex engine is ripgrep"
