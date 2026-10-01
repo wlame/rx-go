@@ -540,6 +540,9 @@ func (e *Engine) RunWithOptions(
 		}
 		return allMatches[i].Pattern < allMatches[j].Pattern
 	})
+	// Every match found, kept or not, can be a line in a kept match's
+	// window, so the windows look lines up in the matches before the cut.
+	uncutMatches := allMatches
 	if opts.MaxResults != nil && len(allMatches) > *opts.MaxResults {
 		allMatches = allMatches[:*opts.MaxResults]
 	}
@@ -548,7 +551,7 @@ func (e *Engine) RunWithOptions(
 	// rather than while the chunks are read.
 	fireMatchHooks(ctx, opts.HookFirer, allMatches, fileIDs, patternIDs)
 
-	contextDict := buildContextDict(allMatches, allContexts, opts.ContextBefore, opts.ContextAfter)
+	contextDict := buildContextDict(allMatches, uncutMatches, allContexts, opts.ContextBefore, opts.ContextAfter)
 
 	// -------------------------------------------------------------------
 	// Phase 5: write caches for large completed scans
@@ -822,31 +825,48 @@ func fireOnFile(ctx context.Context, hf HookFirer, path string, fileStart time.T
 	})
 }
 
-// buildContextDict groups context lines around each match, keyed by
-// "<pattern>:<file>:<offset>". Mirrors Python's group-and-expand
-// logic in parse_multiple_files_multipattern.
+// buildContextDict groups context lines around each match in matches,
+// keyed by "<pattern>:<file>:<offset>".
+//
+// A match's window is its own line plus every line of the same file
+// from contextBefore lines before it to contextAfter lines after it,
+// each bound applied on its own: `-B 12 -A 1` gives at most 12 lines
+// before and 1 after. The lines come from two places. ripgrep reports
+// the lines around a match as context, and a line in the window that
+// matches too as a match of its own, so both are looked up by line
+// number; a line that several patterns match appears once. The matched
+// lines come from found, every match the scan found, which a result cap
+// may have cut matches from: a match past the cap is still a line of
+// the window of the last match kept.
 func buildContextDict(
 	matches []rxtypes.Match,
+	found []rxtypes.Match,
 	contexts []contextWithFile,
 	contextBefore, contextAfter int,
 ) map[string][]rxtypes.ContextLine {
 	out := make(map[string][]rxtypes.ContextLine)
-	width := contextBefore
-	if contextAfter > width {
-		width = contextAfter
-	}
+	hasContext := contextBefore > 0 || contextAfter > 0
 
-	// Index the context lines by file and line number. Walking the
-	// whole slice per match is quadratic, and a large scan produces
-	// tens of thousands of both.
+	// Index every line a window can take by file and line number.
+	// Walking the whole slice per match is quadratic, and a large scan
+	// produces tens of thousands of both.
 	type lineKey struct {
 		fileID string
 		line   int
 	}
-	byLine := make(map[lineKey]rxtypes.ContextLine, len(contexts))
-	if width > 0 {
+	byLine := make(map[lineKey]rxtypes.ContextLine, len(contexts)+len(found))
+	if hasContext {
 		for _, cwf := range contexts {
 			byLine[lineKey{fileID: cwf.fileID, line: cwf.ctx.RelativeLineNumber}] = cwf.ctx
+		}
+		for _, m := range found {
+			if m.RelativeLineNumber == nil {
+				continue
+			}
+			key := lineKey{fileID: m.File, line: *m.RelativeLineNumber}
+			if _, seen := byLine[key]; !seen {
+				byLine[key] = matchedLineAsContext(m)
+			}
 		}
 	}
 
@@ -857,19 +877,9 @@ func buildContextDict(
 		matchLine := *m.RelativeLineNumber
 		key := fmt.Sprintf("%s:%s:%d", m.Pattern, m.File, m.Offset)
 
-		// The window is the matched line plus every context line within
-		// [-contextBefore, +contextAfter] of it in the SAME file.
-		matchedText := ""
-		if m.LineText != nil {
-			matchedText = *m.LineText
-		}
-		window := []rxtypes.ContextLine{{
-			RelativeLineNumber: matchLine,
-			AbsoluteLineNumber: m.AbsoluteLineNumber,
-			LineText:           matchedText,
-			AbsoluteOffset:     m.Offset,
-		}}
-		for d := -width; d <= width; d++ {
+		// The matched line itself, then the lines around it in order.
+		window := []rxtypes.ContextLine{matchedLineAsContext(m)}
+		for d := -contextBefore; d <= contextAfter; d++ {
 			if d == 0 {
 				continue // matched line already added
 			}
@@ -883,6 +893,21 @@ func buildContextDict(
 		out[key] = window
 	}
 	return out
+}
+
+// matchedLineAsContext is a match's line in the form a window lists it.
+// The caller has checked that RelativeLineNumber is set.
+func matchedLineAsContext(m rxtypes.Match) rxtypes.ContextLine {
+	text := ""
+	if m.LineText != nil {
+		text = *m.LineText
+	}
+	return rxtypes.ContextLine{
+		RelativeLineNumber: *m.RelativeLineNumber,
+		AbsoluteLineNumber: m.AbsoluteLineNumber,
+		LineText:           text,
+		AbsoluteOffset:     m.Offset,
+	}
 }
 
 // scannedFilesOutput returns the "scanned_files" field value for the
