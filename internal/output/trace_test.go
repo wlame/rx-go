@@ -107,6 +107,34 @@ func TestBuildFileContexts_DropsUnknownLineNumbers(t *testing.T) {
 	}
 }
 
+// A capped scan of a chunked file can leave a line unnumbered with the
+// number ripgrep gave it inside its chunk. That number names another
+// line of the file, so the line is not printed there, and a match it
+// belongs to marks no line.
+func TestBuildFileContexts_DropsLinesNumberedOnlyInsideTheirChunk(t *testing.T) {
+	resp := baseResponse()
+	resp.Matches = append(resp.Matches, rxtypes.Match{
+		Pattern: "p1", File: "f1", Offset: 900000, AbsoluteLineNumber: -1, RelativeLineNumber: intPtr(2),
+	})
+	resp.ContextLines["p1:f1:900000"] = []rxtypes.ContextLine{
+		{RelativeLineNumber: 2, AbsoluteLineNumber: -1, LineText: "line 9002 ERROR, of another chunk"},
+		{RelativeLineNumber: 4, AbsoluteLineNumber: -1, LineText: "line 9004, of another chunk"},
+	}
+
+	contexts := BuildFileContexts(resp)
+
+	for _, block := range contexts[0].Blocks {
+		for _, row := range block.Lines {
+			if strings.Contains(row.Text, "another chunk") {
+				t.Errorf("a line numbered only inside its chunk was printed as line %d: %q", row.LineNumber, row.Text)
+			}
+			if row.LineNumber == 2 && row.IsMatch {
+				t.Errorf("line 2 is marked as a match by a match numbered only inside its chunk")
+			}
+		}
+	}
+}
+
 // TestBuildFileContexts_SortsFilesByPath keeps output stable across runs;
 // Go map iteration is random.
 func TestBuildFileContexts_SortsFilesByPath(t *testing.T) {
