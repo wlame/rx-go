@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/signatures"
 )
 
@@ -191,6 +193,31 @@ func TestSignaturesShow_User(t *testing.T) {
 	var doc map[string]any
 	if err != nil || json.Unmarshal([]byte(asJSON), &doc) != nil || doc["id"] != "invoice-failed" || doc["kind"] != "regex" {
 		t.Errorf("show --json: %v\n%s", err, asJSON)
+	}
+}
+
+// show prints the cache key the signature's findings are stored under
+// with the settings of the environment; a setting that changes answers
+// changes it.
+func TestSignaturesShow_CacheKey(t *testing.T) {
+	keyLine := regexp.MustCompile(`(?m)^# cache key: ([0-9a-f]{64})$`)
+	out, err := runSignatures(t, "show", "invoice-failed")
+	m := keyLine.FindStringSubmatch(out)
+	if err != nil || m == nil {
+		t.Fatalf("show has no cache key line (%v):\n%s", err, out)
+	}
+	cat := signatures.Load(signatures.LoadOptions{Paths: []string{signaturesFixture}})
+	sig, _ := cat.Lookup("invoice-failed")
+	if want := findings.Key(sig, cat, findingsScanOptions()); m[1] != want {
+		t.Errorf("printed key %s, want %s", m[1], want)
+	}
+	if !strings.Contains(out, "# line pass: no\n# cache key: ") {
+		t.Errorf("the cache key does not follow the line pass:\n%s", out)
+	}
+	t.Setenv("RX_FINDINGS_MAX_PER_SIGNATURE", "500")
+	capped, err := runSignatures(t, "show", "invoice-failed")
+	if c := keyLine.FindStringSubmatch(capped); err != nil || c == nil || c[1] == m[1] {
+		t.Errorf("another cap kept the key (%v):\n%s", err, capped)
 	}
 }
 

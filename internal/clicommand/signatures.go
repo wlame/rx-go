@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/signatures"
 )
@@ -198,10 +199,12 @@ func newSignaturesShowCommand(out io.Writer, checkExamples ExamplesChecker) *cob
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "show ID",
-		Short: "Show one signature: its definition with every default, source, keywords and line pass",
+		Short: "Show one signature: its definition with every default, source, keywords, line pass and cache key",
 		Long: "Prints the signature's definition as YAML with every default filled in, after comment lines " +
-			"that give its source, its keyword clauses (derived from the regex or declared) and whether it " +
-			"runs in the line pass. Exit 2 for an id no signature has or one whose definition was refused.",
+			"that give its source, its keyword clauses (derived from the regex or declared), whether it " +
+			"runs in the line pass, and the key its findings are cached under with the current settings " +
+			"(RX_SIGNATURES_LINE_BYTES, RX_FINDINGS_MAX_PER_SIGNATURE, RX_TIMESTAMP_LOOKBACK_KB, RX_LOG_TZ " +
+			"and the redacting signatures). Exit 2 for an id no signature has or one whose definition was refused.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			cat := signatures.Load(signatures.LoadOptions{CheckExamples: checkExamples})
@@ -241,7 +244,9 @@ func runSignaturesShow(out io.Writer, cat *signatures.Catalogue, id string, json
 }
 
 // showHeader is what `show` prints above the definition, as YAML
-// comments so the whole output stays a valid definition.
+// comments so the whole output stays a valid definition. The cache key
+// is the one a scan with the environment's settings stores the
+// signature's findings under (findings.Key).
 func showHeader(cat *signatures.Catalogue, sig *signatures.Signature) []string {
 	lines := []string{"source: " + sig.Source.String()}
 	if sig.Overrides {
@@ -250,7 +255,8 @@ func showHeader(cat *signatures.Catalogue, sig *signatures.Signature) []string {
 	if sig.DisabledBy != nil {
 		lines = append(lines, "disabled by "+sig.DisabledBy.String())
 	}
-	lines = append(lines, keywordsLine(sig), "line pass: "+yesNo(sig.LinePass()), examplesLine(cat, sig))
+	lines = append(lines, keywordsLine(sig), "line pass: "+yesNo(sig.LinePass()),
+		"cache key: "+findings.Key(sig, cat, findingsScanOptions()), examplesLine(cat, sig))
 	return lines
 }
 

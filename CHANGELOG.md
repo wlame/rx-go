@@ -158,6 +158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RX_MAX_SIGNATURE_SCANS` (default 1, 1 to 64): how many signature
   scans read files at once in `rx serve`; later ones wait their turn,
   and a scan answered from the cache does not wait.
+- `rx signatures show ID` prints the signature's cache key with the
+  current settings (`# cache key: …`, after `# line pass:`).
 - New dependency: `go.yaml.in/yaml/v3` v3.0.5, the YAML parser, under
   the MIT licence (the files ported from libyaml) and the Apache
   License 2.0 (the rest).

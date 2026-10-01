@@ -132,8 +132,9 @@ puts each list item on its own line.)
 
 Prints one signature: comment lines with its source, its marks, its
 keyword clauses (derived from the anchor or declared), whether it runs
-in the [line pass](../concepts/signatures.md#keywords-and-the-gate), and
-whether its examples ran; then its definition as YAML with every
+in the [line pass](../concepts/signatures.md#keywords-and-the-gate), the
+key its findings are cached under, and whether its examples ran; then
+its definition as YAML with every
 default filled in. The output is a valid definition: placed under
 `signatures:` in a file of your own, it loads into the same signature.
 
@@ -145,6 +146,7 @@ rx signatures show invoice-failed
 # source: /home/me/.config/rx/signatures/team.yml:8
 # keywords (derived): [invoice ] AND [ failed]
 # line pass: no
+# cache key: 3b8e5f0c9a1d47e2b6c0f9a8d7e6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8
 # examples: 1 match, 1 no_match, all pass
 id: invoice-failed
 name: Invoice failed
@@ -168,6 +170,14 @@ examples:
 The members of one clause are separated by commas; a line must hold a
 member of every clause (`AND`) before the anchor is tried on it. A
 disabled built-in is shown with `# disabled by file:line`.
+
+The cache key is the one a scan with the current settings stores the
+signature's findings under in the
+[findings cache](../concepts/caching.md#findings). It changes when the
+signature's matching part changes, when `RX_SIGNATURES_LINE_BYTES`,
+`RX_FINDINGS_MAX_PER_SIGNATURE`, `RX_TIMESTAMP_LOOKBACK_KB` or
+`RX_LOG_TZ` changes, and when any redacting signature changes; its name,
+description, group and the other descriptive fields do not change it.
 
 | Flag | Default | Description |
 |---|---|---|

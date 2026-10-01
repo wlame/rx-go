@@ -194,7 +194,8 @@ is masked by every loaded redacting signature before it is stored.
 **Current entries.** An entry is current when `meta.json` still
 describes the file (the identity check below) and the entry's key is
 the one the signature has now. The key is a hash of what decides the
-signature's findings and nothing else.
+signature's findings and nothing else; `rx signatures show ID` prints
+it.
 
 | Change | Effect |
 |---|---|
