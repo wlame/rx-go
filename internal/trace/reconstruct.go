@@ -63,6 +63,9 @@ type ReconstructRequest struct {
 // the offsets in the cache address the decompressed stream, which is
 // also what the scan that filled the cache measured.
 //
+// A context line carries the byte offset of its first byte, as a scan
+// reports it; rx-python's reconstruction leaves it -1.
+//
 // Parity: rx-python/src/rx/trace_cache.py::reconstruct_match_data.
 func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.ContextLine, error) {
 	if len(req.Cached) == 0 {
@@ -109,7 +112,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 				RelativeLineNumber: line,
 				AbsoluteLineNumber: line,
 				LineText:           text,
-				AbsoluteOffset:     -1,
+				AbsoluteOffset:     pos,
 			})
 			afterWanted--
 		}
@@ -129,7 +132,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 					RelativeLineNumber: prev.number,
 					AbsoluteLineNumber: prev.number,
 					LineText:           prev.text,
-					AbsoluteOffset:     -1,
+					AbsoluteOffset:     prev.offset,
 				})
 			}
 			emitted[line] = true
@@ -148,7 +151,7 @@ func ReconstructFromCache(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Co
 			}
 		}
 
-		before.push(line, text)
+		before.push(ringLine{number: line, offset: pos, text: text})
 		pos, line = end, line+1
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
@@ -268,9 +271,11 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 // Leading-context ring
 // ============================================================================
 
-// ringLine is one remembered line: its number and its text.
+// ringLine is one remembered line: its number, the byte offset of its
+// first byte, and its text.
 type ringLine struct {
 	number int
+	offset int64
 	text   string
 }
 
@@ -290,11 +295,11 @@ func newLineRing(n int) *lineRing {
 	return &lineRing{buf: make([]ringLine, n)}
 }
 
-func (r *lineRing) push(number int, text string) {
+func (r *lineRing) push(line ringLine) {
 	if len(r.buf) == 0 {
 		return
 	}
-	r.buf[r.next] = ringLine{number: number, text: text}
+	r.buf[r.next] = line
 	r.next = (r.next + 1) % len(r.buf)
 	if r.size < len(r.buf) {
 		r.size++
