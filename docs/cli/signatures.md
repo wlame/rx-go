@@ -145,7 +145,7 @@ rx signatures show invoice-failed
 # source: /home/me/.config/rx/signatures/team.yml:8
 # keywords (derived): [invoice ] AND [ failed]
 # line pass: no
-# examples: not checked in this build
+# examples: 1 match, 1 no_match, all pass
 id: invoice-failed
 name: Invoice failed
 group: billing
@@ -190,17 +190,19 @@ rx signatures check ~/.config/rx/signatures/
 
 ```text
 /home/me/.config/rx/signatures/draft.yml:6: refund-spike: error: regex: error parsing regexp: missing closing ): `(refund`
-examples: not checked in this build
-2 files, 3 signatures: 1 error, 0 warnings
-Error: The signature files have 1 error
+/home/me/.config/rx/signatures/draft.yml:21: refund-late: error: examples: match example 1 gives no finding
+examples: checked
+2 files, 3 signatures: 2 errors, 0 warnings
+Error: The signature files have 2 errors
 ```
 
 The one warning is `no keywords: runs in the line pass`, for a
 signature with an anchor from which no keyword clause could be derived:
-it works, and is tested on every line. When rx can run the signatures'
-examples it does, a failing example is an error, and the output says
-`examples: checked`; otherwise it says `examples: not checked in this
-build`.
+it works, and is tested on every line. Every signature's examples run
+through the scan engine: a `match` text that gives no finding, or a
+`no_match` text that gives one, is an error of that signature
+(`examples: match example 1 gives no finding`), which is then refused.
+The output says `examples: checked`.
 
 Use it in CI before you ship a signature file:
 

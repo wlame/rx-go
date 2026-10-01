@@ -31,6 +31,7 @@ import (
 	"github.com/wlame/rx-go/internal/clicommand"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/sigscan"
 
 	// Blank-import analyzer detectors so their package init() calls
 	// register them with the global analyzer registry before main runs
@@ -208,10 +209,11 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(clicommand.NewLogsCommand(os.Stdout))
 	root.AddCommand(clicommand.NewIndexCommand(os.Stdout))
 	root.AddCommand(clicommand.NewCompressCommand(os.Stdout))
-	// The examples checker needs the scan engine to match lines; this
-	// build has none, so `rx signatures` loads without running examples
-	// and says so.
-	root.AddCommand(clicommand.NewSignaturesCommand(os.Stdout, nil))
+	// The scan engine runs every signature's examples while the
+	// signatures load: a signature whose examples fail is refused. The
+	// loader takes the checker as a function, since the engine imports
+	// the loader's package.
+	root.AddCommand(clicommand.NewSignaturesCommand(os.Stdout, sigscan.CheckExamples))
 	root.AddCommand(clicommand.NewServeCommand(os.Stdout, appVersion))
 	return root
 }

@@ -62,6 +62,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact count; an excerpt is the first line cut to 200 bytes, with a
   redacted value masked before it is kept. The commands that scan come
   next.
+- `rx signatures`, `show` and `check` run every signature's examples:
+  a `match` text that gives no finding, or a `no_match` text that gives
+  one, refuses the signature with its file, line and id
+  (`examples: match example 1 gives no finding`), and `check` exits 1.
+  The built-in signatures pass theirs.
 - `RX_SIGNATURES_LINE_BYTES` (default 65536, 1024 to 1048576): how many
   bytes of each line a signature scan matches against; a longer line is
   cut there for matching and still counted at its full length.

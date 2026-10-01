@@ -386,9 +386,11 @@ examples:
 
 Each `match` text must give a finding of the signature and each
 `no_match` text none; a text of several lines is read as lines. Built-in
-signatures carry at least one of each. When rx can run them, a failing
-example refuses the signature; [`rx signatures
-check`](../cli/signatures.md#rx-signatures-check) says whether they ran.
+signatures carry at least one of each. rx runs them through the scan
+engine when it loads the signatures, each text as a file of its own:
+a failing example refuses the signature, with its file, line and id
+([`rx signatures check`](../cli/signatures.md#rx-signatures-check)
+lists them).
 
 ## Where rx finds signature files
 

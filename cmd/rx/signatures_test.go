@@ -85,3 +85,27 @@ func TestSamples_DoesNotReadTheSignatureDirectory(t *testing.T) {
 		t.Errorf("rx signatures does not report the unreadable directory:\n%s", listed)
 	}
 }
+
+// rx signatures check runs every signature's examples with the scan
+// engine: the built-ins pass theirs, and a user signature whose match
+// example finds nothing is refused with its file, line and id (exit 1).
+func TestSignatures_CheckRunsTheExamples(t *testing.T) {
+	dir := writeSignatureDir(t, `signatures:
+  - id: invoice-failed
+    name: Invoice failed
+    group: severity
+    description: An invoice that failed.
+    regex: '\binvoice \d+ failed\b'
+    examples:
+      match: ['invoice 7 was paid']
+`)
+	code, stdout, stderr := runRxEnv(t, signatureEnv(dir), "signatures", "check")
+	want := filepath.Join(dir, "team.yml") + ":7: invoice-failed: error: examples: match example 1 gives no finding"
+	if code != 1 || !strings.Contains(stdout, want) || !strings.Contains(stdout, "examples: checked") {
+		t.Errorf("exit %d, want 1 and the line %q and \"examples: checked\"\nstdout: %s\nstderr: %s", code, want, stdout, stderr)
+	}
+	code, stdout, _ = runRxEnv(t, signatureEnv(t.TempDir()), "signatures", "show", "python-traceback")
+	if code != 0 || !strings.Contains(stdout, "# examples: 1 match, 1 no_match, all pass") {
+		t.Errorf("rx signatures show of a built-in: exit %d\n%s", code, stdout)
+	}
+}
