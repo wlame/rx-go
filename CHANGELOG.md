@@ -108,6 +108,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry written by an earlier scan may hold a split line's offset, and
   is discarded and rescanned.
 
+- `rx trace` and `GET /v1/trace` report the offsets a file has when it
+  starts with a UTF-8 byte-order mark. ripgrep, left to its default
+  encoding detection, dropped the mark and counted offsets without its
+  three bytes: every match and context line of the input that started
+  with it (the file, or its first chunk, for a plain file; the whole
+  stream of a gzip, bzip2, xz or zstd copy; the first batch of up to 100
+  frames of a seekable copy) came back 3 bytes short, so
+  `samples --offsets=` answered the line before, and a trace-cache hit
+  read that line's text. Every ripgrep search now runs with
+  `--encoding=none`. The mark is the first three bytes of line 1's
+  `line_text`, as `rx samples` shows it, and submatch positions count
+  it; a pattern anchored with `^` therefore does not match a line that
+  starts with the mark, as with `rg --encoding=none` and grep. A plain
+  UTF-16 file is still binary and skipped; a compressed UTF-16 copy,
+  which rx searches, is now searched as its bytes rather than
+  transcoded, so a pattern written as text no longer matches it.
+
 ### Security
 
 - A directory search no longer follows a symbolic link out of

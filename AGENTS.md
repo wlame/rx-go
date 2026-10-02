@@ -431,10 +431,14 @@ Paste the output. Do not summarize it.
   handler can return one its operation does not declare.
 - rg's `absolute_offset` is relative to rg's stdin; add `chunk.Offset`.
 - Every rg search takes its base arguments from `newRgArgs`
-  (`worker.go`), and they include `--text`. `isTextFile` is the one place
-  that decides text against binary; without `--text`, rg on stdin turns
-  each later NUL byte into a line break, which numbers the lines after it
-  too high and splits the NUL line. Add a flag every search needs there.
+  (`worker.go`), and they include `--text` and `--encoding=none`.
+  `isTextFile` is the one place that decides text against binary;
+  without `--text`, rg on stdin turns each later NUL byte into a line
+  break, which numbers the lines after it too high and splits the NUL
+  line. Without `--encoding=none`, rg strips a UTF-8 byte-order mark at
+  the start of each input (a chunk, a stream, a batch of frames) and
+  counts every offset after it 3 bytes short. Add a flag every search
+  needs there.
 - `klauspost/compress` zstd encoder levels are coarse (1 to 4); higher values clamp.
 - `sync.Mutex` + map beats `sync.Map` for check-and-insert (see `internal/tasks`).
 

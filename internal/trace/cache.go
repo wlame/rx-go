@@ -52,6 +52,8 @@ import (
 // its line. Version 5 scans let ripgrep split lines at NUL bytes, so a
 // file holding one has matches stored at an offset inside their line.
 // Such an entry cannot be told apart from a good one and is discarded.
+// A version 6 scan also counts a UTF-8 byte-order mark in its offsets,
+// which ripgrep stripped before.
 //
 // rx-python writes version 3, so each backend treats the other's trace
 // caches as absent.
