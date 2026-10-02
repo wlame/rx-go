@@ -38,6 +38,7 @@ type samplesInput struct {
 	Context       int    `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
 	BeforeContext int    `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
 	AfterContext  int    `query:"after_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
+	Prefer        string `header:"Prefer" doc:"RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200."`
 }
 
 // samplesOutput is the answer of GET /v1/samples: 200 with an
@@ -49,9 +50,14 @@ type samplesInput struct {
 // bodies; the OpenAPI document gets the schema of each from the
 // operation's declared responses (samplesResponses), which huma keeps
 // rather than deriving one from this type.
+//
+// PreferenceApplied is set on the 202 only. It is hidden from huma's
+// generated document, which would declare it on the 200;
+// samplesResponses declares it on the 202 by hand.
 type samplesOutput struct {
-	Status int
-	Body   any
+	Status            int
+	PreferenceApplied string `header:"Preference-Applied" hidden:"true"`
+	Body              any
 }
 
 // samplesResponses declares the two success answers of GET /v1/samples
@@ -63,11 +69,18 @@ func samplesResponses(api huma.API) map[string]*huma.Response {
 		http.StatusInternalServerError)
 	responses[strconv.Itoa(http.StatusOK)] = jsonResponse("OK",
 		registry.Schema(reflect.TypeOf(rxtypes.SamplesResponse{}), true, "SamplesResponse"))
-	responses[strconv.Itoa(http.StatusAccepted)] = jsonResponse(
-		"The file's line index is being built and did not finish within the server's wait "+
-			"(RX_SAMPLES_WAIT_SECONDS). The body names the build's task: poll GET /v1/tasks/{task_id} "+
-			"until it ends, then send the same request again.",
+	accepted := jsonResponse(
+		"Sent only to a request with `Prefer: respond-async`: the file's line index is being built "+
+			"and did not finish within the server's wait (RX_SAMPLES_WAIT_SECONDS). The body names the "+
+			"build's task: poll GET /v1/tasks/{task_id} until it ends, then send the same request again.",
 		registry.Schema(reflect.TypeOf(rxtypes.TaskResponse{}), true, "TaskResponse"))
+	accepted.Headers = map[string]*huma.Param{
+		"Preference-Applied": {
+			Description: "respond-async: the server applied the preference the request sent (RFC 7240).",
+			Schema:      &huma.Schema{Type: huma.TypeString},
+		},
+	}
+	responses[strconv.Itoa(http.StatusAccepted)] = accepted
 	return responses
 }
 
@@ -180,17 +193,22 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		// belongs to whoever runs the server rather than to a caller.
 		//
 		// The build runs as a background task shared by every request
-		// for the file. This request waits for it up to the server's
-		// wait and answers 202 with the task when the build takes
-		// longer, so the first look at a 50 GB file does not hold an
-		// HTTP request open while all of it is read.
+		// for the file. A request that prefers respond-async waits for
+		// it up to the server's wait and answers 202 with the task when
+		// the build takes longer, so the first look at a 50 GB file does
+		// not hold its HTTP request open while all of it is read. Any
+		// other request waits for the build and answers the lines.
 		if !config.GetBoolEnv("RX_NO_INDEX", false) && samples.NeedsIndexBuild(validated, stat.Size()) {
-			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, s.cfg.SamplesIndexWait)
+			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
+			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
+			stopDeadline()
 			if waitErr != nil {
 				return nil, waitErr
 			}
 			if pending != nil {
-				return &samplesOutput{Status: http.StatusAccepted, Body: *pending}, nil
+				return &samplesOutput{
+					Status: http.StatusAccepted, PreferenceApplied: respondAsync, Body: *pending,
+				}, nil
 			}
 		}
 

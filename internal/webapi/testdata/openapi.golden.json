@@ -1966,6 +1966,15 @@
               "minimum": -1,
               "type": "integer"
             }
+          },
+          {
+            "description": "RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200.",
+            "in": "header",
+            "name": "Prefer",
+            "schema": {
+              "description": "RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200.",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1987,7 +1996,15 @@
                 }
               }
             },
-            "description": "The file's line index is being built and did not finish within the server's wait (RX_SAMPLES_WAIT_SECONDS). The body names the build's task: poll GET /v1/tasks/{task_id} until it ends, then send the same request again."
+            "description": "Sent only to a request with `Prefer: respond-async`: the file's line index is being built and did not finish within the server's wait (RX_SAMPLES_WAIT_SECONDS). The body names the build's task: poll GET /v1/tasks/{task_id} until it ends, then send the same request again.",
+            "headers": {
+              "Preference-Applied": {
+                "description": "respond-async: the server applied the preference the request sent (RFC 7240).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "400": {
             "content": {

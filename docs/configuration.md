@@ -113,7 +113,7 @@ See [concepts/security](concepts/security.md) and
 | Variable | Default | Description |
 |---|---|---|
 | `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them. At most 256 tasks are kept; past that, the oldest finished ones go first. |
-| `RX_SAMPLES_WAIT_SECONDS` | `5` | How long `GET /v1/samples` waits for the line index it needs to be built (a background `index` task, one per file) before it answers `202` with the task instead of the lines. `0` answers `202` at once whenever a build is needed; a negative or non-numeric value keeps the default. `rx samples` ignores it and waits for the build. See [`GET /v1/samples`](api/endpoints/samples.md#response-202-accepted). |
+| `RX_SAMPLES_WAIT_SECONDS` | `5` | How long a `GET /v1/samples` request that sends `Prefer: respond-async` waits for the line index it needs to be built (a background `index` task, one per file) before it answers `202` with the task instead of the lines; a request without the header waits for the build. `0` answers `202` at once whenever a build is needed; a negative or non-numeric value keeps the default. `rx samples` ignores it and waits for the build. See [`GET /v1/samples`](api/endpoints/samples.md#response-202-accepted). |
 
 ## Logging
 

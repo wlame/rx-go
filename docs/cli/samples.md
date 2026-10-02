@@ -87,8 +87,9 @@ checkpoint before the first wanted one. `--no-index` turns the build off
 and the lookup reads the file without an index — slower, same answer.
 
 `GET /v1/samples` builds the same index as a background task shared by
-every request for the file, and answers `202` with the task when the
-build outlasts `RX_SAMPLES_WAIT_SECONDS`; see
+every request for the file, and answers a request that sends
+`Prefer: respond-async` with `202` and the task when the build outlasts
+`RX_SAMPLES_WAIT_SECONDS`; see
 [`GET /v1/samples`](../api/endpoints/samples.md#response-202-accepted).
 
 ### Context at the ends of the file

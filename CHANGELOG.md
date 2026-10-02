@@ -46,12 +46,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /v1/tasks/{task_id}`, and every request for the same file, in
   the same state, waits for that one build instead of starting its own;
   a running `POST /v1/index` task for the file is waited for as well. A
-  request waits up to `RX_SAMPLES_WAIT_SECONDS` (default 5): when the
-  build ends in time it answers `200` as before, otherwise `202` with
-  the task (`task_id`, `status`, `message`, `path`, `started_at`), and
-  the client polls the task and asks again. A client that disconnects
-  stops waiting, not the build. `rx samples` still waits for the build
-  however long it takes. Part of contract 1.4.
+  request that sends `Prefer: respond-async` (RFC 7240) waits up to
+  `RX_SAMPLES_WAIT_SECONDS` (default 5): when the build ends in time it
+  answers `200` as before, otherwise `202` with the task (`task_id`,
+  `status`, `message`, `path`, `started_at`) and
+  `Preference-Applied: respond-async`, and the client polls the task and
+  asks again. A request without the header waits for the build and
+  answers `200`, so a client that cannot follow a task (viewer 0.4.0, a
+  script) works as before. A client that disconnects stops waiting, not
+  the build. `rx samples` still waits for the build however long it
+  takes. Part of contract 1.4.
 
 - The docs state the one way a line index, the trace cache or
   `--no-index` may change a trace answer: a line number that is `-1`
