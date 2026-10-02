@@ -103,16 +103,17 @@ rx "error"  /var/log/app.log.zst                 # compressed (auto-detected)
 rx "error"  /var/log/app.log --json --samples    # JSON + context lines
 rx samples  /var/log/app.log --lines=450000 --context=3 # context by line
 rx index    /var/log/app.log                     # build line-offset index
-rx index    /var/log/app.log --analyze           # + run anomaly detectors
+rx trace    --signatures /var/log/app.log        # tracebacks, secrets and more, found by signatures
 rx compress /var/log/app.log                     # produce seekable .zst
 rx logs show /var/log/syslog                     # syslog, syslog.1, syslog.2.gz, … as one log
 rx serve    --port=7777 --search-root=/var/log   # HTTP API + SPA
 ```
 
-`--analyze` runs the built-in anomaly detectors (tracebacks, secrets,
-long lines, multi-line JSON blobs, coredumps, repeated runs) alongside
-the index build. See [`docs/concepts/analyzers.md`](docs/concepts/analyzers.md)
-for the full catalog and wire contract.
+`--signatures` scans the files for named signatures: the built-in ones
+(tracebacks, crashes, secrets, SQL, long lines, runs of blank lines and
+more) and your own, from YAML files. `rx signatures` lists them. See
+[`docs/concepts/signatures.md`](docs/concepts/signatures.md) and the
+catalogue in [`docs/reference/signatures.md`](docs/reference/signatures.md).
 
 ### Subcommands
 
@@ -143,7 +144,6 @@ for the full catalog and wire contract.
 | GET, POST | `/v1/logs/*`  | Log chains: list, describe, index, samples, search |
 | GET    | `/v1/signatures` | Signature catalogue                 |
 | GET, POST | `/v1/findings` | A file's cached findings; scan a file for signatures |
-| GET    | `/v1/detectors`  | Anomaly detectors and severity scale |
 | GET    | `/metrics`       | Prometheus metrics                  |
 | GET    | `/docs`          | Swagger UI (from `/openapi.json`)   |
 

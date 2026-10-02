@@ -190,23 +190,21 @@ func TestSamplesResponse_JSON(t *testing.T) {
 
 func TestUnifiedFileIndex_NullableSchemaFields(t *testing.T) {
 	t.Parallel()
-	// frames / anomalies / anomaly_summary are
-	// documented schema fields on Python's UnifiedFileIndex. They must
-	// emit null when unset (NOT be omitted). Python emits all three as
-	// null on a default text-file index.
+	// frames and the prefix fields are documented schema fields on
+	// Python's UnifiedFileIndex. They must emit null when unset (NOT be
+	// omitted). Python emits them as null on a default text-file index.
 	src := UnifiedFileIndex{
-		Version:           2,
-		SourcePath:        "/tmp/x.log",
-		SourceModifiedAt:  "2026-04-17T12:34:56.123456",
-		SourceSizeBytes:   1024,
-		CreatedAt:         "2026-04-17T12:34:56.123456",
-		BuildTimeSeconds:  0.5,
-		FileType:          FileTypeText,
-		IsText:            true,
-		LineIndex:         []LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
-		AnalysisPerformed: false,
-		// Frames / Anomalies / AnomalySummary deliberately unset — these
-		// are schema fields documented in rx-python/src/rx/models.py and
+		Version:          2,
+		SourcePath:       "/tmp/x.log",
+		SourceModifiedAt: "2026-04-17T12:34:56.123456",
+		SourceSizeBytes:  1024,
+		CreatedAt:        "2026-04-17T12:34:56.123456",
+		BuildTimeSeconds: 0.5,
+		FileType:         FileTypeText,
+		IsText:           true,
+		LineIndex:        []LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
+		// Frames and the prefix fields deliberately unset — these are
+		// schema fields documented in rx-python/src/rx/models.py and
 		// must appear as null in the output.
 	}
 	data, err := json.Marshal(src)
@@ -215,8 +213,8 @@ func TestUnifiedFileIndex_NullableSchemaFields(t *testing.T) {
 	}
 	for _, frag := range []string{
 		`"frames":null`,
-		`"anomalies":null`,
-		`"anomaly_summary":null`,
+		`"prefix_pattern":null`,
+		`"prefix_regex":null`,
 	} {
 		if !strings.Contains(string(data), frag) {
 			t.Errorf("expected %s in JSON, got %s", frag, data)
@@ -229,16 +227,15 @@ func TestUnifiedFileIndex_MinimalRoundTrip(t *testing.T) {
 	// Minimal required fields; ensure they serialize without panic and
 	// the round trip preserves the schema.
 	src := UnifiedFileIndex{
-		Version:           2,
-		SourcePath:        "/tmp/x.log",
-		SourceModifiedAt:  "2026-04-17T12:34:56.123456",
-		SourceSizeBytes:   1024,
-		CreatedAt:         "2026-04-17T12:34:56.123456",
-		BuildTimeSeconds:  0.5,
-		FileType:          FileTypeText,
-		IsText:            true,
-		LineIndex:         []LineIndexEntry{{LineNumber: 1}, {LineNumber: 100, ByteOffset: 4096}},
-		AnalysisPerformed: false,
+		Version:          2,
+		SourcePath:       "/tmp/x.log",
+		SourceModifiedAt: "2026-04-17T12:34:56.123456",
+		SourceSizeBytes:  1024,
+		CreatedAt:        "2026-04-17T12:34:56.123456",
+		BuildTimeSeconds: 0.5,
+		FileType:         FileTypeText,
+		IsText:           true,
+		LineIndex:        []LineIndexEntry{{LineNumber: 1}, {LineNumber: 100, ByteOffset: 4096}},
 	}
 	data, err := json.Marshal(src)
 	if err != nil {
@@ -327,22 +324,6 @@ func TestTreeResponse_NullableTotals(t *testing.T) {
 	}
 }
 
-func TestDetectorsResponse_EmptyRegistry(t *testing.T) {
-	t.Parallel()
-	// v1 ships with zero detectors; response envelope must still be a
-	// valid JSON with empty lists (not null).
-	r := DetectorsResponse{
-		Detectors:     []DetectorInfo{},
-		Categories:    []CategoryInfo{},
-		SeverityScale: []SeverityScaleLevel{},
-	}
-	data, _ := json.Marshal(r)
-	want := `{"detectors":[],"categories":[],"severity_scale":[]}`
-	if string(data) != want {
-		t.Errorf("got %s, want %s", data, want)
-	}
-}
-
 func TestTraceCacheData_JSON(t *testing.T) {
 	t.Parallel()
 	c := TraceCacheData{
@@ -417,8 +398,8 @@ func TestMatchFoundPayload_NullableLineNumber(t *testing.T) {
 	}
 }
 
-// TestIndexTaskResult_JSON pins the shape of an index answer without
-// analysis: every field present, the ones that need analysis null, and
+// TestIndexTaskResult_JSON pins the shape of a seekable-zstd index
+// answer: every field present, the line-length statistics null, and
 // the task's own fields beside the embedded projection's at the top
 // level.
 func TestIndexTaskResult_JSON(t *testing.T) {
@@ -439,7 +420,7 @@ func TestIndexTaskResult_JSON(t *testing.T) {
 	}
 	for _, frag := range []string{
 		`"file_type":"seekable_zstd"`, `"line_index":[[1,0,0]]`,
-		`"line_length":null`, `"longest_line":null`, `"anomaly_summary":null`, `"anomalies":null`,
+		`"line_length":null`, `"longest_line":null`,
 		`"success":true`, `"index_path":"/home/u/.cache/rx/indexes/big.log.zst_abc.json"`,
 	} {
 		if !strings.Contains(string(data), frag) {

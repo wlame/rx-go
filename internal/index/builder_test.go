@@ -101,7 +101,7 @@ func TestBuild_RoundTrip(t *testing.T) {
 	// Isolate the cache dir so this test doesn't pollute the user's.
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 
-	built, err := Build(p, BuildOptions{StepBytes: 2000, Analyze: true})
+	built, err := Build(p, BuildOptions{StepBytes: 2000})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -135,10 +135,10 @@ func TestBuild_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestBuild_AnalyzeStatistics verifies the line-length aggregates. With
-// a mix of line lengths we can sanity-check avg/median/p95 derived
-// from a deterministic input.
-func TestBuild_AnalyzeStatistics(t *testing.T) {
+// TestBuild_LineLengthStatistics verifies the line-length aggregates
+// every build of a plain file records. With a mix of line lengths we
+// can sanity-check avg/median/p95 derived from a deterministic input.
+func TestBuild_LineLengthStatistics(t *testing.T) {
 	// 100 lines: lengths 1..100 bytes of content (plus \n).
 	var buf bytes.Buffer
 	for i := 1; i <= 100; i++ {
@@ -147,7 +147,7 @@ func TestBuild_AnalyzeStatistics(t *testing.T) {
 	}
 	p := writeTempFile(t, buf.String())
 
-	idx, err := Build(p, BuildOptions{Analyze: true})
+	idx, err := Build(p, BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -177,59 +177,12 @@ func TestBuild_AnalyzeStatistics(t *testing.T) {
 	}
 }
 
-// TestBuild_LineLengthStats_ComputedWithoutAnalyze: Python always
-// populates line_length stats (max/avg/median/p95/p99/stddev/
-// max_line_number/max_byte_offset) regardless of the --analyze flag. The --analyze flag only gates anomaly detection
-// and prefix-pattern work, not the basic line-length scan.
-//
-// Previous Go behavior: stats were gated on Analyze=true, producing
-// null fields in POST /v1/index responses for non-analyze runs. That
-// broke rx-viewer dashboards showing line-length histograms.
-func TestBuild_LineLengthStats_ComputedWithoutAnalyze(t *testing.T) {
-	// Known deterministic mix of line lengths (1..20 bytes).
-	var buf bytes.Buffer
-	for i := 1; i <= 20; i++ {
-		buf.WriteString(strings.Repeat("a", i))
-		buf.WriteByte('\n')
-	}
-	p := writeTempFile(t, buf.String())
-
-	// Build WITHOUT --analyze. Python parity: stats must still be present.
-	idx, err := Build(p, BuildOptions{Analyze: false})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if idx.LineLengthMax == nil || *idx.LineLengthMax != 20 {
-		t.Errorf("LineLengthMax (no analyze): got %v, want 20", idx.LineLengthMax)
-	}
-	// Avg of 1..20 = 10.5
-	if idx.LineLengthAvg == nil || *idx.LineLengthAvg < 10.4 || *idx.LineLengthAvg > 10.6 {
-		t.Errorf("LineLengthAvg (no analyze): got %v, want ~10.5", idx.LineLengthAvg)
-	}
-	if idx.LineLengthMedian == nil {
-		t.Errorf("LineLengthMedian (no analyze) should be populated, got nil")
-	}
-	if idx.LineLengthP95 == nil {
-		t.Errorf("LineLengthP95 (no analyze) should be populated, got nil")
-	}
-	if idx.LineLengthStddev == nil {
-		t.Errorf("LineLengthStddev (no analyze) should be populated, got nil")
-	}
-	if idx.LineLengthMaxLineNumber == nil || *idx.LineLengthMaxLineNumber != 20 {
-		t.Errorf("LineLengthMaxLineNumber (no analyze): got %v, want 20",
-			idx.LineLengthMaxLineNumber)
-	}
-	if idx.LineLengthMaxByteOffset == nil {
-		t.Errorf("LineLengthMaxByteOffset (no analyze) should be populated, got nil")
-	}
-}
-
 // TestBuild_EmptyFile handles the edge case where the source file has
 // zero bytes. Python's builder produces line_count=0, empty_line_count=0,
 // line_length_avg=0, etc. We match.
 func TestBuild_EmptyFile(t *testing.T) {
 	p := writeTempFile(t, "")
-	idx, err := Build(p, BuildOptions{Analyze: true})
+	idx, err := Build(p, BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -248,7 +201,7 @@ func TestBuild_EmptyFile(t *testing.T) {
 func TestBuild_EmptyLineCount(t *testing.T) {
 	content := "hello\n\nworld\n\n\n"
 	p := writeTempFile(t, content)
-	idx, err := Build(p, BuildOptions{Analyze: true})
+	idx, err := Build(p, BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -361,7 +314,7 @@ func TestBuild_ReturnsStatError(t *testing.T) {
 func TestBuild_LongLineDoesNotPanic(t *testing.T) {
 	big := strings.Repeat("z", 10*1024*1024) + "\n"
 	p := writeTempFile(t, big)
-	idx, err := Build(p, BuildOptions{Analyze: true})
+	idx, err := Build(p, BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -446,9 +399,9 @@ func TestLineEndingTally_NoLinesIsLF(t *testing.T) {
 	}
 }
 
-// TestBuild_HugeAnalyze exercises the percentile branch on a realistic
-// but not enormous sample (1000 lines of varying length).
-func TestBuild_HugeAnalyze(t *testing.T) {
+// TestBuild_PercentilesOfAThousandLines exercises the percentile branch
+// on a realistic but not enormous sample (1000 lines of varying length).
+func TestBuild_PercentilesOfAThousandLines(t *testing.T) {
 	var buf bytes.Buffer
 	for i := 0; i < 1000; i++ {
 		n := 10 + (i % 90) // 10..99
@@ -456,7 +409,7 @@ func TestBuild_HugeAnalyze(t *testing.T) {
 		buf.WriteByte('\n')
 	}
 	p := writeTempFile(t, buf.String())
-	idx, err := Build(p, BuildOptions{Analyze: true})
+	idx, err := Build(p, BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

@@ -84,7 +84,6 @@ GET /v1/tasks/{task_id}
     "size_bytes": 582137856,
     "created_at": "2026-04-18T14:23:48.456789Z",
     "build_time_seconds": 2.456,
-    "analysis_performed": false,
     "line_index": [
       {"line_number": 1, "byte_offset": 0},
       {"line_number": 12500, "byte_offset": 2097152}

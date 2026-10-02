@@ -156,14 +156,14 @@ func TestIndexPost_ReusesCacheOnSecondCall(t *testing.T) {
 	ts := newTestServer(t)
 
 	// First call — builds.
-	postAndWait(t, ts.URL, big, 1, false, false)
+	postAndWait(t, ts.URL, big, 1, false)
 
 	// Second call — should hit cache. We can't directly observe "no
 	// rebuild" from outside, but the task should still succeed.
-	postAndWait(t, ts.URL, big, 1, false, false)
+	postAndWait(t, ts.URL, big, 1, false)
 
 	// Third call with --force should rebuild regardless.
-	postAndWait(t, ts.URL, big, 1, true, false)
+	postAndWait(t, ts.URL, big, 1, true)
 }
 
 // TestIndexGet_AfterBuild verifies GET returns a valid cached index
@@ -184,7 +184,7 @@ func TestIndexGet_AfterBuild(t *testing.T) {
 	t.Cleanup(paths.Reset)
 
 	ts := newTestServer(t)
-	postAndWait(t, ts.URL, big, 1, false, false)
+	postAndWait(t, ts.URL, big, 1, false)
 
 	resp, err := http.Get(ts.URL + "/v1/index?path=" + big)
 	if err != nil {
@@ -210,12 +210,11 @@ func TestIndexGet_AfterBuild(t *testing.T) {
 
 // postAndWait POSTs /v1/index and polls until the task is in a terminal
 // state. Fails the test on timeout or a failed task.
-func postAndWait(t *testing.T, baseURL, path string, thresholdMB int, force, analyze bool) {
+func postAndWait(t *testing.T, baseURL, path string, thresholdMB int, force bool) {
 	t.Helper()
 	body, _ := json.Marshal(rxtypes.IndexRequest{
 		Path:      path,
 		Force:     force,
-		Analyze:   analyze,
 		Threshold: intPtr(thresholdMB),
 	})
 	resp, err := http.Post(baseURL+"/v1/index", "application/json", bytes.NewReader(body))
@@ -250,4 +249,30 @@ func postAndWait(t *testing.T, baseURL, path string, thresholdMB int, force, ana
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("task timed out")
+}
+
+// waitForTaskCompletion is a local poll helper. We can't reuse
+// postAndWait because that re-POSTs; we just want to drain an existing
+// task ID to "completed" or fail the test on timeout. Sleeps between
+// polls to match the pattern used elsewhere in this package.
+func waitForTaskCompletion(t *testing.T, baseURL, taskID string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		r, err := http.Get(baseURL + "/v1/tasks/" + taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = r.Body.Close()
+		status, _ := body["status"].(string)
+		if status == "completed" {
+			return
+		}
+		if status == "failed" {
+			t.Fatalf("task failed: %v", body["error"])
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("task did not complete in time")
 }

@@ -14,7 +14,7 @@
 //	rx "pattern" /var/log/app.log          — trace (default subcommand)
 //	rx trace ... --max-results=N          — explicit trace
 //	rx samples /var/log/app.log --lines=100
-//	rx index /var/log/app.log --analyze
+//	rx index /var/log/app.log
 //	rx compress /var/log/app.log --frame-size=4M
 //	rx serve --host=0.0.0.0 --port=8000
 //

@@ -29,7 +29,6 @@ other members trimmed; `rx index --info --json` prints all of them):
   "source_device": 16777229,
   "file_type": "text",
   "index_step_bytes": 1048576,
-  "analysis_performed": false,
   "line_count": 1418377,
   "line_index": [[1, 0], [3561, 1048703], [6894, 2097412], [10236, 3146190]],
   "time_index": {
@@ -88,8 +87,8 @@ takes 11 ms, process start included.
 Every build also reads the timestamp at the start of each line and
 records what it found as `time_index`. It costs no extra pass: the same
 walk that places the checkpoints reads each line's timestamp, for a
-plain, a compressed and a seekable zstd file alike, with or without
-`--analyze`. `time_index` is `null` when no timestamp format is
+plain, a compressed and a seekable zstd file alike. `time_index` is
+`null` when no timestamp format is
 recognized in the first mebibyte of the file's text; the key is always
 there.
 
@@ -155,6 +154,47 @@ seekable copies of one file.
 count and the backward steps; `--json` and `--info --json` give the
 whole section (see [`rx index`](../cli/line-index.md)).
 
+## Line-length statistics
+
+The index of a plain or stream-compressed file carries `line_count`,
+`empty_line_count`, `line_ending` and the line lengths: `line_length_max`,
+`avg`, `median`, `p95`, `p99`, `stddev`, and where the longest line is
+(`line_length_max_line_number`, `line_length_max_byte_offset`). The
+walk that places the checkpoints collects them. A seekable zstd index
+has `line_count` from its frame table and leaves the others `null`, as
+rx-python's does. Both backends compute them the same way, because the
+index file is written by one and read by the other.
+
+**The percentile definition is linear interpolation over the sorted
+sample** — the one Python's `statistics.quantiles(method="inclusive")`
+computes. For a sample of `n` values sorted ascending, the value at
+quantile `q` sits at position `q * (n - 1)` counting from zero, and a
+fractional position interpolates between its two neighbours. With two
+lines of 2 and 4 bytes the median is 3, not 2 or 4.
+
+`stddev` is the **sample** standard deviation, dividing by `n - 1`.
+
+`avg` and `stddev` see every line: rx-go accumulates them with Welford's
+method, rx-python sums directly, and the two agree to within floating
+point's last few bits.
+
+### Above 10,000 lines the percentiles are estimates
+
+rx-go keeps a reservoir of 10,000 uniformly-chosen line lengths rather
+than all of them, so the memory cost of indexing a 100 GB log does not
+grow with the file. Below that count the reservoir holds every line and
+the percentiles are exact. Above it they are estimates from a sample,
+and the two backends are **not** looking at the same lines.
+
+The guarantee there is a tolerance, not equality: **within 2% of the
+true value**, measured worst case at 1% across six seeds on a 60,000-line
+file. `max`, `avg` and `stddev` stay exact whatever the line count.
+
+A comparison of the two backends' indexes should assert the tolerance
+above 10,000 lines and exact agreement below it. The shared fixture for
+the exact case is `testdata/line-lengths.log` here and
+`tests/data/line-lengths.log` in rx-python; both assert the same numbers.
+
 ## How `rx` uses the index
 
 ### Line-number-to-byte seek
@@ -214,7 +254,8 @@ The builder:
    position has advanced `index_step_bytes` beyond the last checkpoint
 3. Counts lines along the way, and reads each line's timestamp for the
    [time section](#the-time-section)
-4. Optionally (when `--analyze` is set) gathers line-length statistics
+4. Gathers the [line-length statistics](#line-length-statistics) (not
+   for a seekable zstd file)
 5. Writes the JSON file atomically (temp file + rename) to
    `~/.cache/rx/indexes/<safe-name>_<hash16>.json`, with the name cut
    to fit in 255 bytes (see [caching](caching.md#indexes))
@@ -241,9 +282,6 @@ A lookup in a large or compressed file builds an index if none is cached,
 so the *second* lookup is fast — which is the case an index exists for.
 A lookup that the head of the file answers builds none (see
 [the first lookup of a large file](#the-first-lookup-of-a-large-file)).
-The build runs without `--analyze`: anomaly detection is a separate
-feature, nothing on the lookup path reads its output, and a full pass to
-answer one line is work nobody asked for.
 
 `--no-index` (or `RX_NO_INDEX=1`) turns it off for a caller that wants
 the read to leave nothing behind; the lookup then streams, which is
@@ -361,7 +399,7 @@ find /var/log/ -name "*.log" -size +50M -exec rx index {} \;
 ### Index files are small
 
 An index has about one checkpoint per MB of source: 9.3 KB for the
-465 MB log above. An analysis adds its anomalies to the file.
+465 MB log above.
 
 ### Compressed-file indexes are different
 

@@ -10,7 +10,7 @@ import (
 // TestBuildIndex_LineStats_KnownContent is the integration regression guard
 // for the Welford + reservoir-sampling refactor. It builds an index on a
 // fixture with a known line-length distribution and asserts the populated
-// IndexAnalysis fields are correct.
+// line-length fields are correct.
 //
 // The fixture is 100 identical lines of 50 bytes content + '\n' (total
 // 5 100 bytes). Because every line has the same length, mean/median/p95/p99
@@ -27,7 +27,7 @@ func TestBuildIndex_LineStats_KnownContent(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	idx, err := Build(path, BuildOptions{Analyze: true})
+	idx, err := Build(path, BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

@@ -1026,25 +1026,6 @@ func TestTreeEndpoint_FilterByExtension(t *testing.T) {
 	}
 }
 
-// TestDetectorsEndpoint returns the analyzer registry list.
-// With zero analyzers registered, we expect an empty list.
-func TestDetectorsEndpoint(t *testing.T) {
-	ts := newTestServer(t)
-	resp, err := http.Get(ts.URL + "/v1/detectors")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status: got %d", resp.StatusCode)
-	}
-	var body map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if _, ok := body["detectors"]; !ok {
-		t.Errorf("response missing detectors key: %v", body)
-	}
-}
-
 // TestTaskEndpoint_NotFound returns 404 for unknown IDs.
 func TestTaskEndpoint_NotFound(t *testing.T) {
 	ts := newTestServer(t)

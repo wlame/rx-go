@@ -72,12 +72,6 @@ func TestSamples_BuildsAnIndexForALargeFile(t *testing.T) {
 	if err != nil || idx == nil {
 		t.Fatalf("no index was built: %v", err)
 	}
-	// Analysis is a different feature: nothing on this path reads its
-	// output, and a full anomaly pass to answer one line is work nobody
-	// asked for.
-	if idx.AnalysisPerformed {
-		t.Error("the index carries analysis, which samples does not need")
-	}
 }
 
 func TestSamples_NoIndexBuildsNothing(t *testing.T) {

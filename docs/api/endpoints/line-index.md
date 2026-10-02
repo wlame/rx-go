@@ -33,7 +33,6 @@ GET /v1/index?path=<file>
   "size_bytes":         582137856,
   "created_at":         "2026-04-18T14:22:03.501729",
   "build_time_seconds": 1.234,
-  "analysis_performed": false,
   "line_index": [
     [1,     0],
     [12500, 2097152],
@@ -41,16 +40,16 @@ GET /v1/index?path=<file>
   ],
   "index_entries":   2187,
   "line_count":      3528914,
-  "empty_line_count": null,
-  "line_ending":      null,
-  "line_length":      null,
-  "longest_line":     null,
+  "empty_line_count": 0,
+  "line_ending":      "LF",
+  "line_length": {
+    "max": 2048, "avg": 164.2, "median": 151.0,
+    "p95": 301.0, "p99": 412.0, "stddev": 61.7
+  },
+  "longest_line":     { "line_number": 1207733, "byte_offset": 198812004 },
   "compression_format":      null,
   "decompressed_size_bytes": null,
   "compression_ratio":       null,
-  "anomaly_count":   0,
-  "anomaly_summary": null,
-  "anomalies":       null,
   "time_summary": {
     "format":            "iso",
     "has_zone":          false,
@@ -75,14 +74,13 @@ The OpenAPI document names this shape `IndexResponse`.
 | `size_bytes` | int64 | Source file size when the index was built |
 | `created_at` | string | ISO 8601 UTC with microsecond precision |
 | `build_time_seconds` | number | Wall-clock build time |
-| `analysis_performed` | bool | Whether `--analyze` was run |
 | `line_index` | array | Sparse checkpoints, each an array (`LineIndexEntry`): `[line_number, byte_offset]`, or `[line_number, byte_offset, frame_index]` in a seekable-zstd index, where the third element is the 0-based frame holding the line |
 | `index_entries` | int | `len(line_index)` |
-| `line_count` | int64 \| null | Total lines, populated when analysis ran |
-| `line_length` | object \| null | `{max, avg, median, p95, p99, stddev}` when analyzed |
-| `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line |
+| `line_count` | int64 \| null | Total lines |
+| `empty_line_count`, `line_ending` | int64, string \| null | Lines with no character other than white space; `LF`, `CRLF`, `CR` or `mixed`. `null` for a seekable zstd file |
+| `line_length` | object \| null | `{max, avg, median, p95, p99, stddev}`; `null` for a seekable zstd file |
+| `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line; `null` for a seekable zstd file |
 | `compression_format` | string \| null | For compressed inputs only |
-| `anomalies` | array \| null | Anomaly detector output — populated when `analyze=true`, `null` otherwise. See [analyzers](../../concepts/analyzers.md) for the shipped catalog |
 | `time_summary` | object \| null | The timestamps of the file's lines, from the index's [time section](../../concepts/line-indexes.md#the-time-section): `format` (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted` or `epoch`), `has_zone`, `first_ms` and `last_ms` (the first and the last timestamped line, `null` when no line carries one), `timestamped_lines`, `backward_steps` and `max_backward_ms`. Values are milliseconds since the Unix epoch: UTC instants when `has_zone` is true, the wall-clock time as written, read as if it were UTC, when it is false. `null` when no timestamp format is recognized in the first mebibyte of the text. The per-checkpoint `max_before` array and the `max` line of the stored index are not included; `rx index --json` gives them. Since contract 1.5 |
 | `cli_command` | string | Equivalent CLI command; see below |
 
@@ -90,15 +88,15 @@ The OpenAPI document names this shape `IndexResponse`.
 
 `cli_command` is `rx index PATH --info --json`: the command that reads
 the same stored index without building one. It prints the whole stored
-index (`UnifiedFileIndex`, 39 members), of which this answer is a
+index (`UnifiedFileIndex`, 40 members), of which this answer is a
 projection:
 
 - `path` and `size_bytes` are `source_path` and `source_size_bytes`
   there.
 - `line_length` and `longest_line` group the flat `line_length_*`
   members there.
-- `index_entries` and `anomaly_count` are counted here; the CLI prints
-  the `line_index` and `anomalies` arrays they count.
+- `index_entries` is counted here; the CLI prints the `line_index`
+  array it counts.
 - Other members appear only in the CLI output: `version`, the identity
   members the cache checks (`source_mtime_ns`, `source_inode`,
   `source_device`, `source_ctime_ns`, `source_fingerprint`) and their
@@ -148,15 +146,18 @@ Content-Type: application/json
 |---|---|:-:|---|---|
 | `path` | string | yes | — | File path |
 | `force` | bool | no | `false` | Rebuild even if a valid cache exists |
-| `analyze` | bool | no | `false` | Run full analysis (line stats, anomalies) |
-| `analyze_window_lines` | int | no | `0` (resolver default 128) | Sliding-window size for the anomaly coordinator. Ignored when `analyze=false`. Clamped to `[1, 2048]` |
 | `threshold` | int \| null | no | `RX_LARGE_FILE_MB` (default 50) | Min file size in MB |
 
-`analyze_window_lines` controls how far multi-line detectors
-(tracebacks, JSON blobs) can look back. The request value overrides
-both the `--analyze-window-lines` CLI flag (if the caller is the
-in-process CLI) and the `RX_ANALYZE_WINDOW_LINES` env var. See
-[concepts/analyzers](../../concepts/analyzers.md).
+The body allows no other member. `analyze` and `analyze_window_lines`
+were removed in contract 2.0 with the index analysis, and a body that
+holds either answers `422`, as any member the schema does not declare
+does:
+
+```json
+{ "detail": "validation failed; unexpected property (body.analyze: …)" }
+```
+
+A file's findings come from [`POST /v1/findings`](findings.md) now.
 
 ### Response — 200 OK
 
@@ -175,10 +176,11 @@ in-process CLI) and the `RX_ANALYZE_WINDOW_LINES` env var. See
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued. Poll `GET /v1/tasks/{task_id}` |
-| `400 Bad Request` | Below size threshold; `analyze` conflicts with cache reuse; a directory; a file that is not text (`not a text file: …: <path>`) |
+| `400 Bad Request` | Below size threshold; a directory; a file that is not text (`not a text file: …: <path>`) |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`) |
 | `404 Not Found` | File doesn't exist |
 | `409 Conflict` | A task for the same path is already running — an index or a compress task |
+| `422 Unprocessable Entity` | The body is not the schema's: a missing `path`, a member it does not declare (`analyze`, `analyze_window_lines`) |
 
 ### Error examples
 
@@ -233,34 +235,10 @@ done
 echo "$resp" | jq '.result | {lines: .line_count, entries: .index_entries}'
 ```
 
-### Example — full analysis
-
-```bash
-curl -sXPOST 'http://127.0.0.1:7777/v1/index' \
-    -H 'Content-Type: application/json' \
-    -d '{"path":"/var/log/audit-2026-03.log","analyze":true}' \
-    | jq '.task_id'
-```
-
-### Example — full analysis with a wider detector window
-
-```bash
-curl -sXPOST 'http://127.0.0.1:7777/v1/index' \
-    -H 'Content-Type: application/json' \
-    -d '{"path":"/var/log/audit-2026-03.log","analyze":true,"analyze_window_lines":512}' \
-    | jq '.task_id'
-```
-
-Useful when the file contains very long tracebacks or large multi-line
-JSON blobs that the default 128-line window would truncate.
-
 ### Cache reuse behavior
 
 - `force=false` + valid cache exists → task completes instantly with
   the cached data
-- `force=false` + valid cache + `analyze=true` + cache lacks analysis,
-  or its analysis ran with another `analyze_window_lines` or another
-  set of detectors (one added, removed or at another version) → rebuild
 - `force=true` → always rebuild
 
 ### Result shape
@@ -277,20 +255,17 @@ The OpenAPI document names it `IndexTaskResult`.
 ```
 
 Its `cli_command` is the `rx index` command for the request: `force`
-and `analyze` become `--force` and `--analyze`, a given `threshold` is
-always written, `0` included (`--threshold=0`; without the flag, `rx
-index` uses `RX_LARGE_FILE_MB`), and a non-zero `analyze_window_lines`
-becomes `--analyze-window-lines=N`.
+becomes `--force`, and a given `threshold` is always written, `0`
+included (`--threshold=0`; without the flag, `rx index` uses
+`RX_LARGE_FILE_MB`).
 
 See [tasks](tasks.md) for the task polling contract.
 
 ## Performance notes
 
 - `GET /v1/index` reads only the stored index (15.8 KB for a 465 MB log)
-- `POST /v1/index` without `analyze`: one pass over the file; 120 ms
-  for a 465 MB log in the page cache
-- `POST /v1/index` with `analyze`: every line goes through every
-  detector; 18.2 s for the same log
+- `POST /v1/index`: one pass over the file; 120 ms for a 465 MB log in
+  the page cache
 - An index is valid while the file keeps its size, mtime, inode, ctime
   and fingerprint (see [caching](../../concepts/caching.md#cache-invalidation));
   `touch -t ...` invalidates it and the next request rebuilds it

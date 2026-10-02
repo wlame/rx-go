@@ -224,7 +224,7 @@ absent and rebuild it. There is no TTL.
 - **Tune worker count for your hardware** — [performance](performance.md)
 - **Set up webhooks for long-running scans** — [api/webhooks](api/webhooks.md)
 - **Wire `rx serve` behind a reverse proxy** — [cli/serve](cli/serve.md)
-- **Add a custom file analyzer** — [concepts/analyzers](concepts/analyzers.md)
+- **Find tracebacks, secrets and more with signatures, or write your own** — [concepts/signatures](concepts/signatures.md)
 
 ## See also
 

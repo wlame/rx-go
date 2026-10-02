@@ -48,21 +48,24 @@ func TestBuild_RefusesASourceOutsideTheSearchRoots(t *testing.T) {
 // pinnedSourceKind is one kind of file Build reads, and how to write a
 // file of that kind holding a given text.
 type pinnedSourceKind struct {
-	name    string
-	ext     string
-	analyze bool
-	write   func(t *testing.T, path string, text []byte)
+	name  string
+	ext   string
+	write func(t *testing.T, path string, text []byte)
+	// text gives the file's n lines; nil means numberedText.
+	text func(n int, word string) []byte
 }
 
 // pinnedSourceKinds covers each way Build reads its source: a plain
 // walk, a stream through a decompressor, the frames of a seekable file,
-// and the analysis pass of a plain and of a seekable file.
+// and the timestamp pass of a plain and of a seekable file, which reads
+// the head for the format and walks a seekable file's text beside its
+// frames.
 var pinnedSourceKinds = []pinnedSourceKind{
 	{name: "plain", ext: ".log", write: writePlain},
-	{name: "plain analyzed", ext: ".log", analyze: true, write: writePlain},
+	{name: "plain with timestamps", ext: ".log", write: writePlain, text: stampedText},
 	{name: "gzip", ext: ".log.gz", write: writeGzip},
 	{name: "seekable", ext: ".zst", write: writeSeekable},
-	{name: "seekable analyzed", ext: ".zst", analyze: true, write: writeSeekable},
+	{name: "seekable with timestamps", ext: ".zst", write: writeSeekable, text: stampedText},
 }
 
 func writePlain(t *testing.T, path string, text []byte) {
@@ -99,6 +102,16 @@ func numberedText(n int, word string) []byte {
 	return buf.Bytes()
 }
 
+// stampedText returns n lines that read `<ISO time> LINE <i> <word>`,
+// one second apart.
+func stampedText(n int, word string) []byte {
+	var buf bytes.Buffer
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&buf, "2026-10-11T10:00:%02dZ LINE %d %s\n", i, i, word)
+	}
+	return buf.Bytes()
+}
+
 // pinnedSourceFixture is a search root holding app<ext>, a link to
 // real<ext> beside it (3 lines), and a secret<ext> of 7 lines outside
 // the root that the link can be retargeted to.
@@ -122,9 +135,13 @@ func newPinnedSourceFixture(t *testing.T, kind pinnedSourceKind) pinnedSourceFix
 			t.Fatalf("mkdir: %v", err)
 		}
 	}
+	text := kind.text
+	if text == nil {
+		text = numberedText
+	}
 	real := filepath.Join(root, "real"+kind.ext)
-	kind.write(t, real, numberedText(3, "REAL"))
-	kind.write(t, filepath.Join(outside, "secret"+kind.ext), numberedText(7, "SECRET"))
+	kind.write(t, real, text(3, "REAL"))
+	kind.write(t, filepath.Join(outside, "secret"+kind.ext), text(7, "SECRET"))
 	link := filepath.Join(root, "app"+kind.ext)
 	if err := os.Symlink("real"+kind.ext, link); err != nil {
 		t.Fatalf("symlink: %v", err)
@@ -156,7 +173,7 @@ func TestBuild_RefusesASourceRetargetedAfterThePin(t *testing.T) {
 		t.Run(kind.name, func(t *testing.T) {
 			fx := newPinnedSourceFixture(t, kind)
 
-			idx, err := Build(fx.link, BuildOptions{Analyze: kind.analyze, afterPin: fx.retarget})
+			idx, err := Build(fx.link, BuildOptions{afterPin: fx.retarget})
 
 			if !errors.Is(err, paths.ErrFileChanged) {
 				t.Errorf("Build = %v; want ErrFileChanged", err)
@@ -177,7 +194,7 @@ func TestBuild_ReadsOnlyThePinnedFileAfterItIsOpened(t *testing.T) {
 		t.Run(kind.name, func(t *testing.T) {
 			fx := newPinnedSourceFixture(t, kind)
 
-			idx, err := Build(fx.link, BuildOptions{Analyze: kind.analyze, beforeWalk: fx.retarget})
+			idx, err := Build(fx.link, BuildOptions{beforeWalk: fx.retarget})
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}

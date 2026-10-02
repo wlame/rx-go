@@ -320,12 +320,6 @@ Or globally:
 RX_LARGE_FILE_MB=1 rx index /tmp/small.log
 ```
 
-Or force analysis (bypasses the threshold):
-
-```bash
-rx index /tmp/small.log --analyze
-```
-
 ## Server startup fails with bind error
 
 ### Symptom
@@ -496,7 +490,7 @@ Then `journalctl -u rx` shows structured log records.
 
 Still stuck?
 
-1. Check `GET /health` for any anomalies (`ripgrep_available: false`,
+1. Check `GET /health` for anything unexpected (`ripgrep_available: false`,
    `search_roots: null`, etc.)
 2. Capture the `--json` answer, and the same run with `--no-cache --no-index`
 3. File an issue at <https://github.com/wlame/rx-go/issues> with:

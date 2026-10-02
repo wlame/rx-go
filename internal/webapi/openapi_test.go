@@ -131,7 +131,8 @@ func TestOpenAPI_BasicShape(t *testing.T) {
 		"/v1/compress",
 		"/v1/tasks/{task_id}",
 		"/v1/tree",
-		"/v1/detectors",
+		"/v1/signatures",
+		"/v1/findings",
 	}
 	for _, p := range expected {
 		if _, ok := paths[p]; !ok {

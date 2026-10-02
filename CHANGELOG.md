@@ -294,7 +294,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order, each line counted with one byte more for its line break; the
   finding at which it runs out and every one after it keep their place
   and lose their lines (`lines_truncated: true`).
-- HTTP wire contract 1.8: the trace answer (`GET /v1/trace`) declares
+- HTTP wire contract 2.0: the trace answer (`GET /v1/trace`) declares
   the optional `signatures`, `findings` and `finding_summary` members and
   the `Finding`, `SignatureRef`, `FileFindingSummary` and `FindingCount`
   schemas. A trace answer without them is the 1.7 answer.
@@ -370,7 +370,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that read the file) and `rx_findings_cache_hits_total` (each signature
   answered from the findings cache by a `GET /v1/findings` or a findings
   task). No label carries a value from a file.
-- HTTP wire contract 1.8 also declares `GET /v1/signatures`,
+- HTTP wire contract 2.0 also declares `GET /v1/signatures`,
   `GET /v1/findings`, `POST /v1/findings`, `DELETE /v1/tasks/{task_id}`,
   the `signatures` parameter of `GET /v1/trace`, the `findings` member
   of a tree entry, the `cancelled` task status, the task members
@@ -387,6 +387,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Without the flag the first positional is still the pattern.
 - `RX_WORKERS` also sets how many goroutines a signature scan reads
   lines with.
+- HTTP wire contract 2.0, a breaking change: `/health` reports
+  `contract_version` `"2.0"`. It removes `GET /v1/detectors`, the
+  analysis members of the index answers and the analysis fields of
+  `POST /v1/index` (see Removed), and holds every addition listed above.
+  A client that knows only contract major 1 must refuse this server.
+- Line index format 11: an index stores no analysis. An index stored by
+  an earlier rx (format 10) is treated as absent, so every index is
+  built again once, smaller, the first time a command needs it.
+
+### Removed
+
+- The index analysis and its nine detectors (`traceback-python`,
+  `traceback-java`, `traceback-js`, `traceback-go`, `coredump-unix`,
+  `secrets-scan`, `long-line`, `repeat-identical`,
+  `json-blob-multiline`). Signatures replace them: the built-in
+  catalogue finds every case they found (see Added), with
+  `rx trace --signatures` and `GET`/`POST /v1/findings`.
+- `rx index --analyze` (`-a`) and `--analyze-window-lines`. They stay as
+  hidden flags so an old script learns what replaced them: any use, with
+  any value, prints `Error: --analyze was replaced by: rx trace
+  --signatures PATH` (for the window flag: `Error: --analyze-window-lines
+  was removed with --analyze, which was replaced by: rx trace
+  --signatures PATH`) and exits 2 before anything is read. `rx index`
+  no longer prints `Indexed and analyzed`, the statistics and anomaly
+  lines, `analysis_performed` under `--info`, or `analysis=` in the
+  summary of several paths. A seekable zstd index has no line-length
+  statistics any more: only `--analyze` computed them.
+- `RX_ANALYZE_WINDOW_LINES`.
+- The members `analysis_performed`, `anomalies`, `anomaly_count`,
+  `anomaly_summary`, `analysis_window_lines` and `analysis_detector_set`
+  of `rx index --json`, `rx index --info --json`, `GET /v1/index` and
+  the result of a `POST /v1/index` task, and the schema
+  `AnomalyRangeResult`.
+- The `analyze` and `analyze_window_lines` members of a
+  `POST /v1/index` body: a body that holds either answers `422`
+  (`validation failed; unexpected property (body.analyze: …)`), as any
+  member the schema does not declare. Asking for analysis no longer
+  skips the size threshold; `threshold: 0` indexes a file of any size.
+  The task's `cli_command` no longer renders `--analyze` or
+  `--analyze-window-lines`.
+- `GET /v1/detectors`, which now answers `404` as any route the server
+  does not have, its schemas `DetectorsResponse`, `DetectorInfo`,
+  `CategoryInfo`, `SeverityRange` and `SeverityScaleLevel`, and the
+  OpenAPI tag `Analysis`. `GET /v1/signatures` lists the signatures.
+- The metrics `rx_analyze_requests_total` and
+  `rx_analyze_duration_seconds`; `rx_signature_scans_total` and
+  `rx_signature_scan_duration_seconds` count signature scans.
+  `rx_errors_total` counts failed trace and samples requests.
+- The docs pages Concepts / Analyzers and API / Detectors. The
+  line-length statistics are described in Concepts / Line indexes, the
+  signatures in Concepts / Signatures.
 
 ## [0.7.0] - 2026-10-10
 

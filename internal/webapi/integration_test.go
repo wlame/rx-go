@@ -148,11 +148,11 @@ func TestIntegration_SPAFlow(t *testing.T) {
 			bodyContains:  `"openapi":"3.1.0"`,
 		},
 		{
-			name:          "GET /v1/detectors returns empty registry + fixed scale",
-			path:          "/v1/detectors",
+			name:          "GET /v1/signatures returns the catalogue",
+			path:          "/v1/signatures",
 			expectStatus:  http.StatusOK,
 			expectTypeHas: "application/json",
-			bodyContains:  `"severity_scale"`,
+			bodyContains:  `"search_path"`,
 		},
 	}
 

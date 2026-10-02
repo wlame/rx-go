@@ -164,12 +164,6 @@ each run whatever the cache holds; see [the matches a capped search
 returns are
 arbitrary](../cli/trace.md#the-matches-a-capped-search-returns-are-arbitrary).)
 
-Anomaly detection writes no files of its own. An analysis is part of
-the file's line index, which records the window and the detectors (each
-with its version) it ran with; a later `--analyze` request with another
-window or another detector set rebuilds the index. See
-[analyzers](analyzers.md).
-
 ### `findings/`
 
 Each scanned file has a directory, named as its line index is
@@ -481,8 +475,7 @@ the same:
 No hard cap. Caches grow as you index more files. Typical sizes:
 
 - **Index cache**: about one checkpoint per MB of source; a 465 MB log
-  gave a 9.3 KB index with 429 checkpoints (an analysis adds its
-  anomalies)
+  gave a 9.3 KB index with 429 checkpoints
 - **Trace cache**: grows with the match count; 51,817 matches of the
   same log took 4.3 MB
 - **Frontend cache**: the size of the rx-viewer bundle
@@ -567,4 +560,4 @@ export RX_CACHE_DIR="/var/cache/rx-users/$USER"
 - [Byte offsets vs line numbers](byte-offsets-vs-line-numbers.md) — why
   indexes matter
 - [Chunking](chunking.md) — when the trace cache is written
-- [Analyzers](analyzers.md) — the analysis stored in an index
+- [Signatures](signatures.md) — what the findings cache holds

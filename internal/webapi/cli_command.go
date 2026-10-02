@@ -160,9 +160,7 @@ var cliCommandTable = map[string]CLICommandOperation{
 		Args: []CLIArg{
 			{Field: "path", Kind: ArgPositional},
 			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
-			{Field: "analyze", Flag: "analyze", Kind: ArgFlag, Absent: defaultValue("false")},
 			{Field: "threshold", Flag: "threshold", Kind: ArgFlag, Absent: noValueDefault()},
-			{Field: "analyze_window_lines", Flag: "analyze-window-lines", Kind: ArgFlag, Absent: defaultValue("0")},
 		},
 	},
 	// The commands that read one log chain: GET /v1/logs/chain is

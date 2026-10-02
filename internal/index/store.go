@@ -77,12 +77,18 @@ import (
 // field that gives the latest time of a file without reading it. A
 // version 9 index has no max and is treated as absent.
 //
+// Version 11: the index records no analysis. analysis_performed,
+// analysis_window_lines, analysis_detector_set, anomalies and
+// anomaly_summary are gone, with the analyzer that wrote them; the
+// signature findings that replace it live in a cache of their own. A
+// version 10 index may hold an analysis and is treated as absent.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 10
+const Version = 11
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp

@@ -27,16 +27,6 @@ const (
 	// checkpoint step (a fiftieth of it).
 	DefaultLargeFileMB = 50
 
-	// DefaultAnalyzeWindowLines is the sliding-window size, in lines,
-	// of the anomaly detectors when nothing else sets it. Large enough
-	// for multi-line tracebacks and small JSON blobs, small enough that
-	// per-worker memory is negligible.
-	DefaultAnalyzeWindowLines = 128
-
-	// MaxAnalyzeWindowLines is the largest window the detectors take:
-	// the size of the fixed array each analyzer window holds.
-	MaxAnalyzeWindowLines = 2048
-
 	// DefaultTaskTTLMinutes is how long a finished background task is
 	// kept before the sweeper removes it.
 	DefaultTaskTTLMinutes = 60
@@ -71,12 +61,6 @@ func MinChunkSizeMB() int {
 // DefaultLargeFileMB.
 func LargeFileMB() int {
 	return LargeFileMBSetting.Value()
-}
-
-// AnalyzeWindowLines returns RX_ANALYZE_WINDOW_LINES, from 1 to
-// MaxAnalyzeWindowLines, or DefaultAnalyzeWindowLines.
-func AnalyzeWindowLines() int {
-	return AnalyzeWindowLinesSetting.Value()
 }
 
 // TaskTTL returns RX_TASK_TTL_MINUTES, from 1 minute to one week, or

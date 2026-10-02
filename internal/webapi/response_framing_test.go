@@ -45,7 +45,7 @@ func TestResponseBody_HasNoTrailingNewline(t *testing.T) {
 		path string
 	}{
 		{"health", "/health"},
-		{"detectors", "/v1/detectors"},
+		{"signatures", "/v1/signatures"},
 		{"openapi", "/openapi.json"},
 		// An error envelope is rendered by a different code path than a
 		// success body, so it has to be checked separately.
@@ -77,7 +77,7 @@ func TestResponseBody_CarriesNoSchemaKey(t *testing.T) {
 
 	routes := []string{
 		"/health",
-		"/v1/detectors",
+		"/v1/signatures",
 		// An error envelope goes through a different code path than a
 		// success body and grew the key too.
 		"/v1/samples?path=&lines=1",

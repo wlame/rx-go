@@ -7,8 +7,8 @@ repeated below so this file stands alone.
 
 ## What this is
 
-`rx` is a CLI and REST API for regex search, line indexing, sampling, anomaly
-analysis and seekable-zstd compression of very large text files (built and
+`rx` is a CLI and REST API for regex search, line indexing, sampling, signature
+scans and seekable-zstd compression of very large text files (built and
 benchmarked at 1.3 GB, designed for 100 GB). It wraps `ripgrep` as the regex
 engine and adds native parallel chunking, line-offset indexes, frame-parallel
 zstd decoding, an HTTP API and a static SPA.
@@ -93,7 +93,9 @@ the position, with a range sorting by its left-hand value
 | `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; magic-byte format signatures; pooled decoders |
 | `internal/filekind/` | The one classifier every command and route uses: format by magic bytes, seekable by seek table, text or not (with the reason) |
 | `internal/seekableindex/` | Frame → line-range index for a seekable `.zst`; the format rx-python defined |
-| `internal/analyzer/` | Detector registry (Freeze barrier) and 9 detectors under `detectors/` |
+| `internal/signatures/` | The signature catalogue: the model, the YAML loader (built-ins embedded from `builtin/`, user files from `RX_SIGNATURES_PATH`), keyword clauses and selection (`Load`, `Resolve`); `rx signatures` |
+| `internal/sigscan/` | The signature scan: matchers, the keyword automaton, measures and the one parallel Go pass over a file's text (`Scan`), redaction of secrets and of redacting block bodies |
+| `internal/findings/` | The findings cache (`<cache>/findings/`, per file and signature), the scan queue and the scan the CLI and HTTP share (`Scan`, `Read`, `Summary`) |
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
 | `internal/frontend/` | Downloads and extracts the viewer bundle |
@@ -103,7 +105,7 @@ the position, with a range sorting by its left-hand value
 | `internal/testparity/` | Harness that runs `../rx-python` and diffs output |
 | `internal/testutil/counting/` | Byte-counting readers for bounded-read tests: `OpenCounting` (a file), `NewReader`, `NewReaderAt` |
 | `pkg/rxtypes/` | Wire types. OpenAPI source of truth |
-| `docs/` | 44 MkDocs pages, built strict in CI, deployed to GitHub Pages |
+| `docs/` | 47 MkDocs pages, built strict in CI, deployed to GitHub Pages |
 
 ## Build, run, test
 
@@ -186,10 +188,12 @@ internal/clicommand/     internal/webapi/
        internal/logchain/  log chains: parts grouped by name, numbered as one text
        internal/trace/     chunker → workers → rg --json → dedup → response
        internal/samples/   line/offset resolver (index-aware)
-       internal/index/     index builder + analyzer coordinator
+       internal/index/     line index builder
+       internal/findings/  findings cache → internal/sigscan/ one Go pass
+                           with the catalogue of internal/signatures/
        internal/seekable/  frame-parallel zstd
                │
-   compression · paths · hooks · analyzer · tasks · prometheus
+   compression · paths · hooks · tasks · prometheus
 ```
 
 Data flow for `rx trace "pattern" big.log`:
@@ -220,7 +224,7 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
 1. **One line numbering, everywhere.** A line number in any rx answer is
    the line's 1-based position in the file's text, counted from the
    first line. It means the same thing in a match, in a context line, in
-   an index checkpoint, in an anomaly range, in `samples`, over HTTP and
+   an index checkpoint, in a finding, in `samples`, over HTTP and
    in the viewer, and it does not depend on how the file is stored:
    plain, gzipped and seekable-zstd copies of one log answer
    identically. The companion rule holds for bytes: an offset is a
@@ -301,6 +305,10 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
    `index.SourceIdentity`. Its identity is taken before the scan's
    chunks are planned, never after the scan, so a log that grows during
    a trace is never cached as larger than the part that was read.
+
+   The findings cache (`internal/findings`) is an accelerator held to
+   the same rule: a file's findings are the same from the cache as from
+   a fresh scan, and the same with a line index or without one.
 
    Bump `index.Version` whenever the on-disk shape or the meaning of a
    field changes. rx-python shares the cache directory and treats an index
@@ -394,26 +402,23 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
    byte counter, and `internal/logchain`'s read seams (`loadPartIndex`,
    `openPart`, `buildPartIndex`, `readTimeRange`; see
    `describe_reads_test.go`) count the reads of each part.
-5. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
-   Never add `omitempty` to a schema-documented wire field; use explicit nulls.
-   Go-only extensions go under `go_extras`.
-6. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
-   the server starts; later registration panics; readers are lock-free. Do not
-   add a mutex. A detector registers a factory with `RegisterLineDetector`,
-   the only registration call, so every detector listed is one that runs
-   and each build gets fresh detector state.
-7. **Sandbox on every path.** Every HTTP handler and every CLI command that
+5. **Cache cross-compatibility with Python.** The index keeps rx-python's
+   names and shapes for every field both backends write (the analysis
+   fields left with index format 11). Never add `omitempty` to a
+   schema-documented wire field; use explicit nulls. Go-only extensions go
+   under `go_extras`.
+6. **Sandbox on every path.** Every HTTP handler and every CLI command that
    receives a path, including output paths, calls
    `paths.ValidatePathWithinRoots` before touching the filesystem.
-8. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
+7. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
    link-local, RFC 1918, CGNAT, multicast and unspecified addresses, and
    resolves DNS at validation time. Do not weaken it. Redirects must be refused
    or re-validated.
-9. **Metrics are off by default.** Wrap every new metric call behind the
+8. **Metrics are off by default.** Wrap every new metric call behind the
    enable gate. Never use `r.URL.Path` as a label; use the chi route pattern.
-10. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
+9. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
    through `internal/webapi/run_detached.go::runDetached`.
-11. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
+10. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
    2 usage error, 3 file not found (for `rx logs`, also a handle that
    names no chain), 4 access denied, 5 interrupted, 6 the log chain is
    invalid, 7 the log chain's files changed since `--fingerprint=`.
@@ -635,7 +640,6 @@ in this file; file a ticket.
 - Do not spawn raw `go func()` in `webapi`.
 - Do not add `omitempty` to schema-documented fields.
 - Do not use `r.URL.Path` as a metric label.
-- Do not add a mutex to the analyzer registry.
 - Do not read a whole file when a range is enough.
 - Do not weaken the sandbox or the SSRF checks.
 - Do not accept a path parameter, including output paths, without validating it.

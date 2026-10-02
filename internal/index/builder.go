@@ -1,7 +1,7 @@
 // Builder implements the construction side of the unified line-offset
 // index. It walks a file line-by-line, records byte offsets at roughly
 // every `step_bytes` interval (aligned to line starts), and collects
-// line-length statistics needed for the `--analyze` path.
+// the line counts and line-length statistics of the text.
 //
 // The on-disk schema is UnifiedFileIndex (pkg/rxtypes). This file writes
 // the same JSON shape as rx-python/src/rx/unified_index.py::build_index
@@ -31,7 +31,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
@@ -48,30 +47,6 @@ type BuildOptions struct {
 	// checkpoints. If 0, we take config.LargeFileMB() / 50 (matches
 	// Python's get_index_step_bytes).
 	StepBytes int64
-
-	// Analyze toggles the line-length statistics and anomaly-ready
-	// fields. When false, only the line-index itself is populated;
-	// matches Python's "light" cache.
-	Analyze bool
-
-	// WindowLines is the sliding-window size passed to analyzer.NewCoordinator
-	// when Analyze is true. Zero means "use the resolver default" — the
-	// builder feeds this through analyzer.ResolveWindowLines(WindowLines, 0)
-	// so the env-var and default-value branches of the resolver still apply.
-	//
-	// Ignored when Analyze is false.
-	WindowLines int
-
-	// Detectors is the list of line-oriented detectors to run during the
-	// scan. Ignored when Analyze is false. When Analyze is true and this
-	// slice is nil/empty, no detectors run but the builder still goes
-	// through the coordinator code path (the coordinator's zero-detector
-	// fast path makes that effectively free).
-	//
-	// Callers populate this from the analyzer registry
-	// (analyzer.LineDetectorSnapshot); passing an explicit slice here is
-	// mostly for tests that want deterministic detector sets.
-	Detectors []analyzer.LineDetector
 
 	// Progress, when set, counts how far the build has read, for a
 	// caller that reports it while the build runs (a background index
@@ -100,35 +75,6 @@ type BuildOptions struct {
 func GetIndexStepBytes() int64 {
 	threshold := int64(config.LargeFileMB()) * 1024 * 1024
 	return threshold / 50
-}
-
-// analysisWindowLines is the sliding-window size an analysis with opts
-// runs with: opts.WindowLines through the resolver, so 0 means the
-// environment variable or the default.
-func analysisWindowLines(opts BuildOptions) int {
-	return analyzer.ResolveWindowLines(opts.WindowLines, 0)
-}
-
-// SatisfiesBuild reports whether a cached index answers a request that
-// would otherwise build one with opts, so the caller may reuse it
-// instead. The cached index must already be valid for its source
-// (LoadForSource checks that).
-//
-// Without analysis, any index will do: the line index does not depend
-// on the options. With analysis, the cached index must hold an analysis
-// made with the same window and the same detector set: a different
-// window finds different anomalies, and so does a detector added,
-// removed or upgraded since. An analysis that does not record them
-// (written before the index did) is never reused.
-func SatisfiesBuild(idx *rxtypes.UnifiedFileIndex, opts BuildOptions) bool {
-	if !opts.Analyze {
-		return true
-	}
-	if !idx.AnalysisPerformed || idx.AnalysisWindowLines == nil || idx.AnalysisDetectorSet == nil {
-		return false
-	}
-	return *idx.AnalysisWindowLines == analysisWindowLines(opts) &&
-		*idx.AnalysisDetectorSet == analyzer.DetectorSetVersion(opts.Detectors)
 }
 
 // Build reads sourcePath and constructs a UnifiedFileIndex. It records
@@ -278,21 +224,16 @@ func buildText(
 		source = dec
 	}
 
-	// The coordinator the walk feeds each line to; nil without --analyze.
-	coord := newCoordinator(opts)
-
 	// Walk the file. Python uses `for line in f` which yields lines
 	// terminated by the platform's preferred newline. In Go, bufio's
 	// ReadSlice('\n') gives the same slice-including-terminator view.
 	//
-	// the walk always collects line-length stats
-	// (Python parity — see rx-python/src/rx/unified_index.py::build_index).
-	// Anomaly detection is gated at the call site (opts.Analyze controls
-	// whether coord is non-nil).
+	// The walk always collects the line-length statistics (Python
+	// parity — see rx-python/src/rx/unified_index.py::build_index).
 	if opts.beforeWalk != nil {
 		opts.beforeWalk()
 	}
-	stats, err := walkLines(source, step, coord, times)
+	stats, err := walkLines(source, step, times)
 	if err != nil {
 		return nil, err
 	}
@@ -314,8 +255,7 @@ func buildText(
 	identity.stampInto(idx)
 
 	// Python always populates the line counts and the line-length
-	// aggregates, whether or not --analyze is set; only the anomaly
-	// fields depend on it.
+	// aggregates of a plain or stream-compressed file.
 	applyLineStats(idx, stats)
 
 	// A compressed source records what it is and how much text it
@@ -331,9 +271,6 @@ func buildText(
 		}
 	}
 
-	if coord != nil {
-		applyAnalysis(idx, coord, stats, opts)
-	}
 	if err := applyTimeIndex(idx, times, stats.LineIndex); err != nil {
 		return nil, fmt.Errorf("%s: %w", sourcePath, err)
 	}
@@ -341,23 +278,6 @@ func buildText(
 	// gated helper — CLI mode skips observation.
 	prometheus.ObserveIndexBuildDuration(time.Since(started))
 	return idx, nil
-}
-
-// newCoordinator returns the analyzer coordinator one build feeds its
-// lines to, or nil when opts asks for no analysis. One coordinator per
-// scan: the builder reads the text sequentially, so that is effectively
-// one "worker". A builder that sharded the file across K workers would
-// give each worker its own Coordinator and combine the per-worker
-// anomaly slices with analyzer.Deduplicate before storage, so an
-// anomaly seen in two overlapping windows is kept once.
-//
-// With a nil coordinator walkLines skips all per-line dispatch, so the
-// hot loop costs nothing extra for a build that does not analyze.
-func newCoordinator(opts BuildOptions) *analyzer.Coordinator {
-	if !opts.Analyze {
-		return nil
-	}
-	return analyzer.NewCoordinator(analysisWindowLines(opts), opts.Detectors)
 }
 
 // timeIndexerFor detects the timestamp format of src from the head of
@@ -421,64 +341,6 @@ func applyLineStats(idx *rxtypes.UnifiedFileIndex, stats *walkStats) {
 	idx.LineEnding = ptrString(stats.LineEnding)
 }
 
-// applyAnalysis finalizes the detectors coord fed during the walk and
-// records their anomalies, and the window and detector set that found
-// them, in idx. It marks idx as analyzed.
-//
-// Each detector's Finalize gets a FlushContext built from the walk's
-// line statistics. The per-worker anomaly lists then go through
-// analyzer.Deduplicate: today there is one "worker" (the single
-// sequential walk), so dedup is a pass-through, but it keeps the
-// plumbing ready for a chunk-parallel builder.
-//
-// Anomalies is a pointer to a slice so that "no analysis" serializes as
-// JSON null; an analysis always sets it, to an empty slice when the
-// detectors found nothing, so the shape is [] rather than null. That
-// matches rx-python for analysis_performed=true runs.
-func applyAnalysis(idx *rxtypes.UnifiedFileIndex, coord *analyzer.Coordinator, stats *walkStats, opts BuildOptions) {
-	flush := &analyzer.FlushContext{
-		TotalLines:       stats.LineCount,
-		MedianLineLength: int64(stats.LineStats.Median),
-		P99LineLength:    int64(stats.LineStats.P99),
-	}
-	groups := [][]analyzer.Anomaly{coord.Finalize(flush)}
-	deduped := analyzer.Deduplicate(groups)
-
-	results := make([]rxtypes.AnomalyRangeResult, 0, len(deduped))
-	summary := make(map[string]int)
-	for _, a := range deduped {
-		// Category is the semantic bucket the detector chose
-		// ("log-traceback", "secrets", "format", ...). DetectorName is
-		// the globally-unique detector identifier stamped by the
-		// coordinator. They are independent: two distinct detectors can
-		// share a category. The wire shape exposes both so UIs can group
-		// by category AND jump by detector.
-		//
-		// Summary is keyed by DetectorName (one counter per detector)
-		// because the frontend's "jump to next $detector" logic needs
-		// per-detector counts, not per-category.
-		results = append(results, rxtypes.AnomalyRangeResult{
-			StartLine:   a.StartLine,
-			EndLine:     a.EndLine,
-			StartOffset: a.StartOffset,
-			EndOffset:   a.EndOffset,
-			Severity:    a.Severity,
-			Category:    a.Category,
-			Description: a.Description,
-			Detector:    a.DetectorName,
-		})
-		summary[a.DetectorName]++
-	}
-	window := analysisWindowLines(opts)
-	detectorSet := analyzer.DetectorSetVersion(opts.Detectors)
-
-	idx.AnalysisPerformed = true
-	idx.Anomalies = &results
-	idx.AnomalySummary = summary
-	idx.AnalysisWindowLines = &window
-	idx.AnalysisDetectorSet = &detectorSet
-}
-
 // ==========================================================================
 // Internals
 // ==========================================================================
@@ -507,7 +369,7 @@ type walkStats struct {
 }
 
 // walkLines streams through r, emitting line-index checkpoints and
-// (when analyze) collecting line-length statistics. The algorithm
+// collecting line-length statistics. The algorithm
 // matches rx-python/src/rx/unified_index.py::build_index byte-for-byte:
 //
 //  1. First line is always at offset 0 (checkpoint [1, 0]).
@@ -523,25 +385,18 @@ type walkStats struct {
 // one line past the end in both cases; readers treat a missing
 // checkpoint as "start at byte 0", so both kinds of index give the same
 // answers.
-//  3. For --analyze: collect lengths of non-empty lines (stripped of
-//     trailing CR/LF) and track the longest line + its position.
+//  3. Collect lengths of non-empty lines (stripped of trailing CR/LF)
+//     and track the longest line + its position.
 //
 // The line ending is decided from the first lines of the text, whole,
 // terminators included, until they reach 64 KiB (lineEndingTally).
-//
-// coord is the analyzer coordinator for this walk, or nil when
-// analysis is disabled. When non-nil, each line (stripped of its
-// trailing CR/LF) is dispatched via coord.ProcessLine along with its
-// absolute byte-offset range. Finalize is the caller's responsibility
-// (Build invokes it after walkLines returns so the FlushContext can be
-// populated from the finalized line-stats snapshot).
 //
 // times is the time-section collector, or nil for a file with no
 // timestamp format. When set, it is told about each checkpoint before
 // the line the checkpoint names is observed (markBefore), then sees
 // every line (observe), so a checkpoint's max_before covers exactly
 // the lines numbered below it.
-func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *timeIndexer) (*walkStats, error) {
+func walkLines(r io.Reader, step int64, times *timeIndexer) (*walkStats, error) {
 	stats := &walkStats{
 		// Non-nil, so an index without checkpoints (an empty file)
 		// serializes as [] rather than null.
@@ -579,10 +434,9 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 	var joined []byte
 	for {
 		// INVARIANT: line is valid only until the next nextLine call (it
-		// points into br's buffer or into joined). Everything below that
-		// keeps bytes of it copies them: the analyzer's window copies
-		// each line into its own slots. The line-ending tally, the
-		// statistics and the time section keep numbers only.
+		// points into br's buffer or into joined). Nothing below keeps
+		// bytes of it: the line-ending tally, the statistics and the
+		// time section keep numbers only.
 		line, err := nextLine(br, &joined)
 		if err != nil {
 			return nil, fmt.Errorf("read: %w", err)
@@ -613,31 +467,14 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 		// Stats observation. Python parity (rx-python/src/rx/unified_index.py):
 		// every line is inspected, whitespace-only lines are counted as
 		// "empty", and non-empty lines' content lengths feed the aggregates.
-		//
-		// Unlike the pre-refactor code, the accumulator now handles BOTH
-		// paths (analyze / non-analyze) with the same call — Python's
-		// behavior is that line_length aggregates are populated regardless
-		// of --analyze, so there is no reason to
-		// bypass the accumulator when analyze==false.
 		stripped := stripLineEnd(line)
 		contentLen := len(stripped)
 		isEmpty := !hasNonWhitespace(stripped)
 		acc.observe(contentLen, isEmpty, int(currentLine), currentOffset)
 
-		// Dispatch to the analyzer coordinator if one was provided. We
-		// pass the STRIPPED line (no trailing CR/LF) to match detector
-		// expectations — the Window's LineEvent contract says Bytes is
-		// "the line content WITHOUT the trailing newline". The absolute
-		// byte range spans the raw line including its terminator so
-		// anomaly start/end offsets align with what seek-to-line needs.
-		//
-		// Zero-detector fast path: if coord has no detectors registered,
-		// ProcessLine is a no-op (single branch per line), so the cost
-		// of passing a coordinator with an empty detector slice is
-		// negligible.
-		if coord != nil {
-			coord.ProcessLine(currentLine, currentOffset, currentOffset+lineLenBytes, stripped)
-		}
+		// The time section reads the line without its CR/LF; the byte
+		// range spans the raw line, terminator included, so the offsets
+		// it records are where a seek to the line lands.
 		if times != nil {
 			times.observe(stripped, currentLine, currentOffset, currentOffset+lineLenBytes)
 		}
@@ -813,12 +650,13 @@ func ptrString(s string) *string    { return &s }
 // checkpoints carry a frame number, and `frames` holds the line range
 // of each frame.
 //
-// Without analysis the line-length statistics the text path collects
-// are left out, as rx-python leaves them out: nothing on the seekable
-// path reads them. With analysis the decompressed text goes through the
-// same walk and the same detectors as a plain file's, so the analysis
-// of a seekable file equals the analysis of its decompressed copy, line
-// numbers and offsets included (both are positions in the text).
+// The line-length statistics the text path collects are left out, as
+// rx-python leaves them out: nothing on the seekable path reads them.
+// When the text has a timestamp format the decompressed text is walked
+// line by line for the time section, through the same walk a plain
+// file's text goes through; the statistics that walk collects are
+// dropped too, so a seekable index has the same fields whether or not
+// its lines carry timestamps.
 func buildSeekable(
 	src openedSource,
 	started time.Time,
@@ -838,11 +676,7 @@ func buildSeekable(
 	}
 	size := current.Size()
 
-	coord := newCoordinator(opts)
-	var (
-		frames *seekableindex.Result
-		stats  *walkStats
-	)
+	var frames *seekableindex.Result
 	if opts.Progress != nil {
 		if progressErr := startSeekableProgress(opts.Progress, src.file, size); progressErr != nil {
 			return nil, fmt.Errorf("%s: %w", sourcePath, progressErr)
@@ -851,16 +685,16 @@ func buildSeekable(
 	if opts.beforeWalk != nil {
 		opts.beforeWalk()
 	}
-	// The text is walked line by line only when something reads its
-	// lines: the analysis, or the time section. Otherwise the frame
-	// scan alone builds the index, as it always has.
-	if coord == nil && times == nil {
+	// The text is walked line by line only when the time section reads
+	// its lines. Otherwise the frame scan alone builds the index, as it
+	// always has.
+	if times == nil {
 		frames, err = seekableindex.BuildAndCopyText(src.file, size, opts.Progress.countWrites(io.Discard))
 	} else {
 		if err = useSeekTable(times, src.file, size); err != nil {
 			return nil, fmt.Errorf("%s: %w", sourcePath, err)
 		}
-		frames, stats, err = buildFramesAndWalkText(src.file, size, step, coord, times, opts.Progress)
+		frames, err = buildFramesAndWalkText(src.file, size, step, times, opts.Progress)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", sourcePath, err)
@@ -893,13 +727,6 @@ func buildSeekable(
 	if info.Size() > 0 && frames.DecompressedSizeBytes > 0 {
 		ratio := float64(frames.DecompressedSizeBytes) / float64(info.Size())
 		idx.CompressionRatio = &ratio
-	}
-	if coord != nil {
-		// The walk counts the same lines the frame table does; its
-		// checkpoints are dropped, since the frame-numbered ones above
-		// are the seekable index's own.
-		applyLineStats(idx, stats)
-		applyAnalysis(idx, coord, stats, opts)
 	}
 	// max_before follows the frame-numbered checkpoints, whose lines
 	// the walk marked from the seek table (frameMarks).
@@ -943,8 +770,9 @@ func startSeekableProgress(progress *Progress, r io.ReaderAt, size int64) error 
 
 // buildFramesAndWalkText makes one decompression pass over a seekable
 // file that both builds its frame table and walks its text through
-// walkLines, which feeds every line to coord and to times (either may
-// be nil, not both).
+// walkLines, which feeds every line to times. The walk's own
+// checkpoints and statistics are dropped: the frame-numbered
+// checkpoints of the frame table are the seekable index's own.
 //
 // Two goroutines share the pass through an io.Pipe. The one started
 // here decodes the frames in order and writes each frame's text into
@@ -967,10 +795,9 @@ func buildFramesAndWalkText(
 	r io.ReaderAt,
 	size int64,
 	step int64,
-	coord *analyzer.Coordinator,
 	times *timeIndexer,
 	progress *Progress,
-) (*seekableindex.Result, *walkStats, error) {
+) (*seekableindex.Result, error) {
 	textReader, textWriter := io.Pipe()
 
 	// framesResult carries the decoding goroutine's outcome back over
@@ -990,7 +817,7 @@ func buildFramesAndWalkText(
 		decoded <- framesResult{frames: frames, err: err}
 	}()
 
-	stats, walkErr := walkLines(textReader, step, coord, times)
+	_, walkErr := walkLines(textReader, step, times)
 	// Unblocks a decoder still writing if the walk stopped early; after
 	// a complete walk the decoder has already finished and this is a
 	// no-op.
@@ -998,10 +825,10 @@ func buildFramesAndWalkText(
 
 	result := <-decoded
 	if result.err != nil {
-		return nil, nil, result.err
+		return nil, result.err
 	}
 	if walkErr != nil {
-		return nil, nil, fmt.Errorf("walk text: %w", walkErr)
+		return nil, fmt.Errorf("walk text: %w", walkErr)
 	}
-	return result.frames, stats, nil
+	return result.frames, nil
 }

@@ -97,7 +97,7 @@ func TestBuildCLICommand_UsesTheEqualsFormForEveryLongFlag(t *testing.T) {
 	// check is on the word after a valueless flag: it must be another
 	// flag or nothing.
 	valuelessFlags := map[string]bool{
-		"--force": true, "--analyze": true, "--info": true, "--json": true,
+		"--force": true, "--info": true, "--json": true,
 		"--no-cache": true, "--no-index": true, "--no-recursive": true,
 	}
 	for _, flag := range trace.MatchingFlags {

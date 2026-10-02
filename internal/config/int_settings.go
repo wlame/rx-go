@@ -76,10 +76,6 @@ var (
 	// maximum bounds the submatch records one line can hold.
 	MaxSubmatchesPerLineSetting = IntSetting{Name: "RX_MAX_SUBMATCHES_PER_LINE", Default: DefaultMaxSubmatchesPerLine, Min: 1, Max: 1_000_000}
 
-	// AnalyzeWindowLinesSetting is RX_ANALYZE_WINDOW_LINES. Its maximum
-	// is the size of the detectors' fixed window.
-	AnalyzeWindowLinesSetting = IntSetting{Name: "RX_ANALYZE_WINDOW_LINES", Default: DefaultAnalyzeWindowLines, Min: 1, Max: MaxAnalyzeWindowLines}
-
 	// TaskTTLMinutesSetting is RX_TASK_TTL_MINUTES. Its maximum, one
 	// week, keeps the duration far from overflowing time.Duration.
 	TaskTTLMinutesSetting = IntSetting{Name: "RX_TASK_TTL_MINUTES", Default: DefaultTaskTTLMinutes, Min: 1, Max: 7 * 24 * 60}
@@ -247,7 +243,6 @@ var IntSettings = []IntSetting{
 	LargeFileMBSetting,
 	MaxLineTextBytesSetting,
 	MaxSubmatchesPerLineSetting,
-	AnalyzeWindowLinesSetting,
 	TaskTTLMinutesSetting,
 	SamplesWaitSecondsSetting,
 	TimestampLookbackKBSetting,

@@ -99,8 +99,7 @@ usage error (exit 2) rather than a silent fall back to `auto`.
 A lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in
 any compressed file, builds a line index if none is cached, so the
 next lookup in the same file is fast. That first lookup reads the whole
-file, and `rx samples` waits for it however long it takes. The build
-runs without analysis.
+file, and `rx samples` waits for it however long it takes.
 
 A lookup whose lines all lie in the head of such a file, its first
 `RX_SAMPLES_HEAD_MB` MiB of text (64 by default; decompressed for a

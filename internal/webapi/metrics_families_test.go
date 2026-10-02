@@ -187,10 +187,10 @@ func mustGet(t *testing.T, rawURL string) int {
 // TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce drives each
 // operation `serve` offers once — traces that miss, write and hit the
 // trace cache, a capped trace with a webhook, a trace that skips a
-// binary file, an invalid pattern, a file whose scan fails, an
-// analyzing index build, an index
-// read and a samples request — and checks that every registered rx_*
-// family changed, except the ones familiesAllowedToStayStill excuses.
+// binary file, an invalid pattern, a file whose scan fails, an index
+// build, an index read and a samples request — and checks that every
+// registered rx_* family changed, except the ones
+// familiesAllowedToStayStill excuses.
 func TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	t.Setenv("RX_LARGE_FILE_MB", "1")
@@ -238,7 +238,7 @@ func TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce(t *testing.T) {
 		}
 	}
 
-	body, _ := json.Marshal(map[string]any{"path": f.bigLog, "analyze": true})
+	body, _ := json.Marshal(map[string]any{"path": f.bigLog, "threshold": 0})
 	resp, err := http.Post(ts.URL+"/v1/index", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("post /v1/index: %v", err)

@@ -32,7 +32,6 @@ func TestRegistry_ContainsCoreMetrics(t *testing.T) {
 	// from Gather()). Bare Counters/Gauges appear unconditionally.
 	TraceRequestsTotal.WithLabelValues("ok").Inc()
 	SamplesRequestsTotal.WithLabelValues("ok").Inc()
-	AnalyzeRequestsTotal.WithLabelValues("ok").Inc()
 	TraceDurationSeconds.WithLabelValues("regular").Observe(0)
 	HTTPResponsesTotal.WithLabelValues("GET", "/v1/trace", "200").Inc()
 	HookCallsTotal.WithLabelValues("on_file", "success").Inc()
@@ -55,18 +54,22 @@ func TestRegistry_ContainsCoreMetrics(t *testing.T) {
 	}
 }
 
-func TestRegistry_DoesNotContainComplexityMetrics(t *testing.T) {
-	// Regex complexity is not implemented in rx-go — double check
-	// none of the dropped metric names leaked through.
+func TestRegistry_DoesNotContainDroppedMetrics(t *testing.T) {
+	// Regex complexity is not implemented in rx-go, and the index
+	// analysis is gone (signature scans have rx_signature_scans_total
+	// and rx_signature_scan_duration_seconds) — double check none of
+	// the dropped metric names leaked through.
 	forbidden := []string{
 		"rx_complexity_requests_total",
 		"rx_complexity_duration_seconds",
 		"rx_regex_complexity_score",
 		"rx_regex_complexity_level_total",
+		"rx_analyze_requests_total",
+		"rx_analyze_duration_seconds",
 	}
 	for _, name := range forbidden {
 		if findMetric(t, name) != nil {
-			t.Errorf("metric %q should NOT be registered (complexity feature dropped)", name)
+			t.Errorf("metric %q should NOT be registered (feature dropped)", name)
 		}
 	}
 }
@@ -112,7 +115,6 @@ func TestGating_NoopWhenDisabled(t *testing.T) {
 	IncIndexCacheMisses()
 	AddFilesSkipped(2)
 	RecordSamplesDuration(time.Second)
-	RecordAnalyzeDuration(time.Second)
 	RecordHook("on_file", "success")
 	RecordHookDuration("on_file", time.Second)
 	RecordError("test_error")

@@ -53,7 +53,7 @@ func TestIndexSchemas_AreNamedInTheDocument(t *testing.T) {
 // TestIndexAnswers_ValidateAgainstTheirSchemas checks real answers
 // against the schemas the document declares for them: a compress task,
 // which builds a seekable-zstd index whose line_index entries have three
-// elements; GET /v1/index on that .zst; an analyze task on the plain
+// elements; GET /v1/index on that .zst; an index task on the plain
 // file, whose entries have two; and GET /v1/index on the plain file.
 func TestIndexAnswers_ValidateAgainstTheirSchemas(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
@@ -89,7 +89,7 @@ func TestIndexAnswers_ValidateAgainstTheirSchemas(t *testing.T) {
 		t.Errorf("seekable-zstd line_index entry lengths = %v, want only 3", got)
 	}
 
-	index := postJSON(t, ts.URL+"/v1/index", `{"path": "`+plain+`", "analyze": true}`)
+	index := postJSON(t, ts.URL+"/v1/index", `{"path": "`+plain+`", "threshold": 0}`)
 	indexTask := waitForTaskBody(t, ts.URL, index["task_id"].(string))
 	validateBody(t, registry, "TaskStatusResponse", indexTask)
 	validateBody(t, registry, "IndexTaskResult", indexTask["result"])

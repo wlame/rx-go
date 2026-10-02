@@ -36,7 +36,7 @@ func TestWalkLines_LongLinesAreJoinedAndNumbered(t *testing.T) {
 		t.Fatalf("newTimeIndexer: %v", err)
 	}
 	const step = 64 << 10
-	stats, err := walkLines(bytes.NewReader(text), step, nil, ti)
+	stats, err := walkLines(bytes.NewReader(text), step, ti)
 	if err != nil {
 		t.Fatalf("walkLines: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestWalkLines_LongLinesAreJoinedAndNumbered(t *testing.T) {
 // whose first line is 10 MiB long and ends in CRLF is a CRLF log.
 func TestWalkLines_ALongFirstLineCountsItsLineEnding(t *testing.T) {
 	text := append(bytes.Repeat([]byte("x"), 10<<20), "\r\nnext line\r\n"...)
-	stats, err := walkLines(bytes.NewReader(text), 1<<20, nil, nil)
+	stats, err := walkLines(bytes.NewReader(text), 1<<20, nil)
 	if err != nil {
 		t.Fatalf("walkLines: %v", err)
 	}

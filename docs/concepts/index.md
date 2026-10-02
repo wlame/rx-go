@@ -39,10 +39,6 @@ performance trade-offs, operational behavior, and how to extend the tool.
   secrets, runs of blank lines): kinds, the YAML file format, the
   keyword gate, where rx finds your files, selection.
 
-- **[Analyzers](analyzers.md)**  
-  The pluggable `FileAnalyzer` interface, the empty-at-v1 registry,
-  and how to add a detector.
-
 - **[Security](security.md)**  
   Search-root sandbox, tarball traversal defenses, webhook SSRF
   protection, threat model.
@@ -63,8 +59,8 @@ If you're new to `rx`, read in this order:
    what doesn't
 6. [Log chains](log-chains.md) — when your logs rotate
 7. [Security](security.md) — before you expose `rx serve` to anything
-8. [Analyzers](analyzers.md) — only if you want to add custom file
-   analysis
+8. [Signatures](signatures.md) — when you want rx to find tracebacks,
+   secrets and other places worth a look by itself
 
 ## See also
 

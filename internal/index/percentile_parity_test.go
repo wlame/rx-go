@@ -11,7 +11,7 @@ import (
 // GET /v1/index, so the two backends have to agree about them. The
 // definition is linear interpolation over the sorted sample, the one
 // Python's statistics.quantiles(method="inclusive") uses, and it is
-// written down in docs/concepts/analyzers.md.
+// written down in docs/concepts/line-indexes.md.
 //
 // The fixture is shared: rx-python has the same file at
 // tests/data/line-lengths.log and asserts the same numbers.
@@ -69,7 +69,7 @@ func TestPercentiles_MatchTheSharedFixture(t *testing.T) {
 // test proves.
 func TestPercentiles_FixtureFileMatchesTheExpectedLengths(t *testing.T) {
 	idx, err := Build(filepath.Join("..", "..", "testdata", "line-lengths.log"),
-		BuildOptions{Analyze: false})
+		BuildOptions{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

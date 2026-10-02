@@ -78,7 +78,6 @@ func newHumaConfig(appVersion string) huma.Config {
 		{Name: "Indexing", Description: "File indexing operations"},
 		{Name: "Operations", Description: "Background tasks"},
 		{Name: "FileTree", Description: "File system navigation"},
-		{Name: "Analysis", Description: "Anomaly detection"},
 		{Name: "Logs", Description: "Log chains: the files of a rotated log read as one"},
 	}
 

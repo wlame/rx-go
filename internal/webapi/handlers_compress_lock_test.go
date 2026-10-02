@@ -62,7 +62,7 @@ func TestCompress_SecondTaskForTheSameOutputIsRefusedWhileTheFirstRuns(t *testin
 	if detail, _ := body["detail"].(string); !strings.Contains(detail, "Compression already in progress for "+output) {
 		t.Errorf("detail %q does not name the output", detail)
 	}
-	status, body = postIndex(t, ts.URL, rxtypes.IndexRequest{Path: output, Analyze: true})
+	status, body = postIndex(t, ts.URL, rxtypes.IndexRequest{Path: output, Threshold: intPtr(0)})
 	if status != http.StatusConflict || body["task_id"] != running.TaskID {
 		t.Errorf("index of the output: status %d, body %v; want 409 with task %s", status, body, running.TaskID)
 	}

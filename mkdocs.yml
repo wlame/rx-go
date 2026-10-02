@@ -192,7 +192,6 @@ nav:
           - api/endpoints/logs-samples.md
           - api/endpoints/logs-trace.md
           - api/endpoints/metrics.md
-          - api/endpoints/detectors.md
   - Concepts:
       - concepts/index.md
       - Chunking: concepts/chunking.md
@@ -203,7 +202,6 @@ nav:
       - Byte offsets vs line numbers: concepts/byte-offsets-vs-line-numbers.md
       - Compression: concepts/compression.md
       - Signatures: concepts/signatures.md
-      - Analyzers: concepts/analyzers.md
       - Security: concepts/security.md
   - Reference:
       - Built-in signatures: reference/signatures.md

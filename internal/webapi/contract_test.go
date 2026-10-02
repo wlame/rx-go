@@ -58,3 +58,24 @@ func TestContractVersion_IsTheDeclaredConstant(t *testing.T) {
 		t.Errorf("contract_version: got %v, want %s", got, ContractVersion)
 	}
 }
+
+// Contract 2.0 removed the index analysis and GET /v1/detectors, so
+// /health reports major 2: a viewer that knows only major 1 refuses
+// this server rather than reading fields it no longer sends.
+func TestHealth_ReportsContract2(t *testing.T) {
+	ts := newTestServer(t)
+
+	resp, err := http.Get(ts.URL + "/health")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if got := body["contract_version"]; got != "2.0" {
+		t.Errorf("contract_version %v, want 2.0", got)
+	}
+}

@@ -19,7 +19,7 @@ import (
 func TestWalkLines_DoesNotAllocatePerLine(t *testing.T) {
 	text := numberedText(20_000, "request served in 12 ms")
 	allocs := testing.AllocsPerRun(3, func() {
-		if _, err := walkLines(bytes.NewReader(text), 1<<20, nil, nil); err != nil {
+		if _, err := walkLines(bytes.NewReader(text), 1<<20, nil); err != nil {
 			t.Fatalf("walkLines: %v", err)
 		}
 	})
@@ -60,7 +60,7 @@ func TestWalkLines_ALongLineIsNotCopiedForTheLineEndingSample(t *testing.T) {
 		}
 	})
 	walking := allocatedBy(func() {
-		if _, err := walkLines(bytes.NewReader(text), 1<<20, nil, nil); err != nil {
+		if _, err := walkLines(bytes.NewReader(text), 1<<20, nil); err != nil {
 			t.Fatalf("walkLines: %v", err)
 		}
 	})

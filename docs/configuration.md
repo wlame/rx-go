@@ -65,8 +65,7 @@ cache. See [long lines](api/endpoints/trace.md#long-lines).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LARGE_FILE_MB` | `50` | The large-file size in MB. `rx index` skips a smaller plain file unless `--analyze` is set or `--threshold=N` is supplied (`--threshold=0` indexes every file; omitting the flag uses this variable). `rx samples` and `GET /v1/samples` build an index before a lookup in a plain file of this size or more. A trace answer for a plain file of this size or more is cached. The index checkpoint step is a fiftieth of it (1 MB by default). |
-| `RX_ANALYZE_WINDOW_LINES` | `128` | Sliding-window size, in lines, of the anomaly detectors that `--analyze` runs. `--analyze-window-lines` and the `analyze_window_lines` request field win over it, and their value is clamped to 1–2048. The variable follows the [integer settings](#integer-settings) rule: from 1 to 2048. See [analyzers](concepts/analyzers.md). |
+| `RX_LARGE_FILE_MB` | `50` | The large-file size in MB. `rx index` skips a smaller plain file unless `--threshold=N` is supplied (`--threshold=0` indexes every file; omitting the flag uses this variable). `rx samples` and `GET /v1/samples` build an index before a lookup in a plain file of this size or more. A trace answer for a plain file of this size or more is cached. The index checkpoint step is a fiftieth of it (1 MB by default). |
 
 ## Cache control
 
@@ -272,7 +271,6 @@ range:
 | `RX_LARGE_FILE_MB` | 50 | 1 | 1048576 | MB (up to 1 TiB) |
 | `RX_MAX_LINE_TEXT_BYTES` | 1048576 | 1 | 268435456 | bytes (1 MiB to 256 MiB) |
 | `RX_MAX_SUBMATCHES_PER_LINE` | 10000 | 1 | 1000000 | submatches |
-| `RX_ANALYZE_WINDOW_LINES` | 128 | 1 | 2048 | lines |
 | `RX_TASK_TTL_MINUTES` | 60 | 1 | 10080 | minutes (up to one week) |
 | `RX_SAMPLES_WAIT_SECONDS` | 5 | 0 | 3600 | seconds |
 | `RX_TIMESTAMP_LOOKBACK_KB` | 64 | 0 | 1024 | KiB |

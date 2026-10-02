@@ -21,9 +21,21 @@ func progressText() []byte {
 	return buf.Bytes()
 }
 
+// stampedProgressText is progressText with a timestamp at the start of
+// each line, so a seekable copy's build walks its text for the time
+// section beside the frame scan.
+func stampedProgressText() []byte {
+	var buf bytes.Buffer
+	for n := 1; n <= 8000; n++ {
+		fmt.Fprintf(&buf, "2026-10-11T10:%02d:%02dZ LINE %d of the log, padded\n", n/60%60, n%60, n)
+	}
+	return buf.Bytes()
+}
+
 // A build given a Progress reports how far it has read: nothing known
 // before it starts, and the whole file once it is done, for every kind
-// of file it indexes.
+// of file it indexes, a seekable file whose text is walked for its
+// timestamps included.
 func TestBuild_ReportsProgressToTheEnd(t *testing.T) {
 	text := progressText()
 	dir := t.TempDir()
@@ -44,26 +56,25 @@ func TestBuild_ReportsProgressToTheEnd(t *testing.T) {
 	seekablePath := filepath.Join(dir, "app.log.zst")
 	seekablefile.Write(t, seekablePath, seekablefile.SplitEvery(text, 64*1024))
 	files["app.log.zst"] = nil
+	stampedPath := filepath.Join(dir, "stamped.log.zst")
+	seekablefile.Write(t, stampedPath, seekablefile.SplitEvery(stampedProgressText(), 64*1024))
+	files["stamped.log.zst"] = nil
 
 	for name := range files {
-		for _, analyze := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s analyze=%v", name, analyze), func(t *testing.T) {
-				progress := &Progress{}
-				if _, known := progress.Fraction(); known {
-					t.Fatal("a progress nobody started reports a fraction")
-				}
-				_, err := Build(filepath.Join(dir, name), BuildOptions{
-					StepBytes: 4096, Analyze: analyze, Progress: progress,
-				})
-				if err != nil {
-					t.Fatalf("Build: %v", err)
-				}
-				fraction, known := progress.Fraction()
-				if !known || fraction != 1 {
-					t.Fatalf("progress after the build = %v (known %v), want 1", fraction, known)
-				}
-			})
-		}
+		t.Run(name, func(t *testing.T) {
+			progress := &Progress{}
+			if _, known := progress.Fraction(); known {
+				t.Fatal("a progress nobody started reports a fraction")
+			}
+			_, err := Build(filepath.Join(dir, name), BuildOptions{StepBytes: 4096, Progress: progress})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			fraction, known := progress.Fraction()
+			if !known || fraction != 1 {
+				t.Fatalf("progress after the build = %v (known %v), want 1", fraction, known)
+			}
+		})
 	}
 }
 

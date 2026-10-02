@@ -359,8 +359,7 @@ func taskResponseOf(task *tasks.Task, path, message string) rxtypes.TaskResponse
 // nothing holds the path.
 //
 // An index task started by POST /v1/index is joined as well: it builds
-// the same line index, with an analysis on top when it was asked for
-// one.
+// the same line index.
 func (b *samplesIndexBuilds) join(path string, identity index.SourceIdentity, size int64) (string, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -601,7 +600,7 @@ func (b *samplesIndexBuilds) finish(build queuedIndexBuild) {
 }
 
 // samplesIndexRequest is the POST /v1/index request that builds what a
-// samples lookup builds: a line index without analysis. It is what the
+// samples lookup builds: a line index. It is what the
 // task's cli_command reproduces. `rx index` skips a file below the
 // large-file size unless told otherwise, and samples indexes every
 // compressed file, so a smaller one gets --threshold=0.

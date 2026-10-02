@@ -9,7 +9,6 @@ lookups on large files.
 rx index PATH [PATH ...] [flags]
 rx index PATH --info                 # inspect cached index
 rx index PATH --delete               # remove cached index
-rx index PATH --analyze              # build with full analysis
 ```
 
 ## Description
@@ -38,11 +37,17 @@ configurable via [`RX_LARGE_FILE_MB`](../configuration.md) or the
 | `-d`, `--delete` | `bool` | `false` | Remove the cached index file |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `-r`, `--recursive` | `bool` | `false` | Recurse into directory paths |
-| `-a`, `--analyze` | `bool` | `false` | Run full analysis (line length stats, anomalies) |
-| `--analyze-window-lines` | `int` | `0` (resolver default 128) | Sliding-window size for the anomaly coordinator; only used with `--analyze`. Capped at 2048 |
-| `--threshold` | `int` | `0` (env default) | Minimum file size in MB to index; ignored with `--analyze` |
+| `--threshold` | `int` | `0` (env default) | Minimum file size in MB to index |
 
 Mode flags have a priority order: `--delete` > `--info` > build.
+
+`-a`, `--analyze` and `--analyze-window-lines` are gone: signatures
+replaced the index analysis. Each of them, with any value, prints
+`Error: --analyze was replaced by: rx trace --signatures PATH` (the
+window flag says it was removed with `--analyze`, and names the same
+replacement) and exits 2 before anything is read. See
+[`rx trace --signatures`](trace.md) and
+[Signatures](../concepts/signatures.md).
 
 
 ### Global flags
@@ -73,23 +78,17 @@ read is not a failure: it is listed under `skipped` with the reason
 
 ## Output
 
-`rx index` prints one line per indexed file. With `--analyze` the
-statistics and the anomaly counts follow underneath:
+`rx index` prints one line per indexed file:
 
 ```text
-Indexed and analyzed 1 files in 0.1s
+Indexed 1 files in 0.1s
   /var/log/app.log: 12 lines, 245.00 B
-    Lines: 12 total, 0 empty
-    Line ending: LF
-    Line length: max=38, avg=19.4, median=11.0, p95=36.4, p99=37.7, stddev=11.9
-    Longest line: line 3, offset 50
-    Anomalies: 1 secrets-scan, 1 traceback-python
-    Use --json for the full anomaly list
 ```
 
-The per-anomaly line ranges, severities and descriptions appear only in
-`--json`. When nothing was indexed the output is `No files indexed.`
-Skipped files follow the indexed ones, each with its reason:
+The line counts and line-length statistics are in `--json` and
+`--info --json`. When nothing was indexed the output is
+`No files indexed.` Skipped files follow the indexed ones, each with
+its reason:
 
 ```text
 No files indexed.
@@ -134,7 +133,6 @@ Index for: /var/log/app.log-2025121008
   file_type: text
   size_bytes: 487603212
   created_at: 2026-10-06T02:07:47.806161Z
-  analysis_performed: false
   line_count: 1418377
   index_entries: 431
   time_format: iso, at the start of each line, no zone, read as UTC
@@ -176,47 +174,6 @@ rx index /var/log/audit-2026-03.log --force
 Rebuilds even if a valid index exists. Useful after a file was modified
 in place without the mtime changing (rare; happens with some rsync
 configurations).
-
-### Full analysis
-
-```bash
-rx index /var/log/audit-2026-03.log --analyze
-```
-
-In addition to the line-offset checkpoints, `--analyze` populates:
-
-- Line-length statistics (max, avg, median, p95, p99, stddev)
-- Byte offset of the longest line
-- Detected line ending (LF vs CRLF)
-- Compression info (for compressed inputs)
-- Anomaly report (nine detectors run by default — see [concepts/analyzers](../concepts/analyzers.md))
-
-`--analyze` is slower than a plain build because it walks every byte
-of the file to gather statistics and dispatches each line to the
-detector coordinator. A cached index satisfies an `--analyze` call only
-when its analysis ran with the same `--analyze-window-lines` and the same
-detectors at the same versions; the index records both
-(`analysis_window_lines`, `analysis_detector_set`). Otherwise `rx` falls
-through to a full rebuild.
-
-### Tuning the anomaly window
-
-Detectors that span multiple lines (tracebacks, multi-line JSON blobs)
-look back through a fixed-size sliding window. The default is 128
-lines, which covers most real-world stacks. Increase it if you see
-multi-line patterns getting truncated:
-
-```bash
-rx index /var/log/app.log --analyze --analyze-window-lines=512
-```
-
-A negative value is a usage error (exit 2 on the CLI, 400 over HTTP),
-because 0 and an absent flag already mean "use the default". rx-python
-accepts the same flag and the same request field, with the same
-precedence and the same refusal.
-
-The resolver precedence is URL param > CLI flag > `RX_ANALYZE_WINDOW_LINES`
-env var > default (128). Values outside `[1, 2048]` are clamped.
 
 ### Multiple files, recursive
 
@@ -309,7 +266,8 @@ The on-disk format is a JSON file containing:
 - The time section, `time_index`: the timestamp format of the lines,
   the first and last timestamps, and the latest timestamp before each
   checkpoint (`null` when no format is recognized)
-- Optional line-length and anomaly statistics (when `--analyze` ran)
+- The line counts and line-length statistics of the text (not for a
+  seekable `.zst`)
 
 Checkpoints are sparse — not every line is in the index. The builder
 emits a checkpoint every fixed byte distance (`index_step_bytes`),
@@ -338,11 +296,8 @@ Measured with the files in the page cache:
 - **Cold build**: one sequential pass; 120 ms for the 465 MB log,
   2.7 s for a 6.3 GB log, the time section included. Slower when the
   file comes from disk.
-- **`--analyze`**: far slower than a plain build, because every line
-  goes through every detector: 18.2 s for the 465 MB log.
 - **Memory**: the builder keeps only the sparse checkpoints; peak RSS
-  was 16 MB for the 465 MB log, 17 MB for the 6.3 GB log and 26 MB for
-  the analyzed build.
+  was 16 MB for the 465 MB log and 17 MB for the 6.3 GB log.
 
 ## Tips and gotchas
 
@@ -350,11 +305,6 @@ Measured with the files in the page cache:
     `rx index` costs seconds to minutes depending on file size. Every
     subsequent `rx trace` or `rx samples` on the same file pays zero
     index cost. Always index files you'll query repeatedly.
-
-!!! warning "Analyze requires full file walk"
-    `--analyze` bypasses the file-size threshold and always walks the
-    whole file. Don't run it in a batch script against thousands of
-    files unless you actually need the line-length stats.
 
 !!! note "Below-threshold ≠ error"
     When a file is smaller than the threshold, its path appears in the
@@ -371,20 +321,17 @@ Measured with the files in the page cache:
     holds each frame's line range.
 
     `rx compress` builds this index for you unless you pass
-    `--no-index`. That index has no analysis: `rx index --analyze
-    big.log.zst` adds the line-length statistics and the anomalies,
-    computed on the decompressed text in the same pass that reads the
-    frames. They are the same as for the decompressed file, line numbers
-    and byte offsets included. Without `--analyze` a seekable index
-    leaves the line-length statistics out.
+    `--no-index`. A seekable index leaves the line-length statistics
+    out, as rx-python's does: `line_count` comes from the frame table,
+    and `line_length`, `longest_line`, `line_ending` and
+    `empty_line_count` are `null`.
 
 !!! warning "Other compressed formats have no random access"
     gzip, bzip2, xz and plain (non-seekable) zstd are indexed through
     their decompressor, so the line numbers and byte offsets describe
     the text inside — but a lookup still streams from the start,
-    because the format offers nowhere else to begin. `--analyze` works
-    on every compressed format and analyses the text inside. A
-    compressed tar archive (`.tar.gz`, `.tgz` and the like) is not
+    because the format offers nowhere else to begin. A compressed tar
+    archive (`.tar.gz`, `.tgz` and the like) is not
     text, by the rule every command applies (see
     [Compression](../concepts/compression.md#how-rx-decides-what-a-file-is)):
     `rx index` lists it under `skipped` with a reason that starts with

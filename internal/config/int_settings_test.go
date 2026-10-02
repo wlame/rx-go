@@ -123,7 +123,6 @@ func TestIntSettings_GettersReadTheirSetting(t *testing.T) {
 		{LargeFileMBSetting, LargeFileMB},
 		{MaxLineTextBytesSetting, MaxLineTextBytes},
 		{MaxSubmatchesPerLineSetting, MaxSubmatchesPerLine},
-		{AnalyzeWindowLinesSetting, AnalyzeWindowLines},
 		{TaskTTLMinutesSetting, func() int { return int(TaskTTL() / time.Minute) }},
 		{SamplesWaitSecondsSetting, func() int { return int(SamplesIndexWait() / time.Second) }},
 		{TimestampLookbackKBSetting, func() int { return int(TimestampLookbackBytes() / 1024) }},
@@ -188,6 +187,40 @@ func TestIntSettings_DocumentedRangesMatch(t *testing.T) {
 		if !bytes.Contains(doc, []byte(row)) {
 			t.Errorf("docs/configuration.md lacks the row %s", row)
 		}
+	}
+}
+
+// The range table of docs/configuration.md lists exactly the integer
+// settings rx reads: a row for a variable that is gone (or not yet
+// declared) promises a setting rx does not have.
+func TestIntSettings_DocumentedTableHasNoOtherRow(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "configuration.md"))
+	if err != nil {
+		t.Fatalf("read docs: %v", err)
+	}
+	_, table, found := strings.Cut(string(doc), "## Integer settings")
+	if !found {
+		t.Fatal("docs/configuration.md has no section Integer settings")
+	}
+	table, _, _ = strings.Cut(table, "\n\n## ")
+	declared := map[string]bool{}
+	for _, s := range IntSettings {
+		declared[s.Name] = true
+	}
+	rows := 0
+	for _, line := range strings.Split(table, "\n") {
+		name, ok := strings.CutPrefix(line, "| `")
+		if !ok {
+			continue
+		}
+		name, _, _ = strings.Cut(name, "`")
+		rows++
+		if !declared[name] {
+			t.Errorf("the table lists %s, which is not an integer setting", name)
+		}
+	}
+	if rows != len(IntSettings) {
+		t.Errorf("the table has %d rows, want one per setting (%d)", rows, len(IntSettings))
 	}
 }
 

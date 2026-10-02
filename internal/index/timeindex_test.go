@@ -596,8 +596,8 @@ func TestSaveLoad_KeepsTheTimeSection(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			built := buildAt(t, t.TempDir(), name, write, text, fileMtime, 128)
-			if built.TimeIndex == nil || built.Version != 10 {
-				t.Fatalf("version %d, time section present %v; want 10 and true", built.Version, built.TimeIndex != nil)
+			if built.TimeIndex == nil || built.Version != Version {
+				t.Fatalf("version %d, time section present %v; want %d and true", built.Version, built.TimeIndex != nil, Version)
 			}
 			cachePath, err := Save(built)
 			if err != nil {

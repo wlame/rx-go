@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestLoadRefusesAnIndexWrittenByAnotherVersion(t *testing.T) {
 	writeNumberedFile(t, src, 200)
 	idx := buildIndexFor(t, src)
 
-	for _, version := range []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 999} {
+	for _, version := range []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 999} {
 		idx.Version = version
 		raw, err := json.Marshal(idx)
 		if err != nil {
@@ -82,6 +83,76 @@ func TestLoadRefusesAnIndexWrittenByAnotherVersion(t *testing.T) {
 		}
 		if _, err := LoadForSource(src); !errors.Is(err, ErrIndexNotFound) {
 			t.Errorf("version %d: LoadForSource err = %v, want ErrIndexNotFound", version, err)
+		}
+	}
+}
+
+// An index stored by format 10 can hold an analysis: the six fields
+// analysis_performed, analysis_window_lines, analysis_detector_set,
+// anomalies, anomaly_summary and, in its answers, anomaly_count. It is
+// an index of another version: absent, not logged as damaged, and the
+// next build writes a format 11 index without those fields in its
+// place.
+func TestLoadFromPath_AFormat10IndexWithAnAnalysisIsAbsent(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	src := filepath.Join(t.TempDir(), "app.log")
+	writeNumberedFile(t, src, 200)
+	buildIndexFor(t, src)
+	cachePath := GetCachePath(src)
+	body, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse index: %v", err)
+	}
+	doc["version"] = 10
+	doc["analysis_performed"] = true
+	doc["analysis_window_lines"] = 128
+	doc["analysis_detector_set"] = "traceback-python@1.0.0"
+	doc["anomalies"] = []any{map[string]any{
+		"start_line": 3, "end_line": 5, "start_offset": 100, "end_offset": 200,
+		"severity": 0.7, "category": "log-traceback", "description": "Python traceback, 3 lines",
+		"detector": "traceback-python",
+	}}
+	doc["anomaly_summary"] = map[string]any{"traceback-python": 1}
+	if body, err = json.Marshal(doc); err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(cachePath, body, 0o600); err != nil {
+		t.Fatalf("write format 10 index: %v", err)
+	}
+	log := captureIndexLog(t)
+
+	if idx, err := LoadFromPath(cachePath); idx != nil || !errors.Is(err, ErrIndexNotFound) {
+		t.Errorf("LoadFromPath = %v, %v; want no index and ErrIndexNotFound", idx, err)
+	}
+	if idx, err := LoadForSource(src); idx != nil || !errors.Is(err, ErrIndexNotFound) {
+		t.Errorf("LoadForSource = %v, %v; want no index and ErrIndexNotFound", idx, err)
+	}
+	if strings.Contains(log.String(), "index_unreadable") {
+		t.Errorf("a format 10 index was logged as damaged:\n%s", log.String())
+	}
+
+	rebuilt := buildIndexFor(t, src)
+	stored, err := os.ReadFile(GetCachePath(src))
+	if err != nil {
+		t.Fatalf("read rebuilt index: %v", err)
+	}
+	var rebuiltDoc map[string]any
+	if err := json.Unmarshal(stored, &rebuiltDoc); err != nil {
+		t.Fatalf("parse rebuilt index: %v", err)
+	}
+	if rebuilt.Version != 11 || rebuiltDoc["version"] != float64(11) {
+		t.Errorf("rebuilt index has version %d (stored %v), want 11", rebuilt.Version, rebuiltDoc["version"])
+	}
+	for _, field := range []string{
+		"analysis_performed", "analysis_window_lines", "analysis_detector_set",
+		"anomalies", "anomaly_count", "anomaly_summary",
+	} {
+		if _, ok := rebuiltDoc[field]; ok {
+			t.Errorf("the rebuilt index stores %s", field)
 		}
 	}
 }

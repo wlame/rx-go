@@ -188,7 +188,6 @@ func NewServer(cfg Config) *Server {
 	registerTaskHandlers(s, api)
 	registerTreeHandlers(s, api)
 	registerLogsHandlers(s, api)
-	registerDetectorsHandlers(s, api)
 	registerSignaturesHandlers(s, api)
 	registerFindingsHandlers(s, api)
 	declareOptionalBearerToken(api)

@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
@@ -31,7 +28,6 @@ import (
 //	rx index PATH [PATH...]      # multiple paths (Python nargs=-1)
 //	rx index PATH --info         # show info, don't build
 //	rx index PATH --delete       # remove cached index
-//	rx index PATH --analyze      # full analysis (builds anomaly data)
 //	rx index PATH --json         # JSON output
 //
 // JSON output shape (Python-compatible per ):
@@ -60,19 +56,25 @@ func NewIndexCommand(out io.Writer) *cobra.Command {
 // test capture the params the real flags produced.
 func newIndexCommand(out io.Writer, run func(io.Writer, indexParams) error) *cobra.Command {
 	var (
-		force              bool
-		showInfo           bool
-		deleteFlag         bool
-		jsonOutput         bool
-		recursive          bool
-		analyze            bool
-		threshold          int
-		analyzeWindowLines int
+		force      bool
+		showInfo   bool
+		deleteFlag bool
+		jsonOutput bool
+		recursive  bool
+		threshold  int
 	)
 	cmd := &cobra.Command{
 		Use:   "index PATH [PATH ...]",
 		Short: "Build or inspect file indexes",
-		Args:  cobra.MinimumNArgs(1),
+		// Args runs before RunE, so a removed flag is reported here
+		// first: `rx index --analyze` with no path gets the replacement
+		// too, rather than "requires at least 1 arg(s)".
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := refuseRemovedIndexFlags(cmd); err != nil {
+				return err
+			}
+			return cobra.MinimumNArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// "Unset" and "zero" are different answers: an explicit
 			// --threshold=0 means "no threshold", and leaving the flag
@@ -83,15 +85,13 @@ func newIndexCommand(out io.Writer, run func(io.Writer, indexParams) error) *cob
 				thresholdOverride = &threshold
 			}
 			return run(out, indexParams{
-				paths:              args,
-				force:              force,
-				showInfo:           showInfo,
-				delete:             deleteFlag,
-				jsonOutput:         jsonOutput,
-				recursive:          recursive,
-				analyze:            analyze,
-				threshold:          thresholdOverride,
-				analyzeWindowLines: analyzeWindowLines,
+				paths:      args,
+				force:      force,
+				showInfo:   showInfo,
+				delete:     deleteFlag,
+				jsonOutput: jsonOutput,
+				recursive:  recursive,
+				threshold:  thresholdOverride,
 			})
 		},
 	}
@@ -100,17 +100,70 @@ func newIndexCommand(out io.Writer, run func(io.Writer, indexParams) error) *cob
 	cmd.Flags().BoolVarP(&deleteFlag, "delete", "d", false, "Delete index for the file")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively process directories")
-	cmd.Flags().BoolVarP(&analyze, "analyze", "a", false, "Run full analysis with anomaly detection")
 	cmd.Flags().IntVar(&threshold, "threshold", 0,
 		"Minimum file size in MB to index; 0 indexes every file. "+
-			"Leave unset to use RX_LARGE_FILE_MB. Ignored with --analyze.")
-	// --analyze-window-lines: sliding-window size (in lines) handed to the
-	// analyzer coordinator. 0 means "not set" — we fall through to the
-	// RX_ANALYZE_WINDOW_LINES env var and then the compiled-in default
-	// via analyzer.ResolveWindowLines. Only relevant with --analyze.
-	cmd.Flags().IntVar(&analyzeWindowLines, "analyze-window-lines", 0,
-		"Sliding-window size (lines) for analyzer detectors. 0 = default. Only used with --analyze.")
+			"Leave unset to use RX_LARGE_FILE_MB.")
+	declareRemovedIndexFlags(cmd)
 	return cmd
+}
+
+// removedIndexFlag is a flag `rx index` no longer has. It is still
+// declared, hidden from --help, so a script that passes it gets message
+// and exit 2 instead of cobra's "unknown flag".
+type removedIndexFlag struct {
+	name      string
+	shorthand string
+	// isBool declares the flag as a boolean, which parses without a
+	// value; any other flag takes any text, so every value it is given
+	// reaches the message.
+	isBool  bool
+	message string
+}
+
+// removedIndexFlags are the analysis flags signatures replaced, in the
+// order they are reported when several are given.
+var removedIndexFlags = []removedIndexFlag{
+	{
+		name:      "analyze",
+		shorthand: "a",
+		isBool:    true,
+		message:   "--analyze was replaced by: rx trace --signatures PATH",
+	},
+	{
+		name: "analyze-window-lines",
+		message: "--analyze-window-lines was removed with --analyze, " +
+			"which was replaced by: rx trace --signatures PATH",
+	},
+}
+
+// declareRemovedIndexFlags declares every removed flag as a hidden one:
+// --analyze as a boolean, so `--analyze` and `-a` parse as they always
+// did, and the window flag as text, so `--analyze-window-lines=N`
+// reaches the message whatever N is.
+func declareRemovedIndexFlags(cmd *cobra.Command) {
+	for _, flag := range removedIndexFlags {
+		if flag.isBool {
+			cmd.Flags().BoolP(flag.name, flag.shorthand, false, flag.message)
+		} else {
+			cmd.Flags().StringP(flag.name, flag.shorthand, "", flag.message)
+		}
+		// MarkHidden fails only for a name that was not declared, and
+		// the name was declared on the line above.
+		_ = cmd.Flags().MarkHidden(flag.name)
+	}
+}
+
+// refuseRemovedIndexFlags returns the usage error of the first removed
+// flag the command line gives, whatever its value (`--analyze=false`
+// too), or nil when it gives none. The error is already printed, so
+// main only turns it into exit 2.
+func refuseRemovedIndexFlags(cmd *cobra.Command) error {
+	for _, flag := range removedIndexFlags {
+		if cmd.Flags().Changed(flag.name) {
+			return exitWithError(os.Stderr, ExitUsageError, "%s", flag.message)
+		}
+	}
+	return nil
 }
 
 type indexParams struct {
@@ -120,11 +173,9 @@ type indexParams struct {
 	delete     bool
 	jsonOutput bool
 	recursive  bool
-	analyze    bool
 	// threshold is nil when --threshold was not given. A zero VALUE is
 	// an explicit "index everything"; see the flag's RunE.
-	threshold          *int
-	analyzeWindowLines int
+	threshold *int
 }
 
 // indexBuildResult aggregates multi-path index-build outcomes into the
@@ -231,7 +282,6 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 		_, _ = fmt.Fprintf(out, "  file_type: %s\n", idx.FileType)
 		_, _ = fmt.Fprintf(out, "  size_bytes: %d\n", idx.SourceSizeBytes)
 		_, _ = fmt.Fprintf(out, "  created_at: %s\n", idx.CreatedAt)
-		_, _ = fmt.Fprintf(out, "  analysis_performed: %v\n", idx.AnalysisPerformed)
 		if idx.LineCount != nil {
 			_, _ = fmt.Fprintf(out, "  line_count: %d\n", *idx.LineCount)
 		}
@@ -249,13 +299,12 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 			entry["index"] = nil
 		} else {
 			entry["index"] = map[string]any{
-				"version":            idx.Version,
-				"file_type":          string(idx.FileType),
-				"source_size_bytes":  idx.SourceSizeBytes,
-				"created_at":         idx.CreatedAt,
-				"analysis_performed": idx.AnalysisPerformed,
-				"line_count":         idx.LineCount,
-				"index_entries":      len(idx.LineIndex),
+				"version":           idx.Version,
+				"file_type":         string(idx.FileType),
+				"source_size_bytes": idx.SourceSizeBytes,
+				"created_at":        idx.CreatedAt,
+				"line_count":        idx.LineCount,
+				"index_entries":     len(idx.LineIndex),
 			}
 		}
 		files = append(files, entry)
@@ -270,10 +319,9 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 			_, _ = fmt.Fprintf(out, "%s: no index exists\n", output.Printable(fmt.Sprint(file["path"])))
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "%s: %v entries, analysis=%v\n",
+		_, _ = fmt.Fprintf(out, "%s: %v entries\n",
 			output.Printable(fmt.Sprint(file["path"])),
-			file["index"].(map[string]any)["index_entries"],
-			file["index"].(map[string]any)["analysis_performed"])
+			file["index"].(map[string]any)["index_entries"])
 	}
 	return nil
 }
@@ -287,13 +335,6 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 //   - Directory expansion → collect files under each dir (recursive when --recursive).
 //   - JSON output wraps everything in {indexed, skipped, errors, total_time}.
 func runIndexBuild(out io.Writer, p indexParams) error {
-	// A negative window is a mistake the caller made, not a way to spell
-	// "not set" — 0 already does that — so it is refused rather than
-	// silently replaced by the default. POST /v1/index refuses it too.
-	if p.analyzeWindowLines < 0 {
-		return exitWithError(os.Stderr, ExitUsageError,
-			"--analyze-window-lines must be positive, or 0 to use the default")
-	}
 	result := buildIndexes(p)
 	if p.jsonOutput {
 		enc := json.NewEncoder(out)
@@ -302,7 +343,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			return err
 		}
 	} else {
-		writeIndexBuildHuman(out, result, p.analyze, indexUnitFiles)
+		writeIndexBuildHuman(out, result, indexUnitFiles)
 	}
 	return multiPathFailure(result.failureCodes(), "one or more files failed to index")
 }
@@ -321,7 +362,6 @@ func (r indexBuildResult) failureCodes() []int {
 // file p.paths names (each file of a directory, recursively with
 // p.recursive), stores it, and returns what happened to each file. It
 // prints nothing; runIndexBuild and `rx logs index` print the result.
-// p.analyzeWindowLines must not be negative.
 func buildIndexes(p indexParams) indexBuildResult {
 	t0 := time.Now()
 	result := indexBuildResult{
@@ -399,8 +439,7 @@ func buildIndexes(p indexParams) indexBuildResult {
 		})
 	}
 
-	// Threshold resolution (MB → bytes). --analyze bypasses the threshold
-	// in Python; Go matches by not gating when p.analyze is true.
+	// Threshold resolution (MB → bytes).
 	//
 	// A supplied threshold wins whatever its value, zero included:
 	// POST /v1/index has always honored an explicit 0 and so has
@@ -411,10 +450,6 @@ func buildIndexes(p indexParams) indexBuildResult {
 		threshold = int64(*p.threshold)
 	}
 	thresholdBytes := threshold * 1024 * 1024
-
-	// Hoisted out of the per-file loop: the window size only depends on
-	// CLI flag and env precedence, not on the path. Compute once.
-	windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
 
 	// Whether the index cache can store an index is checked once, at
 	// the first file that is about to be built, and the answer holds for
@@ -441,7 +476,7 @@ func buildIndexes(p indexParams) indexBuildResult {
 		}
 		// Below-threshold files are skipped rather than indexed, and the
 		// command still exits 0; rx-python does the same.
-		if !p.analyze && info.Size() < thresholdBytes {
+		if info.Size() < thresholdBytes {
 			result.skip(path, belowThresholdReason(info.Size(), thresholdBytes))
 			continue
 		}
@@ -459,27 +494,12 @@ func buildIndexes(p indexParams) indexBuildResult {
 			continue
 		}
 
-		// Populate detectors from the global registry when --analyze is
-		// on. LineDetectorSnapshot returns FRESH instances per call so
-		// state cannot leak across files in a multi-file invocation.
-		var detectors []analyzer.LineDetector
-		if p.analyze {
-			detectors = analyzer.LineDetectorSnapshot()
-		}
-		buildOpts := index.BuildOptions{
-			Analyze:     p.analyze,
-			WindowLines: windowLines,
-			Detectors:   detectors,
-		}
-
-		// Without --force a valid cached index is reused when it answers
-		// this request (index.SatisfiesBuild), as rx-python reuses one;
-		// rebuilding on every call cost a full pass each time. A cache
-		// that is missing, stale or unreadable means a rebuild, not a
-		// failure.
+		// Without --force a valid cached index is reused, as rx-python
+		// reuses one; rebuilding on every call cost a full pass each
+		// time. A cache that is missing, stale or unreadable means a
+		// rebuild, not a failure.
 		if !p.force {
-			if idx, loadErr := index.LoadForSource(path); loadErr == nil && idx != nil &&
-				index.SatisfiesBuild(idx, buildOpts) {
+			if idx, loadErr := index.LoadForSource(path); loadErr == nil && idx != nil {
 				result.Indexed = append(result.Indexed, indexEntryJSON(idx, index.GetCachePath(path)))
 				continue
 			}
@@ -497,7 +517,7 @@ func buildIndexes(p indexParams) indexBuildResult {
 			continue
 		}
 
-		idx, err := index.Build(path, buildOpts)
+		idx, err := index.Build(path, index.BuildOptions{})
 		if errors.Is(err, compression.ErrTooLargeToDecode) {
 			// A file rx refuses to decompress is skipped with the reason,
 			// as trace skips it, not counted as a failure to index.
@@ -538,7 +558,6 @@ func indexEntryJSON(idx *rxtypes.UnifiedFileIndex, cachePath string) map[string]
 		"size_bytes":         idx.SourceSizeBytes,
 		"created_at":         idx.CreatedAt,
 		"build_time_seconds": idx.BuildTimeSeconds,
-		"analysis_performed": idx.AnalysisPerformed,
 		// Go-extra: index_path exposes the cache file location. Python's
 		// CLI does not emit this — it is a Go-only key documented in
 		// MIGRATION.md.
@@ -562,8 +581,8 @@ func indexEntryJSON(idx *rxtypes.UnifiedFileIndex, cachePath string) map[string]
 		entry["line_ending"] = *idx.LineEnding
 	}
 
-	// Line-length stats (only populated when --analyze). Python emits
-	// these under a `line_length` sub-object; match that shape.
+	// Line-length stats (absent from a seekable-zstd index). Python
+	// emits these under a `line_length` sub-object; match that shape.
 	if idx.LineLengthMax != nil {
 		entry["line_length"] = map[string]any{
 			"max":    *idx.LineLengthMax,
@@ -589,19 +608,6 @@ func indexEntryJSON(idx *rxtypes.UnifiedFileIndex, cachePath string) map[string]
 	}
 	if idx.CompressionRatio != nil {
 		entry["compression_ratio"] = *idx.CompressionRatio
-	}
-
-	// Anomaly info when analysis has run.
-	if idx.AnalysisPerformed {
-		anomalyCount := 0
-		if idx.Anomalies != nil {
-			anomalyCount = len(*idx.Anomalies)
-		}
-		entry["anomaly_count"] = anomalyCount
-		entry["anomaly_summary"] = idx.AnomalySummary
-		if idx.Anomalies != nil && len(*idx.Anomalies) > 0 {
-			entry["anomalies"] = *idx.Anomalies
-		}
 	}
 
 	return entry
@@ -632,12 +638,11 @@ const (
 )
 
 // writeIndexBuildHuman renders the same block rx-python prints
-// (`cli/index.py`): one line per file, plus the analysis statistics and
-// the anomaly summary when --analyze was used. The two must stay
-// identical for rx index (unit indexUnitFiles), except for the skipped
-// files: rx-python prints only their count, this lists each one with its
-// reason. unit is the word the counts are given in.
-func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool, unit string) {
+// (`cli/index.py`) for a build without analysis: one line per file. The
+// two must stay identical for rx index (unit indexUnitFiles), except for
+// the skipped files: rx-python prints only their count, this lists each
+// one with its reason. unit is the word the counts are given in.
+func writeIndexBuildHuman(out io.Writer, r indexBuildResult, unit string) {
 	// Nothing indexed: say so, then still report why files were passed
 	// over.
 	if len(r.Indexed) == 0 {
@@ -648,11 +653,7 @@ func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool, unit 
 		}
 		return
 	}
-	if analyze {
-		_, _ = fmt.Fprintf(out, "Indexed and analyzed %d %s in %.1fs\n", len(r.Indexed), unit, r.TotalTime)
-	} else {
-		_, _ = fmt.Fprintf(out, "Indexed %d %s in %.1fs\n", len(r.Indexed), unit, r.TotalTime)
-	}
+	_, _ = fmt.Fprintf(out, "Indexed %d %s in %.1fs\n", len(r.Indexed), unit, r.TotalTime)
 	for _, idx := range r.builtIndexes {
 		writeIndexEntryHuman(out, idx)
 	}
@@ -675,8 +676,8 @@ func writeSkippedHuman(out io.Writer, skipped []rxtypes.SkippedFile, unit string
 	}
 }
 
-// writeIndexEntryHuman prints one file's summary and, when the index was
-// built with analysis, its statistics and anomaly counts.
+// writeIndexEntryHuman prints one file's summary: its path, its line
+// count and its size.
 func writeIndexEntryHuman(out io.Writer, idx *rxtypes.UnifiedFileIndex) {
 	lineInfo := "unknown lines"
 	if idx.LineCount != nil {
@@ -684,67 +685,10 @@ func writeIndexEntryHuman(out io.Writer, idx *rxtypes.UnifiedFileIndex) {
 	}
 	_, _ = fmt.Fprintf(out, "  %s: %s, %s\n",
 		output.Printable(idx.SourcePath), lineInfo, output.HumanSize(idx.SourceSizeBytes))
-
-	if !idx.AnalysisPerformed {
-		return
-	}
-	if idx.LineCount != nil && idx.EmptyLineCount != nil {
-		_, _ = fmt.Fprintf(out, "    Lines: %s total, %s empty\n",
-			output.Thousands(*idx.LineCount), output.Thousands(*idx.EmptyLineCount))
-	}
-	if idx.LineEnding != nil {
-		_, _ = fmt.Fprintf(out, "    Line ending: %s\n", *idx.LineEnding)
-	}
-	if idx.LineLengthMax != nil {
-		_, _ = fmt.Fprintf(out,
-			"    Line length: max=%d, avg=%.1f, median=%.1f, p95=%.1f, p99=%.1f, stddev=%.1f\n",
-			*idx.LineLengthMax, derefFloat(idx.LineLengthAvg), derefFloat(idx.LineLengthMedian),
-			derefFloat(idx.LineLengthP95), derefFloat(idx.LineLengthP99), derefFloat(idx.LineLengthStddev))
-		if idx.LineLengthMaxLineNumber != nil {
-			_, _ = fmt.Fprintf(out, "    Longest line: line %d, offset %d\n",
-				*idx.LineLengthMaxLineNumber, derefInt64(idx.LineLengthMaxByteOffset))
-		}
-	}
-	writeAnomalySummaryHuman(out, idx)
 }
 
-// writeAnomalySummaryHuman prints the per-category counts, and points at
-// --json for the detail, which is the only place the ranges appear.
-func writeAnomalySummaryHuman(out io.Writer, idx *rxtypes.UnifiedFileIndex) {
-	count := 0
-	if idx.Anomalies != nil {
-		count = len(*idx.Anomalies)
-	}
-	if count == 0 {
-		_, _ = fmt.Fprintln(out, "    Anomalies: none")
-		return
-	}
-	if len(idx.AnomalySummary) > 0 {
-		categories := make([]string, 0, len(idx.AnomalySummary))
-		for category := range idx.AnomalySummary {
-			categories = append(categories, category)
-		}
-		sort.Strings(categories)
-		parts := make([]string, 0, len(categories))
-		for _, category := range categories {
-			parts = append(parts, fmt.Sprintf("%d %s", idx.AnomalySummary[category], category))
-		}
-		_, _ = fmt.Fprintf(out, "    Anomalies: %s\n", strings.Join(parts, ", "))
-	} else {
-		_, _ = fmt.Fprintf(out, "    Anomalies: %d\n", count)
-	}
-	_, _ = fmt.Fprintln(out, "    Use --json for the full anomaly list")
-}
-
-// derefFloat and derefInt64 read an optional statistic, treating an
-// absent value as zero the way Python's formatting does.
-func derefFloat(v *float64) float64 {
-	if v == nil {
-		return 0
-	}
-	return *v
-}
-
+// derefInt64 reads an optional count, treating an absent value as zero
+// the way Python's formatting does.
 func derefInt64(v *int64) int64 {
 	if v == nil {
 		return 0

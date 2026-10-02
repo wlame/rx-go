@@ -418,7 +418,7 @@ bare name that must be one of the chain's parts.
   indexes every frozen part again.
 - Removing the indexes of parts that no longer exist.
 - Context that crosses a part's edge in a search.
-- Anomaly analysis of a chain, and `rx compress` of a chain.
+- Signature findings of a chain, and `rx compress` of a chain.
 - `--fingerprint=` on `rx logs trace`: one search can find several
   chains, and each one's entry in `chains` carries its fingerprint.
 - `chain_line` in webhook payloads: a chain search fires the webhooks

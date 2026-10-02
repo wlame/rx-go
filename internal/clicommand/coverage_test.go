@@ -179,7 +179,8 @@ func TestIndexCommand_JSONWrapper(t *testing.T) {
 
 // TestIndexCommand_IndexedEntryShape verifies each `indexed` entry has
 // the fields Python emits (path, file_type, size_bytes, created_at,
-// build_time_seconds, analysis_performed, line_index, index_entries).
+// build_time_seconds, line_index, index_entries), apart from
+// analysis_performed, which contract 2.0 removed.
 func TestIndexCommand_IndexedEntryShape(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	root := t.TempDir()
@@ -204,8 +205,7 @@ func TestIndexCommand_IndexedEntryShape(t *testing.T) {
 	// Python's key list from rx-python/src/rx/cli/index.py::_index_to_json.
 	for _, k := range []string{
 		"path", "file_type", "size_bytes", "created_at",
-		"build_time_seconds", "analysis_performed",
-		"line_index", "index_entries",
+		"build_time_seconds", "line_index", "index_entries",
 	} {
 		if _, ok := entry[k]; !ok {
 			t.Errorf("indexed entry missing key %q; entry=%+v", k, entry)

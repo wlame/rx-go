@@ -14,19 +14,21 @@ package clicommand
 // and rx-python, paused, has no such field.
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"sort"
 	"testing"
 )
 
 // expectedIndexEntryKeys is what an entry of `indexed` carries for a
-// plain text file indexed without --analyze. `line_length` and
-// `longest_line` are here because the line-length statistics come from
-// the index build itself; the keys that really do need --analyze
-// (anomalies, prefix patterns) and the compressed-source key
-// (compression_format) are not.
+// plain text file. `line_length` and `longest_line` are here because
+// the line-length statistics come from the index build itself; the
+// compressed-source key (compression_format) is not. The analysis keys
+// (`analysis_performed`, `anomaly_count`, `anomaly_summary`,
+// `anomalies`) went with contract 2.0, so rx-python's list still has
+// `analysis_performed`.
 var expectedIndexEntryKeys = []string{
-	"analysis_performed",
 	"build_time_seconds",
 	"created_at",
 	"empty_line_count",
@@ -91,5 +93,67 @@ func TestIndex_JSONIndexPathPointsAtTheFileThatWasWritten(t *testing.T) {
 	}
 	if _, err := os.Stat(indexPath); err != nil {
 		t.Errorf("index_path %q: %v", indexPath, err)
+	}
+}
+
+// removedAnalysisFields are the analysis fields of an index and its
+// answers that contract 2.0 and index format 11 removed.
+var removedAnalysisFields = []string{
+	"analysis_performed",
+	"analysis_window_lines",
+	"analysis_detector_set",
+	"anomalies",
+	"anomaly_count",
+	"anomaly_summary",
+}
+
+// `rx index --info --json` prints the stored index for one path and a
+// summary per path for several; neither carries an analysis field.
+func TestIndexInfo_JSONCarriesNoAnalysisField(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	first, second := tinyLogFile(t), tinyLogFile(t)
+	zero := 0
+	runIndexJSON(t, indexParams{paths: []string{first, second}, threshold: &zero})
+
+	single := runIndexInfoJSON(t, first)
+	requireNoAnalysisField(t, "info of one path", single)
+
+	several := runIndexInfoJSON(t, first, second)
+	files, _ := several["files"].([]any)
+	if len(files) != 2 {
+		t.Fatalf("files %v, want two entries", several["files"])
+	}
+	for _, file := range files {
+		summary, _ := file.(map[string]any)["index"].(map[string]any)
+		if summary == nil {
+			t.Fatalf("no index summary in %v", file)
+		}
+		requireNoAnalysisField(t, "info of several paths", summary)
+	}
+}
+
+// runIndexInfoJSON runs `rx index --info --json` on paths and decodes
+// what it prints.
+func runIndexInfoJSON(t *testing.T, paths ...string) map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := runIndex(&buf, indexParams{paths: paths, showInfo: true, jsonOutput: true}); err != nil {
+		t.Fatalf("runIndex --info: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode %q: %v", buf.String(), err)
+	}
+	return decoded
+}
+
+// requireNoAnalysisField fails the test for each removed analysis
+// field doc carries.
+func requireNoAnalysisField(t *testing.T, label string, doc map[string]any) {
+	t.Helper()
+	for _, field := range removedAnalysisFields {
+		if _, ok := doc[field]; ok {
+			t.Errorf("%s carries %s", label, field)
+		}
 	}
 }

@@ -99,15 +99,6 @@ var (
 		[]string{"status"},
 	)
 
-	// AnalyzeRequestsTotal — counter per analyze request (indexing with --analyze).
-	AnalyzeRequestsTotal = factory.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "rx_analyze_requests_total",
-			Help: "Total number of analyze requests",
-		},
-		[]string{"status"},
-	)
-
 	// TraceDurationSeconds — histogram of trace durations.
 	TraceDurationSeconds = factory.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -436,17 +427,6 @@ var (
 			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0},
 		},
 	)
-
-	// AnalyzeRequestsDurationSeconds: how long an index build with
-	// analysis took, from the task's start to the saved index. Same
-	// name and buckets as rx-python's.
-	AnalyzeRequestsDurationSeconds = factory.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "rx_analyze_duration_seconds",
-			Help:    "Time spent processing file analysis requests",
-			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0},
-		},
-	)
 )
 
 // ============================================================================
@@ -531,14 +511,6 @@ func RecordSamplesRequest(status string) {
 		return
 	}
 	SamplesRequestsTotal.WithLabelValues(status).Inc()
-}
-
-// RecordAnalyzeRequest counts one index-with-analysis request.
-func RecordAnalyzeRequest(status string) {
-	if !enabled.Load() {
-		return
-	}
-	AnalyzeRequestsTotal.WithLabelValues(status).Inc()
 }
 
 // RecordTraceDuration observes a trace-request duration.
@@ -695,15 +667,6 @@ func RecordSamplesDuration(dur time.Duration) {
 		return
 	}
 	SamplesDurationSeconds.Observe(dur.Seconds())
-}
-
-// RecordAnalyzeDuration observes how long one index build with analysis
-// took on AnalyzeRequestsDurationSeconds.
-func RecordAnalyzeDuration(dur time.Duration) {
-	if !enabled.Load() {
-		return
-	}
-	AnalyzeRequestsDurationSeconds.Observe(dur.Seconds())
 }
 
 // RecordSamplesOffsets observes the offset count on the

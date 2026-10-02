@@ -150,7 +150,7 @@ func writeLogsIndex(out io.Writer, answers []logsIndexAnswer, oneChain, jsonOutp
 		if i > 0 {
 			_, _ = fmt.Fprintln(out)
 		}
-		writeIndexBuildHuman(out, answer.indexBuildResult, false, indexUnitParts)
+		writeIndexBuildHuman(out, answer.indexBuildResult, indexUnitParts)
 		if answer.Chain != nil {
 			writeChainDescription(out, shownChain{resp: answer.Chain, namedParts: answer.namedParts}, loc)
 		}

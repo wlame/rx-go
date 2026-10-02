@@ -389,7 +389,6 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	}
 
 	get("health", "/health", nil, http.StatusOK)
-	get("detectors", "/v1/detectors", nil, http.StatusOK)
 
 	get("tree of the roots", "/v1/tree", nil, http.StatusOK)
 	get("tree of a directory", "/v1/tree", q("path", root), http.StatusOK)
@@ -512,7 +511,7 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("index before it is built", "/v1/index", q("path", at("app.log")), http.StatusNotFound)
 	get("index outside the root", "/v1/index", q("path", "/etc/hosts"), http.StatusForbidden)
 	get("index without a path", "/v1/index", nil, http.StatusUnprocessableEntity)
-	indexed := post("index with analysis", "/v1/index", map[string]any{"path": at("app.log"), "analyze": true}, http.StatusOK)
+	indexed := post("index", "/v1/index", map[string]any{"path": at("app.log"), "threshold": 0}, http.StatusOK)
 	run.finishTask("finished index task", indexed)
 	get("index after it is built", "/v1/index", q("path", at("app.log")), http.StatusOK)
 	timedIndex := post("index a timestamped file", "/v1/index", map[string]any{"path": at("timed.log"), "threshold": 0}, http.StatusOK)
@@ -521,7 +520,7 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("time range of an indexed timestamped file", "/v1/time-range", q("path", at("timed.log")), http.StatusOK)
 	post("index a file below the threshold", "/v1/index", map[string]any{"path": at("sub/other.log")}, http.StatusBadRequest)
 	post("index a missing file", "/v1/index", map[string]any{"path": at("nope.log")}, http.StatusNotFound)
-	post("index a file outside the root", "/v1/index", map[string]any{"path": "/etc/hosts", "analyze": true}, http.StatusForbidden)
+	post("index a file outside the root", "/v1/index", map[string]any{"path": "/etc/hosts", "threshold": 0}, http.StatusForbidden)
 	post("index with an unknown field", "/v1/index", map[string]any{"path": at("app.log"), "no_such_field": true},
 		http.StatusUnprocessableEntity)
 	post("index with a body that is not JSON", "/v1/index", "{not json", http.StatusBadRequest)
@@ -587,7 +586,7 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	held, _ := manager.Create(busy, "index")
-	post("index while a task runs for the file", "/v1/index", map[string]any{"path": at("three.log"), "analyze": true},
+	post("index while a task runs for the file", "/v1/index", map[string]any{"path": at("three.log"), "threshold": 0},
 		http.StatusConflict)
 	post("compress while a task runs for the file", "/v1/compress",
 		map[string]any{"input_path": at("three.log"), "force": true}, http.StatusConflict)

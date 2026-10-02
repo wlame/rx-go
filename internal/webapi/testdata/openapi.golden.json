@@ -1,51 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AnomalyRangeResult": {
-        "additionalProperties": false,
-        "properties": {
-          "category": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "detector": {
-            "type": "string"
-          },
-          "end_line": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "end_offset": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "severity": {
-            "format": "double",
-            "type": "number"
-          },
-          "start_line": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "start_offset": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "start_line",
-          "end_line",
-          "start_offset",
-          "end_offset",
-          "severity",
-          "category",
-          "description",
-          "detector"
-        ],
-        "type": "object"
-      },
       "ApiError": {
         "additionalProperties": false,
         "properties": {
@@ -107,35 +62,6 @@
           "object",
           "null"
         ]
-      },
-      "CategoryInfo": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "description": "One sentence describing what this category covers.",
-            "type": "string"
-          },
-          "detectors": {
-            "description": "Names of the detectors that report under this category.",
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "name": {
-            "description": "Stable category identifier, kebab-case. Used as the category field of an anomaly.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "description",
-          "detectors"
-        ],
-        "type": "object"
       },
       "ChainEntry": {
         "additionalProperties": false,
@@ -1152,86 +1078,6 @@
         ],
         "type": "object"
       },
-      "DetectorInfo": {
-        "additionalProperties": false,
-        "properties": {
-          "category": {
-            "description": "The category this detector reports anomalies under. Categories are backend-defined; read them from this response rather than hardcoding a list.",
-            "type": "string"
-          },
-          "description": {
-            "description": "One sentence describing what the detector looks for, suitable for a tooltip.",
-            "type": "string"
-          },
-          "examples": {
-            "description": "Short lines that would trigger this detector. May be empty.",
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "name": {
-            "description": "Stable identifier, kebab-case (e.g. \"traceback-python\"). Never display-formatted; use it as a key.",
-            "type": "string"
-          },
-          "severity_range": {
-            "$ref": "#/components/schemas/SeverityRange",
-            "description": "The severity band this detector can emit. Use it to scale a UI indicator without waiting for real anomalies."
-          }
-        },
-        "required": [
-          "name",
-          "category",
-          "description",
-          "severity_range",
-          "examples"
-        ],
-        "type": "object"
-      },
-      "DetectorsResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "categories": {
-            "description": "The categories the registered detectors report under.",
-            "items": {
-              "$ref": "#/components/schemas/CategoryInfo"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "detectors": {
-            "description": "Every detector this backend has registered. The two backends ship different sets, so a client must render whatever it is given.",
-            "items": {
-              "$ref": "#/components/schemas/DetectorInfo"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "severity_scale": {
-            "description": "The severity bands, always populated regardless of how many detectors are registered.",
-            "items": {
-              "$ref": "#/components/schemas/SeverityScaleLevel"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "detectors",
-          "categories",
-          "severity_scale"
-        ],
-        "type": "object"
-      },
       "DisabledBy": {
         "additionalProperties": false,
         "properties": {
@@ -1680,13 +1526,6 @@
       "IndexRequest": {
         "additionalProperties": false,
         "properties": {
-          "analyze": {
-            "type": "boolean"
-          },
-          "analyze_window_lines": {
-            "format": "int64",
-            "type": "integer"
-          },
           "force": {
             "type": "boolean"
           },
@@ -1706,33 +1545,6 @@
       "IndexResponse": {
         "additionalProperties": false,
         "properties": {
-          "analysis_performed": {
-            "description": "Whether the line statistics and anomalies were computed.",
-            "type": "boolean"
-          },
-          "anomalies": {
-            "items": {
-              "$ref": "#/components/schemas/AnomalyRangeResult"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "anomaly_count": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "anomaly_summary": {
-            "additionalProperties": {
-              "format": "int64",
-              "type": "integer"
-            },
-            "type": [
-              "object",
-              "null"
-            ]
-          },
           "build_time_seconds": {
             "format": "double",
             "type": "number"
@@ -1794,7 +1606,7 @@
             ]
           },
           "line_ending": {
-            "description": "LF, CRLF, CR or mixed; null without analysis.",
+            "description": "LF, CRLF, CR or mixed; null for a seekable zstd file.",
             "type": [
               "string",
               "null"
@@ -1808,11 +1620,11 @@
           },
           "line_length": {
             "$ref": "#/components/schemas/LineLengthStats",
-            "description": "Line-length statistics; null without analysis."
+            "description": "Line-length statistics; null for a seekable zstd file."
           },
           "longest_line": {
             "$ref": "#/components/schemas/LongestLine",
-            "description": "Where the longest line is; null without analysis."
+            "description": "Where the longest line is; null for a seekable zstd file."
           },
           "path": {
             "description": "The indexed file.",
@@ -1834,7 +1646,6 @@
           "size_bytes",
           "created_at",
           "build_time_seconds",
-          "analysis_performed",
           "line_index",
           "index_entries",
           "line_count",
@@ -1845,9 +1656,6 @@
           "compression_format",
           "decompressed_size_bytes",
           "compression_ratio",
-          "anomaly_count",
-          "anomaly_summary",
-          "anomalies",
           "time_summary",
           "cli_command"
         ],
@@ -1856,33 +1664,6 @@
       "IndexTaskResult": {
         "additionalProperties": false,
         "properties": {
-          "analysis_performed": {
-            "description": "Whether the line statistics and anomalies were computed.",
-            "type": "boolean"
-          },
-          "anomalies": {
-            "items": {
-              "$ref": "#/components/schemas/AnomalyRangeResult"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "anomaly_count": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "anomaly_summary": {
-            "additionalProperties": {
-              "format": "int64",
-              "type": "integer"
-            },
-            "type": [
-              "object",
-              "null"
-            ]
-          },
           "build_time_seconds": {
             "format": "double",
             "type": "number"
@@ -1948,7 +1729,7 @@
             ]
           },
           "line_ending": {
-            "description": "LF, CRLF, CR or mixed; null without analysis.",
+            "description": "LF, CRLF, CR or mixed; null for a seekable zstd file.",
             "type": [
               "string",
               "null"
@@ -1962,11 +1743,11 @@
           },
           "line_length": {
             "$ref": "#/components/schemas/LineLengthStats",
-            "description": "Line-length statistics; null without analysis."
+            "description": "Line-length statistics; null for a seekable zstd file."
           },
           "longest_line": {
             "$ref": "#/components/schemas/LongestLine",
-            "description": "Where the longest line is; null without analysis."
+            "description": "Where the longest line is; null for a seekable zstd file."
           },
           "path": {
             "description": "The indexed file.",
@@ -1993,7 +1774,6 @@
           "size_bytes",
           "created_at",
           "build_time_seconds",
-          "analysis_performed",
           "line_index",
           "index_entries",
           "line_count",
@@ -2004,9 +1784,6 @@
           "compression_format",
           "decompressed_size_bytes",
           "compression_ratio",
-          "anomaly_count",
-          "anomaly_summary",
-          "anomalies",
           "time_summary",
           "cli_command"
         ],
@@ -2569,56 +2346,6 @@
           "message",
           "path",
           "roots"
-        ],
-        "type": "object"
-      },
-      "SeverityRange": {
-        "additionalProperties": false,
-        "properties": {
-          "max": {
-            "description": "Highest severity this detector emits, 0.0 to 1.0",
-            "format": "double",
-            "type": "number"
-          },
-          "min": {
-            "description": "Lowest severity this detector emits, 0.0 to 1.0",
-            "format": "double",
-            "type": "number"
-          }
-        },
-        "required": [
-          "min",
-          "max"
-        ],
-        "type": "object"
-      },
-      "SeverityScaleLevel": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "description": "One sentence on what this level means for a reader",
-            "type": "string"
-          },
-          "label": {
-            "description": "Display name for the level (e.g. \"high\")",
-            "type": "string"
-          },
-          "max": {
-            "description": "Inclusive upper bound of this level, 0.0 to 1.0",
-            "format": "double",
-            "type": "number"
-          },
-          "min": {
-            "description": "Inclusive lower bound of this level, 0.0 to 1.0",
-            "format": "double",
-            "type": "number"
-          }
-        },
-        "required": [
-          "min",
-          "max",
-          "label",
-          "description"
         ],
         "type": "object"
       },
@@ -3784,54 +3511,6 @@
         "summary": "Compress file to seekable zstd format (background task)",
         "tags": [
           "Operations"
-        ]
-      }
-    },
-    "/v1/detectors": {
-      "get": {
-        "description": "Returns metadata about every registered detector, plus the severity-scale legend.",
-        "operationId": "list-detectors",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DetectorsResponse"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            },
-            "description": "The server requires an API token and the request did not carry it"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            },
-            "description": "Any other error"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {}
-        ],
-        "summary": "List all available anomaly detectors",
-        "tags": [
-          "Analysis"
         ]
       }
     },
@@ -6640,10 +6319,6 @@
     {
       "description": "File system navigation",
       "name": "FileTree"
-    },
-    {
-      "description": "Anomaly detection",
-      "name": "Analysis"
     },
     {
       "description": "Log chains: the files of a rotated log read as one",

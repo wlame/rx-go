@@ -14,7 +14,7 @@ rx serve [flags]
 
 `rx serve` binds to a TCP port and runs an HTTP server with:
 
-- All `/v1/*` endpoints (trace, samples, index, compress, tree, tasks, detectors, info)
+- All `/v1/*` endpoints (trace, samples, time range, index, compress, tree, tasks, log chains, signatures, findings)
 - `/health` — readiness probe with system info
 - `/metrics` — Prometheus exposition format
 - `/docs` — Swagger UI generated from OpenAPI 3.1

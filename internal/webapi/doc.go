@@ -1,7 +1,8 @@
 // Package webapi implements the HTTP surface of rx-go.
 //
-// This package wires together nine endpoint families (health, metrics,
-// trace, samples, index, compress, tasks, tree, detectors) plus a static
+// This package wires together its endpoint families (health, metrics,
+// trace, samples, time range, index, compress, tasks, tree, log chains,
+// signatures and findings) plus a static
 // SPA server for the rx-viewer frontend. The router is chi v5; OpenAPI
 // 3.1 generation + request/response binding is handled by
 // github.com/danielgtaylor/huma/v2 via its humachi adapter.

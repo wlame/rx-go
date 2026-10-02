@@ -10,12 +10,10 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
-	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -92,32 +90,15 @@ func registerIndexHandlers(s *Server, api huma.API) {
 		Tags:        []string{"Operations"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity),
-	}, func(ctx context.Context, in *postIndexInput) (*postIndexOutput, error) {
-		return createIndexTask(ctx, s, in.Body)
+	}, func(_ context.Context, in *postIndexInput) (*postIndexOutput, error) {
+		return createIndexTask(s, in.Body)
 	})
 }
 
 // createIndexTask is the heavy-lifting half of POST /v1/index, split out
-// so integration tests can drive it without a full HTTP round-trip.
-// ctx is the request's: the task runs detached from it, and it only
-// decides whether a failure counts as canceled (recordEndpoint).
-func createIndexTask(ctx context.Context, s *Server, req rxtypes.IndexRequest) (out *postIndexOutput, err error) {
-	// A negative window is a mistake the caller made, not a way to spell
-	// "not set" — 0 and null already do that — so it is refused rather
-	// than silently replaced by the default. rx-python refuses it too,
-	// with the same message.
-	if req.AnalyzeWindowLines != nil && *req.AnalyzeWindowLines < 0 {
-		return nil, ErrBadRequest(
-			"analyze_window_lines must be positive, or 0 to use the default")
-	}
-
-	// Only an indexing request that asks for analysis belongs in the
-	// analyze counter; a plain index build is not an analyze request.
-	// Counted from one deferred site so every return path is covered.
-	if req.Analyze {
-		defer func() { recordEndpoint(ctx, prometheus.RecordAnalyzeRequest, err) }()
-	}
-
+// so integration tests can drive it without a full HTTP round-trip. The
+// task runs detached from the request.
+func createIndexTask(s *Server, req rxtypes.IndexRequest) (*postIndexOutput, error) {
 	validated, err := paths.ValidatePathWithinRoots(req.Path)
 	if err != nil {
 		var perr *paths.ErrPathOutsideRoots
@@ -137,15 +118,11 @@ func createIndexTask(ctx context.Context, s *Server, req rxtypes.IndexRequest) (
 	// File-size threshold check. Request-provided threshold (MB) wins
 	// over env default; converting MB→bytes here keeps the task payload
 	// in native units.
-	//
-	// An analyze request indexes any file, which is what
-	// `rx index --analyze` does. Applying the threshold to it made the
-	// CLI and the API disagree about the same file.
 	thresholdBytes := int64(config.LargeFileMB()) * 1024 * 1024
 	if req.Threshold != nil {
 		thresholdBytes = int64(*req.Threshold) * 1024 * 1024
 	}
-	if !req.Analyze && info.Size() < thresholdBytes {
+	if info.Size() < thresholdBytes {
 		return nil, ErrBadRequest(fmt.Sprintf(
 			"File size %d bytes is below threshold %d bytes",
 			info.Size(), thresholdBytes,
@@ -211,49 +188,23 @@ func createIndexTask(ctx context.Context, s *Server, req rxtypes.IndexRequest) (
 //
 // Pipeline:
 //  1. Mark task Running.
-//  2. If --force is false and the file has a valid cached index that
-//     answers the request (index.SatisfiesBuild), reuse it.
+//  2. If --force is false and the file has a valid cached index, reuse
+//     it.
 //  3. Otherwise run index.Build() to produce a new line-offset index
-//     (with or without --analyze statistics) and Save() it.
+//     and Save() it.
 //  4. Mark task Completed (or Failed on error).
-//
-// Anomaly detection runs inside index.Build, which drives the
-// registered detectors when req.Analyze is set; this function only
-// chooses them and the window.
 func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexRequest) {
 	mgr.MarkRunning(taskID)
 	start := time.Now()
 
-	// Window-size precedence: URL body param (req.AnalyzeWindowLines)
-	// wins; if unset (zero), the resolver falls through to the env var
-	// and then the compiled-in default. The CLI flag doesn't apply in
-	// the HTTP path, so we pass cliFlag=0.
-	windowLines := analyzer.ResolveWindowLines(0, derefWindowLines(req.AnalyzeWindowLines))
-
-	// Populate detectors from the global registry when Analyze is on.
-	// LineDetectorSnapshot returns FRESH instances per call — per-build
-	// state is isolated, so concurrent HTTP-driven builds don't collide.
-	var detectors []analyzer.LineDetector
-	if req.Analyze {
-		detectors = analyzer.LineDetectorSnapshot()
-	}
 	// The build counts its reads into progress, and a status request
 	// reads it from another goroutine while the build runs.
 	progress := &index.Progress{}
-	buildOpts := index.BuildOptions{
-		Analyze:     req.Analyze,
-		WindowLines: windowLines,
-		Detectors:   detectors,
-		Progress:    progress,
-	}
+	buildOpts := index.BuildOptions{Progress: progress}
 
-	// Reuse a valid cached index unless the caller asked for force or
-	// the cached one does not answer this request: an analysis made
-	// with another window or another detector set is rebuilt
-	// (index.SatisfiesBuild).
+	// Reuse a valid cached index unless the caller asked for force.
 	if !req.Force {
-		if existing, err := index.LoadForSource(absPath); err == nil && existing != nil &&
-			index.SatisfiesBuild(existing, buildOpts) {
+		if existing, err := index.LoadForSource(absPath); err == nil && existing != nil {
 			mgr.Complete(taskID, indexTaskResultFrom(existing, index.GetCachePath(absPath), absPath, req))
 			return
 		}
@@ -286,12 +237,6 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 		mgr.Fail(taskID, fmt.Sprintf("save index: %v", err))
 		return
 	}
-	// Only a build that ran the detectors is an analysis; reusing a
-	// cached analyzed index above is not timed as one.
-	if req.Analyze {
-		prometheus.RecordAnalyzeDuration(time.Since(start))
-	}
-
 	mgr.Complete(taskID, indexTaskResultFrom(idx, cachePath, absPath, req))
 }
 
@@ -302,11 +247,9 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 func indexTaskResultFrom(idx *rxtypes.UnifiedFileIndex, indexPath, absPath string, req rxtypes.IndexRequest) rxtypes.IndexTaskResult {
 	projection := indexResponseFrom(idx)
 	projection.CLICommand = BuildCLICommand("index_post", map[string]any{
-		"path":                 absPath,
-		"force":                req.Force,
-		"analyze":              req.Analyze,
-		"threshold":            req.Threshold,
-		"analyze_window_lines": req.AnalyzeWindowLines,
+		"path":      absPath,
+		"force":     req.Force,
+		"threshold": req.Threshold,
 	})
 	return rxtypes.IndexTaskResult{
 		IndexResponse: projection,
@@ -333,7 +276,6 @@ func indexResponseFrom(idx *rxtypes.UnifiedFileIndex) rxtypes.IndexResponse {
 		SizeBytes:             idx.SourceSizeBytes,
 		CreatedAt:             idx.CreatedAt,
 		BuildTimeSeconds:      idx.BuildTimeSeconds,
-		AnalysisPerformed:     idx.AnalysisPerformed,
 		LineIndex:             lineIndex,
 		IndexEntries:          len(lineIndex),
 		LineCount:             idx.LineCount,
@@ -342,17 +284,11 @@ func indexResponseFrom(idx *rxtypes.UnifiedFileIndex) rxtypes.IndexResponse {
 		CompressionFormat:     idx.CompressionFormat,
 		DecompressedSizeBytes: idx.DecompressedSizeBytes,
 		CompressionRatio:      idx.CompressionRatio,
-		AnomalySummary:        idx.AnomalySummary,
-		Anomalies:             idx.Anomalies,
-	}
-	// Anomalies is a *[]AnomalyRangeResult so that "no analysis" stays
-	// null on the wire; dereference with a nil guard before len().
-	if idx.Anomalies != nil {
-		out.AnomalyCount = len(*idx.Anomalies)
 	}
 	out.TimeSummary = timeSummaryFrom(idx.TimeIndex)
 	// The line-length group exists only when the statistics were
-	// computed, and the longest line only when its position is known.
+	// computed (not for a seekable-zstd index), and the longest line
+	// only when its position is known.
 	if idx.LineLengthMax != nil {
 		out.LineLength = &rxtypes.LineLengthStats{
 			Max:    *idx.LineLengthMax,
@@ -393,13 +329,4 @@ func timeSummaryFrom(ti *rxtypes.TimeIndex) *rxtypes.TimeSummary {
 		out.LastMs = &ti.Last.Ms
 	}
 	return out
-}
-
-// derefWindowLines turns the optional request field into the int the
-// resolver takes, where 0 means "not set".
-func derefWindowLines(v *int) int {
-	if v == nil {
-		return 0
-	}
-	return *v
 }

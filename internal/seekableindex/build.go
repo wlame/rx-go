@@ -62,7 +62,7 @@ func Build(r io.ReaderAt, size int64) (*Result, error) {
 // BuildAndCopyText is Build that also writes the file's decompressed
 // text to text, one frame after another in file order, as each frame is
 // decoded. The concatenated writes are exactly the file's text, so a
-// caller that needs to read every line (the analysis does) gets it from
+// caller that needs to read every line (the time section does) gets it from
 // the same single decompression pass that builds the frame table.
 //
 // A write that fails stops the build, and the error returned wraps the

@@ -5,7 +5,7 @@
 //	rx "pattern" /var/log/app.log            # trace is the default command
 //	rx trace "pattern" /var/log/app.log      # explicit trace
 //	rx samples /var/log/app.log --lines=100
-//	rx index /var/log/app.log --analyze
+//	rx index /var/log/app.log
 //	rx compress /var/log/app.log
 //	rx signatures                            # the signatures rx can find
 //	rx serve --port=7777
@@ -27,25 +27,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/clicommand"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/sigscan"
-
-	// Blank-import analyzer detectors so their package init() calls
-	// register them with the global analyzer registry before main runs
-	// analyzer.Freeze(). One line per detector; the catalog is described
-	// in docs/concepts/analyzers.md.
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/coredumpunix"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/jsonblob"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/longline"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/repeatidentical"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/secretsscan"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackgo"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjava"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackjs"
-	_ "github.com/wlame/rx-go/internal/analyzer/detectors/tracebackpython"
 )
 
 // appVersion is overridden at link time via -ldflags "-X main.appVersion=..."
@@ -76,13 +61,6 @@ var knownSubcommands = []string{
 }
 
 func main() {
-	// Freeze the analyzer registry before any request can reach it. Go
-	// guarantees every package's init() has completed before main() runs,
-	// so by this point all blank-imported detector packages have called
-	// RegisterLineDetector. After Freeze, any further Register* call
-	// panics (a defensive signal to catch misuse during development).
-	analyzer.Freeze()
-
 	root := newRootCmd()
 	args := preprocessArgs(os.Args[1:])
 	root.SetArgs(args)
@@ -171,7 +149,7 @@ func newRootCmd() *cobra.Command {
 			"  rx \"pattern\" file.log              # trace (default)\n" +
 			"  rx samples file.log --lines=100    # context around line 100\n" +
 			"  rx logs list /var/log              # rotated logs, one chain each\n" +
-			"  rx index file.log --analyze        # build anomaly index\n" +
+			"  rx index file.log                  # build a line index\n" +
 			"  rx compress file.log               # make a seekable .zst\n" +
 			"  rx signatures                      # list the signatures rx can find\n" +
 			"  rx serve --port=7777               # HTTP API + rx-viewer SPA",

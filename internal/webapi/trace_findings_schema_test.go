@@ -100,7 +100,4 @@ func TestOpenAPI_TraceFindingsMembers(t *testing.T) {
 	if !reflect.DeepEqual(timeMS["type"], []any{"integer", "null"}) {
 		t.Errorf("time_ms type %v, want integer or null", timeMS["type"])
 	}
-	if ContractVersion != "1.8" {
-		t.Errorf("contract %s, want 1.8", ContractVersion)
-	}
 }

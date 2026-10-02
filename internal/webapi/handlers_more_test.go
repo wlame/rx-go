@@ -62,7 +62,6 @@ func TestIndex_GetAfterManualCache(t *testing.T) {
 		LineLengthStddev:        &llstd,
 		LineLengthMaxLineNumber: &llmaxLn,
 		LineLengthMaxByteOffset: &llmaxOff,
-		AnalysisPerformed:       true,
 	}
 	if _, err := index.Save(idx); err != nil {
 		t.Fatalf("save idx: %v", err)
@@ -95,9 +94,6 @@ func TestIndex_GetAfterManualCache(t *testing.T) {
 	}
 	if body["line_count"] != float64(3) {
 		t.Errorf("line_count: got %v, want 3", body["line_count"])
-	}
-	if body["analysis_performed"] != true {
-		t.Errorf("analysis_performed: got %v", body["analysis_performed"])
 	}
 	// line_length sub-object
 	ll, ok := body["line_length"].(map[string]any)

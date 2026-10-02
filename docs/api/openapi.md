@@ -48,7 +48,7 @@ The `/openapi.json` output includes:
 - `openapi: "3.1.0"` — the OpenAPI version
 - `info` — title, version, description, license, contact
 - `tags` — endpoint groupings (`General`, `Search`, `Context`,
-  `Indexing`, `Operations`, `FileTree`, `Analysis`, `Monitoring`)
+  `Indexing`, `Operations`, `FileTree`, `Logs`, `Monitoring`)
 - `paths` — every `/health`, `/v1/*` route
 - `components.schemas` — JSON schema for every request and response
   type
@@ -66,7 +66,6 @@ Endpoints are grouped by `tag` in the spec and UI:
 | Operations | `POST /v1/compress`, `GET /v1/tasks/*`, `DELETE /v1/tasks/*` |
 | FileTree | `/v1/tree` |
 | Signatures | `/v1/signatures`, `GET /v1/findings`, `POST /v1/findings` |
-| Analysis | `/v1/detectors` |
 | Monitoring | `/metrics` (though `/metrics` is documented outside the OpenAPI spec because it's not JSON) |
 
 ## Code generation

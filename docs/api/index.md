@@ -36,7 +36,6 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `GET` | `/v1/signatures` | The signature catalogue the server loaded | [signatures](endpoints/signatures.md) |
 | `GET` | `/v1/findings` | A file's findings from the findings cache: filtered, paged, with text and timeline ticks | [findings](endpoints/findings.md) |
 | `POST` | `/v1/findings` | Scan a file for signatures (background task) | [findings](endpoints/findings.md#post-v1findings) |
-| `GET` | `/v1/detectors` | List registered anomaly detectors | [detectors](endpoints/detectors.md) |
 | `GET` | `/metrics` | Prometheus exposition | [metrics](endpoints/metrics.md) |
 
 In addition, these routes serve the auto-generated docs and the SPA:
@@ -148,7 +147,6 @@ See [metrics](endpoints/metrics.md) for the full list.
 - **[Tasks](endpoints/tasks.md)** — background task polling  
 - **[Tree](endpoints/tree.md)** — file system navigation  
 - **[Log chains](endpoints/logs-chains.md)** — rotated logs read as one: [chains](endpoints/logs-chains.md), [chain](endpoints/logs-chain.md), [index](endpoints/logs-index.md), [samples](endpoints/logs-samples.md), [trace](endpoints/logs-trace.md)  
-- **[Detectors](endpoints/detectors.md)** — anomaly detector metadata  
 - **[Metrics](endpoints/metrics.md)** — Prometheus exposition  
 - **[Webhooks](webhooks.md)** — on_file / on_match / on_complete  
 - **[OpenAPI](openapi.md)** — consuming the generated spec

@@ -27,7 +27,7 @@ func TestSecurityHeaders_OnEveryKindOfResponse(t *testing.T) {
 	// A JSON API response, a health probe, the SPA fallback and a 404
 	// all pass through the same middleware; if one of them does not,
 	// that is the hole worth knowing about.
-	for _, path := range []string{"/health", "/v1/detectors", "/", "/no/such/route"} {
+	for _, path := range []string{"/health", "/v1/signatures", "/", "/no/such/route"} {
 		t.Run(path, func(t *testing.T) {
 			resp, err := http.Get(ts.URL + path)
 			if err != nil {

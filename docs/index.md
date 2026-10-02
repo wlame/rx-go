@@ -81,7 +81,7 @@ rx serve --search-root=/var/log
   Endpoints, request/response schemas, OpenAPI, webhooks.
 
 - **[Concepts](concepts/index.md)**  
-  Chunking, byte offsets vs line numbers, caching, analyzers, security.
+  Chunking, byte offsets vs line numbers, caching, signatures, security.
 
 - **[Performance & tuning](performance.md)**  
   Benchmarks, worker-count advice, when to build an index.

@@ -54,7 +54,7 @@ func TestBuild_PythonParity_ReadmeFixture(t *testing.T) {
 	}
 
 	// Run the Go builder with the SAME step bytes the Python golden used.
-	idx, err := Build(source, BuildOptions{StepBytes: 256, Analyze: true})
+	idx, err := Build(source, BuildOptions{StepBytes: 256})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

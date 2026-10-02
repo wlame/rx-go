@@ -120,9 +120,6 @@ func CanStoreIndex() bool {
 // not nil, counts how far the build has read. An index that was built
 // but could not be stored is an error wrapping ErrIndexNotStored, never
 // a success: the caller logs it or fails its task with it.
-//
-// Analysis is not run: nothing on the samples path reads its output, and
-// a full anomaly pass to answer one line is work nobody asked for.
 func BuildIndex(path string, progress *index.Progress) (*rxtypes.UnifiedFileIndex, string, error) {
 	idx, err := index.Build(path, index.BuildOptions{Progress: progress})
 	if err != nil {

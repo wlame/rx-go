@@ -43,7 +43,7 @@ func TestTaskConflict_BodyNamesTheRunningTask(t *testing.T) {
 		body       string
 		wantDetail string
 	}{
-		{"index", "/v1/index", `{"path": "` + input + `", "analyze": true}`, "Indexing already in progress"},
+		{"index", "/v1/index", `{"path": "` + input + `", "threshold": 0}`, "Indexing already in progress"},
 		{"compress", "/v1/compress", `{"input_path": "` + input + `"}`, "Compression already in progress"},
 	}
 	for _, tc := range cases {
@@ -103,7 +103,7 @@ func TestTaskConflict_DetailNamesTheRunningOperation(t *testing.T) {
 		body       string
 		wantDetail string
 	}{
-		{"compress", "/v1/index", `{"path": "` + input + `", "analyze": true}`, "Compression already in progress for "},
+		{"compress", "/v1/index", `{"path": "` + input + `", "threshold": 0}`, "Compression already in progress for "},
 		{"index", "/v1/compress", `{"input_path": "` + input + `"}`, "Indexing already in progress for "},
 	}
 	for _, tc := range cases {

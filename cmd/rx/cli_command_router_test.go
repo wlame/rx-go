@@ -266,10 +266,10 @@ func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 		// A 300-line file is far below RX_LARGE_FILE_MB; threshold 0
 		// indexes it anyway, and so must the rendered command.
 		result := f.runTask(t, "/v1/index", map[string]any{
-			"path": f.logPath, "force": true, "threshold": 0, "analyze_window_lines": 50,
+			"path": f.logPath, "force": true, "threshold": 0,
 		})
 		rendered, _ := result["cli_command"].(string)
-		want := "rx index " + f.logPath + " --force --threshold=0 --analyze-window-lines=50"
+		want := "rx index " + f.logPath + " --force --threshold=0"
 		if rendered != want {
 			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
 		}
@@ -298,7 +298,7 @@ func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 			t.Fatalf("decode: %v\n%s", err, stdout)
 		}
 		renamed := map[string]string{"path": "source_path", "size_bytes": "source_size_bytes"}
-		for _, key := range []string{"path", "size_bytes", "file_type", "created_at", "line_index", "analysis_performed", "line_count"} {
+		for _, key := range []string{"path", "size_bytes", "file_type", "created_at", "line_index", "line_count"} {
 			storedKey := key
 			if name, ok := renamed[key]; ok {
 				storedKey = name

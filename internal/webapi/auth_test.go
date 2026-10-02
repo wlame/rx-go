@@ -50,7 +50,7 @@ func get(t *testing.T, url, authorization string) (int, string, string) {
 func TestAPIToken_UnsetLeavesEveryRouteOpen(t *testing.T) {
 	ts := newTokenServer(t, "")
 
-	status, _, body := get(t, ts.URL+"/v1/detectors", "")
+	status, _, body := get(t, ts.URL+"/v1/signatures", "")
 
 	if status != http.StatusOK {
 		t.Errorf("status = %d, want 200: %s", status, body)
@@ -73,7 +73,7 @@ func TestAPIToken_SetGuardsTheV1Routes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			status, challenge, body := get(t, ts.URL+"/v1/detectors", tc.authorization)
+			status, challenge, body := get(t, ts.URL+"/v1/signatures", tc.authorization)
 
 			if status != tc.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", status, tc.wantStatus, body)
@@ -166,12 +166,12 @@ func TestOpenAPI_DeclaresTheOptionalBearerToken(t *testing.T) {
 	if scheme.Type != "http" || scheme.Scheme != "bearer" {
 		t.Errorf("bearerAuth scheme = %+v, want http bearer", scheme)
 	}
-	detectors := doc.Paths["/v1/detectors"]["get"]
-	if len(detectors.Security) != 2 || len(detectors.Security[1]) != 0 {
-		t.Errorf("/v1/detectors security = %v, want bearerAuth or nothing", detectors.Security)
+	signatures := doc.Paths["/v1/signatures"]["get"]
+	if len(signatures.Security) != 2 || len(signatures.Security[1]) != 0 {
+		t.Errorf("/v1/signatures security = %v, want bearerAuth or nothing", signatures.Security)
 	}
-	if _, ok := detectors.Responses["401"]; !ok {
-		t.Errorf("/v1/detectors declares no 401")
+	if _, ok := signatures.Responses["401"]; !ok {
+		t.Errorf("/v1/signatures declares no 401")
 	}
 	if health := doc.Paths["/health"]["get"]; len(health.Security) != 0 {
 		t.Errorf("/health security = %v, want none", health.Security)

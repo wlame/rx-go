@@ -103,39 +103,6 @@ func TestHealth_AllFieldsPresent(t *testing.T) {
 	}
 }
 
-// TestDetectors_EmptyRegistry — Go port ships with no analyzers at v1
-// but the response envelope stays shaped for rx-viewer's consumption.
-func TestDetectors_EmptyRegistry(t *testing.T) {
-	ts := newTestServer(t)
-
-	resp, err := http.Get(ts.URL + "/v1/detectors")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var body rxtypes.DetectorsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	if len(body.Detectors) != 0 {
-		t.Errorf("expected empty detectors, got %d", len(body.Detectors))
-	}
-	if len(body.Categories) != 0 {
-		t.Errorf("expected empty categories, got %d", len(body.Categories))
-	}
-	if len(body.SeverityScale) != 4 {
-		t.Errorf("severity_scale: got %d entries, want 4", len(body.SeverityScale))
-	}
-	labels := []string{"low", "medium", "high", "critical"}
-	for i, s := range body.SeverityScale {
-		if s.Label != labels[i] {
-			t.Errorf("severity[%d] label: got %s, want %s", i, s.Label, labels[i])
-		}
-	}
-}
-
 // TestTree_ListSearchRoots exercises the no-path branch.
 func TestTree_ListSearchRoots(t *testing.T) {
 	// Configure a search root for this test.
@@ -553,43 +520,6 @@ func TestIndex_PostBelowThreshold(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", resp.StatusCode)
 	}
-}
-
-// TestIndex_PostAnalyzeIgnoresThreshold pins the API to what
-// `rx index --analyze` does. Analysis indexes any file regardless of
-// size; applying the size threshold to an analyze request made the CLI
-// and the API give different answers about the same file.
-func TestIndex_PostAnalyzeIgnoresThreshold(t *testing.T) {
-	root := t.TempDir()
-	f := filepath.Join(root, "small.log")
-	if err := os.WriteFile(f, []byte("alpha\nbeta\ngamma\n"), 0o600); err != nil {
-		t.Fatalf("write fixture: %v", err)
-	}
-	if err := paths.SetSearchRoots([]string{root}); err != nil {
-		t.Fatalf("set roots: %v", err)
-	}
-	t.Cleanup(paths.Reset)
-	t.Setenv("RX_CACHE_DIR", t.TempDir())
-
-	ts := newTestServer(t)
-	body, _ := json.Marshal(rxtypes.IndexRequest{Path: f, Analyze: true})
-	resp, err := http.Post(ts.URL+"/v1/index", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", resp.StatusCode)
-	}
-	// The task writes its index into RX_CACHE_DIR in the background;
-	// waiting for it keeps that write from racing the removal of the
-	// temporary cache directory when the test ends.
-	var created rxtypes.TaskResponse
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	waitForTaskCompletion(t, ts.URL, created.TaskID)
 }
 
 // TestErrorEnvelope_Format checks that handler-returned errors come out
