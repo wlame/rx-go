@@ -211,12 +211,20 @@ func boundCases() []boundCase {
 			wantText: "\ufffdZ\n", wantSize: 5, wantSubs: []RgSubmatch{},
 		},
 		{
-			name: "a base64 line under the limit is unchanged", event: matchEvent(`{"bytes":"`+b64("ab\xff\n")+`"}`, ``),
-			wantText: b64("ab\xff\n"), wantSize: 4, wantSubs: []RgSubmatch{},
+			name: "a base64 line under the limit is its decoded bytes", event: matchEvent(`{"bytes":"`+b64("ab\xff\n")+`"}`, `{"match":{"bytes":"`+b64("\xff")+`"},"start":2,"end":3}`),
+			wantText: "ab\xff\n", wantSize: 4, wantSubs: []RgSubmatch{sub("\xff", 2, 3)},
 		},
 		{
 			name: "a base64 line is cut at the limit", event: matchEvent(`{"bytes":"`+b64("0123456789\xff\n")+`"}`, ``),
-			wantText: b64("01234567"), wantSize: 12, wantCut: true, wantSubs: []RgSubmatch{}, wantSubsT: true,
+			wantText: "01234567", wantSize: 12, wantCut: true, wantSubs: []RgSubmatch{}, wantSubsT: true,
+		},
+		{
+			name: "a base64 line keeps a whole character before stray bytes at the cut", event: matchEvent(`{"bytes":"`+b64("abcde€\x80\x80x\n")+`"}`, ``),
+			wantText: "abcde€", wantSize: 12, wantCut: true, wantSubs: []RgSubmatch{}, wantSubsT: true,
+		},
+		{
+			name: "a base64 line is cut before a character that runs past the limit", event: matchEvent(`{"bytes":"`+b64("abcdefg€\xff\n")+`"}`, ``),
+			wantText: "abcdefg", wantSize: 12, wantCut: true, wantSubs: []RgSubmatch{}, wantSubsT: true,
 		},
 		{
 			name:     "submatches past the cap are left out",
@@ -346,12 +354,19 @@ type referenceEvent struct {
 	} `json:"data"`
 }
 
-func referenceText(text, bytes *string) string {
+// referenceText is the string a payload stands for: its text, or the
+// bytes its base64 decodes to.
+func referenceText(t *testing.T, text, bytes *string) string {
+	t.Helper()
 	if text != nil {
 		return *text
 	}
 	if bytes != nil {
-		return *bytes
+		decoded, err := base64.StdEncoding.DecodeString(*bytes)
+		if err != nil {
+			t.Fatalf("base64 payload %q: %v", *bytes, err)
+		}
+		return string(decoded)
 	}
 	return ""
 }
@@ -420,14 +435,14 @@ func TestStreamEvents_ReadsRipgrepOutputAsEncodingJSONDoes(t *testing.T) {
 		if string(got[i].Type) != w.Type || number != w.Data.LineNumber || offset != w.Data.AbsoluteOffset {
 			t.Errorf("%s: type %s line %d offset %d", where, got[i].Type, number, offset)
 		}
-		if lines.Text != referenceText(w.Data.Lines.Text, w.Data.Lines.Bytes) || lines.Truncated {
+		if lines.Text != referenceText(t, w.Data.Lines.Text, w.Data.Lines.Bytes) || lines.Truncated {
 			t.Errorf("%s: text %q truncated %v", where, lines.Text, lines.Truncated)
 		}
 		if len(subs) != len(w.Data.Submatches) {
 			t.Fatalf("%s: %d submatches, want %d", where, len(subs), len(w.Data.Submatches))
 		}
 		for j, ws := range w.Data.Submatches {
-			if subs[j].Text() != referenceText(ws.Match.Text, ws.Match.Bytes) || subs[j].Start != ws.Start || subs[j].End != ws.End {
+			if subs[j].Text() != referenceText(t, ws.Match.Text, ws.Match.Bytes) || subs[j].Start != ws.Start || subs[j].End != ws.End {
 				t.Errorf("%s: submatch %d = %+v", where, j, subs[j])
 			}
 		}
