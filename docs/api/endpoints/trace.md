@@ -43,7 +43,7 @@ GET /v1/trace?path=...&regexp=...&max_results=...
 | `no_cache` | `bool` | no | `false` | Neither read nor write the trace cache (`--no-cache`) |
 | `no_index` | `bool` | no | `false` | Read and write no line index; a match a capped scan left unnumbered is numbered by counting from the start of the file (`--no-index`) |
 | `no_recursive` | `bool` | no | `false` | For a directory path, search only the files directly inside it (`--no-recursive`) |
-| `signatures` | `string` | no | — | Scan every file the search covers for these signatures too, as `rx trace --signatures=` does: ids, groups, tags, `all`, `default`, `-word` ([Signatures](#signatures)). Contract 1.8 |
+| `signatures` | `string` | no | — | Scan every file the search covers for these signatures too, as `rx trace --signatures=` does: ids, groups, tags, `all`, `default`, `-word` ([Signatures](#signatures)). Since contract 2.0 |
 
 Repeat `path` and `regexp` to supply multiple values:
 

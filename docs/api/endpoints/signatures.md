@@ -3,7 +3,7 @@
 The signature catalogue the server loaded when it started: the built-in
 signatures and the user's signature files, with every field of each
 definition, the groups, the levels and every load error. The same
-document `rx signatures --json` prints. Since contract 1.8; `features`
+document `rx signatures --json` prints. Since contract 2.0; `features`
 on [`GET /health`](health.md) lists `signatures`.
 
 ## Purpose

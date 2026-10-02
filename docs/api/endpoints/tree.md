@@ -131,7 +131,7 @@ GET /v1/tree?path=<dir>            # list dir contents
 | `is_text` | bool | Files only — false when the first 8 KiB of the file's text (decompressed for a compressed file) hold a NUL byte, the rule every command refuses a file by |
 | `is_indexed` | bool | Files only — whether a line index exists in cache |
 | `line_count` | int64 | Files with an index that has a line count |
-| `findings` | object \| null | Text files only: what the findings cache holds for the file, `{"state": "full" \| "partial", "count": N}` (`count` sums the findings of every current entry, opt-in signatures included); `null` for a directory, a file that is not text, and a file the cache holds nothing current for. Read from the file's `meta.json` alone, its identity compared by the stat the listing already holds, so a listing reads nothing more of the file. Contract 1.8 |
+| `findings` | object \| null | Text files only: what the findings cache holds for the file, `{"state": "full" \| "partial", "count": N}` (`count` sums the findings of every current entry, opt-in signatures included); `null` for a directory, a file that is not text, and a file the cache holds nothing current for. Read from the file's `meta.json` alone, its identity compared by the stat the listing already holds, so a listing reads nothing more of the file. Since contract 2.0 |
 
 All fields except `name`, `path`, and `type` are pointer types in Go
 and may appear as `null` in JSON when the underlying stat failed.

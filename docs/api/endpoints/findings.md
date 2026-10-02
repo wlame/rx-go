@@ -2,7 +2,7 @@
 
 The findings of one file: what the findings cache holds for it
 (`GET`, which never scans), and a scan of the file for signatures as a
-background task (`POST`). Since contract 1.8; `features` on
+background task (`POST`). Since contract 2.0; `features` on
 [`GET /health`](health.md) lists `signatures`.
 
 The findings, their masking and their cache are those of
