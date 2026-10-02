@@ -241,6 +241,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the optional `signatures`, `findings` and `finding_summary` members and
   the `Finding`, `SignatureRef`, `FileFindingSummary` and `FindingCount`
   schemas. A trace answer without them is the 1.7 answer.
+- `rx serve` loads the signatures once when it starts, with every
+  example checked, and logs each load error as a `signature_load_error`
+  warning with its file, line and id; the server starts either way. It
+  reads the scan settings then too, and runs at most
+  `RX_MAX_SIGNATURE_SCANS` scans at once.
+- `GET /v1/signatures`: the catalogue the server loaded, the document
+  `rx signatures --json` prints: every signature with every field of its
+  definition, its kind, source (`{"builtin": true}` or `{"file",
+  "line"}`), keyword clauses, line pass, `overrides` and `disabled_by`;
+  the groups with their order and count; the levels; the load errors
+  (`file`, `line`, `id`, `message`); the search path and the files read.
+- `GET /v1/findings?path=…`: a file's findings from the findings cache
+  alone; it never scans. Every answer has the summary of the requested
+  selection (`signatures=`, default the default set): `state`,
+  `checked`, `missing`, `counts`, `series`, then `total` and
+  `cli_command` (`rx trace PATH --signatures=…`). `findings` is a page
+  (`offset`, `limit` up to 10,000, default 1,000) of the stored findings
+  that pass the filters `signature=` and `group=` (repeatable), `q=` (in
+  the masked excerpt or the signature name, without case), `lines=A-B`
+  (overlap), `after_line=N` and `before_line=N` (listed from the nearest
+  down); `total` counts them. `text=true` fills each finding's `lines`
+  and `before=N` (0 to 5) lines before it, masked as every carrier of
+  finding text is (every value a loaded redacting signature matches,
+  every body line of a redacting block or run as `[masked, N bytes]`,
+  nothing past the text the scan read), within `max_bytes` or
+  `RX_FINDINGS_TEXT_MAX_BYTES`. `ticks=W` (1 to 4,000) places the
+  filtered findings with a time on `W` columns over the file's time
+  range, `start_ms` and `end_ms` as `GET /v1/time-range` gives them,
+  with each column's count and first line per signature. `file_tz` reads
+  `time_ms`, `series` and `ticks` as it reads every time: a finding's
+  `time_ms` is the `line_timestamps` value `GET /v1/samples` gives its
+  line under the same `file_tz` (for a file whose timestamps carry zones,
+  when its line index records their offsets; `null` otherwise).
+- `POST /v1/findings {path, signatures, force}`: a scan of the file as a
+  background task (operation `findings`, `202`): it scans the selected
+  signatures the cache lacks (all of them with `force`) and caches what
+  it finds. A second `POST` while a scan of the file runs returns that
+  task. `GET /v1/tasks/{task_id}` shows `queued` while it waits for the
+  scan queue, then `running` with `bytes_read`, `bytes_total` (new
+  members of every task status, `null` for the other operations) and
+  `progress`; its result is the answer of `GET /v1/findings` without
+  filters, with the first page. A scan runs beside an index build or a
+  compression of the same file. At most 256 findings tasks are queued or
+  running at once; past that a `POST` for another file answers `503`
+  with `Retry-After: 5` and starts nothing.
+- `DELETE /v1/tasks/{task_id}`: cancels a queued or running findings
+  task: the scan stops and caches nothing, and the task ends at once
+  with the new status `cancelled`. A task of another operation, or one
+  that has ended, answers `409`; an unknown id `404`.
+- `GET /v1/trace?signatures=…`: the answer of `rx trace --signatures=…
+  --json` over HTTP: every file the search covers is scanned for the
+  selection through the findings cache, `regexp` may be left out, and
+  `no_cache`, `no_index` and the context window reach the findings as
+  they reach the search. A selection that cannot be resolved answers
+  `400` with the load error.
+- `GET /v1/tree`: each file entry has `findings`, `{state, count}` from
+  the file's findings `meta.json` alone (`full` or `partial`, the
+  findings count of every current entry), and `null` for a directory, a
+  file that is not text and a file the cache holds nothing current for.
+- `/health` lists the feature `signatures`.
+- Metrics `rx_signature_scans_total{status}` (each findings task that
+  ended: `completed`, `failed`, `cancelled`),
+  `rx_signature_scan_duration_seconds` (each completed findings task
+  that read the file) and `rx_findings_cache_hits_total` (each signature
+  answered from the findings cache by a `GET /v1/findings` or a findings
+  task). No label carries a value from a file.
+- HTTP wire contract 1.8 also declares `GET /v1/signatures`,
+  `GET /v1/findings`, `POST /v1/findings`, `DELETE /v1/tasks/{task_id}`,
+  the `signatures` parameter of `GET /v1/trace`, the `findings` member
+  of a tree entry, the `cancelled` task status, the task members
+  `bytes_read` and `bytes_total`, and the schemas `SignaturesResponse`,
+  `SignatureInfo`, `GroupInfo`, `LoadErrorInfo`, `FindingsResponse`,
+  `FindingsTicks`, `FindingSeries`, `FindingsScanRequest` and
+  `TreeFindings`. All of it is additive.
 
 ### Changed
 

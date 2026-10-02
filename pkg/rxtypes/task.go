@@ -1,7 +1,7 @@
 package rxtypes
 
-// TaskResponse is returned by POST /v1/index and POST /v1/compress when
-// a background task is accepted. The client polls GET /v1/tasks/{id}
+// TaskResponse is returned by POST /v1/index, POST /v1/compress and
+// POST /v1/findings when a background task is accepted. The client polls GET /v1/tasks/{id}
 // with the returned TaskID until completion.
 type TaskResponse struct {
 	TaskID    string  `json:"task_id"`
@@ -11,28 +11,33 @@ type TaskResponse struct {
 	StartedAt *string `json:"started_at"`
 }
 
-// TaskStatusResponse is returned by GET /v1/tasks/{task_id}.
+// TaskStatusResponse is returned by GET /v1/tasks/{task_id} and by
+// DELETE /v1/tasks/{task_id}.
 //
-// Operation is "compress", "index" or "chain_index". Status transitions:
-// "queued" → "running" → ("completed" | "failed"). Result is nil until
-// Status == "completed"; Error is nil unless Status == "failed".
-// Progress is nil for a task that does not report it.
+// Operation is "compress", "index", "chain_index" or "findings". Status
+// transitions: "queued" → "running" → ("completed" | "failed"), and a
+// findings task may end "cancelled" from either of the first two.
+// Result is nil until Status == "completed"; Error is nil unless
+// Status == "failed". Progress, BytesRead and BytesTotal are nil for a
+// task that does not report them.
 type TaskStatusResponse struct {
 	TaskID      string     `json:"task_id"`
-	Status      string     `json:"status"`
+	Status      string     `json:"status" doc:"queued, running, completed, failed, or cancelled (a findings task stopped by DELETE /v1/tasks/{task_id})."`
 	Path        string     `json:"path"`
-	Operation   string     `json:"operation"`
+	Operation   string     `json:"operation" doc:"index, compress, chain_index or findings."`
 	StartedAt   *string    `json:"started_at"`
 	CompletedAt *string    `json:"completed_at"`
 	Error       *string    `json:"error"`
 	Progress    *float64   `json:"progress" doc:"Share of the task's input read so far, from 0 to 1. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading."`
+	BytesRead   *int64     `json:"bytes_read" doc:"Bytes of the file a findings task has read so far, as stored on disk. Null for a task of another operation, and for a findings task that has not started reading."`
+	BytesTotal  *int64     `json:"bytes_total" doc:"The size of the file a findings task reads, as stored on disk. Null when bytes_read is."`
 	Result      TaskResult `json:"result"`
 }
 
 // TaskResult is the result of a background task: an IndexTaskResult
 // for an "index" task, a CompressTaskResult for a "compress" task, a
-// ChainIndexTaskResult for a "chain_index" task, and nil (JSON null)
-// until the task completes.
+// ChainIndexTaskResult for a "chain_index" task, a FindingsResponse for
+// a "findings" task, and nil (JSON null) until the task completes.
 //
 // It is a defined type over `any` rather than `any` itself so that the
 // OpenAPI generator can tell this field apart from every other `any` in

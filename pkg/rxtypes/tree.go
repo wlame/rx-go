@@ -20,6 +20,18 @@ type TreeEntry struct {
 	IsIndexed         *bool   `json:"is_indexed"`
 	LineCount         *int64  `json:"line_count"`
 	ChildrenCount     *int    `json:"children_count"`
+	// Findings is how much of the default set of signatures the
+	// findings cache holds for the file; nil for a directory, a file
+	// whose text is not text, and a file with no current cache entry.
+	Findings *TreeFindings `json:"findings" doc:"What the findings cache holds for the file: its state and its findings count. Null for a directory, a file that is not text, and a file the cache holds nothing current for."`
+}
+
+// TreeFindings is what the findings cache holds for one file of a tree
+// listing, read from its summary file alone.
+type TreeFindings struct {
+	_     struct{} `nullable:"true"`
+	State string   `json:"state" enum:"full,partial" doc:"full: every signature of the default set has a current cache entry; partial: some signature has one, an opt-in one included."`
+	Count int64    `json:"count" doc:"The findings of every current entry together, opt-in signatures included."`
 }
 
 // TreeResponse is the body for GET /v1/tree.

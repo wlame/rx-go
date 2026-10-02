@@ -13,10 +13,13 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
+	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/internal/trace"
 )
@@ -71,11 +74,36 @@ type Config struct {
 	// (config.MaxIndexBuilds).
 	MaxIndexBuilds int
 
+	// Signatures is the signature catalogue the findings routes serve:
+	// `rx serve` loads it once when it starts, and it never changes
+	// while the server runs. Nil serves an empty catalogue (a server a
+	// test builds without one).
+	Signatures *signatures.Catalogue
+
+	// Findings are the settings of the signature scans, of the findings
+	// cache and of the text of findings (FindingsOptionsFromEnv), read
+	// once when `rx serve` starts. Nil reads them when the server is
+	// built.
+	Findings *findings.TraceOptions
+
 	// buildSamplesIndex builds and stores the index a samples lookup
 	// waits for; samples.BuildIndex unless a test replaces it. Set here,
 	// before the server starts, so no handler goroutine can read it
 	// while it changes.
 	buildSamplesIndex samplesIndexBuilder
+
+	// findingsSummary says what the findings cache holds for a file of
+	// a tree listing; findings.Summary unless a test replaces it.
+	findingsSummary func(file paths.Pinned, cat *signatures.Catalogue, opts findings.ScanOptions) (*findings.FileSummary, error)
+
+	// maxUnfinishedScans is how many findings tasks may be queued or
+	// running at once; maxUnfinishedScans unless a test lowers it.
+	maxUnfinishedScans int
+
+	// scanFindings runs the scan of a findings task; findings.Scan
+	// unless a test replaces it (to hold a scan while it cancels it).
+	scanFindings func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue,
+		sel []*signatures.Signature, opts findings.ScanOptions) (*findings.Answer, error)
 }
 
 // Server owns the http.Server, chi router, and huma API instance.
@@ -95,6 +123,10 @@ type Server struct {
 	// chainIndex runs the index task of each log chain, whose part
 	// builds go through samplesIndex.
 	chainIndex *chainIndexTasks
+
+	// scanPlaces holds one value per queued or running findings task:
+	// at most Config.maxUnfinishedScans (maxUnfinishedScans) of them.
+	scanPlaces chan struct{}
 
 	// Exported for handler helpers (e.g. integration tests that need
 	// to fire a direct http.Handler call).
@@ -138,6 +170,7 @@ func NewServer(cfg Config) *Server {
 		samplesIndex: newSamplesIndexBuilds(cfg.TaskManager, cfg.Logger, cfg.buildSamplesIndex, cfg.MaxIndexBuilds),
 	}
 	s.chainIndex = newChainIndexTasks(cfg.TaskManager, cfg.Logger, s.samplesIndex)
+	s.scanPlaces = make(chan struct{}, cfg.maxUnfinishedScans)
 
 	// Schemas huma cannot reflect from the Go types; they must be in
 	// place before the first operation that uses them is registered.
@@ -156,6 +189,8 @@ func NewServer(cfg Config) *Server {
 	registerTreeHandlers(s, api)
 	registerLogsHandlers(s, api)
 	registerDetectorsHandlers(s, api)
+	registerSignaturesHandlers(s, api)
+	registerFindingsHandlers(s, api)
 	declareOptionalBearerToken(api)
 
 	// Non-huma routes: /metrics (Prometheus expfmt is raw, not JSON;
@@ -210,6 +245,24 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if cfg.buildSamplesIndex == nil {
 		cfg.buildSamplesIndex = samples.BuildIndex
+	}
+	if cfg.findingsSummary == nil {
+		cfg.findingsSummary = findings.Summary
+	}
+	if cfg.scanFindings == nil {
+		cfg.scanFindings = findings.Scan
+	}
+	if cfg.maxUnfinishedScans <= 0 {
+		cfg.maxUnfinishedScans = maxUnfinishedScans
+	}
+	if cfg.Signatures == nil {
+		// Go note: the zero Catalogue is a valid empty one: every method
+		// reads nil slices and maps, and a selection of it names nothing.
+		cfg.Signatures = &signatures.Catalogue{}
+	}
+	if cfg.Findings == nil {
+		opts := FindingsOptionsFromEnv()
+		cfg.Findings = &opts
 	}
 }
 

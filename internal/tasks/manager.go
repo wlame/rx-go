@@ -444,6 +444,14 @@ func (m *Manager) CreateCancellable(path, operation string) (*Task, context.Cont
 	return task, task.ctx, isNew
 }
 
+// CancellableHolder returns the unfinished cancellable task of
+// operation for path, and false when none runs. It creates nothing: a
+// caller that cannot start a task (no place for one) uses it to join
+// the task already there.
+func (m *Manager) CancellableHolder(path, operation string) (*Task, bool) {
+	return m.Holder(cancellableKey(operation, path))
+}
+
 // cancellableKey is the key a cancellable task of operation holds for
 // path in the path locks. The operation's name and a colon come first,
 // so it never equals a path (an absolute path starts with "/") or a log

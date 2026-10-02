@@ -26,7 +26,7 @@ GET /v1/trace?path=...&regexp=...&max_results=...
 | Parameter | Type | Required | Default | Description |
 |---|---|:-:|---|---|
 | `path` | `string[]` (repeatable) | yes | — | File or directory path(s) |
-| `regexp` | `string[]` (repeatable) | yes | — | Regex pattern(s) |
+| `regexp` | `string[]` (repeatable) | yes, unless `signatures` | — | Regex pattern(s) |
 | `max_results` | `int` | no | `0` (unlimited) | Cap on returned matches. When set, `rx` COOPERATIVELY CANCELS worker fanout once the cap is reached: in-flight ripgrep subprocesses receive SIGKILL and queued chunks are skipped. Use this for fast "first N hits" probes on large files. |
 | `request_id` | `string` | no | auto | Custom UUID v7 request ID |
 | `hook_on_file` | `string` | no | env | URL fired per file (overrides env) |
@@ -43,6 +43,7 @@ GET /v1/trace?path=...&regexp=...&max_results=...
 | `no_cache` | `bool` | no | `false` | Neither read nor write the trace cache (`--no-cache`) |
 | `no_index` | `bool` | no | `false` | Read and write no line index; a match a capped scan left unnumbered is numbered by counting from the start of the file (`--no-index`) |
 | `no_recursive` | `bool` | no | `false` | For a directory path, search only the files directly inside it (`--no-recursive`) |
+| `signatures` | `string` | no | — | Scan every file the search covers for these signatures too, as `rx trace --signatures=` does: ids, groups, tags, `all`, `default`, `-word` ([Signatures](#signatures)). Contract 1.8 |
 
 Repeat `path` and `regexp` to supply multiple values:
 
@@ -117,10 +118,29 @@ file, where it would otherwise use a line index or report `-1`.
 
 These six parameters arrived with contract version 1.4.
 
+### Signatures
+
+With `signatures`, the answer is the one `rx trace --signatures=… --json`
+prints for the same paths
+([`rx trace` › Signatures](../../cli/trace.md#signatures)): every file the
+search covers is scanned for the selection through the findings cache,
+and the answer gains `signatures` (the selection, by id), `findings`
+(every finding of every file, with its lines and the context lines the
+window asks for, masked, within `RX_FINDINGS_TEXT_MAX_BYTES`) and
+`finding_summary` (per file id). `regexp` may then be left out: the
+answer has no pattern and no match. `no_cache` also skips the findings
+cache, `no_index` the line index the findings' text reads may use, and
+`max_results` caps the matches only. A selection that names an unknown,
+refused or disabled signature answers `400` with the reason and the load
+error. Without `signatures` (or with an empty value) the answer is the
+search's alone, with the members of a trace without signatures. A file
+of the findings is the same, field by field, as
+[`GET /v1/findings`](findings.md) gives for it.
+
 ### Required parameter validation
 
-Missing `path` or `regexp` produces `422 Unprocessable Entity` with a
-description of the missing field.
+Missing `path` produces `422 Unprocessable Entity` with a description of
+the missing field; so does a missing `regexp` without `signatures`.
 
 ### Webhook URL validation
 

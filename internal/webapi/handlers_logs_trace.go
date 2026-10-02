@@ -67,7 +67,7 @@ func registerLogTraceHandler(s *Server, api huma.API) {
 		Tags:      []string{"Logs"},
 		Responses: logTraceResponses(api),
 	}, func(ctx context.Context, in *traceInput) (*logTraceOutput, error) {
-		prepared, err := prepareTrace(s, in)
+		prepared, err := prepareTrace(s, in.Path, &in.TraceSwitches)
 		if err != nil {
 			return nil, err
 		}
@@ -81,7 +81,7 @@ func registerLogTraceHandler(s *Server, api huma.API) {
 			prepared.hooks.OnComplete(res.Trace)
 		}
 		answer := res.Answer
-		cli := BuildCLICommand("logs_trace", prepared.cliParams(in))
+		cli := BuildCLICommand("logs_trace", prepared.cliParams(in.Regexp, &in.TraceSwitches))
 		answer.CLICommand = &cli
 		return &logTraceOutput{Body: *answer}, nil
 	})

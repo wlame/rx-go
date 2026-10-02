@@ -2,8 +2,11 @@ package webapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -22,7 +25,8 @@ type taskStatusOutput struct {
 	Body rxtypes.TaskStatusResponse
 }
 
-// registerTaskHandlers mounts GET /v1/tasks/{task_id}.
+// registerTaskHandlers mounts GET /v1/tasks/{task_id} and
+// DELETE /v1/tasks/{task_id}, which cancels a findings scan.
 //
 // Matches rx-python/src/rx/web.py:1879-1913. The task manager lives in
 // internal/tasks; we just look up and project the state.
@@ -42,6 +46,40 @@ func registerTaskHandlers(s *Server, api huma.API) {
 		}
 		return &taskStatusOutput{Body: projectTaskState(task)}, nil
 	})
+
+	cancelResponses := errorResponses(api, http.StatusNotFound, http.StatusConflict)
+	cancelResponses[strconv.Itoa(http.StatusConflict)] = jsonResponse("The task cannot be cancelled: it is not a "+
+		"findings scan, or it has already ended; task_id names it.",
+		api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(rxtypes.TaskConflictError{}), true, "TaskConflictError"))
+	huma.Register(api, huma.Operation{
+		OperationID: "task-cancel",
+		Method:      http.MethodDelete,
+		Path:        "/v1/tasks/{task_id}",
+		Summary:     "Cancel a findings scan",
+		Description: "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches " +
+			"nothing, and the task ends at once with status cancelled, which this answer shows. A client that " +
+			"joined the same scan sees it cancelled and may start it again. 409 for a task of another operation " +
+			"and for a task that has already ended.",
+		Tags:      []string{"Operations"},
+		Responses: cancelResponses,
+	}, func(_ context.Context, in *taskStatusInput) (*taskStatusOutput, error) {
+		mgr := s.cfg.TaskManager
+		// Cancel refuses with one of three errors: an unknown task (404),
+		// a task of another operation, or one that has ended (409).
+		switch err := mgr.Cancel(in.TaskID); {
+		case errors.Is(err, tasks.ErrTaskNotFound):
+			return nil, ErrNotFound(fmt.Sprintf("Task not found: %s", in.TaskID))
+		case errors.Is(err, tasks.ErrNotCancellable):
+			return nil, ErrTaskConflict(fmt.Sprintf("Task %s cannot be cancelled: only a findings scan can", in.TaskID), in.TaskID)
+		case err != nil:
+			return nil, ErrTaskConflict(fmt.Sprintf("Task %s cannot be cancelled: %v", in.TaskID, err), in.TaskID)
+		}
+		task, ok := mgr.Get(in.TaskID)
+		if !ok {
+			return nil, ErrNotFound(fmt.Sprintf("Task not found: %s", in.TaskID))
+		}
+		return &taskStatusOutput{Body: projectTaskState(task)}, nil
+	})
 }
 
 // projectTaskState copies a tasks.Task (internal) to a
@@ -56,6 +94,9 @@ func projectTaskState(t *tasks.Task) rxtypes.TaskStatusResponse {
 		Operation: t.Operation,
 		Progress:  t.Progress(),
 		Result:    t.Result,
+	}
+	if b := t.Bytes(); b != nil {
+		out.BytesRead, out.BytesTotal = &b.Read, &b.Total
 	}
 	if !t.StartedAt.IsZero() {
 		s := formatTaskTime(t.StartedAt)

@@ -16,6 +16,7 @@ import (
 	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/signatures"
+	"github.com/wlame/rx-go/internal/webapi"
 )
 
 // ExamplesChecker runs a signature's examples and says why they fail;
@@ -77,32 +78,12 @@ func runSignaturesList(out io.Writer, cat *signatures.Catalogue, opts signatures
 	if opts.tag != "" && !hasTag(cat, opts.tag) {
 		return exitWithError(os.Stderr, ExitUsageError, "unknown tag %q%s", opts.tag, closeNamesText(opts.tag, tagNames(cat)))
 	}
-	listed := listedSignatures(cat, opts)
+	listed := webapi.ListedSignatures(cat, opts.group, opts.tag)
 	if opts.json {
-		return writeJSON(out, catalogueView(cat, listed, opts.group))
+		return writeJSON(out, webapi.SignaturesView(cat, listed, opts.group))
 	}
 	writeSignatureList(out, cat, listed, opts.group)
 	return nil
-}
-
-// listedSignatures are the active and disabled signatures the filters
-// keep, in catalogue order (disabled ones within their group, after the
-// active ones of the group).
-func listedSignatures(cat *signatures.Catalogue, opts signaturesListOptions) []*signatures.Signature {
-	var out []*signatures.Signature
-	for _, g := range cat.Groups() {
-		if opts.group != "" && g.Name != opts.group {
-			continue
-		}
-		for _, list := range [][]*signatures.Signature{cat.Signatures(), cat.Disabled()} {
-			for _, s := range list {
-				if s.Group == g.Name && (opts.tag == "" || slices.Contains(s.Tags, opts.tag)) {
-					out = append(out, s)
-				}
-			}
-		}
-	}
-	return out
 }
 
 // listColumns are the widths of the list's columns, measured over every
@@ -234,7 +215,7 @@ func runSignaturesShow(out io.Writer, cat *signatures.Catalogue, id string, json
 		return exitWithError(os.Stderr, ExitUsageError, "unknown signature %q%s", id, closeNamesText(id, signatureIDs(cat)))
 	}
 	if jsonOutput {
-		return writeJSON(out, signatureViewOf(sig))
+		return writeJSON(out, webapi.SignatureView(sig))
 	}
 	for _, line := range showHeader(cat, sig) {
 		_, _ = fmt.Fprintln(out, "# "+output.Printable(line))

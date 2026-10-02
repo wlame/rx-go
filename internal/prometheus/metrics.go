@@ -450,6 +450,45 @@ var (
 )
 
 // ============================================================================
+// Signature scans and the findings cache
+// ============================================================================
+
+var (
+	// SignatureScansTotal counts the signature scan tasks of
+	// POST /v1/findings that ended, by how: status "completed",
+	// "failed" or "cancelled".
+	SignatureScansTotal = factory.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "rx_signature_scans_total",
+			Help: "Signature scan tasks that ended, by how they ended",
+		},
+		[]string{"status"},
+	)
+
+	// SignatureScanDurationSeconds is how long a completed signature
+	// scan task took, from its start to its answer, the wait in the scan
+	// queue included. A task the findings cache answered whole is not
+	// observed.
+	SignatureScanDurationSeconds = factory.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "rx_signature_scan_duration_seconds",
+			Help:    "Time a completed signature scan task took that scanned the file",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300, 1800},
+		},
+	)
+
+	// FindingsCacheHitsTotal counts the signatures answered from the
+	// findings cache: each signature a GET /v1/findings found current,
+	// and each a scan task did not have to scan.
+	FindingsCacheHitsTotal = factory.NewCounter(
+		prometheus.CounterOpts{
+			Name: "rx_findings_cache_hits_total",
+			Help: "Signatures answered from the findings cache",
+		},
+	)
+)
+
+// ============================================================================
 // Helpers — business code calls these; prometheus types never exposed.
 // ============================================================================
 //
@@ -820,4 +859,26 @@ func Handler() http.Handler {
 	return promhttp.HandlerFor(Registry, promhttp.HandlerOpts{
 		Registry: Registry,
 	})
+}
+
+// RecordSignatureScan counts one signature scan task that ended with
+// status ("completed", "failed" or "cancelled"), and observes its
+// duration when it completed and scanned the file (scanned).
+func RecordSignatureScan(status string, scanned bool, dur time.Duration) {
+	if !enabled.Load() {
+		return
+	}
+	SignatureScansTotal.WithLabelValues(status).Inc()
+	if status == "completed" && scanned {
+		SignatureScanDurationSeconds.Observe(dur.Seconds())
+	}
+}
+
+// AddFindingsCacheHits adds n signatures answered from the findings
+// cache.
+func AddFindingsCacheHits(n int) {
+	if !enabled.Load() || n <= 0 {
+		return
+	}
+	FindingsCacheHitsTotal.Add(float64(n))
 }

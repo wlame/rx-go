@@ -21,6 +21,8 @@ import (
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
+	"github.com/wlame/rx-go/internal/signatures"
+	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/tasks"
 )
 
@@ -165,6 +167,7 @@ func metricsServer(t *testing.T) (ts *httptest.Server, drain func()) {
 		RipgrepPath: rgPath,
 		TaskManager: tasks.New(tasks.Config{}),
 		Hooks:       dispatcher,
+		Signatures:  signatures.Load(signatures.LoadOptions{Paths: []string{}, CheckExamples: sigscan.CheckExamples}),
 	}))
 	t.Cleanup(ts.Close)
 	return ts, drain
@@ -256,6 +259,24 @@ func TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce(t *testing.T) {
 	samplesQuery := url.Values{"path": {f.bigLog}, "lines": {"10,20"}, "context": {"2"}}
 	if got := mustGet(t, ts.URL+"/v1/samples?"+samplesQuery.Encode()); got != http.StatusOK {
 		t.Fatalf("get /v1/samples: status %d", got)
+	}
+
+	// A signature scan that reads the file, then a read of its findings
+	// from the cache.
+	body, _ = json.Marshal(map[string]any{"path": f.bigLog})
+	resp, err = http.Post(ts.URL+"/v1/findings", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post /v1/findings: %v", err)
+	}
+	task.TaskID = ""
+	_ = json.NewDecoder(resp.Body).Decode(&task)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted || task.TaskID == "" {
+		t.Fatalf("post /v1/findings: status %d, task %q", resp.StatusCode, task.TaskID)
+	}
+	waitForTaskCompletion(t, ts.URL, task.TaskID)
+	if got := mustGet(t, ts.URL+"/v1/findings?"+url.Values{"path": {f.bigLog}}.Encode()); got != http.StatusOK {
+		t.Fatalf("get /v1/findings: status %d", got)
 	}
 	drain()
 

@@ -32,7 +32,7 @@ from the start, at zero.
 
 ## Metric families
 
-These are the 37 `rx_*` families `/metrics` reports, with the Go
+These are the 40 `rx_*` families `/metrics` reports, with the Go
 runtime and process families listed after them.
 
 ### Requests
@@ -48,6 +48,9 @@ runtime and process families listed after them.
 | `rx_context_lines_before` | histogram | — | The context before each position, per answered samples request |
 | `rx_context_lines_after` | histogram | — | The context after each position, per answered samples request |
 | `rx_analyze_duration_seconds` | histogram | — | Per index build with analysis, from the task's start to the saved index; reusing an analyzed index is not counted |
+| `rx_signature_scans_total` | counter | `status` | Once per findings task (`POST /v1/findings`) that ended: `completed`, `failed` or `cancelled` |
+| `rx_signature_scan_duration_seconds` | histogram | — | Per completed findings task that read the file, from the task's start (its wait in the scan queue included) to its answer; a task the findings cache answered whole is not observed |
+| `rx_findings_cache_hits_total` | counter | — | The signatures answered from the findings cache: each signature of the selection a `GET /v1/findings` found current, and each a findings task did not have to scan. No label carries a value from a file |
 | `rx_http_responses_total` | counter | `method`, `endpoint`, `status_code` | Once per HTTP response, with the status the client received; `499` for a request whose client went away before a server error was written, since nobody received it |
 | `rx_errors_total` | counter | `error_type` | Per failed trace, samples or analyze request; a canceled one is not counted |
 

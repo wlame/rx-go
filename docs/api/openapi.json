@@ -58,6 +58,56 @@
         ],
         "type": "object"
       },
+      "BlockDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "lines": {
+            "description": "For a lines block, the lines after the anchor it holds; 0 otherwise.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "max_lines": {
+            "description": "The most lines a block holds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "min_lines": {
+            "description": "The fewest lines a block must have to be a finding.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "not": {
+            "description": "A regex the anchor line must not match; null for none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start": {
+            "description": "The anchor: the regex that opens a block.",
+            "type": "string"
+          },
+          "states": {
+            "description": "The rules that join the following lines to the block; empty for a lines block.",
+            "items": {
+              "$ref": "#/components/schemas/StateRuleInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "start",
+          "states",
+          "lines",
+          "min_lines",
+          "max_lines",
+          "not"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
       "CategoryInfo": {
         "additionalProperties": false,
         "properties": {
@@ -1182,6 +1232,24 @@
         ],
         "type": "object"
       },
+      "DisabledBy": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "description": "The user file whose disable entry switched the built-in off.",
+            "type": "string"
+          },
+          "line": {
+            "description": "The line of that entry.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "type": [
+          "object",
+          "null"
+        ]
+      },
       "FileFindingSummary": {
         "additionalProperties": false,
         "properties": {
@@ -1314,6 +1382,211 @@
         "required": [
           "count",
           "stored"
+        ],
+        "type": "object"
+      },
+      "FindingSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "bucket_ms": {
+            "description": "Length of each bucket in milliseconds.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "counts": {
+            "description": "Lines in each bucket, in time order.",
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "start_ms": {
+            "description": "Start of the first bucket, in milliseconds since the Unix epoch, as an instant read the way the answer reads the file's times.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket_ms",
+          "start_ms",
+          "counts"
+        ],
+        "type": "object"
+      },
+      "FindingsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "checked": {
+            "description": "The signatures of the selection the cache answers, in catalogue order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "cli_command": {
+            "description": "The rx command that gives the same findings.",
+            "type": "string"
+          },
+          "counts": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FindingCount"
+            },
+            "description": "The findings counts of every checked signature, by id.",
+            "type": "object"
+          },
+          "findings": {
+            "description": "One page of the stored findings that pass the filters: from offset, at most limit. In the one order (first line, last line, signature id), or the reverse with before_line.",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "type": "array"
+          },
+          "missing": {
+            "description": "The signatures of the selection the cache does not answer (never scanned, or stale), in catalogue order. A scan (POST /v1/findings) fills them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "series": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FindingSeries"
+            },
+            "description": "The bucket series of every checked density signature, by id; a series whose start cannot be read in the request's file_tz is left out.",
+            "type": "object"
+          },
+          "state": {
+            "description": "full: every signature of the default set has a current cache entry for the file; partial: at least one signature has one (an opt-in one included), and not full; none: none has.",
+            "enum": [
+              "full",
+              "partial",
+              "none"
+            ],
+            "type": "string"
+          },
+          "ticks": {
+            "$ref": "#/components/schemas/FindingsTicks",
+            "description": "The filtered findings placed on a timeline, with ticks=W; null without it."
+          },
+          "total": {
+            "description": "How many stored findings of the checked signatures pass the filters: the length of the list the page is cut from.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "state",
+          "checked",
+          "missing",
+          "counts",
+          "series",
+          "total",
+          "findings",
+          "ticks",
+          "cli_command"
+        ],
+        "type": "object"
+      },
+      "FindingsScanRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "default": false,
+            "description": "Scan every selected signature again, those with a current cache entry too.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "The file to scan. Must be inside a configured --search-root.",
+            "type": "string"
+          },
+          "signatures": {
+            "default": "default",
+            "description": "The selection, as rx trace --signatures= takes it: comma-separated ids, groups and tags, all, default, -word to remove (traceback,sql; all,-pii). Default: the default set.",
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
+      "FindingsTicks": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "description": "Each column that holds at least one filtered finding with a time, in column order. Empty when start_ms or end_ms is null. A finding without a time, or with a time outside start_ms to end_ms, is in no column.",
+            "items": {
+              "$ref": "#/components/schemas/TickColumn"
+            },
+            "type": "array"
+          },
+          "end_ms": {
+            "description": "The file's last timestamp as GET /v1/time-range gives it (last_ms) for the same file_tz; null when it gives none.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "start_ms": {
+            "description": "The file's first timestamp as GET /v1/time-range gives it (first_ms) for the same file_tz; null when it gives none.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "width": {
+            "description": "The number of columns asked for (ticks=W).",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "width",
+          "start_ms",
+          "end_ms",
+          "columns"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "GroupInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "builtin": {
+            "description": "A built-in group; false for one a user file declares.",
+            "type": "boolean"
+          },
+          "count": {
+            "description": "How many active signatures the group has.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "description": {
+            "description": "What the group holds.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The group's kebab-case name.",
+            "type": "string"
+          },
+          "order": {
+            "description": "The group's 1-based place: the built-in groups first. The order sets a group's color.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "order",
+          "count",
+          "builtin"
         ],
         "type": "object"
       },
@@ -1854,6 +2127,35 @@
           "null"
         ]
       },
+      "LoadErrorInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "description": "The file the problem is in (a built-in's embedded name, or a user file).",
+            "type": "string"
+          },
+          "id": {
+            "description": "The id of the signature it refused; empty for a problem of the whole file, a group or a disable entry.",
+            "type": "string"
+          },
+          "line": {
+            "description": "The line of the problem.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "message": {
+            "description": "What is wrong.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "id",
+          "message"
+        ],
+        "type": "object"
+      },
       "LongestLine": {
         "additionalProperties": false,
         "properties": {
@@ -1935,6 +2237,118 @@
           "submatches_truncated"
         ],
         "type": "object"
+      },
+      "MeasureDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "The measure: long-line, binary, entropy, json-block, unprefixed, base64-run, density, time-gap or time-backwards.",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {},
+            "description": "The measure's parameters, defaults applied.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "params"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "RegexDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "capture": {
+            "description": "Which group of the anchor is the finding's value; 0 is the whole match.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "entropy": {
+            "description": "The least Shannon entropy (bits per byte) of the value; null for none.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "not": {
+            "description": "A regex the line must not match; null for none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "regex": {
+            "description": "The anchor, a Go RE2 regex matched against each line.",
+            "type": "string"
+          },
+          "validate": {
+            "description": "A check of the value: luhn, iban, ipv4 or ipv6; null for none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "regex",
+          "not",
+          "capture",
+          "entropy",
+          "validate"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "RunDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "blank": {
+            "description": "A run of blank lines.",
+            "type": "boolean"
+          },
+          "match": {
+            "description": "The regex every line of a run matches; null for a blank or same run.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "min": {
+            "description": "The fewest lines a run must have to be a finding.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "not": {
+            "description": "A regex a line of the run must not match; null for none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "same": {
+            "description": "A run of identical lines.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "match",
+          "not",
+          "blank",
+          "same",
+          "min"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
       },
       "SamplesIndexBuild": {
         "additionalProperties": false,
@@ -2208,6 +2622,179 @@
         ],
         "type": "object"
       },
+      "SignatureExamples": {
+        "additionalProperties": false,
+        "properties": {
+          "match": {
+            "description": "Texts the signature must find.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "no_match": {
+            "description": "Texts the signature must not find.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "match",
+          "no_match"
+        ],
+        "type": "object"
+      },
+      "SignatureInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "block": {
+            "$ref": "#/components/schemas/BlockDefinition",
+            "description": "The definition of a block signature; null for another kind."
+          },
+          "default": {
+            "description": "In the default set: false for an opt-in signature, which runs only when a selection names it.",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "Free text, possibly several lines.",
+            "type": "string"
+          },
+          "disabled_by": {
+            "$ref": "#/components/schemas/DisabledBy",
+            "description": "For a built-in a user file switched off: where. Null otherwise."
+          },
+          "examples": {
+            "$ref": "#/components/schemas/SignatureExamples",
+            "description": "Texts the signature must find and must not find."
+          },
+          "group": {
+            "description": "The signature's one group.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Unique kebab-case id.",
+            "type": "string"
+          },
+          "keywords": {
+            "description": "The keyword clauses of its anchor, lowered: a line is tested only when every clause has a member on it. Empty when the signature runs on every line (line_pass).",
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "type": "array"
+          },
+          "keywords_declared": {
+            "description": "The clauses come from the signature's own keywords field rather than from its anchor.",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "Which of regex, block, run and measure defines it; the member of that name holds the definition.",
+            "enum": [
+              "regex",
+              "block",
+              "run",
+              "measure"
+            ],
+            "type": "string"
+          },
+          "level": {
+            "description": "How much a finding matters.",
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ],
+            "type": "string"
+          },
+          "line_pass": {
+            "description": "No keyword gate: the signature is tested on every line of a scan.",
+            "type": "boolean"
+          },
+          "links": {
+            "description": "URLs about the signature, shown, never fetched.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "measure": {
+            "$ref": "#/components/schemas/MeasureDefinition",
+            "description": "The definition of a measure signature; null for another kind."
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Free key-value pairs, shown, never interpreted.",
+            "type": "object"
+          },
+          "name": {
+            "description": "Short title for lists.",
+            "type": "string"
+          },
+          "overrides": {
+            "description": "A user signature that replaced the built-in of the same id.",
+            "type": "boolean"
+          },
+          "redact": {
+            "description": "The values it finds are masked in every output and in the cache.",
+            "type": "boolean"
+          },
+          "regex": {
+            "$ref": "#/components/schemas/RegexDefinition",
+            "description": "The definition of a regex signature; null for another kind."
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunDefinition",
+            "description": "The definition of a run signature; null for another kind."
+          },
+          "source": {
+            "$ref": "#/components/schemas/SignatureSource",
+            "description": "Where the signature was defined: {\"builtin\": true}, or the user file and the line."
+          },
+          "tags": {
+            "description": "Extra words for selection.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "group",
+          "description",
+          "tags",
+          "level",
+          "links",
+          "metadata",
+          "default",
+          "redact",
+          "kind",
+          "keywords",
+          "keywords_declared",
+          "line_pass",
+          "source",
+          "overrides",
+          "disabled_by",
+          "examples",
+          "regex",
+          "block",
+          "run",
+          "measure"
+        ],
+        "type": "object"
+      },
       "SignatureRef": {
         "additionalProperties": false,
         "properties": {
@@ -2236,6 +2823,81 @@
         ],
         "type": "object"
       },
+      "SignatureSource": {
+        "additionalProperties": false,
+        "properties": {
+          "builtin": {
+            "description": "True for a built-in signature.",
+            "type": "boolean"
+          },
+          "file": {
+            "description": "The user file that defines the signature.",
+            "type": "string"
+          },
+          "line": {
+            "description": "The line of the definition in that file.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "SignaturesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "errors": {
+            "description": "Every problem the load found, by file, then line. A refused signature is not in signatures; a selection that names it is refused with its errors.",
+            "items": {
+              "$ref": "#/components/schemas/LoadErrorInfo"
+            },
+            "type": "array"
+          },
+          "files": {
+            "description": "The user signature files found on the search path, in load order, whether they loaded or were refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "groups": {
+            "description": "The groups in their order: the built-in ones, then those user files declare.",
+            "items": {
+              "$ref": "#/components/schemas/GroupInfo"
+            },
+            "type": "array"
+          },
+          "levels": {
+            "description": "The levels from the lowest to the highest: info, low, medium, high, critical.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "search_path": {
+            "description": "Where the user signature files were looked for: RX_SIGNATURES_PATH, or the configuration directory.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "signatures": {
+            "description": "Every loaded signature, group by group in group order, then in load order; the built-ins a user file disabled are listed too, with disabled_by set.",
+            "items": {
+              "$ref": "#/components/schemas/SignatureInfo"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "signatures",
+          "groups",
+          "levels",
+          "errors",
+          "search_path",
+          "files"
+        ],
+        "type": "object"
+      },
       "SkippedFile": {
         "additionalProperties": false,
         "properties": {
@@ -2249,6 +2911,37 @@
         "required": [
           "path",
           "reason"
+        ],
+        "type": "object"
+      },
+      "StateRuleInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "description": "A matching line is the block's last.",
+            "type": "boolean"
+          },
+          "next": {
+            "description": "The state after a matching line; null when the rule ends the block.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "regex": {
+            "description": "The regex a line must match.",
+            "type": "string"
+          },
+          "state": {
+            "description": "The state the rule applies in.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "regex",
+          "next",
+          "end"
         ],
         "type": "object"
       },
@@ -2326,6 +3019,22 @@
       "TaskStatusResponse": {
         "additionalProperties": false,
         "properties": {
+          "bytes_read": {
+            "description": "Bytes of the file a findings task has read so far, as stored on disk. Null for a task of another operation, and for a findings task that has not started reading.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "bytes_total": {
+            "description": "The size of the file a findings task reads, as stored on disk. Null when bytes_read is.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "completed_at": {
             "type": [
               "string",
@@ -2339,6 +3048,7 @@
             ]
           },
           "operation": {
+            "description": "index, compress, chain_index or findings.",
             "type": "string"
           },
           "path": {
@@ -2364,10 +3074,13 @@
                 "$ref": "#/components/schemas/ChainIndexTaskResult"
               },
               {
+                "$ref": "#/components/schemas/FindingsResponse"
+              },
+              {
                 "type": "null"
               }
             ],
-            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task. Null until then."
+            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task, FindingsResponse for a findings task. Null until then."
           },
           "started_at": {
             "type": [
@@ -2376,6 +3089,7 @@
             ]
           },
           "status": {
+            "description": "queued, running, completed, failed, or cancelled (a findings task stopped by DELETE /v1/tasks/{task_id}).",
             "type": "string"
           },
           "task_id": {
@@ -2391,7 +3105,51 @@
           "completed_at",
           "error",
           "progress",
+          "bytes_read",
+          "bytes_total",
           "result"
+        ],
+        "type": "object"
+      },
+      "TickColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "description": "The column, from 0 to width - 1.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "signatures": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TickCount"
+            },
+            "description": "The findings of the column, by signature id.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "column",
+          "signatures"
+        ],
+        "type": "object"
+      },
+      "TickCount": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "How many findings of the signature fall in the column.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_line": {
+            "description": "The first line of the first of them, in line order.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "first_line"
         ],
         "type": "object"
       },
@@ -2703,6 +3461,10 @@
               "null"
             ]
           },
+          "findings": {
+            "$ref": "#/components/schemas/TreeFindings",
+            "description": "What the findings cache holds for the file: its state and its findings count. Null for a directory, a file that is not text, and a file the cache holds nothing current for."
+          },
           "is_compressed": {
             "type": [
               "boolean",
@@ -2770,9 +3532,36 @@
           "compression_format",
           "is_indexed",
           "line_count",
-          "children_count"
+          "children_count",
+          "findings"
         ],
         "type": "object"
+      },
+      "TreeFindings": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "The findings of every current entry together, opt-in signatures included.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "description": "full: every signature of the default set has a current cache entry; partial: some signature has one, an opt-in one included.",
+            "enum": [
+              "full",
+              "partial"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "count"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
       },
       "TreeResponse": {
         "additionalProperties": false,
@@ -3043,6 +3832,431 @@
         "summary": "List all available anomaly detectors",
         "tags": [
           "Analysis"
+        ]
+      }
+    },
+    "/v1/findings": {
+      "get": {
+        "description": "The findings the findings cache holds for one file; it never scans. Every answer has the summary of the requested selection (state, checked, missing, counts, series), total (the findings that pass the filters) and cli_command; findings is one page of the filtered list, and ticks, with ticks=W, places the filtered findings on a timeline. Filters: signature, group, q, lines, after_line, before_line (descending). A missing signature is scanned by POST /v1/findings.",
+        "operationId": "findings",
+        "parameters": [
+          {
+            "description": "The file whose findings to give. Must be inside a configured --search-root.",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "The file whose findings to give. Must be inside a configured --search-root.",
+              "examples": [
+                "/var/log/app.log"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The selection the summary describes (state, checked, missing), as rx trace --signatures= takes it: comma-separated ids, groups and tags, all, default, -word to remove. Empty or absent: the default set. A selection that names an unknown or refused signature is refused with 400 and the load error.",
+            "explode": false,
+            "in": "query",
+            "name": "signatures",
+            "schema": {
+              "description": "The selection the summary describes (state, checked, missing), as rx trace --signatures= takes it: comma-separated ids, groups and tags, all, default, -word to remove. Empty or absent: the default set. A selection that names an unknown or refused signature is refused with 400 and the load error.",
+              "examples": [
+                "traceback,sql"
+              ],
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only the findings of these signatures (repeatable, at most 256: each costs a comparison per finding).",
+            "explode": true,
+            "in": "query",
+            "name": "signature",
+            "schema": {
+              "description": "Only the findings of these signatures (repeatable, at most 256: each costs a comparison per finding).",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 256,
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Only the findings of signatures of these groups (repeatable, at most 256).",
+            "explode": true,
+            "in": "query",
+            "name": "group",
+            "schema": {
+              "description": "Only the findings of signatures of these groups (repeatable, at most 256).",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 256,
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Only the findings whose excerpt or signature name holds this text, compared without case. The excerpt is masked already, so a masked value is never matched.",
+            "explode": false,
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "description": "Only the findings whose excerpt or signature name holds this text, compared without case. The excerpt is masked already, so a masked value is never matched.",
+              "maxLength": 1024,
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only the findings that overlap lines A-B (1-based, inclusive); one number N means N-N.",
+            "explode": false,
+            "in": "query",
+            "name": "lines",
+            "schema": {
+              "description": "Only the findings that overlap lines A-B (1-based, inclusive); one number N means N-N.",
+              "examples": [
+                "1000-1200"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only the findings whose first line is after line N (the next finding). 0 or absent: no bound.",
+            "explode": false,
+            "in": "query",
+            "name": "after_line",
+            "schema": {
+              "description": "Only the findings whose first line is after line N (the next finding). 0 or absent: no bound.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only the findings whose first line is before line N, listed from the nearest down, in the reverse order (the previous finding). 0 or absent: no bound.",
+            "explode": false,
+            "in": "query",
+            "name": "before_line",
+            "schema": {
+              "description": "Only the findings whose first line is before line N, listed from the nearest down, in the reverse order (the previous finding). 0 or absent: no bound.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "How many filtered findings to pass over before the page.",
+            "explode": false,
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "description": "How many filtered findings to pass over before the page.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The most findings in the page.",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 1000,
+              "description": "The most findings in the page.",
+              "format": "int64",
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Fill lines (and before) of the page's findings, read from the file and masked as every output of findings is: a value a redacting signature matches is masked, a body line of a redacting block or run shows as [masked, N bytes], and no line past the text the scan read is shown.",
+            "explode": false,
+            "in": "query",
+            "name": "text",
+            "schema": {
+              "description": "Fill lines (and before) of the page's findings, read from the file and masked as every output of findings is: a value a redacting signature matches is masked, a body line of a redacting block or run shows as [masked, N bytes], and no line past the text the scan read is shown.",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "With text: how many lines before each finding to give in before.",
+            "explode": false,
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "description": "With text: how many lines before each finding to give in before.",
+              "format": "int64",
+              "maximum": 5,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "With text: the most bytes of text the page holds, taken in line order; the finding at which it runs out and every later one lose their lines and are marked lines_truncated. 0 or absent: RX_FINDINGS_TEXT_MAX_BYTES, which also bounds a larger value.",
+            "explode": false,
+            "in": "query",
+            "name": "max_bytes",
+            "schema": {
+              "description": "With text: the most bytes of text the page holds, taken in line order; the finding at which it runs out and every later one lose their lines and are marked lines_truncated. 0 or absent: RX_FINDINGS_TEXT_MAX_BYTES, which also bounds a larger value.",
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Place the filtered findings on a timeline of this many columns over the file's time range (ticks). 0 or absent: no ticks.",
+            "explode": false,
+            "in": "query",
+            "name": "ticks",
+            "schema": {
+              "description": "Place the filtered findings on a timeline of this many columns over the file's time range (ticks). 0 or absent: no ticks.",
+              "format": "int64",
+              "maximum": 4000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM, as GET /v1/samples and GET /v1/time-range take it. It moves time_ms, series and ticks as it moves their times; a file whose timestamps carry zones needs its line index to record where their offset changes, and its findings have no time without it. Another value is refused with 400.",
+            "explode": false,
+            "in": "query",
+            "name": "file_tz",
+            "schema": {
+              "description": "Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM, as GET /v1/samples and GET /v1/time-range take it. It moves time_ms, series and ticks as it moves their times; a file whose timestamps carry zones needs its line index to record where their offset changes, and its findings have no time without it. Another value is refused with 400.",
+              "examples": [
+                "Europe/Berlin"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Get the cached findings of one file",
+        "tags": [
+          "Signatures"
+        ]
+      },
+      "post": {
+        "description": "Starts a task (operation findings) that scans the file for the selected signatures the findings cache does not hold (with force, for all of them) and caches what it finds; a scan of the same file already running is returned instead, and it scans what it was started for. Poll GET /v1/tasks/{task_id}: bytes_read and bytes_total say how far it read; its result is the answer GET /v1/findings gives without filters, with the first page. DELETE /v1/tasks/{task_id} cancels it. At most RX_MAX_SIGNATURE_SCANS scans read files at once; later ones wait, queued.",
+        "operationId": "findings-scan",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindingsScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "No task started: 256 signature scans are queued or running, as many as the server holds. Ask again once one has ended.",
+            "headers": {
+              "Retry-After": {
+                "description": "5: the seconds to wait before asking again (RFC 9110).",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Scan one file for signatures (background task)",
+        "tags": [
+          "Signatures"
         ]
       }
     },
@@ -4604,7 +5818,136 @@
         ]
       }
     },
+    "/v1/signatures": {
+      "get": {
+        "description": "The signature catalogue loaded when the server started (built-in signatures and the user's files from RX_SIGNATURES_PATH or the configuration directory), as rx signatures --json prints it: every signature with every field of its definition, its kind, source, keyword clauses and line pass; the groups with their order and count; the levels; the load errors; the search path and the files read.",
+        "operationId": "signatures",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignaturesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "List the signatures the server loaded",
+        "tags": [
+          "Signatures"
+        ]
+      }
+    },
     "/v1/tasks/{task_id}": {
+      "delete": {
+        "description": "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches nothing, and the task ends at once with status cancelled, which this answer shows. A client that joined the same scan sees it cancelled and may start it again. 409 for a task of another operation and for a task that has already ended.",
+        "operationId": "task-cancel",
+        "parameters": [
+          {
+            "description": "Task UUID",
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "description": "Task UUID",
+              "examples": [
+                "6e9b0cb4-7d86-4a56-9c56-3b5a19e67d53"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskStatusResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskConflictError"
+                }
+              }
+            },
+            "description": "The task cannot be cancelled: it is not a findings scan, or it has already ended; task_id names it."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Cancel a findings scan",
+        "tags": [
+          "Operations"
+        ]
+      },
       "get": {
         "description": "Returns queued/running/completed/failed state and, on completion, the task result.",
         "operationId": "task-status",
@@ -4813,7 +6156,7 @@
     },
     "/v1/trace": {
       "get": {
-        "description": "Uses ripgrep to scan one or more paths for one or more regex patterns, returning match offsets.",
+        "description": "Uses ripgrep to scan one or more paths for one or more regex patterns, returning match offsets. With signatures, every file the search covers is also scanned for those signatures (through the findings cache), as rx trace --signatures does, and the patterns may be left out.",
         "operationId": "trace",
         "parameters": [
           {
@@ -4839,13 +6182,12 @@
             }
           },
           {
-            "description": "Regex pattern(s) to search for",
+            "description": "Regex pattern(s) to search for. Required unless signatures is given.",
             "explode": true,
             "in": "query",
             "name": "regexp",
-            "required": true,
             "schema": {
-              "description": "Regex pattern(s) to search for",
+              "description": "Regex pattern(s) to search for. Required unless signatures is given.",
               "examples": [
                 [
                   "error"
@@ -5041,6 +6383,20 @@
             "schema": {
               "description": "Search only the files directly inside a directory path, not its subdirectories (rx trace --no-recursive)",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Scan every file the search covers for these signatures too, as rx trace --signatures= does: comma-separated ids, groups and tags, all, default, -word to remove (default for the default set). The answer gains signatures, findings and finding_summary; each finding carries its lines and the context lines asked for, within RX_FINDINGS_TEXT_MAX_BYTES. With it regexp may be left out. Absent or empty: no scan. A selection that names an unknown or refused signature is refused with 400.",
+            "explode": false,
+            "in": "query",
+            "name": "signatures",
+            "schema": {
+              "description": "Scan every file the search covers for these signatures too, as rx trace --signatures= does: comma-separated ids, groups and tags, all, default, -word to remove (default for the default set). The answer gains signatures, findings and finding_summary; each finding carries its lines and the context lines asked for, within RX_FINDINGS_TEXT_MAX_BYTES. With it regexp may be left out. Absent or empty: no scan. A selection that names an unknown or refused signature is refused with 400.",
+              "examples": [
+                "traceback,sql"
+              ],
+              "maxLength": 4096,
+              "type": "string"
             }
           }
         ],

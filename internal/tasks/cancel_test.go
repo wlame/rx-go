@@ -23,6 +23,12 @@ func TestManager_CreateCancellable_JoinsTheRunningTaskOfItsOperation(t *testing.
 	if !isNew || index.TaskID == scan.TaskID {
 		t.Fatalf("an index task on the scanned path was refused: %+v new=%v", index, isNew)
 	}
+	if holder, ok := m.CancellableHolder("/var/log/app.log", "findings"); !ok || holder.TaskID != scan.TaskID {
+		t.Fatalf("CancellableHolder = %v, %v; want %s", holder, ok, scan.TaskID)
+	}
+	if _, ok := m.CancellableHolder("/var/log/app.log", "index"); ok {
+		t.Fatal("CancellableHolder found a cancellable index task")
+	}
 	again, againCtx, isNew := m.CreateCancellable("/var/log/app.log", "findings")
 	if isNew || again.TaskID != scan.TaskID {
 		t.Fatalf("a second scan of the path: %s new=%v, want the running %s", again.TaskID, isNew, scan.TaskID)

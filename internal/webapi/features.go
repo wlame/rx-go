@@ -37,6 +37,11 @@ var featureTable = []string{
 	// directory (rotated logs found by their file names), and
 	// GET /v1/logs/chain describes one.
 	"log_chains",
+	// signatures: GET /v1/signatures lists the signature catalogue,
+	// GET /v1/findings and POST /v1/findings read and scan a file's
+	// findings, DELETE /v1/tasks/{task_id} cancels a scan, GET /v1/trace
+	// takes signatures, and each file of GET /v1/tree has findings.
+	"signatures",
 }
 
 // Features returns the names of featureTable, sorted.

@@ -165,10 +165,20 @@ set. See [api/webhooks](../api/webhooks.md).
 6. Best-effort install or check of the `rx-viewer` SPA (see
    [Viewer updates](#viewer-updates); 60-second budget, failure is
    non-fatal), then the banner names the viewer served and why
-7. Register HTTP middleware (request ID, structured logging, panic
+7. Load the [signatures](../concepts/signatures.md) once: the built-ins
+   and the user's files (`RX_SIGNATURES_PATH`, or the configuration
+   directory), every example checked. Each load error is logged as a
+   `signature_load_error` warning with its file, line and id, and listed
+   by [`GET /v1/signatures`](../api/endpoints/signatures.md); the server
+   starts either way. The scan settings (`RX_WORKERS`,
+   `RX_SIGNATURES_LINE_BYTES`, `RX_FINDINGS_MAX_PER_SIGNATURE`,
+   `RX_TIMESTAMP_LOOKBACK_KB`, `RX_LOG_TZ`, `RX_MAX_LINE_TEXT_BYTES`,
+   `RX_FINDINGS_TEXT_MAX_BYTES`, `RX_MAX_SIGNATURE_SCANS`) are read here
+   too; a change to them or to a signature file takes a restart
+8. Register HTTP middleware (request ID, structured logging, panic
    recovery, Prometheus metrics middleware)
-8. Register every endpoint and the static-file catch-all
-9. Bind the listening socket and begin serving
+9. Register every endpoint and the static-file catch-all
+10. Bind the listening socket and begin serving
 
 If the socket bind fails (port in use, permission denied), the server
 returns immediately with a non-zero exit code.

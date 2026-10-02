@@ -16,9 +16,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/signatures"
+	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/webapi"
 )
 
@@ -220,6 +223,16 @@ func runServe(out io.Writer, p serveParams) error {
 	// binds, so the bundle never changes under a request.
 	served := prepareViewer(fm, mode, os.Stderr)
 
+	// The signature catalogue, loaded once: the findings routes serve
+	// it until the server stops, so a change to a signature file takes
+	// a restart. Load errors do not stop the start; each is logged, and
+	// GET /v1/signatures lists them.
+	catalogue := loadServeSignatures(slog.Default())
+	// Every setting of the scans and of the findings cache is read here,
+	// once; internal/findings and internal/sigscan read no environment.
+	findingsOptions := webapi.FindingsOptionsFromEnv()
+	findings.SetMaxScans(config.MaxSignatureScans())
+
 	// One hook dispatcher (queue, HTTP client, workers) for the whole
 	// server. It holds no URLs: each /v1/trace request resolves its own
 	// from RX_HOOK_ON_*_URL and its hook_on_* parameters and passes them
@@ -236,6 +249,8 @@ func runServe(out io.Writer, p serveParams) error {
 		Hooks:       hookDisp,
 		Logger:      slog.Default(),
 		APIToken:    apiToken,
+		Signatures:  catalogue,
+		Findings:    &findingsOptions,
 	})
 
 	// Nice startup banner — mirrors Python output.
@@ -281,6 +296,18 @@ func runServe(out io.Writer, p serveParams) error {
 		}
 		return nil
 	}
+}
+
+// loadServeSignatures loads the signature catalogue `rx serve` serves:
+// the built-ins and the user's files on the search path, every example
+// checked by the scan engine, as `rx signatures` loads them. Each load
+// error is logged as a warning that names its file, line and id.
+func loadServeSignatures(logger *slog.Logger) *signatures.Catalogue {
+	cat := signatures.Load(signatures.LoadOptions{CheckExamples: sigscan.CheckExamples})
+	for _, e := range cat.Errors() {
+		logger.Warn("signature_load_error", "file", e.File, "line", e.Line, "id", e.ID, "message", e.Message)
+	}
+	return cat
 }
 
 // configureLogLevelFromEnv reads RX_LOG_LEVEL and publishes the resolved

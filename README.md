@@ -138,8 +138,11 @@ for the full catalog and wire contract.
 | POST   | `/v1/index`      | Start background indexing task      |
 | POST   | `/v1/compress`   | Start background compression task   |
 | GET    | `/v1/tasks/{task_id}` | Background task status         |
+| DELETE | `/v1/tasks/{task_id}` | Cancel a signature scan        |
 | GET    | `/v1/tree`       | Browse directory tree               |
 | GET, POST | `/v1/logs/*`  | Log chains: list, describe, index, samples, search |
+| GET    | `/v1/signatures` | Signature catalogue                 |
+| GET, POST | `/v1/findings` | A file's cached findings; scan a file for signatures |
 | GET    | `/v1/detectors`  | Anomaly detectors and severity scale |
 | GET    | `/metrics`       | Prometheus metrics                  |
 | GET    | `/docs`          | Swagger UI (from `/openapi.json`)   |

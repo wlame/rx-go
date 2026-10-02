@@ -37,6 +37,8 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/signatures"
+	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/tasks"
 )
 
@@ -362,7 +364,11 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	}
 	t.Cleanup(paths.Reset)
 	manager := tasks.New(tasks.Config{})
-	ts := httptest.NewServer(NewServer(Config{AppVersion: "conformance-test", RipgrepPath: rgPath, TaskManager: manager}))
+	// The built-in signatures, every example checked, as `rx serve`
+	// loads them, without the user's files.
+	catalogue := signatures.Load(signatures.LoadOptions{Paths: []string{}, CheckExamples: sigscan.CheckExamples})
+	ts := httptest.NewServer(NewServer(Config{AppVersion: "conformance-test", RipgrepPath: rgPath, TaskManager: manager,
+		Signatures: catalogue}))
 	t.Cleanup(ts.Close)
 	t.Cleanup(func() { awaitEveryTask(t, manager) })
 
@@ -544,6 +550,36 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	run.check(apiCall{label: "task that does not exist", method: http.MethodGet, template: "/v1/tasks/{task_id}",
 		path: "/v1/tasks/" + unknownTaskID, want: http.StatusNotFound})
 
+	get("signatures", "/v1/signatures", nil, http.StatusOK)
+	get("findings before a scan", "/v1/findings", q("path", at("app.log")), http.StatusOK)
+	get("findings of a directory", "/v1/findings", q("path", at("emptydir")), http.StatusBadRequest)
+	get("findings with a selection that names nothing known", "/v1/findings",
+		q("path", at("app.log"), "signatures", "no-such-signature"), http.StatusBadRequest)
+	get("findings outside the root", "/v1/findings", q("path", "/etc/hosts"), http.StatusForbidden)
+	get("findings of a missing file", "/v1/findings", q("path", at("nope.log")), http.StatusNotFound)
+	get("findings without a path", "/v1/findings", nil, http.StatusUnprocessableEntity)
+	scan := post("scan a file for signatures", "/v1/findings", map[string]any{"path": at("app.log")}, http.StatusAccepted)
+	run.finishTask("finished findings task", scan)
+	get("findings after a scan, filtered, with text and ticks", "/v1/findings",
+		q("path", at("app.log"), "group", "traceback", "text", "true", "before", "1", "ticks", "10"), http.StatusOK)
+	post("scan a directory", "/v1/findings", map[string]any{"path": at("emptydir")}, http.StatusBadRequest)
+	post("scan outside the root", "/v1/findings", map[string]any{"path": "/etc/hosts"}, http.StatusForbidden)
+	post("scan a missing file", "/v1/findings", map[string]any{"path": at("nope.log")}, http.StatusNotFound)
+	post("scan without a path", "/v1/findings", map[string]any{}, http.StatusUnprocessableEntity)
+	get("trace with signatures", "/v1/trace", q("path", at("app.log"), "signatures", "default"), http.StatusOK)
+
+	// A findings task the manager holds as queued is cancelled without
+	// racing a real scan to its end.
+	scanned, err := paths.ValidatePathWithinRoots(at("three.log"))
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	heldScan, _, _ := manager.CreateCancellable(scanned, "findings")
+	run.check(apiCall{label: "cancel a findings task", method: http.MethodDelete, template: "/v1/tasks/{task_id}",
+		path: "/v1/tasks/" + heldScan.TaskID, want: http.StatusOK})
+	run.check(apiCall{label: "cancel a task that does not exist", method: http.MethodDelete, template: "/v1/tasks/{task_id}",
+		path: "/v1/tasks/" + unknownTaskID, want: http.StatusNotFound})
+
 	// A task the manager holds as queued makes the next request for the
 	// same file a conflict, without racing a real task to its end.
 	busy, err := paths.ValidatePathWithinRoots(at("three.log"))
@@ -555,6 +591,8 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 		http.StatusConflict)
 	post("compress while a task runs for the file", "/v1/compress",
 		map[string]any{"input_path": at("three.log"), "force": true}, http.StatusConflict)
+	run.check(apiCall{label: "cancel an index task", method: http.MethodDelete, template: "/v1/tasks/{task_id}",
+		path: "/v1/tasks/" + held.TaskID, want: http.StatusConflict})
 	// No worker runs the held task: it ends here, so that the wait for
 	// every task at the end of the test does not wait for it.
 	manager.Fail(held.TaskID, "held by the test")

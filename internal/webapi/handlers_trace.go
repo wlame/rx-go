@@ -11,9 +11,12 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/hooks"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
+	"github.com/wlame/rx-go/internal/samples"
+	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -35,7 +38,9 @@ import (
 // the published maximums with this value.
 const MaxTraceContextLines = 100
 
-// traceInput is the query-string shape for GET /v1/trace.
+// traceInput is the query-string shape for GET /v1/logs/trace: the
+// paths, the patterns (required), and the parameters every search route
+// shares (TraceSwitches). GET /v1/trace takes signatureTraceInput.
 //
 // Notes on huma tag semantics:
 //   - query:"path,explode" with a []string type ⇒ repeatable param:
@@ -56,6 +61,31 @@ type traceInput struct {
 	// Regexp uses the Python-compatible name (singular); the engine
 	// accepts multiple via repeated ?regexp=... params.
 	Regexp []string `query:"regexp,explode" required:"true" example:"error" doc:"Regex pattern(s) to search for"`
+	TraceSwitches
+}
+
+// signatureTraceInput is the query-string shape for GET /v1/trace:
+// traceInput's parameters in the same order, with regexp optional when
+// signatures is given, and signatures last.
+//
+// Go note: huma reads the parameters of an embedded struct as if they
+// were written in place, in field order, so both routes publish the
+// shared ones in one order from one declaration.
+type signatureTraceInput struct {
+	Path   []string `query:"path,explode" required:"true" example:"/var/log/app.log" doc:"File or directory path(s) to search"`
+	Regexp []string `query:"regexp,explode" required:"false" example:"error" doc:"Regex pattern(s) to search for. Required unless signatures is given."`
+	TraceSwitches
+	Signatures string `query:"signatures" maxLength:"4096" example:"traceback,sql" doc:"Scan every file the search covers for these signatures too, as rx trace --signatures= does: comma-separated ids, groups and tags, all, default, -word to remove (default for the default set). The answer gains signatures, findings and finding_summary; each finding carries its lines and the context lines asked for, within RX_FINDINGS_TEXT_MAX_BYTES. With it regexp may be left out. Absent or empty: no scan. A selection that names an unknown or refused signature is refused with 400."`
+}
+
+// TraceSwitches are the query parameters every search route takes
+// beside its paths and patterns: the cap, the request id, the webhooks,
+// the matching flags, the context window and the switches. It is
+// embedded in the input of each route.
+//
+// Go note: it is exported because huma reads only exported fields, and
+// an embedded field is exported only when its type's name is.
+type TraceSwitches struct {
 	// MaxResults: 0 sentinel means "not set" (huma doesn't allow pointer
 	// query params). Valid user values start at 1.
 	MaxResults     int    `query:"max_results" minimum:"0" example:"100" doc:"Maximum results to return. 0 = unlimited."`
@@ -96,7 +126,7 @@ type traceInput struct {
 // contextWindow returns the lines to show before and after each match,
 // resolved the way `rx trace` resolves --context, --before and --after:
 // a given before_context or after_context wins over context, 0 included.
-func (in *traceInput) contextWindow() (before, after int) {
+func (in *TraceSwitches) contextWindow() (before, after int) {
 	before, after = in.Context, in.Context
 	if in.BeforeContext >= 0 {
 		before = in.BeforeContext
@@ -109,7 +139,7 @@ func (in *traceInput) contextWindow() (before, after int) {
 
 // matchingFlags reports which matching flags the query turned on, keyed
 // by the long name trace.MatchingFlags uses.
-func (in *traceInput) matchingFlags() map[string]bool {
+func (in *TraceSwitches) matchingFlags() map[string]bool {
 	return map[string]bool{
 		"ignore-case":   in.IgnoreCase,
 		"word-regexp":   in.WordRegexp,
@@ -176,14 +206,14 @@ type preparedTrace struct {
 // max_results (400). The request id is the client's or a new UUID v7.
 //
 // It reads no file: whether a path exists is each route's own check.
-func prepareTrace(s *Server, in *traceInput) (*preparedTrace, error) {
+func prepareTrace(s *Server, requested []string, in *TraceSwitches) (*preparedTrace, error) {
 	if s.cfg.RipgrepPath == "" {
 		return nil, ErrServiceUnavailable("ripgrep is not available on this system")
 	}
 
 	// Sandbox check across every path.
-	validatedPaths := make([]string, 0, len(in.Path))
-	for _, p := range in.Path {
+	validatedPaths := make([]string, 0, len(requested))
+	for _, p := range requested {
 		v, err := paths.ValidatePathWithinRoots(p)
 		if err != nil {
 			var perr *paths.ErrPathOutsideRoots
@@ -280,10 +310,10 @@ func prepareTrace(s *Server, in *traceInput) (*preparedTrace, error) {
 // ones the request gave, not the generated ID or the RX_HOOK_*
 // fallbacks: the command run elsewhere reads its own environment, as
 // this server did.
-func (p *preparedTrace) cliParams(in *traceInput) map[string]any {
+func (p *preparedTrace) cliParams(regexp []string, in *TraceSwitches) map[string]any {
 	return map[string]any{
 		"path":             p.paths,
-		"regexp":           in.Regexp,
+		"regexp":           regexp,
 		"matching_flags":   selectedFlagNames(p.matchingFlags),
 		"max_results":      p.maxResults,
 		"context":          in.Context,
@@ -305,10 +335,13 @@ func (p *preparedTrace) cliParams(in *traceInput) map[string]any {
 //  1. Check the request (prepareTrace): ripgrep availability (503),
 //     every path inside the search roots (403), the effective hook
 //     config and its URLs (400), hook_on_match only with max_results
-//     (400), and a request ID, generated or accepted.
+//     (400), and a request ID, generated or accepted; then a pattern or
+//     signatures (422 without either) and the selection (400).
 //  2. Verify every path exists (404) and every named file opens (403).
 //  3. Call trace.Engine.RunWithOptions with this request's view of the
-//     shared hook dispatcher.
+//     shared hook dispatcher; with signatures, findings.Search, which
+//     runs the same search and scans the files it covered, as
+//     `rx trace --signatures` does.
 //  4. Build response, fire on_complete hook, record metrics, return.
 func registerTraceHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
@@ -316,22 +349,36 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/trace",
 		Summary:     "Search file for regex patterns (supports multiple patterns)",
-		Description: "Uses ripgrep to scan one or more paths for one or more regex patterns, returning match offsets.",
-		Tags:        []string{"Search"},
+		Description: "Uses ripgrep to scan one or more paths for one or more regex patterns, returning match offsets. " +
+			"With signatures, every file the search covers is also scanned for those signatures (through the " +
+			"findings cache), as rx trace --signatures does, and the patterns may be left out.",
+		Tags: []string{"Search"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusUnprocessableEntity,
 			http.StatusInternalServerError, http.StatusServiceUnavailable),
 		// The results are named only so the deferred counter below can
 		// read whatever this handler ends up returning; nothing assigns
 		// them directly.
-	}, func(ctx context.Context, in *traceInput) (traceResp *traceOutput, traceErr error) {
+	}, func(ctx context.Context, in *signatureTraceInput) (traceResp *traceOutput, traceErr error) {
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.
 		defer func() { recordEndpoint(ctx, prometheus.RecordTraceRequest, traceErr) }()
 
-		prepared, err := prepareTrace(s, in)
+		prepared, err := prepareTrace(s, in.Path, &in.TraceSwitches)
 		if err != nil {
 			return nil, err
+		}
+		// A search needs a pattern unless it scans for signatures; the
+		// answer is huma's own for a missing required parameter.
+		if len(in.Regexp) == 0 && in.Signatures == "" {
+			return nil, &apiError{Status: http.StatusUnprocessableEntity,
+				Detail: "validation failed; required query parameter is missing (query.regexp: required unless signatures is given)"}
+		}
+		var sel []*signatures.Signature
+		if in.Signatures != "" {
+			if sel, err = s.selectionOf(in.Signatures); err != nil {
+				return nil, err
+			}
 		}
 
 		// Existence and readability check. The engine lists a file it
@@ -358,7 +405,7 @@ func registerTraceHandlers(s *Server, api huma.API) {
 
 		// Run the engine.
 		start := time.Now()
-		resp, err := s.cfg.Engine.RunWithOptions(ctx, prepared.paths, in.Regexp, prepared.options)
+		resp, err := s.runTrace(ctx, prepared, in, sel)
 		if err != nil {
 			// A pattern ripgrep cannot compile is the caller's mistake,
 			// not ours, and rg's message names the exact position.
@@ -381,10 +428,36 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		// Attach CLI command equivalent. CLICommand is *string because a
 		// schema-documented field must emit null rather than vanish, so
 		// &cli converts the builder's string into a pointer.
-		cli := BuildCLICommand("trace", prepared.cliParams(in))
+		params := prepared.cliParams(in.Regexp, &in.TraceSwitches)
+		if sel != nil {
+			params["signatures"] = in.Signatures
+		}
+		cli := BuildCLICommand("trace", params)
 		resp.CLICommand = &cli
 
 		return &traceOutput{Body: *resp}, nil
+	})
+}
+
+// runTrace runs the search of a GET /v1/trace request: the engine's
+// search of the patterns, or, with signatures (sel not nil),
+// findings.Search, the search and a scan of every file it covered,
+// which `rx trace --signatures` runs too. The findings' context lines
+// are the request's context window, and no_cache and no_index reach
+// the findings cache and the text reads as they reach the search.
+func (s *Server) runTrace(ctx context.Context, prepared *preparedTrace, in *signatureTraceInput, sel []*signatures.Signature) (*rxtypes.TraceResponse, error) {
+	if sel == nil {
+		return s.cfg.Engine.RunWithOptions(ctx, prepared.paths, in.Regexp, prepared.options)
+	}
+	opts := *s.cfg.Findings
+	opts.Scan.NoCache = in.NoCache
+	if in.NoIndex {
+		opts.IndexLoader = samples.NoIndex
+	}
+	opts.Before, opts.After = in.contextWindow()
+	return findings.Search(ctx, s.cfg.Engine, findings.SearchRequest{
+		Paths: prepared.paths, Patterns: in.Regexp, Search: prepared.options,
+		Catalogue: s.cfg.Signatures, Selection: sel, Findings: opts,
 	})
 }
 

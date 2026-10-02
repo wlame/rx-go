@@ -184,6 +184,8 @@ nav:
           - api/endpoints/tasks.md
           - api/endpoints/compress.md
           - api/endpoints/tree.md
+          - api/endpoints/signatures.md
+          - api/endpoints/findings.md
           - api/endpoints/logs-chains.md
           - api/endpoints/logs-chain.md
           - api/endpoints/logs-index.md

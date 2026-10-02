@@ -36,6 +36,7 @@ on an Apple-silicon Mac:
     "log_chains",
     "samples_index_build",
     "samples_timestamps",
+    "signatures",
     "time_range",
     "trace_context_and_switches",
     "trace_matching_flags"
@@ -128,6 +129,7 @@ tells a client whether it can read this server at all.
 | `time_range` | [`GET /v1/time-range`](time-range.md): a file's timestamp format and first and last timestamp |
 | `file_tz` | `file_tz` on [`GET /v1/samples`](samples.md) and [`GET /v1/time-range`](time-range.md): a file's timestamps read as wall clock in a chosen zone |
 | `log_chains` | [`GET /v1/logs/chains`](logs-chains.md): the log chains of a directory, the files of each rotated log found by their names; [`GET /v1/logs/chain`](logs-chain.md): one chain described, its parts in time order |
+| `signatures` | [`GET /v1/signatures`](signatures.md): the signature catalogue; [`GET /v1/findings`](findings.md) and `POST /v1/findings`: a file's cached findings and a scan of it as a task; [`DELETE /v1/tasks/{task_id}`](tasks.md#delete-v1taskstask_id): a scan cancelled; `signatures` on [`GET /v1/trace`](trace.md#signatures); `findings` on each file of [`GET /v1/tree`](tree.md) |
 
 rx-python reports no `features`.
 

@@ -676,6 +676,25 @@ rx --signatures=all,-pii -e timeout app.log          # with a pattern
 The output, the JSON fields and the flags are on the
 [`rx trace`](../cli/trace.md#signatures) page.
 
+## Signatures over HTTP
+
+`rx serve` loads the signatures once when it starts and logs each load
+error; a change to a signature file takes a restart. The routes give
+what the CLI gives, through the same scan, cache and masking:
+
+- [`GET /v1/signatures`](../api/endpoints/signatures.md): the catalogue,
+  as `rx signatures --json` prints it, load errors included.
+- [`GET /v1/findings`](../api/endpoints/findings.md): a file's findings
+  from the findings cache alone, filtered and paged, with their text and
+  their place on a timeline when asked; it never scans.
+- [`POST /v1/findings`](../api/endpoints/findings.md#post-v1findings): a
+  scan of a file as a background task, at most `RX_MAX_SIGNATURE_SCANS`
+  at once, cancelled by `DELETE /v1/tasks/{task_id}`.
+- `signatures` on [`GET /v1/trace`](../api/endpoints/trace.md#signatures):
+  the answer of `rx trace --signatures=… --json`.
+- `findings` on each file of [`GET /v1/tree`](../api/endpoints/tree.md):
+  the file's state and findings count, from its `meta.json` alone.
+
 ## See also
 
 - [`rx signatures`](../cli/signatures.md) — list, show, check, template

@@ -26,12 +26,16 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `POST` | `/v1/index` | Build a new index (background task) | [line-index](endpoints/line-index.md) |
 | `POST` | `/v1/compress` | Compress to seekable zstd (background task) | [compress](endpoints/compress.md) |
 | `GET` | `/v1/tasks/{task_id}` | Poll a background task | [tasks](endpoints/tasks.md) |
+| `DELETE` | `/v1/tasks/{task_id}` | Cancel a findings scan | [tasks](endpoints/tasks.md#delete-v1taskstask_id) |
 | `GET` | `/v1/tree` | Browse directories within search roots | [tree](endpoints/tree.md) |
 | `GET` | `/v1/logs/chains` | The log chains (rotated logs) of a directory | [logs-chains](endpoints/logs-chains.md) |
 | `GET` | `/v1/logs/chain` | One log chain described: parts in time order, checks, state, fingerprint | [logs-chain](endpoints/logs-chain.md) |
 | `POST` | `/v1/logs/index` | Index every part of one log chain (background task) | [logs-index](endpoints/logs-index.md) |
 | `GET` | `/v1/logs/samples` | Lines of a log chain by global line, by part and line, or by time | [logs-samples](endpoints/logs-samples.md) |
 | `GET` | `/v1/logs/trace` | Search log chains, directories and files: each chain's parts in its order, each match with its line in the chain | [logs-trace](endpoints/logs-trace.md) |
+| `GET` | `/v1/signatures` | The signature catalogue the server loaded | [signatures](endpoints/signatures.md) |
+| `GET` | `/v1/findings` | A file's findings from the findings cache: filtered, paged, with text and timeline ticks | [findings](endpoints/findings.md) |
+| `POST` | `/v1/findings` | Scan a file for signatures (background task) | [findings](endpoints/findings.md#post-v1findings) |
 | `GET` | `/v1/detectors` | List registered anomaly detectors | [detectors](endpoints/detectors.md) |
 | `GET` | `/metrics` | Prometheus exposition | [metrics](endpoints/metrics.md) |
 

@@ -63,8 +63,9 @@ Endpoints are grouped by `tag` in the spec and UI:
 | Search | `/v1/trace` |
 | Context | `/v1/samples`, `/v1/time-range` |
 | Indexing | `GET /v1/index`, `POST /v1/index` |
-| Operations | `POST /v1/compress`, `GET /v1/tasks/*` |
+| Operations | `POST /v1/compress`, `GET /v1/tasks/*`, `DELETE /v1/tasks/*` |
 | FileTree | `/v1/tree` |
+| Signatures | `/v1/signatures`, `GET /v1/findings`, `POST /v1/findings` |
 | Analysis | `/v1/detectors` |
 | Monitoring | `/metrics` (though `/metrics` is documented outside the OpenAPI spec because it's not JSON) |
 

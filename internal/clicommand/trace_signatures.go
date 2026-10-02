@@ -129,26 +129,20 @@ func runSignatureTrace(ctx context.Context, engine *trace.Engine, run signatureT
 }
 
 // signatureTraceOptions reads the settings of the findings of a trace
-// from the environment and the flags.
+// from the environment (webapi.FindingsOptionsFromEnv) and the flags.
 func signatureTraceOptions(p traceParams, cat *signatures.Catalogue) findings.TraceOptions {
-	scan := findingsScanOptions()
-	scan.NoCache = p.noCache
+	opts := webapi.FindingsOptionsFromEnv()
+	opts.Scan.NoCache = p.noCache
 	// Every loaded redacting signature masks every excerpt and line, the
 	// selected ones and the others alike.
-	scan.Scan.Redactors = cat.Redactors()
-	loader := samples.IndexLoader(samples.StoredIndex)
+	opts.Scan.Scan.Redactors = cat.Redactors()
+	opts.IndexLoader = samples.StoredIndex
 	if p.noIndex {
-		loader = samples.NoIndex
+		opts.IndexLoader = samples.NoIndex
 	}
-	return findings.TraceOptions{
-		Scan:          scan,
-		Before:        resolveBefore(p),
-		After:         resolveAfter(p),
-		LineTextBytes: config.MaxLineTextBytes(),
-		TextBudget:    config.FindingsTextMaxBytes(),
-		LogZone:       config.LogTZ().Location,
-		IndexLoader:   loader,
-	}
+	opts.Before = resolveBefore(p)
+	opts.After = resolveAfter(p)
+	return opts
 }
 
 // signatureCLIParams are the values the equivalent command of a trace

@@ -41,7 +41,7 @@ type treeOutput struct {
 //
 // Returns 404 when the directory doesn't exist, 400 when it's a file
 // (not a directory), 403 when outside the sandbox.
-func registerTreeHandlers(_ *Server, api huma.API) {
+func registerTreeHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "tree",
 		Method:      http.MethodGet,
@@ -54,7 +54,7 @@ func registerTreeHandlers(_ *Server, api huma.API) {
 	}, func(_ context.Context, in *treeInput) (*treeOutput, error) {
 		// Empty path = "list search roots".
 		if in.Path == "" {
-			return &treeOutput{Body: listSearchRoots()}, nil
+			return &treeOutput{Body: listSearchRoots(s.treeFindings)}, nil
 		}
 
 		validated, err := paths.ValidatePathWithinRoots(in.Path)
@@ -89,7 +89,7 @@ func registerTreeHandlers(_ *Server, api huma.API) {
 			return nil, ErrForbidden(fmt.Sprintf("Permission denied: %s", validated))
 		}
 
-		resp := buildTreeResponse(validated, entries)
+		resp := buildTreeResponse(validated, entries, s.treeFindings)
 		return &treeOutput{Body: resp}, nil
 	})
 }
@@ -99,7 +99,7 @@ func registerTreeHandlers(_ *Server, api huma.API) {
 // When no search roots are configured (unsandboxed CLI use) we return
 // an empty list so the frontend can render a "no sandbox configured"
 // message.
-func listSearchRoots() rxtypes.TreeResponse {
+func listSearchRoots(findingsOf treeFindingsFunc) rxtypes.TreeResponse {
 	roots := paths.GetSearchRoots()
 	if len(roots) == 0 {
 		return rxtypes.TreeResponse{
@@ -118,7 +118,7 @@ func listSearchRoots() rxtypes.TreeResponse {
 			out = append(out, rxtypes.TreeEntry{Name: filepath.Base(root), Path: root, Type: "directory"})
 			continue
 		}
-		out = append(out, buildEntryMetadata(pinned, filepath.Base(root)))
+		out = append(out, buildEntryMetadata(pinned, filepath.Base(root), findingsOf))
 	}
 	return rxtypes.TreeResponse{
 		Path:         "/",
@@ -141,7 +141,7 @@ func listSearchRoots() rxtypes.TreeResponse {
 // a regular file nor a directory (a named pipe, a socket, a device),
 // which no route opens. A symlink to a directory inside the roots is
 // listed as a directory.
-func buildTreeResponse(absPath string, entries []paths.ListedEntry) rxtypes.TreeResponse {
+func buildTreeResponse(absPath string, entries []paths.ListedEntry, findingsOf treeFindingsFunc) rxtypes.TreeResponse {
 	// Split dirs and files, sort each alphabetically (case-insensitive).
 	dirs := make([]paths.ListedEntry, 0, len(entries))
 	files := make([]paths.ListedEntry, 0, len(entries))
@@ -187,7 +187,7 @@ func buildTreeResponse(absPath string, entries []paths.ListedEntry) rxtypes.Tree
 	out := make([]rxtypes.TreeEntry, 0, len(merged))
 	var totalSize int64
 	for _, e := range merged {
-		entry := buildEntryMetadata(e.Target, e.Name)
+		entry := buildEntryMetadata(e.Target, e.Name, findingsOf)
 		out = append(out, entry)
 		if entry.Size != nil {
 			totalSize += *entry.Size
@@ -209,13 +209,36 @@ func buildTreeResponse(absPath string, entries []paths.ListedEntry) rxtypes.Tree
 	return resp
 }
 
+// treeFindingsFunc gives what the findings cache holds for a text file
+// of a listing, or nil (Server.treeFindings).
+type treeFindingsFunc func(target paths.Pinned) *rxtypes.TreeFindings
+
+// treeFindings is what the findings cache holds for a text file of a
+// listing: its state and its findings count, from the file's summary
+// file alone (findings.Summary, which compares the file's identity by
+// the stat its pin holds and reads nothing of the file). It is nil when
+// the cache holds nothing current for the file, and, like the other
+// metadata of a listing, when the summary cannot be read; that is
+// logged at debug level.
+func (s *Server) treeFindings(target paths.Pinned) *rxtypes.TreeFindings {
+	summary, err := s.cfg.findingsSummary(target, s.cfg.Signatures, s.cfg.Findings.Scan)
+	if err != nil {
+		s.cfg.Logger.Debug("findings_summary_unreadable", "path", target.Path(), "error", err.Error())
+		return nil
+	}
+	if summary == nil {
+		return nil
+	}
+	return &rxtypes.TreeFindings{State: string(summary.State), Count: summary.Count}
+}
+
 // buildEntryMetadata computes all TreeEntry fields for one entry, from
 // the file or directory it was pinned to when it was listed. Every stat
 // and read goes through the pin, so an entry retargeted since cannot
 // lend it the size, type or children of a file elsewhere.
 // Best-effort: if stat fails we return what we have; the frontend
 // tolerates missing fields (they're all pointer types).
-func buildEntryMetadata(target paths.Pinned, name string) rxtypes.TreeEntry {
+func buildEntryMetadata(target paths.Pinned, name string, findingsOf treeFindingsFunc) rxtypes.TreeEntry {
 	entryPath := target.Path()
 	isDir := target.Info().IsDir()
 	entry := rxtypes.TreeEntry{
@@ -273,6 +296,11 @@ func buildEntryMetadata(target paths.Pinned, name string) rxtypes.TreeEntry {
 	}
 	entry.IsCompressed = &isCompressed
 	entry.IsText = &isText
+	// Only a text file is scanned for signatures; a directory and any
+	// other file keep findings null.
+	if isText {
+		entry.Findings = findingsOf(target)
+	}
 
 	// Index status. A peek, not a lookup: listing a directory does not
 	// use its indexes, so it must not move the index cache metrics.

@@ -1,14 +1,15 @@
-# `GET /v1/tasks/{task_id}`
+# `GET /v1/tasks/{task_id}`, `DELETE /v1/tasks/{task_id}`
 
-Poll the status of a background task created by `POST /v1/index` or
-`POST /v1/compress`, or of the index build a `GET /v1/samples` request
-answered `202` for.
+Poll the status of a background task created by `POST /v1/index`,
+`POST /v1/compress`, `POST /v1/logs/index` or `POST /v1/findings`, or of
+the index build a `GET /v1/samples` request answered `202` for; cancel a
+findings scan.
 
 ## Purpose
 
-Return the current state (queued, running, completed, failed) of a
-detached task, along with its result on completion or error message on
-failure.
+Return the current state (queued, running, completed, failed,
+cancelled) of a detached task, along with its result on completion or
+error message on failure.
 
 ## Request
 
@@ -36,6 +37,8 @@ GET /v1/tasks/{task_id}
   "completed_at": null,
   "error":       null,
   "progress":    null,
+  "bytes_read":  null,
+  "bytes_total": null,
   "result":      null
 }
 ```
@@ -52,6 +55,8 @@ GET /v1/tasks/{task_id}
   "completed_at": null,
   "error":       null,
   "progress":    0.42,
+  "bytes_read":  null,
+  "bytes_total": null,
   "result":      null
 }
 ```
@@ -68,6 +73,8 @@ GET /v1/tasks/{task_id}
   "completed_at": "2026-04-18T14:23:48.456789Z",
   "error":       null,
   "progress":    1,
+  "bytes_read":  null,
+  "bytes_total": null,
   "result": {
     "success":    true,
     "path":       "/var/log/audit-2026-03.log",
@@ -100,6 +107,8 @@ GET /v1/tasks/{task_id}
   "completed_at": "2026-04-18T14:23:46.789012Z",
   "error":       "build index: permission denied reading /var/log/audit-2026-03.log",
   "progress":    null,
+  "bytes_read":  null,
+  "bytes_total": null,
   "result":      null
 }
 ```
@@ -109,14 +118,16 @@ GET /v1/tasks/{task_id}
 | Field | Type | Description |
 |---|---|---|
 | `task_id` | string | UUID v4 of the task |
-| `status` | string | `"queued"`, `"running"`, `"completed"`, or `"failed"` |
+| `status` | string | `"queued"`, `"running"`, `"completed"`, `"failed"`, or `"cancelled"` (a findings task stopped by [`DELETE`](#delete-v1taskstask_id)) |
 | `path` | string | The validated absolute path the task operates on; for a `chain_index` task, the chain's handle |
-| `operation` | string | `"index"`, `"compress"` or `"chain_index"` (the index task of a log chain) |
+| `operation` | string | `"index"`, `"compress"`, `"chain_index"` (the index task of a log chain) or `"findings"` (a signature scan, [`POST /v1/findings`](findings.md#post-v1findings)) |
 | `started_at` | string | ISO 8601 UTC — when the task was created |
-| `completed_at` | string \| null | Set once the task reaches `completed` or `failed` |
+| `completed_at` | string \| null | Set once the task reaches `completed`, `failed` or `cancelled` |
 | `error` | string \| null | Populated only when `status == "failed"` |
 | `progress` | number \| null | Share of an index task's input read so far, from 0 to 1 (a stream-compressed or plain file counts its bytes on disk, a seekable zstd file its decompressed text); for a `chain_index` task, the share of its parts done, a part whose build runs counted by that build's progress. `null` for a compress task, for an index task that reused a stored index, and before the build has started |
-| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult`, `CompressTaskResult` or `ChainIndexTaskResult` by operation |
+| `bytes_read` | int64 \| null | Bytes of the file a findings task has read so far, as stored on disk. `null` for the other operations, and for a findings task that has not started reading (one waiting in the scan queue, or one the findings cache answers whole) |
+| `bytes_total` | int64 \| null | The size of the file a findings task reads, as stored on disk; `null` when `bytes_read` is. A findings task's `progress` is `bytes_read / bytes_total` |
+| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult`, `CompressTaskResult`, `ChainIndexTaskResult` or `FindingsResponse` by operation |
 
 ### Result shape by operation
 
@@ -127,6 +138,9 @@ GET /v1/tasks/{task_id}
   [compress task result](compress.md#task-result-shape)
 - `operation == "chain_index"`: `ChainIndexTaskResult`, see
   [`POST /v1/logs/index`](logs-index.md#task-result)
+- `operation == "findings"`: `FindingsResponse`, the answer
+  [`GET /v1/findings`](findings.md) gives for the scanned selection
+  without filters: the summary and the first page of 1,000 findings
 
 ## Status codes
 
@@ -139,19 +153,60 @@ GET /v1/tasks/{task_id}
 
 ```text
 queued → running → (completed | failed)
+queued | running → cancelled        (a findings task, by DELETE)
 ```
 
-- `queued` is the initial state right after the POST returns
-- `running` once the background goroutine calls `MarkRunning`
+- `queued` is the initial state right after the POST returns; a
+  findings task stays `queued` while it waits for the scan queue
+  (`RX_MAX_SIGNATURE_SCANS`) or for a scan of the same file
+- `running` once the background goroutine calls `MarkRunning`; a
+  findings task, once it reads the file (a findings task the cache
+  answers whole goes from `queued` to `completed`)
 - `completed` on success with a populated `result`
 - `failed` on error with a populated `error` string
+- `cancelled` when `DELETE` stopped a findings task: no `error`, no
+  `result`
 
 Transitions are monotonic — a task never moves back to an earlier
 state.
 
+## `DELETE /v1/tasks/{task_id}`
+
+Cancels a queued or running findings task ([`POST /v1/findings`](findings.md#post-v1findings)):
+the scan stops at its next read and caches nothing, and the task ends at
+once with status `cancelled`, which the answer shows. A client that
+joined the same scan sees it `cancelled` and may start it again; a new
+`POST` for the file starts a new task at once.
+
+```bash
+curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4'
+```
+
+```json
+{
+  "task_id":     "440cb10b-c583-42ca-9283-840f514c8bd4",
+  "status":      "cancelled",
+  "path":        "/var/log/app.log",
+  "operation":   "findings",
+  "started_at":  "2026-10-11T08:49:44.199639Z",
+  "completed_at": "2026-10-11T08:49:45.012345Z",
+  "error":       null,
+  "progress":    0.41,
+  "bytes_read":  52428800,
+  "bytes_total": 127926272,
+  "result":      null
+}
+```
+
+| Code | When |
+|---:|---|
+| `200 OK` | The task is cancelled; its status is returned |
+| `404 Not Found` | Task ID unknown or already swept |
+| `409 Conflict` | The task is not a findings task (an index, compress or chain_index task cannot be cancelled), or it has already ended. The body is `{"detail", "task_id"}` |
+
 ## Sweeper behavior
 
-Finished tasks (both `completed` and `failed`) are swept from memory by
+Finished tasks (`completed`, `failed` and `cancelled`) are swept from memory by
 a background goroutine that runs every 5 minutes. A task is swept when
 its `completed_at` is older than `RX_TASK_TTL_MINUTES` (default 60).
 

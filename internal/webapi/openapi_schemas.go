@@ -115,8 +115,8 @@ func integerItem(minimum float64, description string) *huma.Schema {
 type taskResultSchema struct{}
 
 // Schema implements huma.SchemaProvider: the result of a task is an
-// IndexTaskResult, a CompressTaskResult, a ChainIndexTaskResult, or
-// null until the task completes.
+// IndexTaskResult, a CompressTaskResult, a ChainIndexTaskResult, a
+// FindingsResponse, or null until the task completes.
 //
 // It is anyOf rather than oneOf because huma's validator accepts any
 // value for a {"type": "null"} branch, so with oneOf a real result would
@@ -125,12 +125,13 @@ type taskResultSchema struct{}
 func (taskResultSchema) Schema(r huma.Registry) *huma.Schema {
 	schema := &huma.Schema{
 		Description: "The task's result once it completes: IndexTaskResult for an index task, " +
-			"CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task. " +
-			"Null until then.",
+			"CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task, " +
+			"FindingsResponse for a findings task. Null until then.",
 		AnyOf: []*huma.Schema{
 			r.Schema(reflect.TypeOf(rxtypes.IndexTaskResult{}), true, ""),
 			r.Schema(reflect.TypeOf(rxtypes.CompressTaskResult{}), true, ""),
 			r.Schema(reflect.TypeOf(rxtypes.ChainIndexTaskResult{}), true, ""),
+			r.Schema(reflect.TypeOf(rxtypes.FindingsResponse{}), true, ""),
 			{Type: "null"},
 		},
 	}

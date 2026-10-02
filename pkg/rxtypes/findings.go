@@ -109,3 +109,57 @@ type FindingSeries struct {
 	StartMS  int64   `json:"start_ms" doc:"Start of the first bucket, in milliseconds since the Unix epoch, as an instant read the way the answer reads the file's times."`
 	Counts   []int64 `json:"counts" nullable:"false" doc:"Lines in each bucket, in time order."`
 }
+
+// FindingsResponse is the findings of one file, as the findings cache
+// holds them: the body of GET /v1/findings and the result of a findings
+// task (POST /v1/findings), which is the same answer with no filter and
+// the first page.
+//
+// The summary members (State to Series, Total and CLICommand) describe
+// the requested selection; Findings is one page of the stored findings
+// that pass the request's filters, and Ticks, when asked for, places
+// those findings on a timeline.
+type FindingsResponse struct {
+	State      string                   `json:"state" enum:"full,partial,none" doc:"full: every signature of the default set has a current cache entry for the file; partial: at least one signature has one (an opt-in one included), and not full; none: none has."`
+	Checked    []string                 `json:"checked" nullable:"false" doc:"The signatures of the selection the cache answers, in catalogue order."`
+	Missing    []string                 `json:"missing" nullable:"false" doc:"The signatures of the selection the cache does not answer (never scanned, or stale), in catalogue order. A scan (POST /v1/findings) fills them."`
+	Counts     map[string]FindingCount  `json:"counts" doc:"The findings counts of every checked signature, by id."`
+	Series     map[string]FindingSeries `json:"series" doc:"The bucket series of every checked density signature, by id; a series whose start cannot be read in the request's file_tz is left out."`
+	Total      int                      `json:"total" doc:"How many stored findings of the checked signatures pass the filters: the length of the list the page is cut from."`
+	Findings   []Finding                `json:"findings" nullable:"false" doc:"One page of the stored findings that pass the filters: from offset, at most limit. In the one order (first line, last line, signature id), or the reverse with before_line."`
+	Ticks      *FindingsTicks           `json:"ticks" doc:"The filtered findings placed on a timeline, with ticks=W; null without it."`
+	CLICommand string                   `json:"cli_command" doc:"The rx command that gives the same findings."`
+}
+
+// FindingsTicks places the filtered findings of a file on a timeline of
+// Width columns over the file's time range, the range GET /v1/time-range
+// gives for the same file_tz: column k holds the findings whose time t
+// has floor((t - start_ms) * width / (end_ms - start_ms + 1)) = k.
+type FindingsTicks struct {
+	_       struct{}     `nullable:"true"`
+	Width   int          `json:"width" doc:"The number of columns asked for (ticks=W)."`
+	StartMS *int64       `json:"start_ms" doc:"The file's first timestamp as GET /v1/time-range gives it (first_ms) for the same file_tz; null when it gives none."`
+	EndMS   *int64       `json:"end_ms" doc:"The file's last timestamp as GET /v1/time-range gives it (last_ms) for the same file_tz; null when it gives none."`
+	Columns []TickColumn `json:"columns" nullable:"false" doc:"Each column that holds at least one filtered finding with a time, in column order. Empty when start_ms or end_ms is null. A finding without a time, or with a time outside start_ms to end_ms, is in no column."`
+}
+
+// TickColumn is one column of a timeline that holds findings.
+type TickColumn struct {
+	Column     int                  `json:"column" doc:"The column, from 0 to width - 1."`
+	Signatures map[string]TickCount `json:"signatures" doc:"The findings of the column, by signature id."`
+}
+
+// TickCount is how many findings of one signature fall in one column,
+// and the first of them.
+type TickCount struct {
+	Count     int   `json:"count" doc:"How many findings of the signature fall in the column."`
+	FirstLine int64 `json:"first_line" doc:"The first line of the first of them, in line order."`
+}
+
+// FindingsScanRequest is the body of POST /v1/findings: the file to
+// scan and the signatures to scan it for.
+type FindingsScanRequest struct {
+	Path       string `json:"path" doc:"The file to scan. Must be inside a configured --search-root."`
+	Signatures string `json:"signatures,omitempty" required:"false" default:"default" maxLength:"4096" doc:"The selection, as rx trace --signatures= takes it: comma-separated ids, groups and tags, all, default, -word to remove (traceback,sql; all,-pii). Default: the default set."`
+	Force      bool   `json:"force,omitempty" required:"false" default:"false" doc:"Scan every selected signature again, those with a current cache entry too."`
+}
