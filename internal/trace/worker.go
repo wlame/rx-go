@@ -798,13 +798,27 @@ func isBrokenPipe(err error) bool {
 // newRgArgs returns the arguments every rx search starts ripgrep with,
 // as a fresh slice the caller appends to.
 //
+// Every ripgrep call that searches a file's content takes its arguments
+// from here: plain chunks (ProcessChunk), decompressed streams
+// (ProcessCompressed) and seekable-zstd frames (scanFrameBatch). A flag
+// that must apply to every search belongs in this list.
+//
 // --no-config keeps RIPGREP_CONFIG_PATH out of the answer. A user's
 // ripgreprc can hold --fixed-strings, --smart-case or --max-columns,
 // each of which changes what rg reports, and an rx answer must not
 // depend on who runs it. --json is the event stream the parser reads;
 // --no-heading and --color=never keep it free of decoration.
+//
+// --text turns ripgrep's own binary detection off. rx decides whether a
+// file is text before any rg starts (isTextFile: a NUL byte in the
+// first 8 KiB makes it binary), so a file that reaches rg is text, and
+// a NUL further on is one more byte of its line. Without --text, rg
+// reading stdin replaces each NUL with a line break: it numbers every
+// later line of the chunk too high and reports a NUL line as two
+// fragments, the second at an offset inside the line. With --text, a
+// NUL line arrives whole, its NUL escaped as \u0000 in the JSON text.
 func newRgArgs() []string {
-	return []string{"--no-config", "--json", "--no-heading", "--color=never"}
+	return []string{"--no-config", "--json", "--no-heading", "--color=never", "--text"}
 }
 
 // ErrInvalidPattern reports a pattern ripgrep refused to compile. It is
