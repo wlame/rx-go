@@ -38,7 +38,8 @@ func submatchFixtureText(size int) []byte {
 		"LINE %d %x ошибкаслитно word\n",
 	}
 	rng := rand.New(rand.NewSource(1)) //nolint:gosec // reproducible fixture bytes, not a secret
-	hex := make([]byte, 12)
+	// Long lines keep the match count, and so the test's run time, low.
+	hex := make([]byte, 96)
 	var b bytes.Buffer
 	for line := 1; b.Len() < size; line++ {
 		_, _ = rng.Read(hex)
@@ -107,7 +108,7 @@ func TestCacheHitGivesEveryMatchTheScansSubmatches(t *testing.T) {
 func TestSeekableCacheHitGivesEveryMatchTheScansSubmatches(t *testing.T) {
 	largeFileCacheEnv(t)
 	path := filepath.Join(t.TempDir(), "submatches.log.zst")
-	text := submatchFixtureText(4 << 20)
+	text := submatchFixtureText(3 << 20)
 	seekablefile.Write(t, path, seekablefile.SplitEvery(text, 256<<10))
 	if info, err := os.Stat(path); err != nil || info.Size() < 1<<20 {
 		t.Fatalf("the seekable fixture must be at least 1 MB to be cached (stat: %v, %v)", info, err)
@@ -193,12 +194,16 @@ func TestCacheHitWithASpanPastItsLineSkipsTheFile(t *testing.T) {
 	}
 }
 
+// denseFiller pads each line of the dense fixtures, so they pass the
+// 1 MB cache threshold with few lines and few matches.
+var denseFiller = strings.Repeat(".", 1000)
+
 // denseLineLog is a log of about size bytes in which every line holds
 // perLine matches of `x`.
 func denseLineLog(size, perLine int) []byte {
 	var b strings.Builder
 	for line := 1; b.Len() < size; line++ {
-		fmt.Fprintf(&b, "LINE %d %s\n", line, strings.Repeat("x ", perLine))
+		fmt.Fprintf(&b, "LINE %d %s %s\n", line, denseFiller, strings.Repeat("x ", perLine))
 	}
 	return []byte(b.String())
 }
@@ -211,7 +216,7 @@ func denseLineLog(size, perLine int) []byte {
 func TestTraceThatLeavesSubmatchesOutIsNotCached(t *testing.T) {
 	largeFileCacheEnv(t)
 	setLineLimits(t, 1<<20, 3)
-	path := writeTextFile(t, "dense.log", denseLineLog(2<<20, 5))
+	path := writeTextFile(t, "dense.log", denseLineLog(3<<19, 5))
 	patterns := []string{"x"}
 
 	first := traceOnce(t, path, patterns, Options{})
@@ -234,8 +239,8 @@ func TestTraceThatLeavesOnePatternsSubmatchesOutIsNotCached(t *testing.T) {
 	largeFileCacheEnv(t)
 	setLineLimits(t, 1<<20, 3)
 	var b strings.Builder
-	for line := 1; b.Len() < 2<<20; line++ {
-		fmt.Fprintf(&b, "LINE %d xxxxxx\n", line)
+	for line := 1; b.Len() < 3<<19; line++ {
+		fmt.Fprintf(&b, "LINE %d %s xxxxxx\n", line, denseFiller)
 	}
 	path := writeTextFile(t, "dense.log", []byte(b.String()))
 	patterns := []string{"xx", "x"}
@@ -256,7 +261,7 @@ func TestTraceThatLeavesOnePatternsSubmatchesOutIsNotCached(t *testing.T) {
 // ones and marks the list, as a scan under that bound does.
 func TestCacheHitUnderALowerSubmatchBoundAnswersAsTheScan(t *testing.T) {
 	largeFileCacheEnv(t)
-	path := writeTextFile(t, "dense.log", denseLineLog(2<<20, 5))
+	path := writeTextFile(t, "dense.log", denseLineLog(3<<19, 5))
 	patterns := []string{"x"}
 	traceOnce(t, path, patterns, Options{})
 
