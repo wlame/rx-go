@@ -31,7 +31,10 @@ var openForReconstruct = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
 // ReconstructRequest describes one cache hit to rebuild.
 type ReconstructRequest struct {
 	// Source is the cached file, pinned when the trace checked it.
-	Source        sandbox.Pinned
+	Source sandbox.Pinned
+	// Cached are the entry's records. Each PatternIndex is a position in
+	// Patterns, the search's own order: an entry read through
+	// loadValidCache has been put into that order already.
 	Cached        []rxtypes.TraceCacheMatch
 	Patterns      []string
 	FileID        string

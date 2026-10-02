@@ -86,6 +86,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A trace answered from the trace cache labels each match with the
+  pattern it matched, whatever order the patterns come in. Searches
+  that list the same patterns in another order (`-e WARN -e NEEDLE`
+  and `-e NEEDLE -e WARN`, or `regexp=` in another order over HTTP)
+  share one cache entry, and a hit used to read each stored match's
+  pattern position against the reader's order: every match of a
+  two-pattern search came back under the other pattern's ID, with the
+  submatches of that other pattern (often none). A hit now translates
+  each stored position through the patterns the entry lists to the
+  reader's ID, and an entry that does not list the reader's patterns is
+  treated as a miss. The cache format is unchanged.
+
 - `rx trace` and `GET /v1/trace` answer a line whose ripgrep JSON event
   is larger than 16 MiB: a matched line that long, or a shorter one on
   which the pattern matches very often (a 1 MB line of `x` searched
