@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
 
@@ -203,12 +204,21 @@ func encodeInto(ctx context.Context, text io.Reader, dst *os.File, opts Options)
 // was read as. A plain file is read up to the size it had when it was
 // opened, so a log that grows during the encoding is encoded as it was
 // at the start, the way a trace plans its chunks.
+//
+// The path is pinned first (paths.Pin), which checks it against the
+// search roots and the hidden rule again: an HTTP compression runs as a
+// background task, well after its request's check, and a link
+// retargeted in between must not be copied into the root.
 func openText(path string) (io.ReadCloser, compression.Format, error) {
+	pinned, err := paths.Pin(path)
+	if err != nil {
+		return nil, compression.FormatNone, err
+	}
 	format, err := inputFormat(path)
 	if err != nil {
 		return nil, compression.FormatNone, fmt.Errorf("detect input format: %w", err)
 	}
-	src, err := os.Open(path)
+	src, err := pinned.Open()
 	if err != nil {
 		return nil, compression.FormatNone, fmt.Errorf("open input: %w", err)
 	}

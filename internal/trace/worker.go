@@ -255,10 +255,11 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 
 	// Open the source file. ReadAt is goroutine-safe and doesn't move
 	// a shared cursor, so we can stream in one goroutine while parsing
-	// events in another.
-	src, err := os.Open(task.FilePath)
+	// events in another. Source.Open refuses a path that no longer leads
+	// to the file the trace checked.
+	src, err := task.Source.Open()
 	if err != nil {
-		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: open %s: %w", task.FilePath, err)
+		return ChunkResult{Elapsed: time.Since(start)}, fmt.Errorf("ProcessChunk: open %s: %w", task.Source.Path(), err)
 	}
 	defer func() { _ = src.Close() }()
 

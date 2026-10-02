@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -19,15 +19,17 @@ import (
 // most this much past that line.
 const reconstructBufferBytes = 256 * 1024
 
-// openForReconstruct opens the source a reconstruction pass reads.
+// openForReconstruct opens the source a reconstruction pass reads,
+// refusing a path that no longer leads to the file the trace checked.
 // Tests replace it to count the bytes read.
-var openForReconstruct = func(path string) (io.ReadSeekCloser, error) {
-	return os.Open(path)
+var openForReconstruct = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
+	return src.Open()
 }
 
 // ReconstructRequest describes one cache hit to rebuild.
 type ReconstructRequest struct {
-	SourcePath    string
+	// Source is the cached file, pinned when the trace checked it.
+	Source        sandbox.Pinned
 	Cached        []rxtypes.TraceCacheMatch
 	Patterns      []string
 	FileID        string
@@ -167,7 +169,7 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 		pos, line = end, line+1
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
-				return matches, ctxLines, ends, fmt.Errorf("reconstruct %s: %w", req.SourcePath, readErr)
+				return matches, ctxLines, ends, fmt.Errorf("reconstruct %s: %w", req.Source.Path(), readErr)
 			}
 			break
 		}
@@ -233,19 +235,19 @@ type reconstructSource struct {
 // positions it so the first cached match is reached with room to spare
 // for its leading context.
 func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstructSource, error) {
-	f, err := openForReconstruct(req.SourcePath)
+	f, err := openForReconstruct(req.Source)
 	if err != nil {
-		return nil, fmt.Errorf("reconstruct: open %s: %w", req.SourcePath, err)
+		return nil, fmt.Errorf("reconstruct: open %s: %w", req.Source.Path(), err)
 	}
 
 	// A compressed source is read through its decompressor from the
 	// start: cached offsets address the decompressed stream, and there
 	// is no cheap way into the middle of it.
-	if format, _ := compression.DetectFromPath(req.SourcePath); format != compression.FormatNone {
+	if format, _ := compression.DetectFromPath(req.Source.Path()); format != compression.FormatNone {
 		dec, dErr := compression.NewReader(f, format)
 		if dErr != nil {
 			_ = f.Close()
-			return nil, fmt.Errorf("reconstruct: decompress %s: %w", req.SourcePath, dErr)
+			return nil, fmt.Errorf("reconstruct: decompress %s: %w", req.Source.Path(), dErr)
 		}
 		return &reconstructSource{
 			reader:    dec,
@@ -260,7 +262,7 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 	}
 	// Start one checkpoint earlier than the one holding the first
 	// match, so the lines before it are available as leading context.
-	idx, idxErr := index.LoadForSource(req.SourcePath)
+	idx, idxErr := index.LoadForSource(req.Source.Path())
 	if idxErr != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return src, nil
 	}

@@ -146,7 +146,9 @@ starts with a dot are left out unless the server runs with `--hidden`.
 A symbolic link is listed under its own name with the type of its
 target, so a link to a directory is a `directory`. A link that leads
 outside every search root, into a hidden entry, or to nothing is left
-out, and `children_count` does not count it. See
+out, and `children_count` does not count it. Every link to a directory
+inside the roots is listed, also when several lead to the same one: the
+listing shows one level, and each link is a way to browse into it. See
 [Symlinks inside a directory search](../../concepts/security.md#symlinks-inside-a-directory-search).
 
 ## Status codes

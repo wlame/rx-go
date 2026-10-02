@@ -55,8 +55,8 @@ func TestWorker_RangeContainmentDedup(t *testing.T) {
 	// lines). Together 1000 matches, no duplicates.
 	// ------------------------------------------------------------------
 	t.Run("AdjacentChunks", func(t *testing.T) {
-		task0 := FileTask{TaskID: 0, FilePath: path, Offset: 0, Count: 6000}
-		task1 := FileTask{TaskID: 1, FilePath: path, Offset: 6000, Count: 6000}
+		task0 := FileTask{TaskID: 0, Source: pinForTest(t, path), Offset: 0, Count: 6000}
+		task1 := FileTask{TaskID: 1, Source: pinForTest(t, path), Offset: 6000, Count: 6000}
 
 		res0, err := ProcessChunk(context.Background(), ChunkRequest{
 			Task:         task0,
@@ -116,8 +116,8 @@ func TestWorker_RangeContainmentDedup(t *testing.T) {
 		// Confirms the range-containment filter relies on the chunker
 		// producing a PARTITION, the invariant documented on
 		// ProcessChunk in worker.go.
-		task0 := FileTask{TaskID: 0, FilePath: path, Offset: 0, Count: 7000}
-		task1 := FileTask{TaskID: 1, FilePath: path, Offset: 5000, Count: 7000}
+		task0 := FileTask{TaskID: 0, Source: pinForTest(t, path), Offset: 0, Count: 7000}
+		task1 := FileTask{TaskID: 1, Source: pinForTest(t, path), Offset: 5000, Count: 7000}
 
 		res0, err := ProcessChunk(context.Background(), ChunkRequest{
 			Task:         task0,

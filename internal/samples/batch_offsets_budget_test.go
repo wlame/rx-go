@@ -38,12 +38,12 @@ func TestBatchOffsets_AgreeWithOneAtATime(t *testing.T) {
 	path, _ := makeLargeFixture(t, budgetLineCount)
 	offsets := offsetsNearTheEnd(8)
 
-	together, err := lineNumbersForOffsets(path, offsets, nil)
+	together, err := lineNumbersForOffsets(pinForTest(t, path), offsets, nil)
 	if err != nil {
 		t.Fatalf("batch: %v", err)
 	}
 	for _, offset := range offsets {
-		alone, aErr := lineNumberForOffset(path, offset)
+		alone, aErr := lineNumberForOffset(pinForTest(t, path), offset)
 		if aErr != nil {
 			t.Fatalf("offset %d: %v", offset, aErr)
 		}
@@ -59,7 +59,7 @@ func TestBatchOffsets_AgreeWithOneAtATime(t *testing.T) {
 	}
 	shuffled = append(shuffled, offsets[0], offsets[2])
 
-	jumbled, err := lineNumbersForOffsets(path, shuffled, nil)
+	jumbled, err := lineNumbersForOffsets(pinForTest(t, path), shuffled, nil)
 	if err != nil {
 		t.Fatalf("shuffled batch: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestBatchOffsets_AgreeWithOneAtATime(t *testing.T) {
 func TestBatchOffsets_UnterminatedLastLine(t *testing.T) {
 	path := writeExactFixture(t, "alpha\nbeta\ngamma")
 
-	got, err := lineNumbersForOffsets(path, []int64{0, 6, 11}, nil)
+	got, err := lineNumbersForOffsets(pinForTest(t, path), []int64{0, 6, 11}, nil)
 	if err != nil {
 		t.Fatalf("batch: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/testutil/counting"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -37,8 +38,8 @@ func TestCacheHit_CappedTraceReadsOnlyToItsLastMatch(t *testing.T) {
 
 	var read *atomic.Int64
 	original := openForReconstruct
-	openForReconstruct = func(p string) (io.ReadSeekCloser, error) {
-		f, counter := counting.OpenCounting(t, p)
+	openForReconstruct = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
+		f, counter := counting.OpenCounting(t, src.Path())
 		read = counter
 		return f, nil
 	}

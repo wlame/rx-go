@@ -361,10 +361,19 @@ Paste the output. Do not summarize it.
   itself are exempt. The error message is part of the contract.
 - **A directory walk reads only what naming the path would allow.**
   Every walk of a user's directory goes through `paths.WalkDir` (or
-  `paths.ResolveEntry` for a one-level listing such as `/v1/tree`): a
+  `paths.ListDir` for a one-level listing such as `/v1/tree`): a
   symlink is resolved and its target checked like a named path, and a
-  refused one is reported with a reason, never read. Do not add a walk
-  that calls `os.ReadDir` and opens what it finds.
+  refused one is reported with a reason, never read. Each directory is
+  searched once per walk, which bounds the work by the number of real
+  directories. Do not add a walk that calls `os.ReadDir` and opens what
+  it finds.
+- **A file is read only through its pin.** `paths.Pin` checks a path
+  and records the device and inode of the file it leads to;
+  `Pinned.Open` refuses the file when the path leads elsewhere by the
+  time of the read. The trace engine, `samples`, `index.Build` and
+  `compressfile` read a user's file only through a `paths.Pinned`. Do
+  not add an `os.Open` of a user's path in them; take the pin the walk
+  or the caller made, or pin the path yourself.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading

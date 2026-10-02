@@ -104,12 +104,14 @@ func TestTraceCommand_DirectoryWalkStaysInsideTheSearchRoot(t *testing.T) {
 
 	resp := traceDirJSON(t, tree.Root)
 
-	wantFiles := sorted(tree.In, tree.InLink, tree.Deep, tree.DeepByLink)
+	wantFiles := sorted(tree.In, tree.InLink, tree.Deep)
 	if got := searchedFiles(resp); !slices.Equal(got, wantFiles) {
 		t.Errorf("searched %v, want %v", got, wantFiles)
 	}
+	// sub is searched once, under its own path: subdirlink is a second
+	// way into it and is reported as skipped.
 	wantTexts := []string{
-		"LINE 1 deep NEEDLE", "LINE 1 deep NEEDLE",
+		"LINE 1 deep NEEDLE",
 		"LINE 1 inside NEEDLE", "LINE 1 inside NEEDLE",
 	}
 	if got := matchedTexts(resp); !slices.Equal(got, wantTexts) {
@@ -117,7 +119,7 @@ func TestTraceCommand_DirectoryWalkStaysInsideTheSearchRoot(t *testing.T) {
 	}
 	// Every link the walk refused is reported, so a caller can see that
 	// part of the tree was not searched.
-	wantSkipped := sorted(tree.Out, tree.OutDir, tree.Visible, tree.Loop, tree.Self, tree.Dangling)
+	wantSkipped := sorted(tree.Out, tree.OutDir, tree.Visible, tree.Loop, tree.Self, tree.Dangling, tree.SubDirLink)
 	if got := sorted(resp.SkippedFiles...); !slices.Equal(got, wantSkipped) {
 		t.Errorf("skipped %v, want %v", got, wantSkipped)
 	}
@@ -225,18 +227,19 @@ func TestIndexCommand_RecursiveWalkStaysInsideTheSearchRoot(t *testing.T) {
 		paths: []string{tree.Root}, recursive: true, threshold: &zero,
 	})
 
-	wantIndexed := sorted(tree.In, tree.InLink, tree.Deep, tree.DeepByLink)
+	wantIndexed := sorted(tree.In, tree.InLink, tree.Deep)
 	if got := indexedPaths(t, result); !slices.Equal(got, wantIndexed) {
 		t.Errorf("indexed %v, want %v", got, wantIndexed)
 	}
 	reasons := skipReasons(result)
 	for path, wantWord := range map[string]string{
-		tree.Out:      "outside",
-		tree.OutDir:   "outside",
-		tree.Visible:  ".private",
-		tree.Loop:     "loop",
-		tree.Self:     "resolve",
-		tree.Dangling: "resolve",
+		tree.Out:        "outside",
+		tree.OutDir:     "outside",
+		tree.Visible:    ".private",
+		tree.Loop:       "loop",
+		tree.Self:       "resolve",
+		tree.Dangling:   "resolve",
+		tree.SubDirLink: "already searched through",
 	} {
 		if reason, ok := reasons[path]; !ok || !strings.Contains(reason, wantWord) {
 			t.Errorf("skip reason for %s is %q, want one that says %q", path, reason, wantWord)
@@ -262,4 +265,70 @@ func TestIndexCommand_NonRecursiveWalkNeverTakesALinkedDirectoryForAFile(t *test
 		}
 	}
 	requireNoIndexFor(t, tree.Out, tree.Secret, tree.Visible, tree.Private)
+}
+
+// fanOutBudget bounds a search of the fan-out tree. Following every link
+// the way it is met costs 6^6 = 46,656 paths to one file, which took
+// longer than 30 s; entering each directory once takes milliseconds.
+const fanOutBudget = 10 * time.Second
+
+// sandboxedFanOut builds six levels of six links to the next level and
+// confines rx to the tree's root.
+func sandboxedFanOut(t *testing.T) linktree.FanOut {
+	t.Helper()
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	fan := linktree.BuildFanOut(t, 6, 6)
+	if err := paths.SetSearchRoots([]string{fan.Root}); err != nil {
+		t.Fatalf("set search roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	return fan
+}
+
+// countAlreadySearched counts the skip reasons that name a second way
+// into a directory already searched.
+func countAlreadySearched(reasons map[string]string) int {
+	n := 0
+	for _, reason := range reasons {
+		if strings.Contains(reason, "already searched through") {
+			n++
+		}
+	}
+	return n
+}
+
+func TestTraceCommand_FanOutOfDirectoryLinksSearchesEachDirectoryOnce(t *testing.T) {
+	fan := sandboxedFanOut(t)
+
+	start := time.Now()
+	resp := traceDirJSON(t, fan.Top)
+	if elapsed := time.Since(start); elapsed > fanOutBudget {
+		t.Errorf("rx trace took %s, want under %s", elapsed, fanOutBudget)
+	}
+
+	if got := matchedTexts(resp); !slices.Equal(got, []string{"LINE 1 NEEDLE"}) {
+		t.Errorf("matched %v, want the one line of f.log once", got)
+	}
+	// One link per level is followed; the other five are skipped.
+	if want := fan.Levels * (fan.Links - 1); len(resp.SkippedFiles) != want {
+		t.Errorf("skipped %d paths, want %d", len(resp.SkippedFiles), want)
+	}
+}
+
+func TestIndexCommand_FanOutOfDirectoryLinksIndexesTheFileOnce(t *testing.T) {
+	fan := sandboxedFanOut(t)
+	zero := 0
+
+	start := time.Now()
+	result := runIndexJSON(t, indexParams{paths: []string{fan.Top}, recursive: true, threshold: &zero})
+	if elapsed := time.Since(start); elapsed > fanOutBudget {
+		t.Errorf("rx index -r took %s, want under %s", elapsed, fanOutBudget)
+	}
+
+	if got := indexedPaths(t, result); len(got) != 1 || !strings.HasSuffix(got[0], "f.log") {
+		t.Errorf("indexed %v, want f.log once", got)
+	}
+	if got, want := countAlreadySearched(skipReasons(result)), fan.Levels*(fan.Links-1); got != want {
+		t.Errorf("%d skips name a directory already searched, want %d", got, want)
+	}
 }

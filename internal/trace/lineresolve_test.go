@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/index"
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/testutil/counting"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -104,7 +105,7 @@ func TestLineResolver_NoIndexCountsLinesAndNeverReadsTheIndex(t *testing.T) {
 
 	lines := []int{1, 2, 437, 900, len(offsets)}
 	matches := unnumberedMatches(offsets, lines)
-	resolveUnknownLineNumbers(map[string]string{"f1": path}, matches, nil,
+	resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil,
 		lineResolverFor(Options{NoIndex: true}))
 
 	for i, m := range matches {
@@ -129,7 +130,7 @@ func TestLineResolver_DefaultUsesTheIndex(t *testing.T) {
 	saveShiftedIndex(t, path, 1000)
 
 	matches := unnumberedMatches(offsets, []int{900})
-	resolveUnknownLineNumbers(map[string]string{"f1": path}, matches, nil,
+	resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil,
 		lineResolverFor(Options{}))
 
 	// The shifted checkpoints show the number came from the index.
@@ -144,7 +145,7 @@ func TestLineResolver_DefaultWithoutAnIndexLeavesTheLineUnknown(t *testing.T) {
 	offsets := fixtureLineOffsets(t, path)
 
 	matches := unnumberedMatches(offsets, []int{900})
-	resolveUnknownLineNumbers(map[string]string{"f1": path}, matches, nil,
+	resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, matches, nil,
 		lineResolverFor(Options{}))
 
 	if got := matches[0].AbsoluteLineNumber; got != -1 {
@@ -161,7 +162,7 @@ func TestLineResolver_CountingNumbersContextLines(t *testing.T) {
 		fileID: "f1",
 		ctx:    rxtypes.ContextLine{AbsoluteLineNumber: -1, RelativeLineNumber: 7, AbsoluteOffset: offsets[512]},
 	}}
-	resolveUnknownLineNumbers(map[string]string{"f1": path}, nil, contexts,
+	resolveUnknownLineNumbers(map[string]sandbox.Pinned{"f1": pinForTest(t, path)}, nil, contexts,
 		lineResolverFor(Options{NoIndex: true}))
 
 	if got := contexts[0].ctx; got.AbsoluteLineNumber != 512 || got.RelativeLineNumber != 512 {
@@ -178,15 +179,15 @@ func TestLineResolver_CountingStopsAtTheHighestOffset(t *testing.T) {
 	offsets := fixtureLineOffsets(t, path)
 	var read *atomic.Int64
 	original := openForLineCount
-	openForLineCount = func(p string) (io.ReadSeekCloser, error) {
-		f, counter := counting.OpenCounting(t, p)
+	openForLineCount = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
+		f, counter := counting.OpenCounting(t, src.Path())
 		read = counter
 		return f, nil
 	}
 	t.Cleanup(func() { openForLineCount = original })
 
 	target := total / 4
-	got := resolveLinesByCounting(path, []int64{offsets[target] + 5})
+	got := resolveLinesByCounting(pinForTest(t, path), []int64{offsets[target] + 5})
 
 	if got[offsets[target]+5] != target {
 		t.Fatalf("resolved %v, want line %d", got, target)

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -41,7 +42,7 @@ func resolveCompressedLines(
 	}
 	var totalLines int64
 	if needTotalLines {
-		n, err := streamLineCount(req.Path, format, idx)
+		n, err := streamLineCount(req.Source, format, idx)
 		if err != nil {
 			return err
 		}
@@ -123,7 +124,7 @@ func resolveCompressedLines(
 		lastLine = max(lastLine, w.end)
 	}
 
-	cursor, err := openStreamAtLine(req.Path, format, idx, firstLine)
+	cursor, err := openStreamAtLine(req.Source, format, idx, firstLine)
 	if err != nil {
 		return err
 	}
@@ -163,8 +164,8 @@ func resolveCompressedLines(
 // openStreamAtLine returns the text of a compressed stream from the
 // start of a line at or before line: the index checkpoint before it
 // when idx has one, else the first byte.
-func openStreamAtLine(path string, format compression.Format, idx *rxtypes.UnifiedFileIndex, line int64) (*textCursor, error) {
-	text := streamedText{path: path, format: format}
+func openStreamAtLine(src paths.Pinned, format compression.Format, idx *rxtypes.UnifiedFileIndex, line int64) (*textCursor, error) {
+	text := streamedText{src: src, format: format}
 	offset, startLine := chooseSeekOrigin(idx, line)
 	cursor, err := text.openAt(offset)
 	if err != nil {
@@ -177,11 +178,11 @@ func openStreamAtLine(path string, format compression.Format, idx *rxtypes.Unifi
 // streamLineCount returns the number of lines in a compressed stream:
 // the index's count when there is an index, else a count over the whole
 // decompressed stream.
-func streamLineCount(path string, format compression.Format, idx *rxtypes.UnifiedFileIndex) (int64, error) {
+func streamLineCount(src paths.Pinned, format compression.Format, idx *rxtypes.UnifiedFileIndex) (int64, error) {
 	if idx != nil && idx.LineCount != nil {
 		return *idx.LineCount, nil
 	}
-	return streamCountLines(path, format)
+	return streamCountLines(src, format)
 }
 
 // trimNewline drops the line terminator a reader keeps, so the text
@@ -197,8 +198,8 @@ func trimNewline(s string) string {
 // A line is counted at its line break, and a last line that no break
 // ends is counted too: it is a line, and -1 has to name it as it does
 // in the plain copy of the same text.
-func streamCountLines(path string, format compression.Format) (int64, error) {
-	cursor, err := streamedText{path: path, format: format}.openAt(0)
+func streamCountLines(src paths.Pinned, format compression.Format) (int64, error) {
+	cursor, err := streamedText{src: src, format: format}.openAt(0)
 	if err != nil {
 		return 0, err
 	}
