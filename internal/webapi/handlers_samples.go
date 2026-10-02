@@ -26,7 +26,8 @@ import (
 // both-set or neither-set returns 400.
 //
 // context is an alias that sets both before_context and after_context.
-// Individual contexts override it.
+// Individual contexts override it. Each stops at MaxTraceContextLines,
+// the trace endpoint's cap; the tags spell the number.
 // Negative one sentinels for "not provided" are used here because huma
 // forbids pointer query params. -1 is outside the normal value range
 // (context must be >= 0), so it's a safe signal for "default".
@@ -34,9 +35,9 @@ type samplesInput struct {
 	Path          string `query:"path" required:"true" example:"/var/log/app.log" doc:"File path to read from"`
 	Offsets       string `query:"offsets" example:"100,200,300" doc:"Comma-separated byte offsets or ranges"`
 	Lines         string `query:"lines" example:"100,200-205,-1" doc:"Comma-separated 1-based line numbers or ranges"`
-	Context       int    `query:"context" minimum:"-1" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
-	BeforeContext int    `query:"before_context" minimum:"-1" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
-	AfterContext  int    `query:"after_context" minimum:"-1" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
+	Context       int    `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
+	BeforeContext int    `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
+	AfterContext  int    `query:"after_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
 }
 
 // samplesOutput is the answer of GET /v1/samples: 200 with an

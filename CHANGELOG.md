@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not report it (a compress task, or an index task that reused a stored
   index). Part of contract 1.4.
 
+- `GET /v1/samples` caps `context`, `before_context` and
+  `after_context` at 100 lines per side, the cap the trace endpoint
+  has; a larger value is a `422`, and the OpenAPI document declares the
+  bound. `rx samples` keeps no cap. Part of contract 1.4.
+
 ### Changed
 
 - `rx samples --lines` and `GET /v1/samples?lines=` on a gzip, bzip2, xz
