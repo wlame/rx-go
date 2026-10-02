@@ -23,8 +23,12 @@ import (
 // releases this backend has been checked against, so a viewer published
 // after it is refused and `rx serve` comes up with no interface at all.
 // Both backends and the viewer's release checklist carry the same rule.
+//
+// The window starts at 0.8.0, the first viewer that speaks contract 2:
+// contract 2.0 removed what earlier viewers read (the index analysis,
+// GET /v1/detectors), and they know only contract major 1.
 const (
-	MinViewerVersion          = "0.2.0"
+	MinViewerVersion          = "0.8.0"
 	MaxViewerVersionExclusive = "0.9.0"
 )
 
@@ -51,7 +55,7 @@ func semverInRange(v semver) bool {
 	return compareSemver(v, minV) >= 0 && compareSemver(v, maxV) < 0
 }
 
-// supportedRange renders the range for messages: "0.2.0 <= v < 0.9.0".
+// supportedRange renders the range for messages: "0.8.0 <= v < 0.9.0".
 func supportedRange() string {
 	return MinViewerVersion + " <= v < " + MaxViewerVersionExclusive
 }

@@ -309,7 +309,9 @@ exposed as a flag).
 
 With no `RX_FRONTEND_URL` or `RX_FRONTEND_VERSION` set, `rx serve` serves
 the newest published `rx-viewer` release inside the range this `rx` was
-built against (`0.2.0 <= v < 0.9.0` today). Before the server binds:
+built against (`0.8.0 <= v < 0.9.0` today: viewer 0.8.0 is the first
+that speaks contract 2, and earlier viewers are refused). Before the
+server binds:
 
 | Cache | What `rx serve` does | Banner |
 |---|---|---|

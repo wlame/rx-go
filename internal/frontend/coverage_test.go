@@ -251,7 +251,7 @@ func TestEnsure_CacheHit(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(dir, "assets"), 0o755)
 	// A version inside the range, checked an hour ago: no check is due.
 	md := &CacheMetadata{
-		Version:   Version{Version: "0.2.0"},
+		Version:   Version{Version: cachedInsideRange},
 		LastCheck: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 	}
 	b, _ := json.Marshal(md)

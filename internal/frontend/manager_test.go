@@ -152,7 +152,7 @@ func TestManager_IsAvailable_FalseWhenMissing(t *testing.T) {
 func TestEnsure_NoCacheInstallsARelease(t *testing.T) {
 	tarball := makeFakeTarball(t)
 	// Inside the supported viewer range (see compat.go).
-	tag := "v0.2.3"
+	tag := "v" + newestInsideRange
 
 	mux := http.NewServeMux()
 	var srv *httptest.Server
@@ -257,7 +257,7 @@ func TestEnsure_CachedVersionSkipsDownload(t *testing.T) {
 // checked within the last day.
 func TestEnsure_CacheHitWithoutEnvVars(t *testing.T) {
 	dest := t.TempDir()
-	seedCache(t, dest, "0.2.0", time.Now().Add(-time.Hour))
+	seedCache(t, dest, cachedInsideRange, time.Now().Add(-time.Hour))
 
 	m := NewManager(Config{CacheDir: dest, Logger: silentLog()})
 	m.envURL, m.envVersion = "", ""

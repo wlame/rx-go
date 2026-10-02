@@ -13,28 +13,24 @@ import (
 // TestViewerVersionCompatible pins the range this backend was built
 // against. rx-python keeps its own window while it is paused, so these
 // numbers may differ from its.
+//
+// Contract 2.0 removed what viewers before 0.8.0 read (the index
+// analysis, GET /v1/detectors), and viewer 0.8.0 is the first that
+// speaks contract 2, so the window starts there.
 func TestViewerVersionCompatible(t *testing.T) {
 	cases := []struct {
 		version string
 		want    bool
 	}{
-		{"0.2.0", true},
-		{"v0.2.0", true},
-		{"0.2.9", true},
-		{"0.2.10-rc1", true}, // a pre-release of a supported patch
-		{"0.3.0", true},      // released and checked against this backend
-		{"0.3.7", true},
-		{"0.4.0", true}, // released and checked against this backend
-		{"0.4.3", true},
-		{"0.5.0", true}, // released and checked against this backend
-		{"0.5.2", true},
-		{"0.6.0", true}, // released and checked against this backend
-		{"0.6.1", true},
-		{"0.1.9", false}, // below the minimum
-		{"0.7.0", true},  // checked against this backend before its release
-		{"0.7.3", true},
-		{"0.8.0", true}, // the last minor inside the window
+		{"0.8.0", true}, // the first viewer that speaks contract 2
+		{"v0.8.0", true},
+		{"0.8.1", true},
 		{"0.8.5", true},
+		{"0.8.10-rc1", true}, // a pre-release of a supported patch
+		{"0.7.1", false},     // speaks contract 1 only
+		{"0.7.9", false},
+		{"0.2.0", false},
+		{"0.1.9", false},
 		{"0.9.0", false}, // past the window: a 0.x minor may break
 		{"1.0.0", false},
 		{"2.4.1", false},

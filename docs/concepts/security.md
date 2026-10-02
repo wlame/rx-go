@@ -514,9 +514,9 @@ leaves the last good bundle exactly where it was.
 ### "Latest" is bounded
 
 `rx serve` installs the newest published viewer release whose version
-falls inside the range this backend was built against — `0.2.0 <= v <
+falls inside the range this backend was built against — `0.8.0 <= v <
 0.9.0` today (the viewer is a 0.x product, where a minor bump may break
-compatibility). It reads GitHub's release list, skips drafts and
+compatibility, and 0.8.0 is the first viewer that speaks contract 2). It reads GitHub's release list, skips drafts and
 pre-releases, and leaves out every release past the range; a newer one is
 logged as `frontend_newer_release_outside_range`. A cached viewer outside
 the range is not served: it is replaced, or, when no release inside the

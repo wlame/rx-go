@@ -27,14 +27,15 @@ func failingGitHub(t *testing.T) (*httptest.Server, *atomic.Int32) {
 	return srv, &hits
 }
 
-// cachedViewerManager returns a manager over a cache holding viewer
-// 0.2.0, last checked at lastCheck, that asks apiBase for releases.
+// cachedViewerManager returns a manager over a cache holding the oldest
+// viewer the supported range takes (frontend.MinViewerVersion), last
+// checked at lastCheck, that asks apiBase for releases.
 func cachedViewerManager(t *testing.T, apiBase string, lastCheck time.Time) *frontend.Manager {
 	t.Helper()
 	t.Setenv("RX_FRONTEND_URL", "")
 	t.Setenv("RX_FRONTEND_VERSION", "")
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>0.2.0</html>"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>"+frontend.MinViewerVersion+"</html>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, "assets"), 0o700); err != nil {
@@ -42,7 +43,7 @@ func cachedViewerManager(t *testing.T, apiBase string, lastCheck time.Time) *fro
 	}
 	fm := frontend.NewManager(frontend.Config{CacheDir: dir, APIBase: apiBase})
 	md := &frontend.CacheMetadata{
-		Version:   frontend.Version{Version: "0.2.0"},
+		Version:   frontend.Version{Version: frontend.MinViewerVersion},
 		LastCheck: lastCheck.UTC().Format(time.RFC3339),
 	}
 	if err := fm.WriteMetadata(md); err != nil {
@@ -58,11 +59,11 @@ func TestPrepareViewer_FailedCheckWarnsOnceAndServesTheCache(t *testing.T) {
 
 	served := prepareViewer(fm, viewerCheckDaily, &stderr)
 
-	if served.Reason != frontend.ServedFromCache || served.Version != "0.2.0" {
-		t.Errorf("served = %+v, want the cached 0.2.0", served)
+	if served.Reason != frontend.ServedFromCache || served.Version != frontend.MinViewerVersion {
+		t.Errorf("served = %+v, want the cached %s", served, frontend.MinViewerVersion)
 	}
 	lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Warning: ") || !strings.HasSuffix(lines[0], ". Viewer: v0.2.0 (cached).") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Warning: ") || !strings.HasSuffix(lines[0], ". Viewer: v"+frontend.MinViewerVersion+" (cached).") {
 		t.Errorf("stderr = %q, want one warning line naming the cached viewer", stderr.String())
 	}
 	if !fm.IsAvailable() {

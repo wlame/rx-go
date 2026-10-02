@@ -160,17 +160,29 @@ func requireRecentLastCheck(t *testing.T, m *Manager) {
 	}
 }
 
-// Versions around the range's upper bound, derived from compat.go so
-// these tests keep their meaning when the range is widened. The comments
-// give the values for the range 0.2.0 <= v < 0.9.0.
+// Versions inside and around the range, derived from compat.go so these
+// tests keep their meaning when the range moves. The comments give the
+// values for the range 0.8.0 <= v < 0.9.0, which is one minor wide, so
+// the versions inside it differ in their patch.
 var (
 	upperBound, _     = parseSemver(MaxViewerVersionExclusive)
 	firstPastRange    = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor)   // 0.9.0
 	patchPastRange    = fmt.Sprintf("%d.%d.1", upperBound.major, upperBound.minor)   // 0.9.1
 	pinnedPastRange   = fmt.Sprintf("%d.%d.5", upperBound.major, upperBound.minor)   // 0.9.5
-	newestInsideRange = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor-1) // 0.8.0
-	olderInsideRange  = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor-2) // 0.7.0
+	newestInsideRange = fmt.Sprintf("%d.%d.9", upperBound.major, upperBound.minor-1) // 0.8.9
+	olderInsideRange  = fmt.Sprintf("%d.%d.4", upperBound.major, upperBound.minor-1) // 0.8.4
+	// cachedInsideRange is the oldest release the range takes: a cached
+	// viewer that a newer release inside the range replaces.
+	cachedInsideRange = MinViewerVersion // 0.8.0
+	// beforeRange is a release just below the range.
+	beforeRange = previousMinor(MinViewerVersion) // 0.7.0
 )
+
+// previousMinor returns the x.y.0 release one minor below version.
+func previousMinor(version string) string {
+	v, _ := parseSemver(version)
+	return fmt.Sprintf("%d.%d.0", v.major, v.minor-1)
+}
 
 // windowReleases lists one release past the window first, as GitHub
 // would once a newer viewer is out.
@@ -182,7 +194,7 @@ func TestEnsure_StaleCheckInstallsNewestReleaseInsideWindow(t *testing.T) {
 	t.Parallel()
 	gh := newFakeGitHub(t, windowReleases)
 	dir := t.TempDir()
-	seedCache(t, dir, "0.2.0", time.Now().Add(-48*time.Hour))
+	seedCache(t, dir, cachedInsideRange, time.Now().Add(-48*time.Hour))
 	var logged strings.Builder
 	m := managerFor(dir, gh.srv.URL, &logged)
 
@@ -191,7 +203,7 @@ func TestEnsure_StaleCheckInstallsNewestReleaseInsideWindow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	want := Served{Version: newestInsideRange, Reason: ServedUpdated, Replaced: "0.2.0"}
+	want := Served{Version: newestInsideRange, Reason: ServedUpdated, Replaced: cachedInsideRange}
 	if served != want {
 		t.Errorf("served = %+v, want %+v", served, want)
 	}
@@ -205,7 +217,7 @@ func TestEnsure_RecentCheckAsksNothing(t *testing.T) {
 	t.Parallel()
 	gh := newFakeGitHub(t, windowReleases)
 	dir := t.TempDir()
-	seedCache(t, dir, "0.2.0", time.Now().Add(-time.Hour))
+	seedCache(t, dir, cachedInsideRange, time.Now().Add(-time.Hour))
 	var logged strings.Builder
 	m := managerFor(dir, gh.srv.URL, &logged)
 
@@ -214,7 +226,7 @@ func TestEnsure_RecentCheckAsksNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if want := (Served{Version: "0.2.0", Reason: ServedFromCache}); served != want {
+	if want := (Served{Version: cachedInsideRange, Reason: ServedFromCache}); served != want {
 		t.Errorf("served = %+v, want %+v", served, want)
 	}
 	if hits := gh.listHits.Load(); hits != 0 {
@@ -226,7 +238,7 @@ func TestUpdate_ChecksWhateverLastCheckSays(t *testing.T) {
 	t.Parallel()
 	gh := newFakeGitHub(t, windowReleases)
 	dir := t.TempDir()
-	seedCache(t, dir, "0.2.0", time.Now().Add(-time.Hour))
+	seedCache(t, dir, cachedInsideRange, time.Now().Add(-time.Hour))
 	var logged strings.Builder
 	m := managerFor(dir, gh.srv.URL, &logged)
 
@@ -238,7 +250,7 @@ func TestUpdate_ChecksWhateverLastCheckSays(t *testing.T) {
 	if hits := gh.listHits.Load(); hits != 1 {
 		t.Errorf("releases listed %d times, want 1", hits)
 	}
-	if want := (Served{Version: newestInsideRange, Reason: ServedUpdated, Replaced: "0.2.0"}); served != want {
+	if want := (Served{Version: newestInsideRange, Reason: ServedUpdated, Replaced: cachedInsideRange}); served != want {
 		t.Errorf("served = %+v, want %+v", served, want)
 	}
 }
@@ -281,7 +293,7 @@ func TestEnsure_FailedCheckKeepsTheCache(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			seedCache(t, dir, "0.2.0", time.Now().Add(-48*time.Hour))
+			seedCache(t, dir, cachedInsideRange, time.Now().Add(-48*time.Hour))
 			var logged strings.Builder
 			m := managerFor(dir, tc.apiBase(t), &logged)
 
@@ -290,10 +302,10 @@ func TestEnsure_FailedCheckKeepsTheCache(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.wantInErr) {
 				t.Fatalf("Ensure error = %v, want one naming %q", err, tc.wantInErr)
 			}
-			if want := (Served{Version: "0.2.0", Reason: ServedFromCache}); served != want {
+			if want := (Served{Version: cachedInsideRange, Reason: ServedFromCache}); served != want {
 				t.Errorf("served = %+v, want %+v", served, want)
 			}
-			if !m.IsAvailable() || servedIndex(t, dir) != "<html>0.2.0</html>" {
+			if !m.IsAvailable() || servedIndex(t, dir) != "<html>"+cachedInsideRange+"</html>" {
 				t.Errorf("the cached viewer must stay in place and be served")
 			}
 			// The caller reports the returned error; the manager adds no
@@ -330,7 +342,7 @@ func TestEnsure_FailedCheckWaitsADayBeforeTheNextOne(t *testing.T) {
 	}))
 	t.Cleanup(api.Close)
 	dir := t.TempDir()
-	seedCache(t, dir, "0.2.0", time.Time{})
+	seedCache(t, dir, cachedInsideRange, time.Time{})
 	var logged strings.Builder
 	m := managerFor(dir, api.URL, &logged)
 
@@ -361,7 +373,7 @@ func TestEnsure_SlowReleaseListingIsCutShort(t *testing.T) {
 	}))
 	t.Cleanup(func() { close(release); api.Close() })
 	dir := t.TempDir()
-	seedCache(t, dir, "0.2.0", time.Now().Add(-48*time.Hour))
+	seedCache(t, dir, cachedInsideRange, time.Now().Add(-48*time.Hour))
 	var logged strings.Builder
 	m := managerFor(dir, api.URL, &logged)
 	m.releaseCheckTimeout = 50 * time.Millisecond
@@ -399,11 +411,11 @@ func TestEnsure_NoCacheInstallsNewestReleaseInsideWindow(t *testing.T) {
 func TestEnsure_SkipsDraftsAndPreReleases(t *testing.T) {
 	t.Parallel()
 	gh := newFakeGitHub(t, []fakeRelease{
-		{tag: "v0.6.2", draft: true},
-		{tag: "v0.6.1", prerelease: true},
-		{tag: "v0.6.0-rc.1"}, // a pre-release tag GitHub was not told about
+		{tag: "v" + newestInsideRange, draft: true},
+		{tag: "v" + olderInsideRange, prerelease: true},
+		{tag: "v" + olderInsideRange + "-rc.1"}, // a pre-release tag GitHub was not told about
 		{tag: "not-a-version"},
-		{tag: "v0.5.0"},
+		{tag: "v" + cachedInsideRange},
 	})
 	dir := t.TempDir()
 	var logged strings.Builder
@@ -414,8 +426,8 @@ func TestEnsure_SkipsDraftsAndPreReleases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	if served.Version != "0.5.0" {
-		t.Errorf("installed %q, want 0.5.0, the newest published release", served.Version)
+	if served.Version != cachedInsideRange {
+		t.Errorf("installed %q, want %s, the newest published release", served.Version, cachedInsideRange)
 	}
 }
 
@@ -443,7 +455,7 @@ func TestEnsure_CurrentCacheIsKeptAndTheCheckRecorded(t *testing.T) {
 
 func TestEnsure_CacheOutsideWindowIsReplaced(t *testing.T) {
 	t.Parallel()
-	for _, cached := range []string{"0.1.0", patchPastRange} {
+	for _, cached := range []string{beforeRange, patchPastRange} {
 		t.Run(cached, func(t *testing.T) {
 			t.Parallel()
 			gh := newFakeGitHub(t, windowReleases)
@@ -486,6 +498,34 @@ func TestEnsure_CacheOutsideWindowIsNotServedWhenItCannotBeReplaced(t *testing.T
 	}
 }
 
+// Viewer 0.7.1 speaks contract major 1 only. Until a viewer that
+// speaks contract 2 is published, a cache holding 0.7.1 is not served
+// and nothing is installed: rx serve comes up with no viewer, and says
+// which range it waits for.
+func TestEnsure_ContractOneViewerIsNotServedUntilAContractTwoViewerIsOut(t *testing.T) {
+	t.Parallel()
+	gh := newFakeGitHub(t, []fakeRelease{{tag: "v0.7.1"}, {tag: "v0.7.0"}})
+	dir := t.TempDir()
+	seedCache(t, dir, "0.7.1", time.Now().Add(-48*time.Hour))
+	var logged strings.Builder
+	m := managerFor(dir, gh.srv.URL, &logged)
+
+	served, err := m.Ensure(context.Background())
+
+	if err == nil || !strings.Contains(err.Error(), supportedRange()) {
+		t.Errorf("Ensure: %v; want an error naming the range %s", err, supportedRange())
+	}
+	if want := (Served{Reason: ServedNone}); served != want {
+		t.Errorf("served = %+v, want %+v", served, want)
+	}
+	if m.IsAvailable() {
+		t.Error("viewer 0.7.1 must not be served by a contract 2 backend")
+	}
+	if hits := gh.downloadHits.Load(); hits != 0 {
+		t.Errorf("downloaded %d bundles, want none outside the range", hits)
+	}
+}
+
 func TestEnsure_OverridesNeverListReleases(t *testing.T) {
 	t.Parallel()
 	gh := newFakeGitHub(t, windowReleases)
@@ -503,7 +543,7 @@ func TestEnsure_OverridesNeverListReleases(t *testing.T) {
 		},
 		{
 			name:   "RX_FRONTEND_URL downloads its bundle",
-			cached: "0.2.0",
+			cached: cachedInsideRange,
 			setEnv: func(m *Manager) { m.envURL = gh.srv.URL + "/download/v" + newestInsideRange + "/dist.tar.gz" },
 			want:   Served{Version: newestInsideRange, Reason: ServedOverride},
 		},

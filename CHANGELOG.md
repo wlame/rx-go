@@ -395,6 +395,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Line index format 11: an index stores no analysis. An index stored by
   an earlier rx (format 10) is treated as absent, so every index is
   built again once, smaller, the first time a command needs it.
+- `rx serve` installs viewer releases `0.8.0 <= v < 0.9.0` only: 0.8.0
+  is the first viewer that speaks contract 2, and every earlier one
+  (0.7.1 included) knows only contract major 1, so a cached one is not
+  served. Release this rx-go and rx-viewer 0.8.0 back to back: between
+  the two releases `rx serve` has no viewer to serve and comes up with
+  `Viewer: none (/ redirects to /docs)`; the API answers as usual.
 
 ### Removed
 
