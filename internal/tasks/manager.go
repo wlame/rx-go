@@ -24,6 +24,11 @@
 //     task that makes thousands of them never drops another one.
 //   - A watch (Watch) that keeps how a task ended, for a caller that
 //     reads it after the cap or the sweeper may have dropped the task.
+//   - Cancellable tasks (CreateCancellable): a signature scan runs under
+//     a context its task keeps, and Cancel stops it and ends the task
+//     as cancelled (DELETE /v1/tasks/{task_id}). Such a task holds a key
+//     of its operation and path, so it runs beside an index build or a
+//     compression of the same file.
 //
 // Task store backing: Python uses an asyncio.Lock with dict mutation.
 // This package uses one sync.Mutex guarding a map[string]*Task for the
@@ -34,6 +39,8 @@
 package tasks
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -88,11 +95,15 @@ type Status string
 // Task lifecycle:
 //
 //	Queued -> Running -> (Completed | Failed)
+//	Queued or Running -> Cancelled (Cancel, cancellable tasks only)
 const (
 	StatusQueued    Status = "queued"
 	StatusRunning   Status = "running"
 	StatusCompleted Status = "completed"
 	StatusFailed    Status = "failed"
+	// StatusCancelled is the end of a cancellable task stopped by
+	// Cancel. It is final: a later Update of the task changes nothing.
+	StatusCancelled Status = "cancelled"
 )
 
 // Task holds the metadata and result of one background job. All
@@ -101,7 +112,7 @@ const (
 type Task struct {
 	TaskID      string
 	Path        string
-	Operation   string // "index" | "compress" | "chain_index"
+	Operation   string // "index" | "compress" | "chain_index" | "findings"
 	Status      Status
 	StartedAt   time.Time
 	CompletedAt *time.Time
@@ -124,6 +135,23 @@ type Task struct {
 	// progress, when set, says how far the task's work has got; see
 	// ReportProgress. Shared by the clones too.
 	progress ProgressFunc
+
+	// bytes, when set, says how many bytes the task's work has read and
+	// of how many; see ReportBytes. Shared by the clones too.
+	bytes ByteProgressFunc
+
+	// ctx and cancel are set for a cancellable task (CreateCancellable)
+	// and nil for any other: the worker runs under ctx, and Cancel (or
+	// the task's end) calls cancel. Set at creation and never changed,
+	// so the clones may share them.
+	//
+	// Go note: a context.Context is how Go passes "stop now" down a call
+	// chain. Calling its CancelFunc closes ctx.Done() and makes ctx.Err()
+	// non-nil; every function that was given ctx and checks it (the
+	// signature scan between chunks, a wait in the scan queue) then
+	// returns early with that error.
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	// held lists every key the task holds in the manager's path locks,
 	// each once: its paths, Path first (CreateHolding), or the one key
@@ -161,8 +189,8 @@ type Watch struct {
 	end  *End
 }
 
-// Done returns a channel that is closed when the task ends, completed
-// or failed; Manager.Done gives the same channel.
+// Done returns a channel that is closed when the task ends, completed,
+// failed or cancelled; Manager.Done gives the same channel.
 func (w Watch) Done() <-chan struct{} { return w.done }
 
 // End returns how the task ended. Call it only once Done's channel is
@@ -195,10 +223,31 @@ func (t *Task) Progress() *float64 {
 	return &fraction
 }
 
-// IsTerminal reports whether the task is done (completed or failed).
-// Used by the sweeper and by HTTP 409 logic.
+// ByteProgressFunc reports how many bytes a task's work has read so far
+// and how many it will read in all. Like ProgressFunc it is called from
+// the goroutine that serves a status request while the worker keeps
+// working, so it must be safe to call concurrently with the work.
+type ByteProgressFunc func() (read, total int64)
+
+// ByteProgress is how many bytes a task's work has read, of how many.
+type ByteProgress struct {
+	Read, Total int64
+}
+
+// Bytes returns the bytes the task's work has read and their total, or
+// nil when the task reports none.
+func (t *Task) Bytes() *ByteProgress {
+	if t.bytes == nil {
+		return nil
+	}
+	read, total := t.bytes()
+	return &ByteProgress{Read: read, Total: total}
+}
+
+// IsTerminal reports whether the task is done (completed, failed or
+// cancelled). Used by the sweeper and by HTTP 409 logic.
 func (t *Task) IsTerminal() bool {
-	return t.Status == StatusCompleted || t.Status == StatusFailed
+	return t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled
 }
 
 // ============================================================================
@@ -372,14 +421,79 @@ func (m *Manager) CreateKeyed(operation, path, key string) (*Task, bool) {
 	return task, isNew
 }
 
+// CreateCancellable registers a new task for operation on path that
+// Cancel can stop, and returns it with the context its worker runs
+// under. When a task of the same operation already runs for path, it
+// returns that task, its context and false: the caller joins it.
+//
+// The task holds a key of its operation and path (cancellableKey), not
+// the path itself, so it runs beside a task of another operation on the
+// same file: a signature scan reads the file and writes only its own
+// cache, and an index build or a compression of the file does not stop
+// it, nor it them.
+//
+// The context is canceled by Cancel, and also when the task ends by
+// Complete or Fail, so a worker never holds a live context after its
+// task is over. Only findings tasks are created this way.
+func (m *Manager) CreateCancellable(path, operation string) (*Task, context.Context, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, _, isNew := m.createLocked(newTask{
+		operation: operation, path: path, held: []string{cancellableKey(operation, path)}, cancellable: true,
+	})
+	return task, task.ctx, isNew
+}
+
+// cancellableKey is the key a cancellable task of operation holds for
+// path in the path locks. The operation's name and a colon come first,
+// so it never equals a path (an absolute path starts with "/") or a log
+// chain's key (which starts with "chain:").
+func cancellableKey(operation, path string) string {
+	return operation + ":" + path
+}
+
+// ErrNotCancellable is returned by Cancel for a task that was not
+// created cancellable: an index, compress or chain_index task.
+var ErrNotCancellable = errors.New("the task cannot be cancelled")
+
+// ErrTaskEnded is returned by Cancel for a task that has already ended.
+var ErrTaskEnded = errors.New("the task has already ended")
+
+// Cancel stops the cancellable task taskID: it cancels the task's
+// context, which stops its worker's wait or work, and ends the task at
+// once with StatusCancelled, which no later Update changes. Its key is
+// released, so a new task for the same path may start at once (it waits
+// for the stopping worker wherever the work itself serializes).
+//
+// It returns ErrTaskNotFound for an unknown task, ErrNotCancellable
+// for a task not created by CreateCancellable, and ErrTaskEnded for a
+// task that has already ended; the task is not changed then.
+func (m *Manager) Cancel(taskID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	switch {
+	case !ok:
+		return ErrTaskNotFound
+	case task.cancel == nil:
+		return ErrNotCancellable
+	case task.IsTerminal():
+		return ErrTaskEnded
+	}
+	task.cancel()
+	m.endLocked(task, StatusCancelled)
+	return nil
+}
+
 // newTask is what creating a task takes: its operation, the path it
-// shows, the keys it holds in the path locks (unique, at least one) and
-// its class.
+// shows, the keys it holds in the path locks (unique, at least one), its
+// class, and whether Cancel can stop it.
 type newTask struct {
-	operation string
-	path      string
-	held      []string
-	subtask   bool
+	operation   string
+	path        string
+	held        []string
+	subtask     bool
+	cancellable bool
 }
 
 // createLocked creates the task spec describes, or returns the running
@@ -402,6 +516,13 @@ func (m *Manager) createLocked(spec newTask) (*Task, string, bool) {
 		held:      spec.held,
 		subtask:   spec.subtask,
 		end:       &End{},
+	}
+	if spec.cancellable {
+		// Go note: context.WithCancel returns a child of Background that
+		// only cancel (or nothing else) ends. Background never ends by
+		// itself, so the task's context lives until Cancel or the task's
+		// end calls cancel.
+		task.ctx, task.cancel = context.WithCancel(context.Background())
 	}
 	m.tasks[task.TaskID] = task
 	for _, key := range spec.held {
@@ -489,12 +610,19 @@ func (m *Manager) dropOldestFinishedLocked(subtask bool) {
 // Callers pass non-zero values for fields they want to change; zero
 // values leave the field untouched. A helper variant Update*() could
 // be added per-field if this becomes unwieldy.
+//
+// A cancelled task is not changed: Cancel ended it, and its worker's
+// own Fail or Complete, which comes once the work has stopped, is
+// ignored, so the task stays cancelled with no error and no result.
 func (m *Manager) Update(taskID string, status Status, errMsg string, result any) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	task, ok := m.tasks[taskID]
 	if !ok {
 		return false
+	}
+	if task.Status == StatusCancelled {
+		return true
 	}
 	// Whether the task had already ended before this update: only the
 	// first transition to a terminal status closes done, since closing
@@ -510,17 +638,38 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 		task.Result = result
 	}
 	if task.IsTerminal() && !wasTerminal {
-		// The end is written before done closes, so every watcher woken
-		// by the close reads it complete (see Watch.End).
-		*task.end = End{Status: task.Status, Error: task.Error}
-		close(task.done)
+		m.closeEndLocked(task)
 	}
 	if task.IsTerminal() {
 		now := time.Now().UTC()
 		task.CompletedAt = &now
 		m.releasePathsLocked(task)
+		if task.cancel != nil {
+			// The work is over: release the context's resources.
+			task.cancel()
+		}
 	}
 	return true
+}
+
+// endLocked ends task with status: the end time, the end every watcher
+// reads, the done channel closed and the keys released. The caller
+// holds m.mu, and task has not ended yet.
+func (m *Manager) endLocked(task *Task, status Status) {
+	task.Status = status
+	now := time.Now().UTC()
+	task.CompletedAt = &now
+	m.closeEndLocked(task)
+	m.releasePathsLocked(task)
+}
+
+// closeEndLocked writes how task ended and closes its done channel. The
+// end is written before done closes, so every watcher woken by the
+// close reads it complete (see Watch.End). The caller holds m.mu, and
+// task has just reached a terminal status for the first time.
+func (m *Manager) closeEndLocked(task *Task) {
+	*task.end = End{Status: task.Status, Error: task.Error}
+	close(task.done)
 }
 
 // MarkRunning is a convenience for the worker goroutine that picks up
@@ -539,8 +688,8 @@ func (m *Manager) Fail(taskID string, errMsg string) bool {
 	return m.Update(taskID, StatusFailed, errMsg, nil)
 }
 
-// Done returns a channel that is closed when the task ends, completed
-// or failed, and false when no such task exists. A receive from it
+// Done returns a channel that is closed when the task ends, completed,
+// failed or cancelled, and false when no such task exists. A receive from it
 // blocks until then; a task that has already ended returns a channel
 // that is already closed.
 //
@@ -606,6 +755,20 @@ func (m *Manager) ReportProgress(taskID string, fn ProgressFunc) bool {
 		return false
 	}
 	task.progress = fn
+	return true
+}
+
+// ReportBytes gives a task the function its status reads the bytes read
+// and their total from, as ReportProgress gives the fraction. The worker
+// calls it once, when it starts. Returns false when no such task exists.
+func (m *Manager) ReportBytes(taskID string, fn ByteProgressFunc) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return false
+	}
+	task.bytes = fn
 	return true
 }
 

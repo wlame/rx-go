@@ -33,9 +33,11 @@ linters:
     misspell:
       locale: US
       # The signature catalogue keeps the British spelling of its type
-      # name, Catalogue, which every package that uses it shares.
+      # name, Catalogue, which every package that uses it shares. The
+      # task status `cancelled` is a value of the HTTP contract.
       ignore-rules:
         - catalogue
+        - cancelled
     govet:
       enable-all: true
       disable:
