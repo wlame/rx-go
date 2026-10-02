@@ -27,7 +27,8 @@
 // rx-go up to v0.3.0 and rx-python write the footer in another order,
 // the legacy rx layout: (footer_magic: u32, num_frames: u32, flags: u8),
 // with bit 0 of flags as the checksum flag. ReadSeekTable reads both
-// layouts and prefers the specification's.
+// layouts and prefers the specification's; WriteSeekTable writes the
+// specification's.
 //
 // The skippable-frame header (8 bytes: magic + length), the entries and
 // the footer use LittleEndian encoding.

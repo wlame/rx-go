@@ -287,10 +287,17 @@ from the final frame layout.
 ...
 [zstd frame #N]  — last chunk (may be smaller than 4M)
 [skippable frame] — seek table: [(c0_sz, d0_sz), (c1_sz, d1_sz), ...]
+                    then the footer: frame count (4), descriptor (1), magic (4)
 ```
 
 The skippable frame's magic number is part of the zstd spec; non-seekable
-decoders ignore it.
+decoders ignore it. The seek table follows the zstd seekable format
+specification (facebook/zstd, `contrib/seekable_format`): the footer ends
+with the magic `0x8F92EAB1`, and the descriptor is 0 (no per-frame
+checksums). rx-go up to v0.3.0 and rx-python wrote the footer as magic,
+frame count, flags; `rx` still reads those files as seekable, and
+rx-python reads the files `rx compress` writes now as plain zstd. See
+[Compression](../concepts/compression.md#when-rx-trusts-a-seek-table).
 
 ### Performance characteristics
 
