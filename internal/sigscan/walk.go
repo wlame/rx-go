@@ -21,11 +21,13 @@ type line struct {
 	// a first line that starts with a byte-order mark, else 0. A value
 	// span in the view plus shift is a position in the line.
 	shift int
-	// stamped and ms are the line's own timestamp, in the file's frame
-	// (timeTracker.observe fills them before the line is matched;
-	// stamped is false in a file without timestamps).
+	// stamped and ms are the line's own timestamp, in the file's frame,
+	// and off the zone offset the line writes (timeTracker.observe fills
+	// them before the line is matched; stamped is false in a file
+	// without timestamps).
 	stamped bool
 	ms      int64
+	off     int
 }
 
 // rawFinding is a finding as a walk reports it: line indexes relative
@@ -63,7 +65,7 @@ func toFinding(cs *compiledSig, f *rawFinding, lineBase int64) Finding {
 	out := Finding{
 		StartLine: lineBase + f.startIdx, EndLine: lineBase + f.endIdx,
 		StartOffset: f.startOff, EndOffset: f.endOff,
-		TimeMS: f.tm.pointer(),
+		TimeMS: f.tm.pointer(), TimeOffsetMinutes: f.tm.offsetMinutes(),
 		Masked: f.masked, firstLen: f.firstLen,
 	}
 	if f.hasEx {

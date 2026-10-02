@@ -94,8 +94,8 @@ func viewCatalogue(t *testing.T) *signatures.Catalogue {
 	return cat
 }
 
-// Review focus: each filter keeps what it names, they combine, and
-// before_line lists the nearest finding first.
+// Each filter keeps what it names, filters combine, and before_line
+// lists the nearest finding first.
 func TestFindingsFilter_EachFilterAndTheirOrder(t *testing.T) {
 	cat := viewCatalogue(t)
 	all := []rxtypes.Finding{

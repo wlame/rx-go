@@ -202,7 +202,7 @@ curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f51
 |---:|---|
 | `200 OK` | The task is cancelled; its status is returned |
 | `404 Not Found` | Task ID unknown or already swept |
-| `409 Conflict` | The task is not a findings task (an index, compress or chain_index task cannot be cancelled), or it has already ended. The body is `{"detail", "task_id"}` |
+| `409 Conflict` | The task is not a findings task (an index, compress or chain_index task cannot be cancelled), it has already ended (completed, failed or cancelled), or its scan has finished reading and its answer is being written: from that point a cancel is refused, so a task never ends `cancelled` with findings written. The body is `{"detail", "task_id"}` |
 
 ## Sweeper behavior
 

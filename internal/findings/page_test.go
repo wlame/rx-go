@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -75,11 +76,12 @@ func TestWireFindings_EveryStoredFindingInTheOneOrder(t *testing.T) {
 	}
 }
 
-// Under a file zone, a zone-less file's times are its wall clocks read
-// in that zone, the instants line_timestamps gives; a file whose
-// timestamps carry zones reads each line's written wall clock in the
-// zone when its line index records where the offset changes, and has
-// no time without it (it cannot be known without reading the file).
+// Under a file zone every finding's time is the line_timestamps value
+// samples gives its first line under that zone: a zone-less file's wall
+// clock read in the zone, a zoned file's written wall clock (its stored
+// instant plus the offset its stamped line writes) read in the zone, an
+// epoch file's value read in the zone; with a line index and without
+// one alike, since the offset travels with each finding.
 func TestWireFindings_FileZoneReadsTheTimesAsSamplesDoes(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	cat := loadCatalogue(t, defErrLine)
@@ -90,7 +92,9 @@ func TestWireFindings_FileZoneReadsTheTimesAsSamplesDoes(t *testing.T) {
 	dir := t.TempDir()
 	texts := map[string]string{
 		"local.log": "2026-01-15 10:00:00 INFO start\n2026-01-15 10:00:05 ERROR boom\nERROR no stamp\n",
-		"zoned.log": "2026-01-15T10:00:00+01:00 INFO start\n2026-01-15T10:00:05+02:00 ERROR boom\nERROR no stamp\n",
+		"zoned.log": "2026-01-15T10:00:00+01:00 INFO start\n2026-01-15T10:00:05+02:00 ERROR boom\nERROR no stamp\n" +
+			"2026-01-15T10:00:06 ERROR without a zone\n2026-01-15T10:00:07Z ERROR in UTC\n",
+		"epoch.log": "1768471200 INFO start\n1768471205 ERROR boom\nERROR no stamp\n",
 	}
 	for name, text := range texts {
 		path := writeLog(t, dir, name, text)
@@ -99,6 +103,7 @@ func TestWireFindings_FileZoneReadsTheTimesAsSamplesDoes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var withoutIndex []rxtypes.Finding
 		for _, withIndex := range []bool{false, true} {
 			opts := traceOptions(t)
 			opts.FileZone = tokyo
@@ -110,22 +115,26 @@ func TestWireFindings_FileZoneReadsTheTimesAsSamplesDoes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var lineSet []samples.OffsetOrRange
+			for _, f := range got {
+				lineSet = append(lineSet, samples.OffsetOrRange{Start: f.StartLine})
+			}
 			resp, err := samples.Resolve(context.Background(), samples.Request{
-				Path: path, Lines: []samples.OffsetOrRange{{Start: 2}, {Start: 3}}, IndexLoader: opts.IndexLoader,
-				FileZone: zoneOf(t, "Asia/Tokyo"),
+				Path: path, Lines: lineSet, IndexLoader: samples.NoIndex, FileZone: zoneOf(t, "Asia/Tokyo"),
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			for _, f := range got {
 				want := resp.LineTimestamps[strconv.FormatInt(f.StartLine, 10)]
-				unknown := name == "zoned.log" && !withIndex
-				switch {
-				case unknown && f.TimeMS != nil:
-					t.Errorf("%s line %d without an index: time %d, want null", name, f.StartLine, *f.TimeMS)
-				case !unknown && (f.TimeMS == nil || len(want) != 1 || want[0] == nil || *f.TimeMS != *want[0]):
+				if f.TimeMS == nil || len(want) != 1 || want[0] == nil || *f.TimeMS != *want[0] {
 					t.Errorf("%s line %d index=%v: time %v, want line_timestamps %v", name, f.StartLine, withIndex, f.TimeMS, want)
 				}
+			}
+			if !withIndex {
+				withoutIndex = got
+			} else if !reflect.DeepEqual(got, withoutIndex) {
+				t.Errorf("%s: the index changes the findings:\n%+v\n%+v", name, got, withoutIndex)
 			}
 		}
 	}
@@ -251,5 +260,35 @@ func TestAnswer_CachedCountsTheSignaturesTheCacheAnswered(t *testing.T) {
 	read, err := Read(file, cat, pick(t, cat, "err-line", "warn-line"), opts)
 	if err != nil || read.Cached != 2 {
 		t.Errorf("read: cached %d, %v; want 2", read.Cached, err)
+	}
+}
+
+// MayWrite is asked once a scan has read the file, before anything is
+// written: false writes nothing and the scan ends as canceled; true
+// writes as before. A scan the cache answers whole writes nothing and
+// does not ask.
+func TestScan_MayWriteDecidesTheWrite(t *testing.T) {
+	cat := loadCatalogue(t, defErrLine, defWarnLine)
+	file := classify(t, writeLog(t, t.TempDir(), "app.log", "ERROR one\nWARN two\n"))
+	opts := testOptions(t)
+	asked := 0
+	refuse := opts
+	refuse.MayWrite = func() bool { asked++; return false }
+	if _, err := Scan(context.Background(), file, cat, pick(t, cat, "err-line"), refuse); !errors.Is(err, context.Canceled) || asked != 1 {
+		t.Fatalf("refused: err %v, asked %d", err, asked)
+	}
+	if files := entryFiles(t, opts.Dir); len(files) != 0 {
+		t.Fatalf("a refused scan wrote %v", files)
+	}
+	allow := opts
+	allow.MayWrite = func() bool { asked++; return true }
+	if ans, err := Scan(context.Background(), file, cat, pick(t, cat, "err-line"), allow); err != nil || ans.Cached != 0 || asked != 2 {
+		t.Fatalf("allowed: %v, asked %d", err, asked)
+	}
+	if read, err := Read(file, cat, pick(t, cat, "err-line"), opts); err != nil || len(read.Checked) != 1 {
+		t.Fatalf("the allowed scan was not written: %+v %v", read, err)
+	}
+	if _, err := Scan(context.Background(), file, cat, pick(t, cat, "err-line"), allow); err != nil || asked != 2 {
+		t.Fatalf("a scan the cache answers asked %d times: %v", asked, err)
 	}
 }

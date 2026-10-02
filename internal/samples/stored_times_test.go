@@ -16,10 +16,10 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
-// storedValues are the values a scan or an index keeps for every line
-// of the file at path that has a timestamp of its own: milliseconds in
-// the file's own frame, by line number.
-func storedValues(t *testing.T, path string) map[int64]int64 {
+// storedValues are the stamps a scan or an index keeps for every line
+// of the file at path that has a timestamp of its own: the value in the
+// file's own frame and the zone offset the line writes, by line number.
+func storedValues(t *testing.T, path string) map[int64]timestamps.Stamp {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
@@ -42,7 +42,7 @@ func storedValues(t *testing.T, path string) map[int64]int64 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values := map[int64]int64{}
+	values := map[int64]timestamps.Stamp{}
 	line := int64(1)
 	for start := 0; start < len(data); line++ {
 		end := start
@@ -50,19 +50,19 @@ func storedValues(t *testing.T, path string) map[int64]int64 {
 			end++
 		}
 		if s, ok := index.LineStamp(parser, data[start:end]); ok {
-			values[line] = s.Ms
+			values[line] = s
 		}
 		start = end + 1
 	}
 	return values
 }
 
-// The instant StoredTimes gives for a line's stored value is the
-// line_timestamps value samples gives for the line under the same file
-// zone, for a file whose timestamps carry no zone and one whose offset
-// changes, with an index and without one; the one case it cannot give
-// (a file zone on a file whose timestamps carry zones, without an index
-// that records where their offset changes) answers false.
+// The instant StoredTimes gives for a line's stored value and the offset
+// the line writes is the line_timestamps value samples gives the line
+// under the same file zone: for a file whose timestamps carry no zone,
+// one whose offset changes (and with a line that writes none), and one
+// of epoch values; with a line index and without one, which never
+// changes the answer.
 func TestStoredTimes_GiveTheInstantsOfLineTimestamps(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	t.Setenv("RX_LOG_TZ", "Europe/Berlin")
@@ -70,7 +70,8 @@ func TestStoredTimes_GiveTheInstantsOfLineTimestamps(t *testing.T) {
 	files := map[string]string{
 		"local.log": "2026-03-29 01:59:58 INFO LINE 1\nno stamp LINE 2\n2026-03-29 03:00:01 INFO LINE 3\n2026-03-29 03:00:02 INFO LINE 4\n",
 		"zoned.log": "2026-03-29T01:59:58+01:00 INFO LINE 1\nno stamp LINE 2\n2026-03-29T03:00:01+02:00 INFO LINE 3\n" +
-			"2026-03-29T03:00:02+02:00 INFO LINE 4\n",
+			"2026-03-29T03:00:02 INFO LINE 4\n",
+		"epoch.log": "1774745998 INFO LINE 1\nno stamp LINE 2\n1774746001 INFO LINE 3\n1774746002.500 INFO LINE 4\n",
 	}
 	lastLine := int64(4)
 	berlin, err := time.LoadLocation("Europe/Berlin")
@@ -87,6 +88,9 @@ func TestStoredTimes_GiveTheInstantsOfLineTimestamps(t *testing.T) {
 			t.Fatal(err)
 		}
 		stored := storedValues(t, path)
+		if len(stored) != 3 {
+			t.Fatalf("%s: %d stamped lines, want 3", name, len(stored))
+		}
 		loaders := map[string]IndexLoader{
 			"no index": NoIndex,
 			"index":    func(string) (*rxtypes.UnifiedFileIndex, error) { return idx, nil },
@@ -117,13 +121,9 @@ func TestStoredTimes_GiveTheInstantsOfLineTimestamps(t *testing.T) {
 					t.Fatal(err)
 				}
 				want := oracle.LineTimestamps["1-4"]
-				cannot := name == "zoned.log" && zoneName != "" && loaderName == "no index"
-				for line, value := range stored {
-					got, ok := times.Instant(line, value)
-					switch {
-					case cannot && ok:
-						t.Errorf("%s line %d: gave %d without the offsets it needs", label, line, got)
-					case !cannot && (!ok || want[line-1] == nil || got != *want[line-1]):
+				for line, stamp := range stored {
+					got, ok := times.Instant(stamp.Ms, stamp.OffsetMinutes)
+					if !ok || want[line-1] == nil || got != *want[line-1] {
 						t.Errorf("%s line %d: %d %v, want line_timestamps %v", label, line, got, ok, deref(want[line-1]))
 					}
 				}

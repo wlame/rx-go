@@ -232,6 +232,10 @@ func runServe(out io.Writer, p serveParams) error {
 	// once; internal/findings and internal/sigscan read no environment.
 	findingsOptions := webapi.FindingsOptionsFromEnv()
 	findings.SetMaxScans(config.MaxSignatureScans())
+	// GET /v1/findings reads one file's findings on every page, filter
+	// and key press; the decoded answers of the last few files read are
+	// kept (findings.SetReadCache: never stale, bounded).
+	findings.SetReadCache(serveFindingsReadCacheFiles, serveFindingsReadCacheBytes)
 
 	// One hook dispatcher (queue, HTTP client, workers) for the whole
 	// server. It holds no URLs: each /v1/trace request resolves its own
@@ -297,6 +301,14 @@ func runServe(out io.Writer, p serveParams) error {
 		return nil
 	}
 }
+
+// The bounds of the findings read cache of `rx serve`: the decoded
+// findings of at most 8 files and 64 MiB, the least recently read file
+// out first.
+const (
+	serveFindingsReadCacheFiles = 8
+	serveFindingsReadCacheBytes = 64 << 20
+)
 
 // loadServeSignatures loads the signature catalogue `rx serve` serves:
 // the built-ins and the user's files on the search path, every example

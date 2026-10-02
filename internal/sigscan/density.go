@@ -124,8 +124,10 @@ type densitySlot struct {
 	firstStart, lastNext int64
 	// firstLen is the first line's length without its ending.
 	firstLen int64
-	// firstMs is the first line's own timestamp.
-	firstMs int64
+	// firstMs is the first line's time (the last stamped line's), and
+	// firstOff the zone offset that stamped line writes.
+	firstMs  int64
+	firstOff int
 	// The first line's excerpt, kept for the finding of a burst.
 	excerpt       []byte
 	hasEx, masked bool
@@ -143,7 +145,7 @@ func (s *densitySlot) merge(src *densitySlot) {
 	}
 	s.count += src.count
 	if src.first < s.first {
-		s.first, s.firstStart, s.firstLen, s.firstMs = src.first, src.firstStart, src.firstLen, src.firstMs
+		s.first, s.firstStart, s.firstLen, s.firstMs, s.firstOff = src.first, src.firstStart, src.firstLen, src.firstMs, src.firstOff
 		s.excerpt, s.hasEx, s.masked = src.excerpt, src.hasEx, src.masked
 	}
 	if src.last > s.last {
@@ -292,7 +294,7 @@ func (w *densityWalker) line(l *line, idx int64, times *timeTracker, out sink) {
 	}
 	s := w.edge.hist.slot(times.last.ms)
 	if s.count == 0 {
-		s.first, s.firstStart, s.firstLen, s.firstMs = idx, l.start, l.length, times.last.ms
+		s.first, s.firstStart, s.firstLen, s.firstMs, s.firstOff = idx, l.start, l.length, times.last.ms, times.last.off
 		if out.mayStore() {
 			s.excerpt, s.masked = w.ex.build(nil, l.view)
 			s.hasEx = true
@@ -404,7 +406,8 @@ func modifiedZ(x, med, mad int64) float64 {
 // burstFinding is the finding of a burst that starts with slot s.
 func burstFinding(s *densitySlot) rawFinding {
 	return rawFinding{startIdx: s.first, endIdx: s.last, startOff: s.firstStart, endOff: s.lastNext, firstLen: s.firstLen,
-		excerpt: s.excerpt, hasEx: s.hasEx, masked: s.masked, vs: -1, ve: -1, tm: timeRef{ms: s.firstMs, state: timeKnown}}
+		excerpt: s.excerpt, hasEx: s.hasEx, masked: s.masked, vs: -1, ve: -1,
+		tm: timeRef{ms: s.firstMs, off: s.firstOff, state: timeKnown}}
 }
 
 // widenBurst extends a burst's finding over slot s: from the earlier
@@ -413,7 +416,7 @@ func widenBurst(f *rawFinding, s *densitySlot) {
 	if s.first < f.startIdx {
 		f.startIdx, f.startOff, f.firstLen = s.first, s.firstStart, s.firstLen
 		f.excerpt, f.hasEx, f.masked = s.excerpt, s.hasEx, s.masked
-		f.tm = timeRef{ms: s.firstMs, state: timeKnown}
+		f.tm = timeRef{ms: s.firstMs, off: s.firstOff, state: timeKnown}
 	}
 	if s.last > f.endIdx {
 		f.endIdx, f.endOff = s.last, s.lastNext

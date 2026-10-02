@@ -28,31 +28,27 @@ var ErrNoScannedEnd = errors.New("the findings carry no end of the text their sc
 // the density series of sel, by signature id.
 //
 // Times are read the way opts says (answerTimes): a scan keeps them in
-// the file's own frame, and an answer gives instants, a zone-less
-// file's wall clocks read in opts.LogZone, or every line's written wall
-// clock read in opts.FileZone when it is set. A finding whose time
-// cannot be given that way has none (time_ms null); a series whose
-// start cannot is left out. The file's format is read only when a zone
-// asks for it.
+// the file's own frame with the zone offset each stamped line writes,
+// and an answer gives instants, a zone-less file's wall clocks read in
+// opts.LogZone, or every line's written wall clock read in
+// opts.FileZone when it is set: the line_timestamps value samples gives
+// the finding's first line. A time outside the years 1 to 9999 becomes
+// null; a series whose start cannot be read is left out. The file's
+// format is read only when a zone asks for it.
 func WireFindings(answer *Answer, file trace.SearchFile, sel []*signatures.Signature, fileID string, opts TraceOptions) ([]rxtypes.Finding, map[string]rxtypes.FindingSeries, error) {
 	sel = uniqueSignatures(sel)
-	found := []rxtypes.Finding{}
 	stored := map[string]*sigscan.Series{}
+	hasTime := false
 	for _, sig := range sel {
 		res := answer.BySignature[sig.ID]
 		if res == nil {
 			continue
 		}
-		for _, f := range res.Findings {
-			found = append(found, wireFinding(sig.ID, fileID, f))
-		}
+		hasTime = hasTime || slices.ContainsFunc(res.Findings, func(f sigscan.Finding) bool { return f.TimeMS != nil })
 		if res.Series != nil {
 			stored[sig.ID] = res.Series
 		}
 	}
-	slices.SortStableFunc(found, func(a, b rxtypes.Finding) int { return rxtypes.CompareFindings(&a, &b) })
-
-	hasTime := slices.ContainsFunc(found, func(f rxtypes.Finding) bool { return f.TimeMS != nil })
 	var times *samples.StoredTimes
 	if hasTime || len(stored) > 0 {
 		var err error
@@ -60,13 +56,22 @@ func WireFindings(answer *Answer, file trace.SearchFile, sel []*signatures.Signa
 			return nil, nil, fmt.Errorf("%s: %w", file.Path(), err)
 		}
 	}
-	if times != nil {
-		for i := range found {
-			if ms := found[i].TimeMS; ms != nil {
-				found[i].TimeMS = instantOrNil(times, found[i].StartLine, *ms)
+
+	found := []rxtypes.Finding{}
+	for _, sig := range sel {
+		res := answer.BySignature[sig.ID]
+		if res == nil {
+			continue
+		}
+		for _, f := range res.Findings {
+			w := wireFinding(sig.ID, fileID, f)
+			if times != nil && f.TimeMS != nil {
+				w.TimeMS = instantOrNil(times, *f.TimeMS, f.TimeOffsetMinutes)
 			}
+			found = append(found, w)
 		}
 	}
+	slices.SortStableFunc(found, func(a, b rxtypes.Finding) int { return rxtypes.CompareFindings(&a, &b) })
 	return found, seriesIn(stored, times), nil
 }
 
@@ -87,10 +92,11 @@ func answerTimes(file trace.SearchFile, opts TraceOptions) (*samples.StoredTimes
 	})
 }
 
-// instantOrNil is the instant of a finding's stored time, or nil when
-// times cannot give it.
-func instantOrNil(times *samples.StoredTimes, line, stored int64) *int64 {
-	instant, ok := times.Instant(line, stored)
+// instantOrNil is the instant of a finding's stored time, whose stamped
+// line writes the zone offset writtenOffset, or nil when it falls
+// outside the years 1 to 9999.
+func instantOrNil(times *samples.StoredTimes, stored int64, writtenOffset int) *int64 {
+	instant, ok := times.Instant(stored, writtenOffset)
 	if !ok {
 		return nil
 	}
@@ -99,16 +105,20 @@ func instantOrNil(times *samples.StoredTimes, line, stored int64) *int64 {
 
 // seriesIn turns the stored density series into the wire's, their
 // starts read as times reads the file's times (nil: as stored). A start
-// belongs to no line, so it is read only when every line of the file
-// moves by one offset (StoredTimes.Exact); otherwise, and when the
-// start falls outside the years 1 to 9999, the series is left out.
+// belongs to no line, so it is read only in the file's own frame
+// (StoredTimes.Exact): under a file zone, a file whose timestamps carry
+// zones has its series left out, with an index and without one alike.
+// So is a series whose start falls outside the years 1 to 9999.
 func seriesIn(stored map[string]*sigscan.Series, times *samples.StoredTimes) map[string]rxtypes.FindingSeries {
 	out := make(map[string]rxtypes.FindingSeries, len(stored))
 	for id, s := range stored {
 		start := s.StartMS
 		if times != nil {
-			instant, ok := times.Instant(1, start)
-			if !ok || !times.Exact() {
+			if !times.Exact() {
+				continue
+			}
+			instant, ok := times.Instant(start, 0)
+			if !ok {
 				continue
 			}
 			start = instant

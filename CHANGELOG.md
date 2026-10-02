@@ -149,7 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version, `RX_SIGNATURES_LINE_BYTES` and the redacting signatures, and
   the line count and length of the text the scan read) and
   one `<signature-id>.json` per signature (its findings with their
-  times, masked excerpts, value spans and `masked` flags, and a density
+  times and the zone offset each time's stamped line writes, masked
+  excerpts, value spans and `masked` flags, and a density
   measure's bucket series). Cached entries are used only with a current
   `meta.ranges.json`; without one the file's signatures are scanned
   again. A later scan of the file answers every
@@ -272,8 +273,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with each column's count and first line per signature. `file_tz` reads
   `time_ms`, `series` and `ticks` as it reads every time: a finding's
   `time_ms` is the `line_timestamps` value `GET /v1/samples` gives its
-  line under the same `file_tz` (for a file whose timestamps carry zones,
-  when its line index records their offsets; `null` otherwise).
+  line under the same `file_tz`, with a line index and without one (a
+  zoned file's series are left out under `file_tz`). `rx serve` keeps
+  the decoded findings of the last 8 files read, at most 64 MiB, so
+  paging and filters of one file decode its cache files once; a kept
+  answer is used only for the file's identity and the entries' keys it
+  was read with.
 - `POST /v1/findings {path, signatures, force}`: a scan of the file as a
   background task (operation `findings`, `202`): it scans the selected
   signatures the cache lacks (all of them with `force`) and caches what
@@ -288,8 +293,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `Retry-After: 5` and starts nothing.
 - `DELETE /v1/tasks/{task_id}`: cancels a queued or running findings
   task: the scan stops and caches nothing, and the task ends at once
-  with the new status `cancelled`. A task of another operation, or one
-  that has ended, answers `409`; an unknown id `404`.
+  with the new status `cancelled`. A task of another operation, one
+  that has ended, or one whose scan has finished reading and is writing
+  its answer answers `409`, so a task never ends `cancelled` with
+  findings written; an unknown id `404`.
 - `GET /v1/trace?signatures=…`: the answer of `rx trace --signatures=…
   --json` over HTTP: every file the search covers is scanned for the
   selection through the findings cache, `regexp` may be left out, and

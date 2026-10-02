@@ -245,6 +245,18 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 		// also while a panic unwinds it, before runDetached recovers, so
 		// the place is given back on every path.
 		defer func() { <-s.scanPlaces }()
+		// A panic in the scan fails the task in runDetached, which
+		// recovers it; it is counted here first, then passed on.
+		//
+		// Go note: recover stops a panic only inside a deferred call;
+		// panic(r) starts it again, so runDetached's own deferred
+		// recover still sees it and fails the task.
+		defer func() {
+			if r := recover(); r != nil {
+				prometheus.RecordSignatureScan("failed", false, 0)
+				panic(r)
+			}
+		}()
 		s.runFindingsScan(taskCtx, scan)
 	})
 	return &findingsScanOutput{Body: rxtypes.TaskResponse{
@@ -323,7 +335,9 @@ func (p *scanProgress) fraction() (float64, bool) {
 // gives without filters (the first page), or fails with the scan's
 // error. A cancel (DELETE /v1/tasks/{task_id}) ends the task at once
 // and cancels ctx: the scan stops and writes nothing, and this worker
-// leaves the task as Cancel left it.
+// leaves the task as Cancel left it. Once the scan has its answer the
+// task settles (tasks.Manager.Settle, through ScanOptions.MayWrite),
+// and a cancel is refused from then on.
 func (s *Server) runFindingsScan(ctx context.Context, scan findingsScan) {
 	mgr := s.cfg.TaskManager
 	start := time.Now()
@@ -340,21 +354,28 @@ func (s *Server) runFindingsScan(ctx context.Context, scan findingsScan) {
 			mgr.ReportProgress(scan.taskID, progress.fraction)
 		}
 	}
+	// The scan's point of no return: the task settles there, so a cancel
+	// either comes first (the scan then writes nothing) or is refused
+	// (the task completes with what the scan wrote). A task never ends
+	// cancelled with entries on disk.
+	opts.MayWrite = func() bool { return mgr.Settle(scan.taskID) }
 	answer, err := s.cfg.scanFindings(ctx, scan.file, s.cfg.Signatures, scan.sel, opts)
+	// A scan the cache answered whole was never asked; it settles here.
+	if err == nil && !mgr.Settle(scan.taskID) {
+		err = context.Canceled
+	}
 	var resp *rxtypes.FindingsResponse
 	if err == nil {
 		resp, err = s.findingsAnswer(ctx, scan.path, scan.file, answer, scan.sel, firstPageView())
 	}
-	// A cancel that came after the scan leaves the task as Cancel left
-	// it too.
-	if err == nil && ctx.Err() == nil {
+	if err == nil {
 		resp.CLICommand = scan.cli
 		prometheus.AddFindingsCacheHits(answer.Cached)
 		mgr.Complete(scan.taskID, *resp)
 		prometheus.RecordSignatureScan("completed", answer.Cached < len(scan.sel), time.Since(start))
 		return
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		// Cancel ended the task already; the scan's error is the
 		// cancel's.
 		prometheus.RecordSignatureScan("cancelled", false, 0)

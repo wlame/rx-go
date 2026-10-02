@@ -75,6 +75,8 @@ func (p *prevLine) ref(idx int64, ex *excerpter, out sink) lineRef {
 // where it is, its length without its ending, and its timestamp.
 type stampedLine struct {
 	idx, start, next, length, ms int64
+	// off is the zone offset the line writes, minutes east of UTC.
+	off int
 }
 
 // backSpec is a time-backwards measure's parameters, in milliseconds.
@@ -107,7 +109,7 @@ func (w *backWalker) line(l *line, idx int64, out sink) {
 	}
 	switch {
 	case !w.prev.ok:
-		f := &backFirst{line: stampedLine{idx: idx, start: l.start, next: l.next, length: l.length, ms: l.ms}}
+		f := &backFirst{line: stampedLine{idx: idx, start: l.start, next: l.next, length: l.length, ms: l.ms, off: l.off}}
 		if out.mayStore() {
 			f.excerpt, f.masked = w.ex.build(nil, l.view)
 			f.hasEx = true
@@ -115,14 +117,14 @@ func (w *backWalker) line(l *line, idx int64, out sink) {
 		w.first = f
 	case w.prev.ms-l.ms > w.spec.tolerance:
 		f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, firstLen: l.length, vs: -1, ve: -1,
-			tm: timeRef{ms: l.ms, state: timeKnown}}
+			tm: timeRef{ms: l.ms, off: l.off, state: timeKnown}}
 		if out.storing() {
 			w.exBuf, f.masked = w.ex.build(w.exBuf[:0], l.view)
 			f.excerpt, f.hasEx = w.exBuf, true
 		}
 		out.add(w.cs, &f)
 	}
-	w.prev = stampRef{ms: l.ms, start: l.start, ok: true}
+	w.prev = stampRef{ms: l.ms, start: l.start, off: l.off, ok: true}
 }
 
 // mergeBackwards merges a chunk of a time-backwards measure: its first
@@ -133,7 +135,7 @@ func (m *merger) mergeBackwards(si int32, sc *sigChunk, base int64) {
 	if f := sc.back; f != nil && m.lastStamp.ok && m.lastStamp.ms-f.line.ms > cs.back.tolerance {
 		m.storeSink(si, 1, true).add(cs, &rawFinding{startIdx: base + f.line.idx, endIdx: base + f.line.idx,
 			startOff: f.line.start, endOff: f.line.next, firstLen: f.line.length, excerpt: f.excerpt, hasEx: f.hasEx, masked: f.masked,
-			vs: -1, ve: -1, tm: timeRef{ms: f.line.ms, state: timeKnown}})
+			vs: -1, ve: -1, tm: timeRef{ms: f.line.ms, off: f.line.off, state: timeKnown}})
 	}
 	m.take(si, sc.findings, sc.count)
 }
@@ -184,7 +186,7 @@ func (w *gapWalker) line(l *line, idx int64, before *prevLine, out sink) {
 	if !l.stamped {
 		return
 	}
-	here := stampedLine{idx: idx, start: l.start, next: l.next, length: l.length, ms: l.ms}
+	here := stampedLine{idx: idx, start: l.start, next: l.next, length: l.length, ms: l.ms, off: l.off}
 	if !w.prev.ok {
 		f := &gapFirst{line: here}
 		if idx > 0 {
@@ -198,7 +200,7 @@ func (w *gapWalker) line(l *line, idx int64, before *prevLine, out sink) {
 			w.edge.kept.add(gapCandidate{delta: delta, from: before.ref(idx-1, w.ex, out), to: here})
 		}
 	}
-	w.prev = stampRef{ms: l.ms, start: l.start, ok: true}
+	w.prev = stampRef{ms: l.ms, start: l.start, off: l.off, ok: true}
 }
 
 // gapMerge gathers a time-gap measure's intervals and candidates in the

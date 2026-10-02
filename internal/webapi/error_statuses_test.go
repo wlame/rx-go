@@ -119,8 +119,10 @@ func statusesReturnedByHandlers(t *testing.T) map[string]map[int]bool {
 		}
 		files = append(files, file)
 		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil {
-				funcs[fn.Name.Name] = fn
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				if key, ok := funcKey(fn); ok {
+					funcs[key] = fn
+				}
 			}
 		}
 	}
@@ -146,25 +148,66 @@ func statusesReturnedByHandlers(t *testing.T) map[string]map[int]bool {
 	return out
 }
 
+// serverMethodPrefix keys a method of *Server in the walk's function
+// map: "Server.getFindings", apart from any package-level function.
+const serverMethodPrefix = "Server."
+
+// funcKey is how the walk names a declaration: a package-level function
+// by its name, a method of Server or *Server by serverMethodPrefix and
+// its name; other methods are not followed (false).
+func funcKey(fn *ast.FuncDecl) (string, bool) {
+	if fn.Recv == nil {
+		return fn.Name.Name, true
+	}
+	if len(fn.Recv.List) != 1 {
+		return "", false
+	}
+	recv := fn.Recv.List[0].Type
+	if star, ok := recv.(*ast.StarExpr); ok {
+		recv = star.X
+	}
+	if ident, ok := recv.(*ast.Ident); ok && ident.Name == "Server" {
+		return serverMethodPrefix + fn.Name.Name, true
+	}
+	return "", false
+}
+
+// calledKey is the walk's name of the function a call reaches: a
+// package-level function called by name, or a method of *Server called
+// through a selector (s.getFindings); "" for anything else.
+func calledKey(call *ast.CallExpr, funcs map[string]*ast.FuncDecl) string {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name
+	case *ast.SelectorExpr:
+		if _, isMethod := funcs[serverMethodPrefix+fun.Sel.Name]; isMethod {
+			if _, onIdent := fun.X.(*ast.Ident); onIdent {
+				return serverMethodPrefix + fun.Sel.Name
+			}
+		}
+	}
+	return ""
+}
+
 // collectStatuses walks node, recording the status of every error
 // constructor called and descending into every package-level function
-// called that has not been visited yet.
+// and every method of *Server called that has not been visited yet.
 func collectStatuses(node ast.Node, funcs map[string]*ast.FuncDecl, visited map[string]bool, statuses map[int]bool) {
 	ast.Inspect(node, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		ident, ok := call.Fun.(*ast.Ident)
-		if !ok {
+		key := calledKey(call, funcs)
+		if key == "" {
 			return true
 		}
-		if status, isConstructor := errorConstructorStatus[ident.Name]; isConstructor {
+		if status, isConstructor := errorConstructorStatus[key]; isConstructor {
 			statuses[status] = true
 			return true
 		}
-		if fn, isFunc := funcs[ident.Name]; isFunc && !visited[ident.Name] && fn.Body != nil {
-			visited[ident.Name] = true
+		if fn, isFunc := funcs[key]; isFunc && !visited[key] && fn.Body != nil {
+			visited[key] = true
 			collectStatuses(fn.Body, funcs, visited, statuses)
 		}
 		return true
@@ -228,4 +271,27 @@ func sortedKeys(responses map[string]*huma.Response) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// The walk follows a handler into the methods of *Server it calls
+// (s.getFindings, s.startFindingsScan), not only into package-level
+// functions: the statuses found here come from those methods alone.
+func TestStatusesReturnedByHandlers_FollowsServerMethods(t *testing.T) {
+	returned := statusesReturnedByHandlers(t)
+	cases := []struct {
+		operation string
+		statuses  []int
+	}{
+		// getFindings → findingsFailure (500), parseLineRange's error (400).
+		{"findings", []int{http.StatusBadRequest, http.StatusInternalServerError}},
+		// startFindingsScan → the 503 of a full set of scans.
+		{"findings-scan", []int{http.StatusServiceUnavailable}},
+	}
+	for _, tc := range cases {
+		for _, status := range tc.statuses {
+			if !returned[tc.operation][status] {
+				t.Errorf("%s: the walk does not reach %d (found %v)", tc.operation, status, returned[tc.operation])
+			}
+		}
+	}
 }

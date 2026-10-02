@@ -72,7 +72,9 @@ func detectTimes(r io.ReaderAt, size int64, kind filekind.Kind, mtimeNs int64, l
 }
 
 // stampOf returns the own timestamp of line l (milliseconds in the
-// file's frame) and whether it has one.
+// file's frame), the zone offset the line writes (minutes east of UTC:
+// 0 for a line that writes none, Z, UTC, GMT or an epoch value) and
+// whether it has one.
 //
 // The index parses each line as it is in the text, its line ending
 // stripped. The view differs from that in one place only: a byte-order
@@ -85,12 +87,12 @@ func detectTimes(r io.ReaderAt, size int64, kind filekind.Kind, mtimeNs int64, l
 //
 // It allocates nothing: every line but the marked one is parsed in
 // place, and that one goes through markedStamp.
-func (t *timeSource) stampOf(l *line) (int64, bool) {
+func (t *timeSource) stampOf(l *line) (int64, int, bool) {
 	if l.shift > 0 {
 		return t.markedStamp(l.view)
 	}
 	s, ok := index.LineStamp(t.parser, l.view)
-	return s.Ms, ok
+	return s.Ms, s.OffsetMinutes, ok
 }
 
 // markedStamp parses line 1 of a text that starts with a byte-order
@@ -101,7 +103,7 @@ func (t *timeSource) stampOf(l *line) (int64, bool) {
 // escapes to the heap (the compiler cannot prove the parser keeps no
 // reference to it). Kept out of stampOf, it costs one allocation per
 // marked file instead of one per line.
-func (t *timeSource) markedStamp(view []byte) (int64, bool) {
+func (t *timeSource) markedStamp(view []byte) (int64, int, bool) {
 	var marked [timestamps.WindowBytes]byte
 	n := copy(marked[:], utf8BOM)
 	n += copy(marked[n:], view)
@@ -109,16 +111,18 @@ func (t *timeSource) markedStamp(view []byte) (int64, bool) {
 		// The copy is a prefix of a longer line: there is no line
 		// ending in it to strip.
 		s, ok := t.parser.Own(marked[:n])
-		return s.Ms, ok
+		return s.Ms, s.OffsetMinutes, ok
 	}
 	s, ok := index.LineStamp(t.parser, marked[:n])
-	return s.Ms, ok
+	return s.Ms, s.OffsetMinutes, ok
 }
 
-// stampRef is a line with a timestamp of its own: its time and where
-// the line starts in the text. ok is false for "no such line".
+// stampRef is a line with a timestamp of its own: its time, the zone
+// offset it writes (minutes east of UTC) and where the line starts in
+// the text. ok is false for "no such line".
 type stampRef struct {
 	ms, start int64
+	off       int
 	ok        bool
 }
 
@@ -138,7 +142,12 @@ const (
 
 // timeRef is a finding's time as a walk knows it.
 type timeRef struct {
-	ms    int64
+	ms int64
+	// off is the zone offset the stamped line the time comes from
+	// writes, in minutes east of UTC: what turns ms, an instant in a file
+	// whose timestamps carry zones, back into the wall clock the line
+	// shows (an answer read in another zone needs it).
+	off   int
 	state timeState
 }
 
@@ -165,9 +174,9 @@ type timeTracker struct {
 // line comes from the splitter with stamped false, which is the answer
 // in a file without one.
 func (t *timeTracker) observe(l *line) {
-	if ms, ok := t.src.stampOf(l); ok {
-		l.stamped, l.ms = true, ms
-		t.last = stampRef{ms: ms, start: l.start, ok: true}
+	if ms, off, ok := t.src.stampOf(l); ok {
+		l.stamped, l.ms, l.off = true, ms, off
+		t.last = stampRef{ms: ms, start: l.start, off: off, ok: true}
 	}
 }
 
@@ -194,7 +203,7 @@ func within(stamp stampRef, start, lookback int64) timeRef {
 	if !stamp.ok || start-stamp.start > lookback {
 		return timeRef{state: timeNone}
 	}
-	return timeRef{ms: stamp.ms, state: timeKnown}
+	return timeRef{ms: stamp.ms, off: stamp.off, state: timeKnown}
 }
 
 // settle decides a pending time from the last stamped line of the text
@@ -213,4 +222,13 @@ func (r timeRef) pointer() *int64 {
 	}
 	ms := r.ms
 	return &ms
+}
+
+// offsetMinutes returns the offset as Finding.TimeOffsetMinutes holds
+// it: 0 unless the time is known.
+func (r timeRef) offsetMinutes() int {
+	if r.state != timeKnown {
+		return 0
+	}
+	return r.off
 }

@@ -11,7 +11,7 @@ import (
 // of every cached finding and of every file's masked ranges, so a
 // change that can change any answer of the engine bumps it: a finding,
 // an excerpt, a masked range, or MaxBodiesPerSignature.
-const EngineVersion = 2
+const EngineVersion = 3
 
 // MaxBodiesPerSignature is how many bodies of one redacting block or run
 // signature a scan records exactly (Result.MaskedRanges): far more than
@@ -94,6 +94,14 @@ type Finding struct {
 	// when it starts at most Options.LookbackBytes before. Nil when
 	// there is none, and in a file without timestamps.
 	TimeMS *int64
+	// TimeOffsetMinutes is the zone offset, in minutes east of UTC, that
+	// the stamped line TimeMS comes from writes: 0 for a line that
+	// writes none, Z, UTC, GMT or an epoch value, and when TimeMS is
+	// nil. In a file whose timestamps carry zones, TimeMS plus this
+	// offset is the wall clock the line shows, which an answer that
+	// reads the file in another zone (a request's file_tz) needs, as
+	// samples reads it; no line index is needed for it.
+	TimeOffsetMinutes int
 	// Excerpt is the first line's view with every value a redacting
 	// signature matches on it masked (Options.Redactors), each byte that
 	// is not UTF-8 then replaced by U+FFFD, cut to 200 bytes on a

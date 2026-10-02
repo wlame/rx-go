@@ -160,13 +160,23 @@ file whose timestamps carry no zone in `RX_LOG_TZ`. Under `file_tz`
 every line's written wall clock is read in that zone instead, so a
 finding's `time_ms` is the `line_timestamps` value
 [`GET /v1/samples`](samples.md) gives its line under the same
-`file_tz`. A file whose timestamps carry zones needs, for that, the
-offset each line writes, which its [line index](../../concepts/line-indexes.md#the-time-section)
-records (`zone_offsets`): without such an index its findings have
-`time_ms: null` under `file_tz`, as `GET /v1/time-range` answers
-`source: none` in that case. A `density` series' `start_ms` is read the
-same way, and left out when it cannot be (a file that writes more than
-one offset).
+`file_tz`. For a file whose timestamps carry zones that is the
+wall clock its stamped line writes, read in the zone: the scan keeps,
+beside each finding's time, the zone offset that line writes, so no
+line index is needed and the answer is the same with one and without.
+An epoch value is read as a wall clock in the zone, as samples reads
+it. A `density` series' `start_ms` belongs to no line: it is read the
+same way in the file's own frame, and under `file_tz` the series of a
+file whose timestamps carry zones are left out.
+
+The answer is the same with a line index and without one: the index
+only spares the read of the head of the text for the format, and of
+the end of the text for the time range of `ticks`. `rx serve` keeps
+the decoded findings of the last 8 files read (at most 64 MiB, the
+least recently read file out first), so paging, filters and ticks of
+one file decode its cache files once; `meta.json` and the file's
+identity are still read on every request, so a kept answer is never
+stale.
 
 ### Ticks
 

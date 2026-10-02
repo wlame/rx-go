@@ -49,7 +49,8 @@ func registerTaskHandlers(s *Server, api huma.API) {
 
 	cancelResponses := errorResponses(api, http.StatusNotFound, http.StatusConflict)
 	cancelResponses[strconv.Itoa(http.StatusConflict)] = jsonResponse("The task cannot be cancelled: it is not a "+
-		"findings scan, or it has already ended; task_id names it.",
+		"findings scan, it has already ended, or its scan has finished reading and is writing its answer; task_id "+
+		"names it.",
 		api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(rxtypes.TaskConflictError{}), true, "TaskConflictError"))
 	huma.Register(api, huma.Operation{
 		OperationID: "task-cancel",
@@ -58,8 +59,9 @@ func registerTaskHandlers(s *Server, api huma.API) {
 		Summary:     "Cancel a findings scan",
 		Description: "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches " +
 			"nothing, and the task ends at once with status cancelled, which this answer shows. A client that " +
-			"joined the same scan sees it cancelled and may start it again. 409 for a task of another operation " +
-			"and for a task that has already ended.",
+			"joined the same scan sees it cancelled and may start it again. 409 for a task of another operation, " +
+			"for a task that has already ended, and for one whose scan has finished reading and is writing its " +
+			"answer (a task never ends cancelled with findings written).",
 		Tags:      []string{"Operations"},
 		Responses: cancelResponses,
 	}, func(_ context.Context, in *taskStatusInput) (*taskStatusOutput, error) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/tasks"
@@ -908,6 +910,132 @@ func TestFindingsRoute_SameAnswerWithAndWithoutTheLineIndex(t *testing.T) {
 	for i, q := range queries {
 		if indexed := f.getFindings(t, q...); !jsonEqual(t, indexed, cold[i]) {
 			t.Errorf("%v: with the index %+v\nwithout %+v", q, indexed, cold[i])
+		}
+	}
+}
+
+// A scan worker that panics fails its task (runDetached) and is counted
+// as a failed scan.
+func TestFindingsRoute_APanickingScanIsCountedAsFailed(t *testing.T) {
+	prometheus.Enable()
+	t.Cleanup(prometheus.Disable)
+	f := newFindingsFixture(t, func(c *Config) {
+		c.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		c.scanFindings = func(context.Context, trace.SearchFile, *signatures.Catalogue,
+			[]*signatures.Signature, findings.ScanOptions) (*findings.Answer, error) {
+			panic("a scan that breaks")
+		}
+	})
+	before := snapshotMetrics(t)["rx_signature_scans_total"]["status=failed"]
+	task, _ := f.finish(t, f.startScan(t, f.log, "default").TaskID)
+	if task.Status != "failed" || task.Error == nil || !strings.Contains(*task.Error, "a scan that breaks") {
+		t.Fatalf("task %+v", task)
+	}
+	if after := snapshotMetrics(t)["rx_signature_scans_total"]["status=failed"]; after != before+1 {
+		t.Fatalf("failed scans %v → %v, want one more", before, after)
+	}
+}
+
+// A cancel and the scan's write meet at one point (MayWrite): a cancel
+// that comes before it leaves the task cancelled and the cache empty; a
+// DELETE that comes after it answers 409 and the task completes with
+// its findings written. A task never ends cancelled with entries on
+// disk.
+func TestTaskCancelRoute_ACancelAtTheWriteNeverLeavesCancelledEntries(t *testing.T) {
+	for _, cancelFirst := range []bool{true, false} {
+		var f *findingsFixture
+		deleteStatus := 0
+		f = newFindingsFixture(t, func(c *Config) {
+			c.scanFindings = func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue,
+				sel []*signatures.Signature, o findings.ScanOptions) (*findings.Answer, error) {
+				mayWrite := o.MayWrite
+				o.MayWrite = func() bool {
+					running, _ := f.manager.CancellableHolder(f.log, "findings")
+					if cancelFirst {
+						deleteStatus, _ = f.call(t, http.MethodDelete, "/v1/tasks/"+running.TaskID, nil, nil)
+						return mayWrite()
+					}
+					ok := mayWrite()
+					deleteStatus, _ = f.call(t, http.MethodDelete, "/v1/tasks/"+running.TaskID, nil, nil)
+					return ok
+				}
+				return findings.Scan(ctx, file, cat, sel, o)
+			}
+		})
+		task, _ := f.finish(t, f.startScan(t, f.log, "default").TaskID)
+		got := f.getFindings(t)
+		switch {
+		case cancelFirst && (deleteStatus != http.StatusOK || task.Status != "cancelled" || got.State != "none"):
+			t.Errorf("cancel before the write: DELETE %d, task %s, cache %s", deleteStatus, task.Status, got.State)
+		case !cancelFirst && (deleteStatus != http.StatusConflict || task.Status != "completed" || got.State != "full"):
+			t.Errorf("cancel after the write: DELETE %d, task %s, cache %s", deleteStatus, task.Status, got.State)
+		}
+	}
+}
+
+// Under file_tz the findings of a file whose timestamps carry zones, of
+// a zone-less file and of an epoch file have the times GET /v1/samples
+// gives their lines under the same file_tz, and ticks over the range
+// GET /v1/time-range gives; and the answer is the same before and after
+// the file is indexed. The first file is the case the index once
+// decided: a plain zoned file whose line 2 reads 10:00:01 in Tokyo.
+func TestFindingsRoute_FileZoneTimesNeedNoIndex(t *testing.T) {
+	f := newFindingsFixture(t, nil)
+	files := map[string]string{
+		"zoned.log": "2026-01-15T10:00:00+02:00 INFO start\n2026-01-15T10:00:01+02:00 ERROR one\nERROR no stamp\n" +
+			"2026-01-15T10:00:02+01:00 ERROR another offset\n2026-01-15T10:00:03 ERROR without a zone\n" +
+			"2026-01-15T10:30:00Z ERROR later\n",
+		"local.log": "2026-01-15 10:00:00 INFO start\n2026-01-15 10:00:01 ERROR one\nERROR no stamp\n2026-01-15 10:30:00 ERROR later\n",
+		"epoch.log": "1768471200 INFO start\n1768471201 ERROR one\nERROR no stamp\n1768473000 ERROR later\n",
+	}
+	const zone = "Asia/Tokyo"
+	for name, text := range files {
+		path := filepath.Join(f.root, name)
+		writeFixture(t, path, []byte(text))
+		if task, _ := f.finish(t, f.startScan(t, path, "err-line").TaskID); task.Status != "completed" {
+			t.Fatalf("%s: scan %+v", name, task)
+		}
+		get := func() rxtypes.FindingsResponse {
+			t.Helper()
+			status, raw := f.call(t, http.MethodGet, "/v1/findings",
+				url.Values{"path": {path}, "signatures": {"err-line"}, "file_tz": {zone}, "ticks": {"10"}}, nil)
+			if status != http.StatusOK {
+				t.Fatalf("%s: GET %d %s", name, status, raw)
+			}
+			var resp rxtypes.FindingsResponse
+			decode(t, raw, &resp)
+			return resp
+		}
+		cold := get()
+		status, raw := f.call(t, http.MethodGet, "/v1/time-range", url.Values{"path": {path}, "file_tz": {zone}}, nil)
+		var span rxtypes.TimeRangeResponse
+		decode(t, raw, &span)
+		if status != http.StatusOK || span.FirstMs == nil || span.LastMs == nil || *cold.Ticks.StartMS != *span.FirstMs ||
+			*cold.Ticks.EndMS != *span.LastMs || len(cold.Ticks.Columns) < 2 {
+			t.Fatalf("%s: ticks %+v, time range %s", name, cold.Ticks, raw)
+		}
+		for _, found := range cold.Findings {
+			q := url.Values{"path": {path}, "lines": {fmt.Sprint(found.StartLine)}, "context": {"0"}, "file_tz": {zone}}
+			_, raw := f.call(t, http.MethodGet, "/v1/samples", q, nil)
+			var lines rxtypes.SamplesResponse
+			decode(t, raw, &lines)
+			stamps := lines.LineTimestamps[fmt.Sprint(found.StartLine)]
+			if len(stamps) != 1 || stamps[0] == nil || found.TimeMS == nil || *found.TimeMS != *stamps[0] {
+				t.Errorf("%s line %d: time %v, samples %s", name, found.StartLine, found.TimeMS, raw)
+			}
+		}
+		if name == "zoned.log" && (cold.Findings[0].StartLine != 2 || *cold.Findings[0].TimeMS != 1768438801000) {
+			t.Errorf("zoned.log line 2: %+v, want 1768438801000 (10:00:01 read in Tokyo)", cold.Findings[0])
+		}
+
+		status, raw = f.call(t, http.MethodPost, "/v1/index", nil, map[string]any{"path": path, "threshold": 0})
+		var task rxtypes.TaskResponse
+		decode(t, raw, &task)
+		if done, _ := f.finish(t, task.TaskID); status != http.StatusOK || done.Status != "completed" {
+			t.Fatalf("%s: index %d %+v", name, status, done)
+		}
+		if indexed := get(); !jsonEqual(t, indexed, cold) {
+			t.Errorf("%s: with the index %+v\nwithout %+v", name, indexed, cold)
 		}
 	}
 }

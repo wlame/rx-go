@@ -203,7 +203,7 @@ func (m *merger) settleTimes(res *chunkResult) {
 			f := &sc.findings[i]
 			tm := timeRef{state: timePending}
 			tm.settle(f.StartOffset, carry, lookback)
-			f.TimeMS = tm.pointer()
+			f.TimeMS, f.TimeOffsetMinutes = tm.pointer(), tm.offsetMinutes()
 		}
 		sc.pending = nil
 		sc.runs.leading.tm.settle(sc.runs.leading.startOff, carry, lookback)

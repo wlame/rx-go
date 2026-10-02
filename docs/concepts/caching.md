@@ -192,9 +192,11 @@ It holds:
   Every scan writes it, since every scan walks every loaded redacting
   block and run;
 - `<signature-id>.json` — one entry: its `key`, its `findings` (lines,
-  text offsets, `time_ms`, the excerpt with every secret masked, the
-  value span, `masked`) and, for a `density` measure, its bucket
-  `series`; a signature whose id is `meta` gets `meta.signature.json`;
+  text offsets, `time_ms` and `time_offset_minutes`, the zone offset
+  the stamped line of that time writes, the excerpt with every secret
+  masked, the value span, `masked`) and, for a `density` measure, its
+  bucket `series`; a signature whose id is `meta` gets
+  `meta.signature.json`;
 - `.lock` — the file a writing process locks.
 
 A signature checked with no findings is an entry with `count: 0`. No

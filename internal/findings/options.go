@@ -58,6 +58,14 @@ type ScanOptions struct {
 	// Dir is the findings cache directory, config.GetFindingsCacheDir()
 	// in production. Required unless NoCache or Spooled is set.
 	Dir string
+	// MayWrite, when set, is asked once a scan has read the file and
+	// before it writes anything to the cache: false writes nothing, and
+	// Scan returns context.Canceled. It is the scan's point of no
+	// return: a caller that can cancel the scan (a findings task) settles
+	// there, so a cancel either comes before it and nothing is written,
+	// or comes after it and is refused. It is not asked when the cache
+	// answers every selected signature, nor with NoCache or Spooled.
+	MayWrite func() bool
 }
 
 // usesCache reports whether the options let a call read and write the

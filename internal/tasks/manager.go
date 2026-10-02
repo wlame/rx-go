@@ -153,6 +153,10 @@ type Task struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// settled says the task's work is past the point where it can stop
+	// (Settle): Cancel refuses it from then on.
+	settled bool
+
 	// held lists every key the task holds in the manager's path locks,
 	// each once: its paths, Path first (CreateHolding), or the one key
 	// of a keyed task (CreateKeyed), which need not be Path. Set at
@@ -464,8 +468,26 @@ func cancellableKey(operation, path string) string {
 // created cancellable: an index, compress or chain_index task.
 var ErrNotCancellable = errors.New("the task cannot be cancelled")
 
-// ErrTaskEnded is returned by Cancel for a task that has already ended.
+// ErrTaskEnded is returned by Cancel for a task that has already ended,
+// or whose work is past the point where it can stop (Settle).
 var ErrTaskEnded = errors.New("the task has already ended")
+
+// Settle marks the point past which the cancellable task taskID cannot
+// stop: its worker has its answer and is about to write it. From then
+// on Cancel refuses the task with ErrTaskEnded, so a task never ends
+// cancelled after its work wrote anything. It returns false for a task
+// that is already cancelled (the worker must then write nothing) and
+// for an unknown task, and true otherwise, also when called again.
+func (m *Manager) Settle(taskID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok || task.Status == StatusCancelled {
+		return false
+	}
+	task.settled = true
+	return true
+}
 
 // Cancel stops the cancellable task taskID: it cancels the task's
 // context, which stops its worker's wait or work, and ends the task at
@@ -475,7 +497,8 @@ var ErrTaskEnded = errors.New("the task has already ended")
 //
 // It returns ErrTaskNotFound for an unknown task, ErrNotCancellable
 // for a task not created by CreateCancellable, and ErrTaskEnded for a
-// task that has already ended; the task is not changed then.
+// task that has already ended or settled (Settle); the task is not
+// changed then.
 func (m *Manager) Cancel(taskID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -485,7 +508,7 @@ func (m *Manager) Cancel(taskID string) error {
 		return ErrTaskNotFound
 	case task.cancel == nil:
 		return ErrNotCancellable
-	case task.IsTerminal():
+	case task.IsTerminal() || task.settled:
 		return ErrTaskEnded
 	}
 	task.cancel()

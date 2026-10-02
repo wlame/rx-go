@@ -147,3 +147,36 @@ func TestManager_ReportBytes_IsReadThroughTheTask(t *testing.T) {
 		t.Fatal("ReportBytes found a task that does not exist")
 	}
 }
+
+// Settle marks the point past which a cancellable task's work cannot
+// stop: Cancel then refuses with ErrTaskEnded and changes nothing. A
+// task cancelled first cannot settle; nor can an unknown task.
+func TestManager_Settle_EndsTheTimeACancelCanStopTheTask(t *testing.T) {
+	m := New(Config{Logger: silentLogger()})
+	task, ctx, _ := m.CreateCancellable("/var/log/app.log", "findings")
+	m.MarkRunning(task.TaskID)
+	if !m.Settle(task.TaskID) {
+		t.Fatal("a running task did not settle")
+	}
+	if !m.Settle(task.TaskID) {
+		t.Fatal("a settled task did not settle again")
+	}
+	if err := m.Cancel(task.TaskID); !errors.Is(err, ErrTaskEnded) {
+		t.Fatalf("Cancel after Settle = %v, want ErrTaskEnded", err)
+	}
+	if got, _ := m.Get(task.TaskID); got.Status != StatusRunning || ctx.Err() != nil {
+		t.Fatalf("Cancel after Settle changed the task: %+v, ctx %v", got, ctx.Err())
+	}
+	m.Complete(task.TaskID, "result")
+	if got, _ := m.Get(task.TaskID); got.Status != StatusCompleted {
+		t.Fatalf("a settled task did not complete: %+v", got)
+	}
+
+	cancelled, _, _ := m.CreateCancellable("/var/log/other.log", "findings")
+	if err := m.Cancel(cancelled.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if m.Settle(cancelled.TaskID) || m.Settle("no-such-task") {
+		t.Fatal("a cancelled or unknown task settled")
+	}
+}

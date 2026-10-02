@@ -7,30 +7,29 @@ import (
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/timestamps"
-	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // StoredTimes turns the time values stored for a file's lines into the
 // UTC instants an answer about the file gives: the values of
 // line_timestamps and of TimeRange under the same file zone.
 //
-// A line index and a signature scan store each line's time in the
-// file's own frame (milliseconds since the epoch: the instant for a file
-// whose timestamps carry zones, the wall clock read as UTC for one whose
-// timestamps carry none). An answer reads them in the frame its request
-// asks for (frameIn): without a file zone, a zone-less file's wall
-// clocks are read in RX_LOG_TZ and a zoned file's instants stay as they
-// are; under a file zone every line's written wall clock is read in that
-// zone. The second needs, for a file whose timestamps carry zones, the
-// offset each line writes, which only a line index that records where
-// it changes (zone_offsets) gives without reading the file again.
+// A signature scan stores each time in the file's own frame
+// (milliseconds since the epoch: the instant for a file whose timestamps
+// carry zones, the wall clock read as UTC for one whose timestamps carry
+// none), beside the zone offset the line writes. An answer reads them in
+// the frame its request asks for (frameIn): without a file zone, a
+// zone-less file's wall clocks are read in RX_LOG_TZ and a zoned file's
+// instants stay as they are; under a file zone every line's written
+// wall clock is read in that zone, and for a file whose timestamps
+// carry zones that wall clock is the instant plus the offset the line
+// writes, the value a samples parser of that frame reads from the line
+// (timestamps.Parser's inFileFrame). Nothing of the file is read for it,
+// and no line index is needed.
 type StoredTimes struct {
 	frame timeFrame
-	// segments turn a stored value into the frame's (segmentsToFrame):
-	// storedFrame when the frame is the file's own, the line index's
-	// zone offsets under a file zone on a zoned file. Nil when they are
-	// not known: then no value can be turned.
-	segments []zoneSegment
+	// stored is true when the frame is the file's own: a stored value
+	// needs no offset to be read in it.
+	stored bool
 }
 
 // StoredTimesRequest names the file whose stored times to turn and how
@@ -41,7 +40,8 @@ type StoredTimesRequest struct {
 	Path   string
 	Source paths.Pinned
 	Kind   filekind.Kind
-	// IndexLoader gives the file's line index, or none (nil, NoIndex).
+	// IndexLoader gives the file's line index, or none (nil, NoIndex);
+	// it only spares the read of the head for the format.
 	IndexLoader IndexLoader
 	// FileZone, when set, reads every line's written wall clock in this
 	// zone (Request.FileZone, the file_tz of a request); a zone a line
@@ -58,19 +58,14 @@ type StoredTimesRequest struct {
 // The format comes from the file's line index when req.IndexLoader
 // gives one (which detected it the same way), and is otherwise detected
 // from the head of the text, at most timestamps.SampleBytes read through
-// the pin, as timesOf does. The zone offsets come only from the index.
+// the pin, as timesOf does: the answer is the same either way.
 func StoredTimesOf(req StoredTimesRequest) (*StoredTimes, error) {
-	lookup := Request{Path: req.Path, Source: req.Source, IndexLoader: req.IndexLoader}
-	var (
-		detected timestamps.Format
-		section  *rxtypes.TimeIndex
-	)
-	if idx := loadIndexOrNone(lookup); idx != nil {
+	var detected timestamps.Format
+	if idx := loadIndexOrNone(Request{Path: req.Path, Source: req.Source, IndexLoader: req.IndexLoader}); idx != nil {
 		if idx.TimeIndex == nil {
 			return nil, nil
 		}
-		section = idx.TimeIndex
-		detected = formatOfSection(section)
+		detected = formatOfSection(idx.TimeIndex)
 	} else {
 		format, ok, err := detectTimeFormat(req.Source, req.Kind)
 		if err != nil || !ok {
@@ -86,35 +81,24 @@ func StoredTimesOf(req StoredTimesRequest) (*StoredTimes, error) {
 	if req.LogZone != nil {
 		logZone = config.Zone{Name: req.LogZone.String(), Location: req.LogZone}
 	}
-	times := &StoredTimes{frame: frameIn(fileZone, detected, logZone)}
-	switch {
-	case times.frame.readsStoredFrame(detected):
-		times.segments = storedFrame
-	case section != nil:
-		if segments, ok := segmentsToFrame(times.frame, detected, section); ok {
-			times.segments = segments
-		}
-	}
-	return times, nil
+	frame := frameIn(fileZone, detected, logZone)
+	return &StoredTimes{frame: frame, stored: frame.readsStoredFrame(detected)}, nil
 }
 
-// Instant returns the UTC instant of stored, the value kept for line
-// (the line whose own timestamp gave it, or any later line up to the
-// next timestamped one: they share its offset), and false when it
-// cannot be given: under a file zone, for a file whose timestamps carry
-// zones and whose index does not record where their offset changes, or
-// when the instant falls outside the years 1 to 9999.
-func (t *StoredTimes) Instant(line, stored int64) (int64, bool) {
-	if t.segments == nil {
-		return 0, false
+// Instant returns the UTC instant of stored, a time value kept in the
+// file's own frame, whose line writes the zone offset writtenOffset
+// (minutes east of UTC; 0 for a line that writes none), and false when
+// the instant falls outside the years 1 to 9999.
+func (t *StoredTimes) Instant(stored int64, writtenOffset int) (int64, bool) {
+	if t.stored {
+		return t.frame.instant(stored)
 	}
-	return t.frame.instant(frameValueAt(t.segments, line, stored))
+	return t.frame.instant(stored + int64(writtenOffset)*msPerMinute)
 }
 
-// Exact reports whether Instant turns every line's value by one offset,
-// whatever line it is given: the frame is the file's own, or the file
-// writes one offset. A value that belongs to no line (the start of a
+// Exact reports whether Instant needs no line's offset: the frame is
+// the file's own. A value that belongs to no line (the start of a
 // density series) can be turned only then.
 func (t *StoredTimes) Exact() bool {
-	return len(t.segments) == 1
+	return t.stored
 }

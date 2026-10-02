@@ -430,10 +430,13 @@ type findingJSON struct {
 	StartOffset int64  `json:"start_offset"`
 	EndOffset   int64  `json:"end_offset"`
 	TimeMS      *int64 `json:"time_ms"`
-	Excerpt     string `json:"excerpt"`
-	ValueStart  *int   `json:"value_start"`
-	ValueEnd    *int   `json:"value_end"`
-	Masked      bool   `json:"masked"`
+	// TimeOffsetMinutes is the zone offset the stamped line of TimeMS
+	// writes (sigscan.Finding's), 0 without a time.
+	TimeOffsetMinutes int    `json:"time_offset_minutes"`
+	Excerpt           string `json:"excerpt"`
+	ValueStart        *int   `json:"value_start"`
+	ValueEnd          *int   `json:"value_end"`
+	Masked            bool   `json:"masked"`
 }
 
 // seriesJSON is a density measure's bucket series.
@@ -450,8 +453,8 @@ func entryOf(key string, r *sigscan.SignatureResult) *entryFile {
 		e.Findings = make([]findingJSON, len(r.Findings))
 		for i, f := range r.Findings {
 			e.Findings[i] = findingJSON{StartLine: f.StartLine, EndLine: f.EndLine, StartOffset: f.StartOffset,
-				EndOffset: f.EndOffset, TimeMS: f.TimeMS, Excerpt: f.Excerpt, ValueStart: f.ValueStart,
-				ValueEnd: f.ValueEnd, Masked: f.Masked}
+				EndOffset: f.EndOffset, TimeMS: f.TimeMS, TimeOffsetMinutes: f.TimeOffsetMinutes, Excerpt: f.Excerpt,
+				ValueStart: f.ValueStart, ValueEnd: f.ValueEnd, Masked: f.Masked}
 		}
 	}
 	if r.Series != nil {
@@ -481,8 +484,8 @@ func (e *entryFile) result(count int64) *sigscan.SignatureResult {
 		r.Findings = make([]sigscan.Finding, len(e.Findings))
 		for i, f := range e.Findings {
 			r.Findings[i] = sigscan.Finding{StartLine: f.StartLine, EndLine: f.EndLine, StartOffset: f.StartOffset,
-				EndOffset: f.EndOffset, TimeMS: f.TimeMS, Excerpt: f.Excerpt, ValueStart: f.ValueStart,
-				ValueEnd: f.ValueEnd, Masked: f.Masked}
+				EndOffset: f.EndOffset, TimeMS: f.TimeMS, TimeOffsetMinutes: f.TimeOffsetMinutes, Excerpt: f.Excerpt,
+				ValueStart: f.ValueStart, ValueEnd: f.ValueEnd, Masked: f.Masked}
 		}
 	}
 	if e.Series != nil {

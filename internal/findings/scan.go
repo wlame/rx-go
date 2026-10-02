@@ -29,6 +29,10 @@ var errNoCacheDir = errors.New("findings: no cache directory (ScanOptions.Dir)")
 type scheduler struct {
 	slots *slotLimiter
 	files *fileLocks
+	// decoded is the read cache of Read; nil (off) until SetReadCache.
+	// Go note: an atomic.Pointer lets the server turn it on while no
+	// read runs yet and every read load it without a lock.
+	decoded atomic.Pointer[readCache]
 
 	// Seams, set by tests only.
 	// scanFile is the scan (sigscan.Scan).
@@ -71,6 +75,21 @@ var defaultScheduler = newScheduler(1)
 // lets waiting scans start at once.
 func SetMaxScans(n int) {
 	defaultScheduler.slots.setLimit(n)
+}
+
+// SetReadCache turns on the read cache of Read in this process: the
+// decoded entries and masked ranges of at most files files and bytes
+// bytes of findings, the least recently read file out first, so a
+// repeated Read of a file decodes no entry file again (never a stale
+// one: see readCache). 0 for either turns it off. The HTTP server calls
+// it once at start; the CLI, which reads a file once, leaves it off.
+func SetReadCache(files int, bytes int64) {
+	defaultScheduler.setReadCache(files, bytes)
+}
+
+// setReadCache is SetReadCache on this scheduler.
+func (s *scheduler) setReadCache(files int, bytes int64) {
+	s.decoded.Store(newReadCache(files, bytes))
 }
 
 // Scan answers the findings of sel in file: every signature with a
@@ -179,6 +198,11 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
+	// The point of no return: past it the answer is given and, when the
+	// file is unchanged, written.
+	if opts.MayWrite != nil && !opts.MayWrite() {
+		return nil, context.Canceled
+	}
 	fresh := freshEntries(missing, res, s.scannedAt())
 	if unchanged {
 		// An unsafe directory or lock file was logged where it was
@@ -226,8 +250,11 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	// The entries are read before the identity is checked. A writer
 	// that scanned a changed file wrote its entries after the change,
 	// so if any entry read here came from it, the check below sees the
-	// change and drops them all.
-	view := s.viewOf(root, meta, scope, cat, sel, opts.Scan.Cap)
+	// change and drops them all. The read cache gives what it holds for
+	// the state meta.json records, which the same check then confirms.
+	cache := s.decoded.Load()
+	reuse := &readReuse{held: cache.lookup(dirOf(file), meta.identity()), fresh: map[string]decodedEntry{}}
+	view := s.viewOfReusing(root, meta, scope, cat, sel, opts.Scan.Cap, reuse)
 	now, err := s.identityOf(file.Pinned())
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", file.Path(), err)
@@ -235,6 +262,7 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	if !meta.identity().Equal(now) {
 		return newAnswer(cat, sel, nil, nil, scannedText{}), nil
 	}
+	cache.store(dirOf(file), now, reuse.freshRanges, reuse.fresh)
 	ans := newAnswer(cat, sel, view.entries, view.current, view.text)
 	ans.Cached = len(ans.Checked)
 	return ans, nil
@@ -423,11 +451,30 @@ func (s *scheduler) loadView(base, dirName string, start index.SourceIdentity, s
 // signature missing).
 func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue,
 	sel []*signatures.Signature, capSetting int) cacheView {
+	return s.viewOfReusing(root, meta, scope, cat, sel, capSetting, nil)
+}
+
+// readReuse is what a Read takes from and gives to the read cache: what
+// the cache holds for the file's state (held, nil for nothing), and
+// what the view decoded from the files (freshRanges, fresh), for the
+// cache once the identity is confirmed.
+type readReuse struct {
+	held        *decodedFile
+	freshRanges *decodedRanges
+	fresh       map[string]decodedEntry
+}
+
+// viewOfReusing is viewOf that takes the ranges and the entries reuse
+// holds when they are the ones meta.json names now (the same key and
+// count, the same number of stored findings), and records what it
+// decodes from the files in reuse. A nil reuse decodes every file.
+func (s *scheduler) viewOfReusing(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue,
+	sel []*signatures.Signature, capSetting int, reuse *readReuse) cacheView {
 	view := cacheView{meta: meta, entries: map[string]cachedEntry{}, current: currentInMeta(meta, scope, cat)}
 	if len(view.current) == 0 {
 		return view
 	}
-	text, ok := s.readRanges(root, meta, scope, cat)
+	text, ok := s.rangesOf(root, meta, scope, cat, reuse)
 	if !ok {
 		view.current = map[string]bool{}
 		return view
@@ -440,6 +487,12 @@ func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *s
 			delete(view.current, sig.ID)
 			continue
 		}
+		if held, ok := reuse.entry(sig.ID, summary); ok && held.lastLine <= view.text.lines {
+			result := &sigscan.SignatureResult{Findings: held.findings, Count: summary.Count, Series: held.series}
+			view.entries[sig.ID] = cachedEntry{result: result, scannedAt: summary.ScannedAt}
+			view.current[sig.ID] = true
+			continue
+		}
 		var entry entryFile
 		err := readJSON(s.openCache, root, name, maxEntryBytes(capSetting), &entry)
 		if err != nil || entry.Key != summary.Key || len(entry.Findings) != summary.Stored || int64(summary.Stored) > summary.Count ||
@@ -447,10 +500,50 @@ func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *s
 			delete(view.current, sig.ID)
 			continue
 		}
-		view.entries[sig.ID] = cachedEntry{result: entry.result(summary.Count), scannedAt: summary.ScannedAt}
+		result := entry.result(summary.Count)
+		view.entries[sig.ID] = cachedEntry{result: result, scannedAt: summary.ScannedAt}
 		view.current[sig.ID] = true
+		if reuse != nil {
+			reuse.fresh[sig.ID] = decodedEntryOf(&entry, result)
+		}
 	}
 	return view
+}
+
+// entry returns the entry the read cache holds for id when it is the
+// one meta.json names now: the same key and stored count.
+func (r *readReuse) entry(id string, summary metaEntry) (decodedEntry, bool) {
+	if r == nil || r.held == nil {
+		return decodedEntry{}, false
+	}
+	e, ok := r.held.entries[id]
+	if !ok || e.key != summary.Key || len(e.findings) != summary.Stored || int64(summary.Stored) > summary.Count {
+		return decodedEntry{}, false
+	}
+	return e, true
+}
+
+// rangesOf is readRanges that takes the ranges reuse holds when they
+// are the ones meta.json and the scope name (the same key and count),
+// and records the ranges it decodes in reuse.
+func (s *scheduler) rangesOf(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue, reuse *readReuse) (scannedText, bool) {
+	if reuse != nil && reuse.held != nil && reuse.held.ranges != nil {
+		r := reuse.held.ranges
+		named := meta.MaskedRanges.Key == scope.rangesKey && meta.MaskedRanges.Count == r.count
+		if named && r.key == scope.rangesKey {
+			return r.text, true
+		}
+	}
+	text, ok := s.readRanges(root, meta, scope, cat)
+	if ok && reuse != nil {
+		reuse.freshRanges = &decodedRanges{key: meta.MaskedRanges.Key, count: meta.MaskedRanges.Count, text: text}
+	}
+	return text, ok
+}
+
+// dirOf is the read cache's name of a file: its cache directory's name.
+func dirOf(file trace.SearchFile) string {
+	return entryDirName(file.Path())
 }
 
 // readRanges reads the ranges file meta.json names, and reports false
