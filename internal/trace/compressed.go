@@ -225,18 +225,24 @@ func ProcessCompressed(
 		return nil
 	})
 
-	// If the stream returned io.EOF from inside the callback we use
-	// that as our "stop early" signal — not a real error. Cancel so
-	// rg exits and the io.Copy goroutine unblocks via broken-pipe
-	// on its next write.
-	if errors.Is(streamErr, io.EOF) {
+	// INVARIANT: rg is never waited on while its stdout is unread. A nil
+	// streamErr means the parser read rg's stdout to the end, so rg has
+	// written everything and is exiting. Any other return means the
+	// parser stopped early, and rg may still have output to write: with
+	// nobody reading, it would block on the full pipe and rgCmd.Wait
+	// below would never return. Canceling childCtx makes
+	// exec.CommandContext kill rg, and the io.Copy goroutine then
+	// unblocks with a broken pipe on its next write.
+	if streamErr != nil {
 		cancel()
+	}
+	// io.EOF from inside the callback is the cap's "stop early" signal,
+	// not a failure.
+	if errors.Is(streamErr, io.EOF) {
 		streamErr = nil
 	}
 
 	// Reap rg and wait for the copy goroutine so we don't leak either.
-	// Order matters: waiting on rg.Wait AFTER closing stdin (done inside
-	// the copy goroutine) lets rg drain its output buffer cleanly.
 	rgWaitErr := rgCmd.Wait()
 	copyErr := <-copyDone
 
