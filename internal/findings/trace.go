@@ -95,9 +95,10 @@ func newTracer() *tracer {
 type fileFindings struct {
 	file     TraceFile
 	findings []rxtypes.Finding
-	// ranges are the file's masked ranges (Answer.MaskedRanges): the
-	// bodies of redacting blocks and runs, whose lines no carrier shows.
-	ranges  [][2]int64
+	// text is the file's masked ranges (the bodies of redacting blocks
+	// and runs, whose lines no carrier shows) and the end of the text the
+	// scan read, past which no line is shown.
+	text    scannedText
 	summary rxtypes.FileFindingSummary
 }
 
@@ -161,7 +162,8 @@ func (tr *tracer) scanFile(ctx context.Context, f TraceFile, cat *signatures.Cat
 	if err != nil {
 		return nil, err
 	}
-	ff := &fileFindings{file: f, ranges: answer.MaskedRanges, summary: rxtypes.FileFindingSummary{
+	text := scannedText{ranges: answer.MaskedRanges, lines: answer.TextLines, bytes: answer.TextBytes}
+	ff := &fileFindings{file: f, text: text, summary: rxtypes.FileFindingSummary{
 		State: string(answer.State), Signatures: make(map[string]rxtypes.FindingCount, len(sel)),
 	}}
 	for _, sig := range sel {
@@ -330,7 +332,7 @@ func (t *traceText) fill(ctx context.Context, ff *fileFindings) error {
 		}
 		if cached.number != line.Number {
 			cached.number = line.Number
-			cached.text, cached.masked = t.maskedLine(line, ff.ranges)
+			cached.text, cached.masked = t.maskedLine(line, ff.text.ranges)
 		}
 		f, ft := &ff.findings[i], &texts[i]
 		text, masked := cached.text, cached.masked
@@ -378,6 +380,10 @@ func (t *traceText) fill(ctx context.Context, ff *fileFindings) error {
 		Before: min(t.opts.Before, maxContextLines), After: min(t.opts.After, maxContextLines),
 		KeepBytes:   max(t.opts.LineTextBytes, 0) + maskSlack(t.opts),
 		IndexLoader: t.opts.IndexLoader,
+		// SECURITY: nothing past the text the scan read: a log that grew
+		// since holds lines in no masked range (the rest of a key block
+		// open at the end, say).
+		TextLines: ff.text.lines, TextBytes: ff.text.bytes,
 	}
 	if err := t.readSpans(ctx, req, visit); err != nil {
 		return err

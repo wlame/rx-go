@@ -165,11 +165,14 @@ func scanVariant(t *testing.T, v variant, text []byte, sigs []*signatures.Signat
 }
 
 // requireSameFindings fails when two results differ in any finding or
-// count, or in their masked ranges.
+// count, in their masked ranges, or in how much text they read.
 func requireSameFindings(t *testing.T, want, got *Result) {
 	t.Helper()
 	if !slices.Equal(want.MaskedRanges, got.MaskedRanges) {
 		t.Fatalf("masked ranges differ:\nwant %v\ngot  %v", want.MaskedRanges, got.MaskedRanges)
+	}
+	if want.TextLines != got.TextLines || want.TextBytes != got.TextBytes {
+		t.Fatalf("text read: want %d lines and %d bytes, got %d and %d", want.TextLines, want.TextBytes, got.TextLines, got.TextBytes)
 	}
 	for id, w := range want.BySignature {
 		g := got.BySignature[id]

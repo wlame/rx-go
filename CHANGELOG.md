@@ -146,7 +146,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key, count, stored findings and scan time, and the key and count of
   the masked ranges), `meta.ranges.json` (the file's masked ranges: the
   body lines of every redacting block and run, keyed by the engine
-  version, `RX_SIGNATURES_LINE_BYTES` and the redacting signatures) and
+  version, `RX_SIGNATURES_LINE_BYTES` and the redacting signatures, and
+  the line count and length of the text the scan read) and
   one `<signature-id>.json` per signature (its findings with their
   times, masked excerpts, value spans and `masked` flags, and a density
   measure's bucket series). Cached entries are used only with a current
@@ -223,7 +224,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside is masked whole; every body line of a loaded redacting `block`
   or `run`, selected or not, becomes `[masked, N bytes]` in the lines of
   every finding and in the lines before and after one, so a private
-  key's base64 lines never show around an error line next to it.
+  key's base64 lines never show around an error line next to it. No
+  line past the end of the text the scan read is shown, and a last line
+  written on since shows the bytes the scan saw: a log that grew after
+  its scan (the rest of a key block appended, say) shows its new lines
+  after the next scan.
   `masked` is true when anything in the excerpt or the lines was masked.
   The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
   masked: they are the pattern's own output.

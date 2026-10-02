@@ -186,8 +186,11 @@ It holds:
 - `meta.ranges.json` — the file's masked ranges: its `key` and the
   `ranges`, `[first, last]` line numbers of the body lines of every
   redacting block and run (see [Signatures](signatures.md#how-a-scan-reads-a-file)),
-  sorted, the same for every chunking and storage. Every scan writes
-  it, since every scan walks every loaded redacting block and run;
+  sorted, the same for every chunking and storage; and the end of the
+  text the scan read, `text_lines` and `text_bytes` (the decompressed
+  text of a compressed file), past which no text of a finding is shown.
+  Every scan writes it, since every scan walks every loaded redacting
+  block and run;
 - `<signature-id>.json` — one entry: its `key`, its `findings` (lines,
   text offsets, `time_ms`, the excerpt with every secret masked, the
   value span, `masked`) and, for a `density` measure, its bucket
@@ -224,9 +227,10 @@ The masked ranges have a key of their own: the engine's version,
 `RX_SIGNATURES_LINE_BYTES` (the line view decides whether a line opens
 or continues a block) and the redacting signatures. A file whose
 `meta.ranges.json` is missing, unreadable, of another key or count
-than `meta.json` records, or not sorted as a scan writes it, has no
-current entry: its signatures are scanned again, and `meta.ranges.json`
-is written anew.
+than `meta.json` records, not sorted as a scan writes it, or whose end
+of the text lies before a range or a cached finding, has no current
+entry: its signatures are scanned again, and `meta.ranges.json` is
+written anew.
 
 A stale entry is overwritten the next time its signature is scanned;
 nothing prunes the directories of deleted files, as for `indexes/`. The

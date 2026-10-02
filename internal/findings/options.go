@@ -90,6 +90,11 @@ type Answer struct {
 	// and an answer holds cached findings only together with their
 	// ranges. Nil when the answer holds no findings.
 	MaskedRanges [][2]int64
+	// TextLines and TextBytes are the end of the text the findings and
+	// the ranges describe (sigscan.Result's): no carrier shows a line
+	// past it, of a file that grew since it was scanned. 0 when the
+	// answer holds no findings.
+	TextLines, TextBytes int64
 }
 
 // FileSummary is how much of the default set a file has cached, for

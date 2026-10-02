@@ -268,11 +268,14 @@ func newRecordedScheduler(maxScans int) (*scheduler, *recorder) {
 
 // requireSameFindings fails unless two answers hold equal findings,
 // field by field (nil and empty told apart), for the same signatures,
-// and the same masked ranges.
+// the same masked ranges and the same end of the scanned text.
 func requireSameFindings(t testing.TB, got, want *Answer) {
 	t.Helper()
 	if !slices.Equal(got.MaskedRanges, want.MaskedRanges) {
 		t.Fatalf("masked ranges differ: got %v, want %v", got.MaskedRanges, want.MaskedRanges)
+	}
+	if got.TextLines != want.TextLines || got.TextBytes != want.TextBytes {
+		t.Fatalf("scanned text differs: got %d lines and %d bytes, want %d and %d", got.TextLines, got.TextBytes, want.TextLines, want.TextBytes)
 	}
 	if !reflect.DeepEqual(got.BySignature, want.BySignature) {
 		for id, w := range want.BySignature {

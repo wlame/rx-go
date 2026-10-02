@@ -61,6 +61,13 @@ type SpansRequest struct {
 	// longer line is cut there and its whole length reported. 0 or
 	// less keeps nothing.
 	KeepBytes int
+	// TextLines and TextBytes, when TextLines is above 0, are the end of
+	// the text the caller knows (its line count and its length in
+	// bytes), for a file that may have grown since: no line past line
+	// TextLines is read or handed over, and a line that runs past byte
+	// TextBytes is cut there, with the length it had then. 0 reads to the
+	// end of the file's text.
+	TextLines, TextBytes int64
 	// IndexLoader, when set, gives the file's line index: a stream then
 	// starts at the checkpoint before the first span, and a seekable
 	// file is entered through its frame table. Nil reads no index. The
@@ -106,11 +113,21 @@ const (
 // A line holds at most KeepBytes bytes in memory however long it is.
 // When the text ends before a span's last line, the pass returns an
 // error wrapping ErrSpanPastEnd that names the file; lines after a span
-// that the end of the text cuts are simply not there. ctx stops the
-// pass at its next read.
+// that the end of the text cuts are simply not there. With
+// req.TextLines, the end of the text is the one given: a span past it
+// is the same error, and nothing past it is read or handed over. ctx
+// stops the pass at its next read.
 func ReadLineSpans(ctx context.Context, req SpansRequest, visit func(span int, line SpanLine) SpanAction) error {
 	if len(req.Spans) == 0 {
 		return nil
+	}
+	if req.TextLines > 0 {
+		for _, s := range req.Spans {
+			if s.LastLine > req.TextLines {
+				return fmt.Errorf("%s: lines %d-%d: %w (the text read ends at line %d)",
+					req.Source.Path(), s.FirstLine, s.LastLine, ErrSpanPastEnd, req.TextLines)
+			}
+		}
 	}
 	p := newSpanPass(ctx, req, visit)
 	defer p.close()
@@ -168,9 +185,13 @@ func newSpanPass(ctx context.Context, req SpansRequest, visit func(int, SpanLine
 	}
 	for i, s := range req.Spans {
 		first := max(1, s.FirstLine-int64(max(req.Before, 0)))
-		p.windows = append(p.windows, &spanWindow{
-			index: i, span: s, first: first, last: s.LastLine + int64(max(req.After, 0)), next: first,
-		})
+		last := s.LastLine + int64(max(req.After, 0))
+		if req.TextLines > 0 {
+			// SECURITY: no line past the text the caller knows: a file
+			// that grew since holds lines its findings do not describe.
+			last = min(last, req.TextLines)
+		}
+		p.windows = append(p.windows, &spanWindow{index: i, span: s, first: first, last: last, next: first})
 	}
 	return p
 }
@@ -237,6 +258,7 @@ func (p *spanPass) readLine() (ended bool, err error) {
 	if length == 0 {
 		return true, nil
 	}
+	text, textLen = p.cutAtTextEnd(text, textLen)
 	line := SpanLine{Number: p.line, Text: text, Length: textLen}
 	kept := p.active[:0]
 	for _, w := range p.active {
@@ -261,6 +283,21 @@ func (p *spanPass) readLine() (ended bool, err error) {
 	p.active = kept
 	p.advance(length)
 	return ended, nil
+}
+
+// cutAtTextEnd cuts the current line at req.TextBytes, when the caller
+// gave the end of the text: the last line the caller saw, written on
+// since (it had no line break then), shows the bytes the caller saw and
+// the length it had.
+func (p *spanPass) cutAtTextEnd(text []byte, textLen int64) ([]byte, int64) {
+	if p.req.TextLines <= 0 {
+		return text, textLen
+	}
+	if room := max(p.req.TextBytes-p.offset, 0); textLen > room {
+		textLen = room
+		text = text[:min(int64(len(text)), room)]
+	}
+	return text, textLen
 }
 
 // advance moves the cursor past a line of length bytes, its line break

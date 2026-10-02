@@ -132,7 +132,7 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 			return nil, err
 		}
 		fresh := freshEntries(sel, res, s.scannedAt())
-		return newAnswer(cat, sel, fresh, idSet(sel), res.MaskedRanges), nil
+		return newAnswer(cat, sel, fresh, idSet(sel), textOf(res)), nil
 	}
 	if opts.Dir == "" {
 		return nil, errNoCacheDir
@@ -159,7 +159,7 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 		missing = view.missing(sel)
 	}
 	if len(missing) == 0 {
-		return newAnswer(cat, sel, view.entries, view.current, view.ranges), nil
+		return newAnswer(cat, sel, view.entries, view.current, view.text), nil
 	}
 
 	res, err := s.scanQueued(ctx, file, missing, scanOpts)
@@ -181,7 +181,7 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 	if unchanged {
 		// An unsafe directory or lock file was logged where it was
 		// found; any other failure is logged here, once per process.
-		if err := s.commit(ctx, opts.Dir, dirName, file.Path(), start, scope, missing, fresh, res.MaskedRanges); err != nil && !errors.Is(err, errUnsafeEntry) {
+		if err := s.commit(ctx, opts.Dir, dirName, file.Path(), start, scope, missing, fresh, textOf(res)); err != nil && !errors.Is(err, errUnsafeEntry) {
 			warnWriteFailed(file.Path(), err)
 		}
 	}
@@ -190,17 +190,18 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 		entries[id] = e
 		current[id] = true
 	}
-	// The scan read the whole file, so its ranges are the file's; the
-	// entries taken from the cache were masked with the same ranges,
-	// since their keys hold the same redacting set and line view.
-	return newAnswer(cat, sel, entries, current, res.MaskedRanges), nil
+	// The scan read the whole file, so its ranges and its end are the
+	// file's; the entries taken from the cache were masked with the same
+	// ranges, since their keys hold the same redacting set and line view,
+	// and describe the same text (the identity matched).
+	return newAnswer(cat, sel, entries, current, textOf(res)), nil
 }
 
 // read is Read on this scheduler.
 func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel []*signatures.Signature, opts ScanOptions) (*Answer, error) {
 	sel = uniqueSignatures(sel)
 	if !opts.usesCache() {
-		return newAnswer(cat, sel, nil, nil, nil), nil
+		return newAnswer(cat, sel, nil, nil, scannedText{}), nil
 	}
 	if opts.Dir == "" {
 		return nil, errNoCacheDir
@@ -208,7 +209,7 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	root, err := openEntryDir(opts.Dir, entryDirName(file.Path()), false)
 	if err != nil {
 		// Absent, unsafe (logged) or unreadable: a miss.
-		return newAnswer(cat, sel, nil, nil, nil), nil
+		return newAnswer(cat, sel, nil, nil, scannedText{}), nil
 	}
 	// Go note: defer closes the directory when read returns.
 	defer func() { _ = root.Close() }()
@@ -216,7 +217,7 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	meta, err := s.readMeta(root)
 	if err != nil {
 		// Absent, or unreadable (readMeta logged it): a miss.
-		return newAnswer(cat, sel, nil, nil, nil), nil
+		return newAnswer(cat, sel, nil, nil, scannedText{}), nil
 	}
 	// The entries are read before the identity is checked. A writer
 	// that scanned a changed file wrote its entries after the change,
@@ -228,9 +229,9 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 		return nil, fmt.Errorf("%s: %w", file.Path(), err)
 	}
 	if !meta.identity().Equal(now) {
-		return newAnswer(cat, sel, nil, nil, nil), nil
+		return newAnswer(cat, sel, nil, nil, scannedText{}), nil
 	}
-	return newAnswer(cat, sel, view.entries, view.current, view.ranges), nil
+	return newAnswer(cat, sel, view.entries, view.current, view.text), nil
 }
 
 // summary is Summary on this scheduler.
@@ -359,7 +360,7 @@ type cachedEntry struct {
 
 // cacheView is what the cache holds for a file: the selected entries it
 // could read, the ids of every current entry (selected or not), and the
-// file's masked ranges.
+// file's masked ranges with the end of its scanned text.
 type cacheView struct {
 	// meta is meta.json as read; nil when it is absent, unreadable, of
 	// another version or of another file state.
@@ -370,8 +371,9 @@ type cacheView struct {
 	// current are the ids of every current entry: the selected ones in
 	// entries, and every other one meta.json names with a current key.
 	current map[string]bool
-	// ranges are the file's masked ranges, read from its ranges file.
-	ranges [][2]int64
+	// text is the file's masked ranges and the end of its scanned text,
+	// read from its ranges file.
+	text scannedText
 }
 
 // missing returns the signatures of sel without a usable entry.
@@ -419,12 +421,12 @@ func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *s
 	if len(view.current) == 0 {
 		return view
 	}
-	ranges, ok := s.readRanges(root, meta, scope, cat)
+	text, ok := s.readRanges(root, meta, scope, cat)
 	if !ok {
 		view.current = map[string]bool{}
 		return view
 	}
-	view.ranges = ranges
+	view.text = text
 	for _, sig := range sel {
 		summary, named := meta.Signatures[sig.ID]
 		name, cacheable := entryName(sig.ID)
@@ -434,7 +436,8 @@ func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *s
 		}
 		var entry entryFile
 		err := readJSON(s.openCache, root, name, maxEntryBytes(capSetting), &entry)
-		if err != nil || entry.Key != summary.Key || len(entry.Findings) != summary.Stored || int64(summary.Stored) > summary.Count {
+		if err != nil || entry.Key != summary.Key || len(entry.Findings) != summary.Stored || int64(summary.Stored) > summary.Count ||
+			entry.endsPast(view.text.lines) {
 			delete(view.current, sig.ID)
 			continue
 		}
@@ -446,19 +449,15 @@ func (s *scheduler) viewOf(root *os.Root, meta *metaFile, scope keyScope, cat *s
 
 // readRanges reads the ranges file meta.json names, and reports false
 // when it is missing, unreadable, of another key than meta.json and the
-// scope give, of another length than meta.json records, or not sorted
-// and disjoint as a scan writes it.
-func (s *scheduler) readRanges(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue) ([][2]int64, bool) {
+// scope give, of another length than meta.json records, or not as a
+// scan writes it (rangesFile.text).
+func (s *scheduler) readRanges(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue) (scannedText, bool) {
 	var file rangesFile
 	err := readJSON(s.openCache, root, rangesName, maxRangesBytes(len(cat.Redactors())), &file)
-	if err != nil || file.Key != scope.rangesKey || file.Key != meta.MaskedRanges.Key ||
-		len(file.Ranges) != meta.MaskedRanges.Count || !validRanges(file.Ranges) {
-		return nil, false
+	if err != nil || file.Key != scope.rangesKey || file.Key != meta.MaskedRanges.Key || len(file.Ranges) != meta.MaskedRanges.Count {
+		return scannedText{}, false
 	}
-	if file.Ranges == nil {
-		file.Ranges = [][2]int64{}
-	}
-	return file.Ranges, true
+	return file.text()
 }
 
 // currentInMeta returns the ids meta.json names whose key is current
@@ -511,7 +510,8 @@ func isQuietMiss(err error) bool {
 }
 
 // commit writes the entries of a scan of the file at sourcePath, whose
-// identity was start, and the masked ranges the scan found, into dir.
+// identity was start, and the masked ranges and the end of the text the
+// scan read, into dir.
 //
 // The order is what keeps the cache consistent:
 //
@@ -533,7 +533,7 @@ func isQuietMiss(err error) bool {
 // as stale (other settings) are kept as they are: they are overwritten
 // when this process scans that signature.
 func (s *scheduler) commit(ctx context.Context, base, dirName, sourcePath string, start index.SourceIdentity, scope keyScope,
-	scanned []*signatures.Signature, fresh map[string]cachedEntry, ranges [][2]int64) error {
+	scanned []*signatures.Signature, fresh map[string]cachedEntry, text scannedText) error {
 	// Every operation below goes through root, the file's directory,
 	// checked to be a plain directory and not a link (openEntryDir).
 	root, err := openEntryDir(base, dirName, true)
@@ -560,13 +560,11 @@ func (s *scheduler) commit(ctx context.Context, base, dirName, sourcePath string
 		}
 		meta.Signatures[sig.ID] = metaEntry{Key: key, Count: e.result.Count, Stored: len(e.result.Findings), ScannedAt: e.scannedAt}
 	}
-	if ranges == nil {
-		ranges = [][2]int64{}
-	}
-	if err := writeJSONAtomic(root, rangesName, rangesFile{Key: scope.rangesKey, Ranges: ranges}); err != nil {
+	file := text.fileOf(scope.rangesKey)
+	if err := writeJSONAtomic(root, rangesName, file); err != nil {
 		return err
 	}
-	meta.MaskedRanges = rangesMeta{Key: scope.rangesKey, Count: len(ranges)}
+	meta.MaskedRanges = rangesMeta{Key: scope.rangesKey, Count: len(file.Ranges)}
 	if s.beforeMeta != nil {
 		if err := s.beforeMeta(); err != nil {
 			return err
@@ -610,13 +608,14 @@ func freshEntries(sigs []*signatures.Signature, res *sigscan.Result, at time.Tim
 }
 
 // newAnswer builds the answer of sel from the entries known, the state
-// from the ids of every current entry, and the file's masked ranges.
+// from the ids of every current entry, and the file's masked ranges and
+// the end of its scanned text.
 func newAnswer(cat *signatures.Catalogue, sel []*signatures.Signature, entries map[string]cachedEntry, current map[string]bool,
-	ranges [][2]int64) *Answer {
+	text scannedText) *Answer {
 	ans := &Answer{
 		State: stateOf(cat, current), Checked: []string{}, Missing: []string{},
 		BySignature: map[string]*sigscan.SignatureResult{}, ScannedAt: map[string]time.Time{},
-		MaskedRanges: ranges,
+		MaskedRanges: text.ranges, TextLines: text.lines, TextBytes: text.bytes,
 	}
 	for _, sig := range sel {
 		e, ok := entries[sig.ID]

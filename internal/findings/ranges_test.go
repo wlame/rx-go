@@ -2,6 +2,8 @@ package findings
 
 import (
 	"bytes"
+	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/signatures"
+	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -190,13 +194,15 @@ func rewriteJSON(t *testing.T, path string, change func(v map[string]any)) {
 	}
 }
 
-// A cached entry is used only with its file's masked ranges, since its
-// text could not be masked without them. When the ranges file is
-// missing, holds another count than meta.json records or ranges that
-// are not sorted, or meta.json names no ranges (as one written before
-// they were kept), Read answers every signature missing, and Scan scans
-// again and writes the ranges back; a meta.json without ranges shows as
-// nothing cached in Summary too.
+// A cached entry is used only with its file's masked ranges and the end
+// of its scanned text, since its text could not be masked or bounded
+// without them. When the ranges file is missing, holds another count
+// than meta.json records, ranges that are not sorted, ranges past the
+// end it records, or an end before an entry's finding, or meta.json
+// names no ranges (as one written before they were kept), Read answers
+// every signature missing, and Scan scans again and writes the ranges
+// back; a meta.json without ranges shows as nothing cached in Summary
+// too.
 func TestScan_EntriesWithoutTheirRangesAreMissing(t *testing.T) {
 	cat := loadCatalogue(t, defErrLine, defPem, defB64)
 	cases := map[string]func(t *testing.T, dir string){
@@ -217,6 +223,17 @@ func TestScan_EntriesWithoutTheirRangesAreMissing(t *testing.T) {
 			rewriteJSON(t, filepath.Join(dir, metaName), func(v map[string]any) {
 				v["masked_ranges"].(map[string]any)["count"] = 2
 			})
+		},
+		"text end before a finding": func(t *testing.T, dir string) {
+			rewriteJSON(t, filepath.Join(dir, rangesName), func(v map[string]any) {
+				v["ranges"], v["text_lines"], v["text_bytes"] = []any{}, 0, 0
+			})
+			rewriteJSON(t, filepath.Join(dir, metaName), func(v map[string]any) {
+				v["masked_ranges"].(map[string]any)["count"] = 0
+			})
+		},
+		"ranges past the text end": func(t *testing.T, dir string) {
+			rewriteJSON(t, filepath.Join(dir, rangesName), func(v map[string]any) { v["text_lines"] = 5 })
 		},
 		"meta.json without ranges": func(t *testing.T, dir string) {
 			rewriteJSON(t, filepath.Join(dir, metaName), func(v map[string]any) { delete(v, "masked_ranges") })
@@ -320,5 +337,104 @@ func TestTrace_BodyLinesAreMaskedInEveryCarrier(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// growingLog is a log whose text ends inside a PEM block (an error
+// line, the BEGIN line and one key line), and the rest of the block,
+// written to the log later.
+func growingLog() (seen, growth string) {
+	return "2026-10-10 14:00:01.000 ERROR before the key\n-----BEGIN PRIVATE KEY-----\n" + fakeKeyLine(1) + "\n",
+		fakeKeyLine(2) + "\n" + fakeKeyLine(3) + "\n-----END PRIVATE KEY-----\n"
+}
+
+// appendText appends text to the file at path, creating it: as it is,
+// or as one more gzip member (a gzip reader reads the members one after
+// the other, as a log rotated by appending does).
+func appendText(t *testing.T, path, text string, gz bool) {
+	t.Helper()
+	data := []byte(text)
+	if gz {
+		var buf bytes.Buffer
+		w := gzip.NewWriter(&buf)
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		data = buf.Bytes()
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The text of a finding never shows a line past the end of the text the
+// scan read. A log that ends inside a key block, and grows after the
+// scan and before its text is read (the rest of the key appended), gives
+// an error line before the block only the lines the scan saw in after,
+// the key line masked: never the later key lines, which are in no masked
+// range. Plain and gzip, the scan fresh or answered from the cache.
+func TestTrace_TextStopsAtTheEndOfTheScannedText(t *testing.T) {
+	cat := loadCatalogue(t, defErrLine, defPem)
+	seen, growth := growingLog()
+	for _, gz := range []bool{false, true} {
+		for _, cached := range []bool{false, true} {
+			t.Run(fmt.Sprintf("gzip=%v/cached=%v", gz, cached), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "app.log")
+				if gz {
+					path += ".gz"
+				}
+				appendText(t, path, seen, gz)
+				files := traceFiles(t, path)
+				opts := traceOptions(t)
+				opts.After = 4
+				s, rec := newRecordedScheduler(1)
+				if cached {
+					mustScan(t, s, files[0].File, cat, pick(t, cat, "err-line"), opts.Scan)
+					rec.scanned()
+				}
+				tr := newTracer()
+				grown := false
+				tr.scan = func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue, sel []*signatures.Signature,
+					o ScanOptions) (*Answer, error) {
+					ans, err := s.scan(ctx, file, cat, sel, o)
+					if !grown {
+						appendText(t, path, growth, gz) // the log grows after the scan, before its text is read
+						grown = true
+					}
+					return ans, err
+				}
+				ans, err := tr.trace(context.Background(), files, cat, pick(t, cat, "err-line"), opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if scans := rec.scanned(); cached != (len(scans) == 0) {
+					t.Errorf("scans %v (cached: %v)", scans, cached)
+				}
+				if len(ans.Findings) != 1 {
+					t.Fatalf("findings %+v", ans.Findings)
+				}
+				f := ans.Findings[0]
+				if want := []string{"----************", "[masked, 64 bytes]"}; !slices.Equal(f.After, want) || !f.Masked {
+					t.Errorf("after %q masked %v, want %q", f.After, f.Masked, want)
+				}
+				raw, err := json.Marshal(ans)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, secret := range []string{fakeKeyLine(1), fakeKeyLine(2), fakeKeyLine(3)} {
+					if strings.Contains(string(raw), secret) {
+						t.Errorf("the answer holds %q:\n%s", secret, raw)
+					}
+				}
+			})
+		}
 	}
 }

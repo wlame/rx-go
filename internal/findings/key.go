@@ -95,8 +95,10 @@ func scopeFor(cat *signatures.Catalogue, opts ScanOptions, engine int, measureVe
 	return keyScope{shared: canonicalJSON(settings), rangesKey: hex.EncodeToString(sum[:]), measureVersion: measureVersion}
 }
 
-// rangesKeyFormat names the layout of the bytes a ranges key hashes.
-const rangesKeyFormat = "rx-findings-ranges/1"
+// rangesKeyFormat names the layout of the bytes a ranges key hashes,
+// and of the ranges file: a file of another layout (one without the end
+// of the scanned text) has another key, so it is never current.
+const rangesKeyFormat = "rx-findings-ranges/2"
 
 // rangesSettings is what the key of a file's masked ranges hashes.
 type rangesSettings struct {

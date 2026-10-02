@@ -148,6 +148,14 @@ type Result struct {
 	// none, and for an empty selection, which reads nothing. They are
 	// the same for every chunking and storage of the text.
 	MaskedRanges [][2]int64
+	// TextLines and TextBytes are how much text the scan read: its line
+	// count and its length in bytes (the decompressed text of a
+	// compressed file, a byte-order mark included). A file that grows
+	// during or after the scan was read up to here, and its findings,
+	// masked ranges and the text read for them describe that text:
+	// nothing past it is in a masked range, so no line past it is shown.
+	// Both are 0 for an empty selection, which reads nothing.
+	TextLines, TextBytes int64
 	// BytesRead is how many bytes of the file the scan read, as stored
 	// on disk: the whole file, plus what was read twice at chunk edges,
 	// plus the head of the file read for its timestamp format.

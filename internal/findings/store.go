@@ -303,10 +303,55 @@ type rangesMeta struct {
 }
 
 // rangesFile is meta.ranges.json: the file's masked ranges, as a scan
-// with the key's redacting set and line view found them.
+// with the key's redacting set and line view found them, and the end of
+// the text that scan read (its line count and length in bytes).
 type rangesFile struct {
-	Key    string     `json:"key"`
-	Ranges [][2]int64 `json:"ranges"`
+	Key       string     `json:"key"`
+	Ranges    [][2]int64 `json:"ranges"`
+	TextLines int64      `json:"text_lines"`
+	TextBytes int64      `json:"text_bytes"`
+}
+
+// scannedText is what an answer knows of the text its findings
+// describe: the masked ranges, and where the text the scan read ends
+// (sigscan.Result's MaskedRanges, TextLines and TextBytes). Every
+// carrier of a finding's text masks the ranges and shows nothing past
+// the end.
+type scannedText struct {
+	ranges       [][2]int64
+	lines, bytes int64
+}
+
+// textOf is the scanned text of a scan's result.
+func textOf(res *sigscan.Result) scannedText {
+	return scannedText{ranges: res.MaskedRanges, lines: res.TextLines, bytes: res.TextBytes}
+}
+
+// fileOf is the ranges file that records text under key.
+func (st scannedText) fileOf(key string) rangesFile {
+	ranges := st.ranges
+	if ranges == nil {
+		ranges = [][2]int64{}
+	}
+	return rangesFile{Key: key, Ranges: ranges, TextLines: st.lines, TextBytes: st.bytes}
+}
+
+// text is the scanned text a ranges file records; ok is false when the
+// file is not as a scan writes it: the ranges are not sorted and
+// disjoint (validRanges), a range lies past the end it records, or that
+// end has fewer bytes than lines (every line holds a byte at least).
+func (f rangesFile) text() (scannedText, bool) {
+	if !validRanges(f.Ranges) || f.TextLines < 0 || f.TextBytes < f.TextLines {
+		return scannedText{}, false
+	}
+	if n := len(f.Ranges); n > 0 && f.Ranges[n-1][1] > f.TextLines {
+		return scannedText{}, false
+	}
+	ranges := f.Ranges
+	if ranges == nil {
+		ranges = [][2]int64{}
+	}
+	return scannedText{ranges: ranges, lines: f.TextLines, bytes: f.TextBytes}, true
 }
 
 // maxRangesBytes bounds the masked ranges file of a catalogue with
@@ -413,6 +458,19 @@ func entryOf(key string, r *sigscan.SignatureResult) *entryFile {
 		e.Series = &seriesJSON{BucketMS: r.Series.BucketMS, StartMS: r.Series.StartMS, Counts: r.Series.Counts}
 	}
 	return e
+}
+
+// endsPast reports whether a finding of the entry ends past line lines,
+// the end of the scanned text the ranges file records: the two do not
+// describe one text, so the entry is not used (its text would be read
+// without a bound).
+func (e *entryFile) endsPast(lines int64) bool {
+	for _, f := range e.Findings {
+		if f.EndLine > lines {
+			return true
+		}
+	}
+	return false
 }
 
 // result turns an entry file back into the scan's result, with the

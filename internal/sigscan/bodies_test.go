@@ -459,3 +459,36 @@ func TestJoinRanges(t *testing.T) {
 		}
 	}
 }
+
+// A result says how much text the scan read: its line count and its
+// length in bytes (the decompressed text of a compressed file), with or
+// without a final line break, a CRLF or a byte-order mark; the same on
+// every chunking and storage. The text of a finding is never read past
+// it.
+func TestScan_ResultSaysHowMuchTextItRead(t *testing.T) {
+	sigs := loadSigs(t, sigFile(regexSig("err", `ERROR`)), "err")
+	cases := []struct {
+		name  string
+		text  string
+		lines int64
+	}{
+		{"final line break", "INFO a\nERROR b\n", 2},
+		{"no final line break", "INFO a\nERROR b", 2},
+		{"CRLF and a byte-order mark", "\xEF\xBB\xBFERROR a\r\nINFO b\r\n", 2},
+		{"one line", "ERROR", 1},
+		{"the mixed text", mixedText(), 36},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, []byte(tc.text), sigs, Options{})
+			if ref.TextLines != tc.lines || ref.TextBytes != int64(len(tc.text)) {
+				t.Fatalf("text lines %d, bytes %d; want %d and %d", ref.TextLines, ref.TextBytes, tc.lines, len(tc.text))
+			}
+			for _, v := range append(chunkVariants(), storageVariants()...) {
+				t.Run(v.name, func(t *testing.T) {
+					requireSameFindings(t, ref, scanVariant(t, v, []byte(tc.text), sigs, Options{}))
+				})
+			}
+		})
+	}
+}

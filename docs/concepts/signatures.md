@@ -660,7 +660,9 @@ rx --signatures=all,-pii -e timeout app.log          # with a pattern
   signature matches on a line, and every body line of a loaded
   redacting block or run, which shows as `[masked, N bytes]` in the
   lines of any finding and in the lines before and after one (`-B`,
-  `-A`, `--context`) alike. Each line
+  `-A`, `--context`) alike. No line past the end of the text the scan
+  read is shown: a log that grew since shows its new lines after its
+  next scan. Each line
   is cut at `RX_MAX_LINE_TEXT_BYTES`, and the text of all findings
   together stops at `RX_FINDINGS_TEXT_MAX_BYTES`; the findings past it
   keep their place and say `lines_truncated`.

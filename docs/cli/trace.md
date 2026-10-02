@@ -278,6 +278,12 @@ a compressed stream is read from its start up to its last finding.
   A line is masked before it is cut, so a secret the cut falls inside
   is masked as a whole. The file itself stays readable through
   `rx samples`.
+- The text never reaches past the end of the text the scan read. A log
+  that grew since its scan (or while its text was read) shows its new
+  lines after the next scan: until then a finding at its very end has
+  fewer `after` lines, and a last line written on since shows the bytes
+  the scan saw. New lines belong to no masked range yet, so this is
+  what keeps the rest of a key block written after the scan hidden.
 - The matches of `-e PATTERN` (`matches[].line_text`,
   `context_lines`) are not masked: they are your own regex's output,
   not text of a finding.

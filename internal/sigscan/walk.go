@@ -108,8 +108,10 @@ func (s *chunkSink) add(cs *compiledSig, f *rawFinding) {
 // merge.
 type chunkResult struct {
 	seq int
-	// lines is the number of lines the chunk owns.
+	// lines is the number of lines the chunk owns; end is the offset
+	// just past its last line (the end of the text for the last chunk).
 	lines int64
+	end   int64
 	// final says the walk reached the end of the text.
 	final bool
 	sigs  []sigChunk
@@ -192,6 +194,8 @@ type walk struct {
 	// a finding starting there would have, for time-gap.
 	prevStart int64
 	prevTm    timeRef
+	// end is the offset just past the last line walked.
+	end int64
 }
 
 // newWalk returns a walk for one chunk. gs is the goroutine's gate
@@ -294,6 +298,7 @@ func (w *walk) line(l *line) bool {
 	if len(e.gaps) > 0 {
 		w.prevStart, w.prevTm = l.start, w.times.at(l.start)
 	}
+	w.end = l.next
 	w.idx++
 	return true
 }
@@ -416,7 +421,7 @@ func addValueFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 // Runs are always reported, never closed: the merge closes them.
 func (w *walk) finish(final bool) *chunkResult {
 	res := w.res
-	res.lines, res.final = w.idx, final
+	res.lines, res.end, res.final = w.idx, w.end, final
 	res.lastStamp = w.times.last
 	if w.e.hasSame && w.idx > 0 {
 		res.lastView, res.lastLen = bytes.Clone(w.prevView), w.prevLen

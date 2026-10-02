@@ -191,6 +191,46 @@ func TestReadLineSpans_SpanPastTheEndIsAnError(t *testing.T) {
 	if !errors.Is(err, ErrSpanPastEnd) || !strings.Contains(err.Error(), path) {
 		t.Errorf("error %v, want ErrSpanPastEnd naming %s", err, path)
 	}
+	// A span past the end of the text the caller gives is the same
+	// error, though the file holds its lines.
+	_, err = readSpansOf(t, path, SpansRequest{Spans: lineSpansAt(starts, [2]int64{40, 45}), KeepBytes: 100, TextLines: 42, TextBytes: starts[42]},
+		func(int, SpanLine) SpanAction { return SpanContinue })
+	if !errors.Is(err, ErrSpanPastEnd) {
+		t.Errorf("a span past the given end: error %v, want ErrSpanPastEnd", err)
+	}
+}
+
+// Given the end of the text a caller saw (its line count and length),
+// the spans of a file that has grown since get exactly the lines that
+// text holds: no line past its last, and its last line, which had no
+// line break and was written on since, cut at the length seen with that
+// length reported. Every storage, with and without an index.
+func TestReadLineSpans_StopsAtTheEndOfTheTextGiven(t *testing.T) {
+	seen, starts := variedLog(50, 7)
+	grown := append(bytes.Clone(seen), []byte(" TAIL-NOT-SEEN\nLINE 51 NOT SEEN\nLINE 52 NOT SEEN\n")...)
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(plain, grown, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := compressedCopiesOf(t, grown, dir)
+	files["app.log"] = plain
+	spans := lineSpansAt(starts, [2]int64{44, 45}, [2]int64{49, 50})
+	const before, after, keep = 2, 4, 1 << 10
+	want := wantSpanLines(seen, spans, before, after, keep)
+	for name, path := range files {
+		for loaderName, loader := range loadersFor(t, path) {
+			t.Run(name+"/"+loaderName, func(t *testing.T) {
+				got := spanLines(t, path, SpansRequest{Spans: spans, Before: before, After: after, KeepBytes: keep,
+					IndexLoader: loader, TextLines: 50, TextBytes: int64(len(seen))})
+				for i := range spans {
+					if !slices.Equal(got[i], want[i]) {
+						t.Errorf("span %d (lines %d-%d):\ngot  %v\nwant %v", i, spans[i].FirstLine, spans[i].LastLine, got[i], want[i])
+					}
+				}
+			})
+		}
+	}
 }
 
 // A plain file is read only around its spans: the pass seeks to each

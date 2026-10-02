@@ -91,6 +91,10 @@ type merger struct {
 	lastLine lineRef
 	// ranges are the masked ranges, set by finish.
 	ranges [][2]int64
+	// textEnd is the offset just past the last line merged so far: once
+	// every chunk is merged, the length of the text the scan read (and
+	// base its line count).
+	textEnd int64
 }
 
 // sigMerge is the merge's state for one signature.
@@ -175,6 +179,7 @@ func (m *merger) add(res *chunkResult) error {
 		m.lastLine.idx += m.base
 	}
 	m.base += res.lines
+	m.textEnd = res.end
 	m.stamped += res.stamped
 	if m.e.hasSame {
 		m.lastView, m.lastLen = res.lastView, res.lastLen

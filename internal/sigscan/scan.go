@@ -169,7 +169,7 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	s.progress.finish()
-	return &Result{BySignature: m.result(), MaskedRanges: m.ranges, BytesRead: r.n.Load()}, nil
+	return &Result{BySignature: m.result(), MaskedRanges: m.ranges, TextLines: m.base, TextBytes: m.textEnd, BytesRead: r.n.Load()}, nil
 }
 
 // mtimeOf is the modification time of a pinned file, in nanoseconds
@@ -200,7 +200,7 @@ func scanBytes(ctx context.Context, text []byte, sigs []*signatures.Signature, o
 	if err != nil {
 		return nil, err
 	}
-	return &Result{BySignature: m.result(), MaskedRanges: m.ranges}, nil
+	return &Result{BySignature: m.result(), MaskedRanges: m.ranges, TextLines: m.base, TextBytes: m.textEnd}, nil
 }
 
 // countingReaderAt counts the bytes read through it, from any number of

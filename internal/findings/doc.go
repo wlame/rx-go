@@ -14,7 +14,7 @@
 //
 //	<dir>/<safe_basename>_<sha256(abs path)[:16]>/
 //	    meta.json            the commit point: the file's identity, one summary per signature, the ranges' key
-//	    meta.ranges.json     the file's masked ranges: the body lines of every redacting block and run
+//	    meta.ranges.json     the file's masked ranges (the body lines of every redacting block and run) and the end of the text read
 //	    <signature-id>.json  one entry: its key, its findings and its density series
 //	    .lock                taken (flock) while a process writes the directory
 //
