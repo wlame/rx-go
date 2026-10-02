@@ -129,8 +129,8 @@ If you're hitting OOM on scans with many matches:
 |---|---|---|
 | `rx index` on the 465 MB log | 142 ms (build) | 11 ms (valid index found) |
 | `rx trace` rare literal, 6.3 GB log | 0.48 s | 12 ms (trace cache hit) |
-| `rx trace WARN`, 465 MB log, 51,817 matches | 331 ms | 429 ms (trace cache hit) |
-| `rx trace WARN --max-results=100`, 465 MB log (`time` field) | 15 ms | 30 ms (trace cache hit) |
+| `rx trace WARN`, 465 MB log, 51,817 matches (`time` field) | 96 ms | 183 ms (trace cache hit) |
+| `rx trace WARN --max-results=100`, 465 MB log (`time` field) | 15 ms | 39 ms (trace cache hit) |
 | `rx samples --lines=40000000`, 6.3 GB log | 2.46 s | 20 ms (index) |
 
 A trace cache hit parses the stored matches and reads the file on one
@@ -233,7 +233,7 @@ expect noticeably worse latency per lookup.
 
 Caches are written via a temporary file and a rename. An index is
 about one checkpoint per MB of source (9.3 KB for the 465 MB log); a
-trace cache entry grows with the match count (4.9 MB for 51,817
+trace cache entry grows with the match count (4.3 MB for 51,817
 matches).
 
 ## Extrapolation to very large files
