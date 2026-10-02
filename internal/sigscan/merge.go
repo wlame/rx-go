@@ -1,6 +1,10 @@
 package sigscan
 
-import "context"
+import (
+	"cmp"
+	"context"
+	"slices"
+)
 
 // The merge takes the chunk results in text order and builds the answer
 // a walk of the whole text in one piece would give.
@@ -33,6 +37,15 @@ import "context"
 //
 // The cap is applied here, in text order: the first Cap findings of a
 // signature are stored, and every finding is counted.
+//
+// Bodies: the body recorders (engine.bodyRecorders) are blocks and runs
+// like any other, merged by the same rules, with a bound of their own
+// (MaxBodiesPerSignature) in place of the cap; so the bodies they keep
+// are the first ones by line, whatever the chunking. Once every chunk is
+// merged, their findings give the masked ranges (bodyRanges), and every
+// stored finding whose first line lies in one gets the excerpt
+// "[masked, N bytes]" (maskExcerpts): only then is it known, since a
+// body may close chunks after a finding on one of its lines.
 //
 // Times: the merge carries the last stamped line of the text merged so
 // far (lastStamp). A chunk's findings whose first line had no stamped
@@ -76,6 +89,8 @@ type merger struct {
 	// lastLine is the last line merged so far, as the start of a
 	// time-gap finding.
 	lastLine lineRef
+	// ranges are the masked ranges, set by finish.
+	ranges [][2]int64
 }
 
 // sigMerge is the merge's state for one signature.
@@ -235,6 +250,68 @@ func (m *merger) finish() {
 		m.sigs[si].series = m.sigs[si].density.finish(m.e.sigs[si], m.storeSink(si, 1, true))
 	}
 	m.dropUnprefixedBelowShare()
+	m.ranges = m.bodyRanges()
+	m.maskExcerpts()
+}
+
+// bodyRanges joins the bodies the body recorders found into the masked
+// ranges: the lines after the first line of each of their findings
+// (a block's finding ends at the last line it joined), sorted, with
+// ranges that overlap or touch joined.
+//
+// SECURITY: a recorder that found more bodies than it keeps fails
+// closed. The bodies it kept are the first ones by line, so every body
+// it did not keep starts after the first line of the last one it kept:
+// every line from there to the end of the text is masked.
+func (m *merger) bodyRanges() [][2]int64 {
+	var bodies [][2]int64
+	for si := m.e.selected; si < len(m.e.sigs); si++ {
+		ms := &m.sigs[si]
+		for _, f := range ms.stored {
+			if f.EndLine > f.StartLine {
+				bodies = append(bodies, [2]int64{f.StartLine + 1, f.EndLine})
+			}
+		}
+		if n := len(ms.stored); n > 0 && ms.count > int64(n) {
+			bodies = append(bodies, [2]int64{ms.stored[n-1].StartLine + 1, max(m.base, ms.stored[n-1].StartLine+1)})
+		}
+	}
+	return joinRanges(bodies)
+}
+
+// joinRanges sorts ranges by their first line and joins those that
+// overlap or touch ([3 5] and [6 8] become [3 8]). The result is never
+// nil.
+func joinRanges(ranges [][2]int64) [][2]int64 {
+	slices.SortFunc(ranges, func(a, b [2]int64) int { return cmp.Compare(a[0], b[0]) })
+	out := make([][2]int64, 0, len(ranges))
+	for _, r := range ranges {
+		if n := len(out); n > 0 && r[0] <= out[n-1][1]+1 {
+			out[n-1][1] = max(out[n-1][1], r[1])
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// maskExcerpts replaces the excerpt of every stored finding of a
+// selected signature whose first line lies in a masked range by the
+// line's length, and marks the finding masked: such a line is the body
+// of a redacting block or run, which holds secrets no value mask finds.
+// It clears every stored finding's first-line length, which only the
+// merge uses.
+func (m *merger) maskExcerpts() {
+	for si := range m.e.selected {
+		stored := m.sigs[si].stored
+		for i := range stored {
+			f := &stored[i]
+			if InMaskedRanges(m.ranges, f.StartLine) {
+				f.Excerpt, f.Masked = MaskedLineText(f.firstLen), true
+			}
+			f.firstLen = 0
+		}
+	}
 }
 
 // dropUnprefixedBelowShare empties the result of an unprefixed measure
@@ -253,10 +330,11 @@ func (m *merger) dropUnprefixedBelowShare() {
 	}
 }
 
-// result is the merged answer.
+// result is the merged answer of the selected signatures (the body
+// recorders are not part of it).
 func (m *merger) result() map[string]*SignatureResult {
-	out := make(map[string]*SignatureResult, len(m.e.sigs))
-	for si, cs := range m.e.sigs {
+	out := make(map[string]*SignatureResult, m.e.selected)
+	for si, cs := range m.e.sigs[:m.e.selected] {
 		findings := m.sigs[si].stored
 		if findings == nil {
 			findings = []Finding{}
@@ -272,7 +350,7 @@ func (m *merger) take(si int32, findings []Finding, count int64) {
 	ms := &m.sigs[si]
 	ms.count += count
 	for _, f := range findings {
-		if len(ms.stored) >= m.e.cap {
+		if len(ms.stored) >= m.e.capOf(si) {
 			break
 		}
 		f.StartLine += m.base + 1
@@ -285,7 +363,7 @@ func (m *merger) take(si int32, findings []Finding, count int64) {
 // noteFull tells the workers when a signature has all the findings it
 // can store, so they stop building them.
 func (m *merger) noteFull(si int32) {
-	if len(m.sigs[si].stored) >= m.e.cap {
+	if len(m.sigs[si].stored) >= m.e.capOf(si) {
 		m.e.full[si].Store(true)
 	}
 }
@@ -376,7 +454,7 @@ type mergeSink struct {
 	added    int64
 }
 
-func (s *mergeSink) storing() bool  { return len(s.m.sigs[s.si].stored) < s.m.e.cap }
+func (s *mergeSink) storing() bool  { return len(s.m.sigs[s.si].stored) < s.m.e.capOf(s.si) }
 func (s *mergeSink) mayStore() bool { return s.storing() }
 
 func (s *mergeSink) add(cs *compiledSig, f *rawFinding) {
@@ -524,7 +602,7 @@ func (m *merger) converge(rp *replay, res *chunkResult) {
 	if dropped < int64(len(sc.findings)) {
 		rest = sc.findings[dropped:]
 	}
-	need := m.e.cap - len(ms.stored)
+	need := m.e.capOf(rp.si) - len(ms.stored)
 	truncated := sc.count > int64(len(sc.findings))
 	if need <= 0 || !truncated || len(rest) >= need {
 		m.take(rp.si, rest, 0)

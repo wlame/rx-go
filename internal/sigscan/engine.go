@@ -16,10 +16,16 @@ import (
 // or run program. It is built once per scan and only read afterwards,
 // so every worker goroutine shares it.
 type engine struct {
-	sigs      []*compiledSig
-	gate      *gate
+	// sigs are the selected signatures, then the body recorders
+	// (bodyRecorders): sigs[:selected] are the ones the result answers.
+	sigs     []*compiledSig
+	selected int
+	gate     *gate
+	// lineBytes is the line view; cap is the findings cap of a selected
+	// signature, bodyCap that of a body recorder (capOf).
 	lineBytes int
 	cap       int
+	bodyCap   int
 	// lineAnchored are the signatures with an anchor but no keyword
 	// clause: their anchor is tested on every line.
 	lineAnchored []int32
@@ -76,9 +82,14 @@ type compiledSig struct {
 	sig    *signatures.Signature
 	kind   signatures.Kind
 	redact bool
-	regex  *regexMatcher
-	block  *blockProgram
-	run    *runProgram
+	// bodyOnly marks a body recorder: a copy of a redacting block or run
+	// that the walk runs only for where its bodies lie. It builds no
+	// excerpt, and the result leaves it out; its findings give
+	// Result.MaskedRanges (merger.bodyRanges).
+	bodyOnly bool
+	regex    *regexMatcher
+	block    *blockProgram
+	run      *runProgram
 	// value is the matcher of a value measure (entropy, base64-run).
 	value valueMatcher
 	// minShare is the unprefixed measure's min_share: its runs count
@@ -94,27 +105,30 @@ type compiledSig struct {
 
 // compile builds the engine of a selection. A signature id given twice
 // is scanned once. Each measure is compiled to the machinery it runs on
-// (measures.go).
+// (measures.go). After the selected signatures come the body recorders
+// of every redacting block and run, selected or given as a redactor
+// (bodyRecorders); an empty selection has none, since it reads nothing.
 func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
-	e := &engine{lineBytes: opts.LineBytes, cap: opts.Cap}
+	e := &engine{lineBytes: opts.LineBytes, cap: opts.Cap, bodyCap: MaxBodiesPerSignature}
 	if e.lineBytes <= 0 {
 		e.lineBytes = DefaultLineBytes
 	}
 	if e.cap <= 0 {
 		e.cap = DefaultCap
 	}
-	seen := map[string]bool{}
-	var unique []*signatures.Signature
-	for _, sig := range sigs {
-		if !seen[sig.ID] {
-			seen[sig.ID] = true
-			unique = append(unique, sig)
-		}
+	unique := uniqueByID(sigs)
+	e.selected = len(unique)
+	all := unique
+	if len(unique) > 0 {
+		all = slices.Concat(unique, bodyRecorders(unique, opts.Redactors))
 	}
-	for i, sig := range unique {
-		cs, err := compileSig(int32(i), sig)
+	for i, sig := range all {
+		cs, err := compileSig(int32(i), sig) // #nosec G115 -- at most the loaded signatures, twice
 		if err != nil {
 			return nil, err
+		}
+		if i >= e.selected {
+			cs.recordBodies()
 		}
 		e.sigs = append(e.sigs, cs)
 		// A measure is run by the machinery of the kind it is compiled
@@ -142,7 +156,9 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 			e.lineAnchored = append(e.lineAnchored, cs.idx)
 		}
 	}
-	g, err := newGate(unique)
+	// The body recorders are gated by their keyword clauses as any
+	// signature is, in the one automaton of the scan.
+	g, err := newGate(all)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +170,69 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	}
 	e.redact = redact
 	return e, nil
+}
+
+// uniqueByID returns sigs with each id once, in first-seen order.
+func uniqueByID(sigs []*signatures.Signature) []*signatures.Signature {
+	seen := map[string]bool{}
+	var unique []*signatures.Signature
+	for _, sig := range sigs {
+		if !seen[sig.ID] {
+			seen[sig.ID] = true
+			unique = append(unique, sig)
+		}
+	}
+	return unique
+}
+
+// recordsBodies reports whether sig is a redacting block or `match` run:
+// a signature whose body lines (after its anchor line) every output
+// replaces by their length. A redacting run is always a `match` run
+// (the loader refuses redact on blank and same runs).
+func recordsBodies(sig *signatures.Signature) bool {
+	return sig.Redact && (sig.Kind == signatures.KindBlock || sig.Kind == signatures.KindRun) && sig.Anchor() != nil
+}
+
+// bodyRecorders returns the redacting blocks and runs of the selected
+// and the given signatures, each id once: the signatures the scan walks
+// a second time, as body recorders, for where their bodies lie. A
+// selected one is walked twice because its findings keep the findings
+// cap and its own min_lines, while its bodies are recorded far past
+// the cap and for every block it opened.
+func bodyRecorders(selected, given []*signatures.Signature) []*signatures.Signature {
+	var out []*signatures.Signature
+	for _, sig := range uniqueByID(slices.Concat(selected, given)) {
+		if recordsBodies(sig) {
+			out = append(out, sig)
+		}
+	}
+	return out
+}
+
+// recordBodies turns a compiled redacting block or run into its body
+// recorder. A block's copy has min_lines 1: min_lines decides only
+// which closed blocks are findings, never what a block joins, so the
+// copy walks exactly as the signature does and reports every block it
+// opened, one shorter than min_lines too: such a block still holds the
+// lines it joined, key material included. A run keeps its min: every
+// line of a run matches the anchor, so a run too short to be a finding
+// already has its values masked.
+func (cs *compiledSig) recordBodies() {
+	cs.bodyOnly = true
+	if cs.block != nil {
+		prog := *cs.block
+		prog.minLines = 1
+		cs.block = &prog
+	}
+}
+
+// capOf is the most findings signature si stores: the findings cap, or
+// for a body recorder the bound on its bodies.
+func (e *engine) capOf(si int32) int {
+	if e.sigs[si].bodyOnly {
+		return e.bodyCap
+	}
+	return e.cap
 }
 
 // redactorSet is a set of redacting signatures as text is masked by

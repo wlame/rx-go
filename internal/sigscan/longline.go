@@ -69,7 +69,7 @@ type longCandidate struct {
 
 // emit adds the candidate to out as a finding.
 func (c *longCandidate) emit(cs *compiledSig, out sink) {
-	out.add(cs, &rawFinding{startIdx: c.idx, endIdx: c.idx, startOff: c.start, endOff: c.next,
+	out.add(cs, &rawFinding{startIdx: c.idx, endIdx: c.idx, startOff: c.start, endOff: c.next, firstLen: c.length,
 		excerpt: c.excerpt, hasEx: c.hasEx, vs: -1, ve: -1, masked: c.masked, tm: c.tm})
 }
 

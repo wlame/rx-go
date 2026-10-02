@@ -50,10 +50,12 @@ func compileRun(spec *signatures.RunSpec) *runProgram {
 type runPiece struct {
 	startIdx, endIdx int64
 	startOff, endOff int64
-	excerpt          []byte
-	hasEx            bool
-	vs, ve           int
-	masked           bool
+	// firstLen is the first line's length without its ending.
+	firstLen int64
+	excerpt  []byte
+	hasEx    bool
+	vs, ve   int
+	masked   bool
 	// tm is the first line's time.
 	tm timeRef
 }
@@ -135,8 +137,8 @@ func (r *runWalker) step(l *line, idx int64, sameAsPrevious bool, out sink) {
 // excerpt now, from its first line; a `same` run when it has a second.
 func (r *runWalker) begin(l *line, idx int64, out sink) {
 	r.open = true
-	r.cur = runPiece{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, excerpt: r.cur.excerpt[:0], vs: -1, ve: -1,
-		tm: r.times.at(l.start)}
+	r.cur = runPiece{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, firstLen: l.length, excerpt: r.cur.excerpt[:0],
+		vs: -1, ve: -1, tm: r.times.at(l.start)}
 	if r.prog.mode != runSame {
 		r.buildExcerpt(l.view, l, out)
 	}
@@ -145,9 +147,10 @@ func (r *runWalker) begin(l *line, idx int64, out sink) {
 // buildExcerpt builds the open run's excerpt from view, a line equal to
 // its first (l, when given, is that line), once, when the run may be
 // kept: a run's fate is known only when it ends, possibly in a later
-// chunk. Every redactor masks it (excerpter.build).
+// chunk. Every redactor masks it (excerpter.build). A body recorder
+// builds none.
 func (r *runWalker) buildExcerpt(view []byte, l *line, out sink) {
-	if r.cur.hasEx || !out.mayStore() {
+	if r.cur.hasEx || !out.mayStore() || r.cs.bodyOnly {
 		return
 	}
 	r.cur.hasEx = true
@@ -183,7 +186,7 @@ func (r *runWalker) end(out sink) {
 
 // emitPiece hands a run to a sink as a finding.
 func emitPiece(cs *compiledSig, p *runPiece, out sink) {
-	out.add(cs, &rawFinding{startIdx: p.startIdx, endIdx: p.endIdx, startOff: p.startOff, endOff: p.endOff,
+	out.add(cs, &rawFinding{startIdx: p.startIdx, endIdx: p.endIdx, startOff: p.startOff, endOff: p.endOff, firstLen: p.firstLen,
 		excerpt: p.excerpt, hasEx: p.hasEx, vs: p.vs, ve: p.ve, masked: p.masked, tm: p.tm})
 }
 

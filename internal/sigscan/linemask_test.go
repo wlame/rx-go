@@ -38,7 +38,9 @@ func newMasker(t testing.TB, sigs []*signatures.Signature, viewBytes int) *LineM
 // A line masked whole and cut to the excerpt's 200 bytes is the excerpt
 // a scan gives the line, mask for mask, and is marked masked exactly
 // when the excerpt is: the lines of a finding and its excerpt never
-// disagree about a secret.
+// disagree about a secret. A line in a masked range (the body of the
+// redacting block or run) is "[masked, N bytes]" in both, as a carrier
+// of the text replaces it.
 func TestLineMasker_MasksLikeTheExcerpt(t *testing.T) {
 	sigs := lineMaskSigs(t)
 	every := loadSigs(t, sigFile(regexSig("any", `.`)), "any")
@@ -60,6 +62,9 @@ func TestLineMasker_MasksLikeTheExcerpt(t *testing.T) {
 		for _, f := range res.BySignature["any"].Findings {
 			line := lines[f.StartLine-1]
 			got, masked := masker.MaskLine([]byte(line), excerptBytes)
+			if InMaskedRanges(res.MaskedRanges, f.StartLine) {
+				got, masked = MaskedLineText(int64(len(line))), true
+			}
 			if got != f.Excerpt || masked != f.Masked {
 				t.Fatalf("seed %d line %d %q:\nmasked line %q (%v)\nexcerpt     %q (%v)",
 					seed, f.StartLine, line, got, masked, f.Excerpt, f.Masked)

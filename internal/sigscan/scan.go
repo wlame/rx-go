@@ -49,6 +49,9 @@ type tuning struct {
 	// gapLimit sets how many candidates a time-gap keeper holds after
 	// it compacts; 0 means max(Cap, maxGapCandidates).
 	gapLimit int
+	// bodyCap sets how many bodies a body recorder keeps; 0 means
+	// MaxBodiesPerSignature.
+	bodyCap int
 	// open opens the file; nil means its pin's Open.
 	open func(paths.Pinned) (fileReader, int64, error)
 	// rewalkLine, when set, is called for each line the merge walks
@@ -101,7 +104,9 @@ func openPinned(pin paths.Pinned) (fileReader, int64, error) {
 //
 // The answer is the same for every number of workers, every chunk size
 // and every storage of the same text. A signature id given twice is
-// scanned once. A measure signature is refused with an error.
+// scanned once. Every redacting block and run of sigs and of
+// opts.Redactors is walked for its bodies, which give the result's
+// MaskedRanges; an empty selection reads nothing.
 //
 // Canceling ctx stops every goroutine of the scan, and Scan returns
 // ctx.Err() and no result. Any other failure (the file cannot be read,
@@ -123,7 +128,7 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 	}
 	if len(e.sigs) == 0 {
 		// Nothing to look for: the file is not read.
-		return &Result{BySignature: map[string]*SignatureResult{}}, nil
+		return &Result{BySignature: map[string]*SignatureResult{}, MaskedRanges: [][2]int64{}}, nil
 	}
 	open := tune.open
 	if open == nil {
@@ -144,6 +149,9 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	e.gapLimit = tune.gapLimitFor(e.cap)
+	if tune.bodyCap > 0 {
+		e.bodyCap = tune.bodyCap
+	}
 	s := newScanRun(e, opts, tune, size)
 	var m *merger
 	switch {
@@ -161,7 +169,7 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	s.progress.finish()
-	return &Result{BySignature: m.result(), BytesRead: r.n.Load()}, nil
+	return &Result{BySignature: m.result(), MaskedRanges: m.ranges, BytesRead: r.n.Load()}, nil
 }
 
 // mtimeOf is the modification time of a pinned file, in nanoseconds
@@ -192,7 +200,7 @@ func scanBytes(ctx context.Context, text []byte, sigs []*signatures.Signature, o
 	if err != nil {
 		return nil, err
 	}
-	return &Result{BySignature: m.result()}, nil
+	return &Result{BySignature: m.result(), MaskedRanges: m.ranges}, nil
 }
 
 // countingReaderAt counts the bytes read through it, from any number of

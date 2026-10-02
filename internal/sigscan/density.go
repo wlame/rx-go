@@ -122,6 +122,8 @@ type densitySlot struct {
 	// in the merge); firstStart and lastNext their start and end offsets.
 	first, last          int64
 	firstStart, lastNext int64
+	// firstLen is the first line's length without its ending.
+	firstLen int64
 	// firstMs is the first line's own timestamp.
 	firstMs int64
 	// The first line's excerpt, kept for the finding of a burst.
@@ -141,7 +143,7 @@ func (s *densitySlot) merge(src *densitySlot) {
 	}
 	s.count += src.count
 	if src.first < s.first {
-		s.first, s.firstStart, s.firstMs = src.first, src.firstStart, src.firstMs
+		s.first, s.firstStart, s.firstLen, s.firstMs = src.first, src.firstStart, src.firstLen, src.firstMs
 		s.excerpt, s.hasEx, s.masked = src.excerpt, src.hasEx, src.masked
 	}
 	if src.last > s.last {
@@ -290,7 +292,7 @@ func (w *densityWalker) line(l *line, idx int64, times *timeTracker, out sink) {
 	}
 	s := w.edge.hist.slot(times.last.ms)
 	if s.count == 0 {
-		s.first, s.firstStart, s.firstMs = idx, l.start, times.last.ms
+		s.first, s.firstStart, s.firstLen, s.firstMs = idx, l.start, l.length, times.last.ms
 		if out.mayStore() {
 			s.excerpt, s.masked = w.ex.build(nil, l.view)
 			s.hasEx = true
@@ -401,7 +403,7 @@ func modifiedZ(x, med, mad int64) float64 {
 
 // burstFinding is the finding of a burst that starts with slot s.
 func burstFinding(s *densitySlot) rawFinding {
-	return rawFinding{startIdx: s.first, endIdx: s.last, startOff: s.firstStart, endOff: s.lastNext,
+	return rawFinding{startIdx: s.first, endIdx: s.last, startOff: s.firstStart, endOff: s.lastNext, firstLen: s.firstLen,
 		excerpt: s.excerpt, hasEx: s.hasEx, masked: s.masked, vs: -1, ve: -1, tm: timeRef{ms: s.firstMs, state: timeKnown}}
 }
 
@@ -409,7 +411,7 @@ func burstFinding(s *densitySlot) rawFinding {
 // first line to the later last line.
 func widenBurst(f *rawFinding, s *densitySlot) {
 	if s.first < f.startIdx {
-		f.startIdx, f.startOff = s.first, s.firstStart
+		f.startIdx, f.startOff, f.firstLen = s.first, s.firstStart, s.firstLen
 		f.excerpt, f.hasEx, f.masked = s.excerpt, s.hasEx, s.masked
 		f.tm = timeRef{ms: s.firstMs, state: timeKnown}
 	}

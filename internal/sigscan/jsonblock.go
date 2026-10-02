@@ -89,7 +89,7 @@ func (b *blockWalker) tryOpenJSON(l *line, idx int64, out sink) {
 	if !ok {
 		return
 	}
-	st := blockState{startIdx: idx, startOff: l.start, lines: 1, lastIdx: idx, lastEnd: l.next, vs: -1, ve: -1,
+	st := blockState{startIdx: idx, startOff: l.start, firstLen: l.length, lines: 1, lastIdx: idx, lastEnd: l.next, vs: -1, ve: -1,
 		depth: 1, indent: indent, closer: closer, tm: b.times.at(l.start)}
 	if out.mayStore() {
 		st.hasEx = true

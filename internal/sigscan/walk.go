@@ -33,8 +33,10 @@ type line struct {
 type rawFinding struct {
 	startIdx, endIdx int64
 	startOff, endOff int64
-	excerpt          []byte
-	hasEx            bool
+	// firstLen is the length of the first line without its ending.
+	firstLen int64
+	excerpt  []byte
+	hasEx    bool
 	// vs and ve are the value span in the first line (-1: none).
 	vs, ve int
 	// masked says the finding's text is masked: its signature redacts,
@@ -62,7 +64,7 @@ func toFinding(cs *compiledSig, f *rawFinding, lineBase int64) Finding {
 		StartLine: lineBase + f.startIdx, EndLine: lineBase + f.endIdx,
 		StartOffset: f.startOff, EndOffset: f.endOff,
 		TimeMS: f.tm.pointer(),
-		Masked: f.masked,
+		Masked: f.masked, firstLen: f.firstLen,
 	}
 	if f.hasEx {
 		out.Excerpt = string(f.excerpt)
@@ -199,7 +201,7 @@ func newWalk(e *engine, gs *gateScratch) *walk {
 	w := &walk{e: e, gs: gs, blockOf: make([]*blockWalker, n), runOf: make([]*runWalker, n), sinks: make([]chunkSink, n),
 		res: &chunkResult{sigs: make([]sigChunk, n)}, ex: newExcerpter(e), times: timeTracker{src: e.times}}
 	for i := range w.sinks {
-		w.sinks[i] = chunkSink{cap: e.cap, full: &e.full[i]}
+		w.sinks[i] = chunkSink{cap: e.capOf(int32(i)), full: &e.full[i]} // #nosec G115 -- at most the loaded signatures, twice
 	}
 	for _, si := range e.blocks {
 		w.blockOf[si] = newBlockWalker(e.sigs[si], w.ex, &w.times)
@@ -304,7 +306,7 @@ func (w *walk) timeMeasures(l *line, idx int64) {
 		w.backOf[si].line(l, idx, &w.sinks[si])
 	}
 	if len(e.gaps) > 0 {
-		before := prevLine{view: w.prevView, start: w.prevStart, tm: w.prevTm}
+		before := prevLine{view: w.prevView, length: w.prevLen, start: w.prevStart, tm: w.prevTm}
 		for _, si := range e.gaps {
 			w.gapOf[si].line(l, idx, &before, &w.sinks[si])
 		}
@@ -357,7 +359,7 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 	if !ok {
 		return
 	}
-	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, vs: -1, ve: -1, tm: tm}
+	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, firstLen: l.length, vs: -1, ve: -1, tm: tm}
 	if store {
 		if vs >= 0 {
 			f.vs, f.ve = vs+l.shift, ve+l.shift
@@ -386,7 +388,7 @@ func (w *walk) finishTimeMeasures(res *chunkResult) {
 		res.sigs[si].density = &w.densityOf[si].edge
 	}
 	if len(e.gaps) > 0 && w.idx > 0 {
-		last := prevLine{view: w.prevView, start: w.prevStart, tm: w.prevTm}
+		last := prevLine{view: w.prevView, length: w.prevLen, start: w.prevStart, tm: w.prevTm}
 		res.lastLine = last.ref(w.idx-1, w.ex, &w.sinks[e.gaps[0]])
 	}
 }
@@ -399,7 +401,8 @@ func addValueFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 	if !ok {
 		return
 	}
-	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, vs: v[0] + l.shift, ve: v[1] + l.shift, tm: tm}
+	f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, firstLen: l.length,
+		vs: v[0] + l.shift, ve: v[1] + l.shift, tm: tm}
 	if out.storing() {
 		var masked bool
 		*exBuf, masked = ex.build((*exBuf)[:0], l.view)

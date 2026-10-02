@@ -27,10 +27,13 @@ var mixedCatalogue = sigFile(
 	kindSig("blanks", "run", "blank: true", "min: 2"),
 	kindSig("repeats", "run", "same: true", "min: 2"),
 	kindSig("errors", "run", "match: 'ERROR'", "min: 2"),
+	kindSig("pem", "block", `start: '^-----BEGIN [A-Z ]*PRIVATE KEY-----$'`, `continue: '^[A-Za-z0-9+/=]+$'`,
+		`end: '^-----END [A-Z ]*PRIVATE KEY-----$'`, "max_lines: 5")+"    redact: true\n",
+	kindSig("tok-run", "run", `match: 'token=(\w+)'`, "min: 2")+"    redact: true\n",
 )
 
 // mixedIDs are the ids of mixedCatalogue.
-var mixedIDs = []string{"err-code", "api-key", "tb", "py-chain", "begin-end", "head-two", "blanks", "repeats", "errors"}
+var mixedIDs = []string{"err-code", "api-key", "tb", "py-chain", "begin-end", "head-two", "blanks", "repeats", "errors", "pem", "tok-run"}
 
 // mixedLineBytes is the view size of the same-answer tests: small, so
 // that generated long lines exceed it.
@@ -162,9 +165,12 @@ func scanVariant(t *testing.T, v variant, text []byte, sigs []*signatures.Signat
 }
 
 // requireSameFindings fails when two results differ in any finding or
-// count.
+// count, or in their masked ranges.
 func requireSameFindings(t *testing.T, want, got *Result) {
 	t.Helper()
+	if !slices.Equal(want.MaskedRanges, got.MaskedRanges) {
+		t.Fatalf("masked ranges differ:\nwant %v\ngot  %v", want.MaskedRanges, got.MaskedRanges)
+	}
 	for id, w := range want.BySignature {
 		g := got.BySignature[id]
 		if g == nil || !reflect.DeepEqual(w, g) {
@@ -299,6 +305,8 @@ func randomText(seed uint64, n int) string {
 		{"BEGIN", "a", "END"}, {"BEGIN"}, {"END"},
 		{"HEAD", "h1"}, {"same", "same", "same"},
 		{"key=AKIAIOSFODNN7EXAMPLE"}, {strings.Repeat("L", 1100)}, {strings.Repeat("L", 1100), strings.Repeat("L", 1100)},
+		{"-----BEGIN PRIVATE KEY-----", "RkFLRUtFWQ==", "-----END PRIVATE KEY-----"}, {"-----BEGIN PRIVATE KEY-----", "RkFLRQ=="},
+		{"token=abc1 ERROR", "token=abc2"},
 	}
 	var b strings.Builder
 	if r.IntN(2) == 0 {

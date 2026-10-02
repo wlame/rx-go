@@ -83,6 +83,8 @@ type blockState struct {
 	remaining int
 	startIdx  int64
 	startOff  int64
+	// firstLen is the start line's length without its ending.
+	firstLen int64
 	// lines is how many lines the block holds, the start included.
 	lines int
 	// lastIdx and lastEnd are the block's last joined line that is not
@@ -187,8 +189,8 @@ func (b *blockWalker) tryOpen(l *line, idx int64, out sink) {
 	if !p.anchor.Match(l.view) || (p.not != nil && p.not.Match(l.view)) {
 		return
 	}
-	st := blockState{startIdx: idx, startOff: l.start, lines: 1, lastIdx: idx, lastEnd: l.next, remaining: p.lines, vs: -1, ve: -1,
-		tm: b.times.at(l.start)}
+	st := blockState{startIdx: idx, startOff: l.start, firstLen: l.length, lines: 1, lastIdx: idx, lastEnd: l.next, remaining: p.lines,
+		vs: -1, ve: -1, tm: b.times.at(l.start)}
 	closeAfter := false
 	if p.lines == 0 {
 		rule := p.rules[0][0]
@@ -201,7 +203,7 @@ func (b *blockWalker) tryOpen(l *line, idx int64, out sink) {
 		st.state = rule.next
 		closeAfter = rule.end
 	}
-	if out.mayStore() {
+	if out.mayStore() && !b.cs.bodyOnly {
 		st.hasEx = true
 		st.excerpt, st.masked, st.vs, st.ve = anchorExcerpt(b.st.excerpt[:0], b.ex, b.cs, p.anchor, l)
 	}
@@ -214,13 +216,24 @@ func (b *blockWalker) tryOpen(l *line, idx int64, out sink) {
 // close ends the open block: trailing blank lines are dropped, and the
 // block is a finding when it still holds at least min_lines lines.
 // Either way it owned the lines it joined.
+//
+// A body recorder's block keeps them all: its finding ends at the last
+// line the block joined, trailing blank lines included, since every
+// line after the anchor is its body (a line whose view is blank may
+// hold more past the view).
 func (b *blockWalker) close(out sink) {
 	b.open = false
 	st := &b.st
+	endIdx, endOff := st.lastIdx, st.lastEnd
+	if b.cs.bodyOnly {
+		// Blocks join consecutive lines, so the last one joined is the
+		// start plus the lines joined after it.
+		endIdx = st.startIdx + int64(st.lines) - 1
+	}
 	if st.lastIdx-st.startIdx+1 < int64(b.prog.minLines) {
 		return
 	}
-	out.add(b.cs, &rawFinding{startIdx: st.startIdx, endIdx: st.lastIdx, startOff: st.startOff, endOff: st.lastEnd,
+	out.add(b.cs, &rawFinding{startIdx: st.startIdx, endIdx: endIdx, startOff: st.startOff, endOff: endOff, firstLen: st.firstLen,
 		excerpt: st.excerpt, hasEx: st.hasEx, vs: st.vs, ve: st.ve, masked: st.masked, tm: st.tm})
 }
 

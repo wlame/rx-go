@@ -42,7 +42,9 @@ const maxGapCandidates = 1 << 16
 // excerpt and time a finding that starts there holds. ok is false for
 // no line.
 type lineRef struct {
-	idx, start    int64
+	idx, start int64
+	// length is the line's length without its ending.
+	length        int64
 	excerpt       []byte
 	hasEx, masked bool
 	tm            timeRef
@@ -50,17 +52,18 @@ type lineRef struct {
 }
 
 // prevLine is the line before the current one in a walk, for time-gap:
-// its view (borrowed), start and time.
+// its view (borrowed), length, start and time.
 type prevLine struct {
-	view  []byte
-	start int64
-	tm    timeRef
+	view   []byte
+	length int64
+	start  int64
+	tm     timeRef
 }
 
 // ref returns the line idx (the walk's previous line) as a lineRef,
 // with its excerpt when out may store it.
 func (p *prevLine) ref(idx int64, ex *excerpter, out sink) lineRef {
-	r := lineRef{idx: idx, start: p.start, tm: p.tm, ok: true}
+	r := lineRef{idx: idx, start: p.start, length: p.length, tm: p.tm, ok: true}
 	if out.mayStore() {
 		r.excerpt, r.masked = ex.build(nil, p.view)
 		r.hasEx = true
@@ -68,9 +71,10 @@ func (p *prevLine) ref(idx int64, ex *excerpter, out sink) lineRef {
 	return r
 }
 
-// stampedLine is a stamped line as the end of a finding or a pair.
+// stampedLine is a stamped line as the end of a finding or a pair:
+// where it is, its length without its ending, and its timestamp.
 type stampedLine struct {
-	idx, start, next, ms int64
+	idx, start, next, length, ms int64
 }
 
 // backSpec is a time-backwards measure's parameters, in milliseconds.
@@ -103,14 +107,14 @@ func (w *backWalker) line(l *line, idx int64, out sink) {
 	}
 	switch {
 	case !w.prev.ok:
-		f := &backFirst{line: stampedLine{idx: idx, start: l.start, next: l.next, ms: l.ms}}
+		f := &backFirst{line: stampedLine{idx: idx, start: l.start, next: l.next, length: l.length, ms: l.ms}}
 		if out.mayStore() {
 			f.excerpt, f.masked = w.ex.build(nil, l.view)
 			f.hasEx = true
 		}
 		w.first = f
 	case w.prev.ms-l.ms > w.spec.tolerance:
-		f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, vs: -1, ve: -1,
+		f := rawFinding{startIdx: idx, endIdx: idx, startOff: l.start, endOff: l.next, firstLen: l.length, vs: -1, ve: -1,
 			tm: timeRef{ms: l.ms, state: timeKnown}}
 		if out.storing() {
 			w.exBuf, f.masked = w.ex.build(w.exBuf[:0], l.view)
@@ -128,7 +132,7 @@ func (m *merger) mergeBackwards(si int32, sc *sigChunk, base int64) {
 	cs := m.e.sigs[si]
 	if f := sc.back; f != nil && m.lastStamp.ok && m.lastStamp.ms-f.line.ms > cs.back.tolerance {
 		m.storeSink(si, 1, true).add(cs, &rawFinding{startIdx: base + f.line.idx, endIdx: base + f.line.idx,
-			startOff: f.line.start, endOff: f.line.next, excerpt: f.excerpt, hasEx: f.hasEx, masked: f.masked,
+			startOff: f.line.start, endOff: f.line.next, firstLen: f.line.length, excerpt: f.excerpt, hasEx: f.hasEx, masked: f.masked,
 			vs: -1, ve: -1, tm: timeRef{ms: f.line.ms, state: timeKnown}})
 	}
 	m.take(si, sc.findings, sc.count)
@@ -180,7 +184,7 @@ func (w *gapWalker) line(l *line, idx int64, before *prevLine, out sink) {
 	if !l.stamped {
 		return
 	}
-	here := stampedLine{idx: idx, start: l.start, next: l.next, ms: l.ms}
+	here := stampedLine{idx: idx, start: l.start, next: l.next, length: l.length, ms: l.ms}
 	if !w.prev.ok {
 		f := &gapFirst{line: here}
 		if idx > 0 {
@@ -250,7 +254,7 @@ func (gm *gapMerge) finish(cs *compiledSig, out sink) {
 			continue
 		}
 		out.add(cs, &rawFinding{startIdx: c.from.idx, endIdx: c.to.idx, startOff: c.from.start, endOff: c.to.next,
-			excerpt: c.from.excerpt, hasEx: c.from.hasEx, masked: c.from.masked, vs: -1, ve: -1, tm: c.from.tm})
+			firstLen: c.from.length, excerpt: c.from.excerpt, hasEx: c.from.hasEx, masked: c.from.masked, vs: -1, ve: -1, tm: c.from.tm})
 	}
 }
 

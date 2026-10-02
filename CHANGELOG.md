@@ -75,7 +75,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its text before the first secret, and one with more than 64 distinct
   values or 4,096 matches is masked whole. Every excerpt is masked by
   every loaded redacting signature, selected or not, so a finding of a
-  signature that does not redact never shows a secret either.
+  signature that does not redact never shows a secret either. The
+  bodies of redacting blocks and runs are masked as well, since a PEM
+  key's material is in lines no value mask finds: every scan also walks
+  every loaded redacting `block` and `run` signature, selected or not,
+  for where its bodies lie (every line a block joined after its anchor,
+  a block under its `min_lines` and its trailing blank lines included;
+  every line of a run after its first), the same for every chunking and
+  storage, and a finding of any signature whose first line is a body
+  line has the excerpt `[masked, N bytes]` (N the line's length) and is
+  marked masked. A signature's first 100,000 bodies are kept line by
+  line; past that, every line from its last kept body to the end of the
+  file counts as a body.
 - Every finding of a signature scan has a time: the timestamp of its
   first line, or else that of the nearest earlier line with one when
   that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` before it (the

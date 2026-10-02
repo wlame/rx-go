@@ -493,6 +493,24 @@ finding is marked masked. A redacting signature takes part only on a
 line that passes its keyword gate (a line that holds the Kelvin sign or
 the long s passes every gate), and only where an excerpt is kept.
 
+**Bodies of redacting blocks and runs.** The key material of a PEM
+private key is in the lines after its `BEGIN` line, and those lines hold
+no value a mask could find. So every scan also walks every redacting
+`block` and `run` signature rx has loaded, selected or not, gated by its
+keywords, and notes where their bodies lie: every line a block joined
+after its anchor line (a block shorter than its `min_lines`, which is no
+finding, and the blank lines it joined at its end, included), and every
+line of a run after its first. A finding of any signature whose first
+line is a body line has the excerpt `[masked, N bytes]`, N the line's
+length in bytes without its line ending, and is marked masked: a
+`base64-run` finding on a key line shows no byte of the key. A run's
+lines all match its anchor, so a run too short to be a finding still has
+its values masked on every line, as above. The bodies are found the same
+way for every chunking and every storage of the file, however many
+there are: a signature's first 100,000 bodies are noted line by line,
+and past that every line from its last noted body to the end of the
+file counts as a body (redaction fails closed).
+
 **Times.** Every finding has a time: the timestamp of its first line,
 or else that of the nearest earlier line with one, when that line
 starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB before the finding's first
