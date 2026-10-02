@@ -4,11 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
-	"sort"
-	"strings"
 	"testing"
-
-	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // requireRipgrep skips the test when `rg` isn't on PATH. Lets us
@@ -168,52 +164,6 @@ func TestProcessAllChunks_PreservesTaskOrdering(t *testing.T) {
 		if len(slot) != 1 {
 			t.Errorf("slot %d: %d matches, want 1", i, len(slot))
 		}
-	}
-}
-
-// ============================================================================
-// IdentifyMatchingPatterns
-// ============================================================================
-
-func TestIdentifyMatchingPatterns_MultiPattern(t *testing.T) {
-	patterns := map[string]string{"p1": "foo", "p2": "bar", "p3": "baz"}
-	order := []string{"p1", "p2", "p3"}
-	line := "foo and bar together"
-	subs := []rxtypes.Submatch{
-		{Text: "foo", Start: 0, End: 3},
-		{Text: "bar", Start: 8, End: 11},
-	}
-	got := IdentifyMatchingPatterns(line, subs, patterns, order, nil)
-	sort.Strings(got)
-	want := []string{"p1", "p2"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
-
-func TestIdentifyMatchingPatterns_CaseInsensitive(t *testing.T) {
-	patterns := map[string]string{"p1": "ERROR"}
-	order := []string{"p1"}
-	line := "some error occurred"
-	got := IdentifyMatchingPatterns(line, nil, patterns, order, []string{"-i"})
-	if len(got) != 1 || got[0] != "p1" {
-		t.Errorf("got %v, want [p1]", got)
-	}
-}
-
-func TestIdentifyMatchingPatterns_EmptyOnStaleCache(t *testing.T) {
-	patterns := map[string]string{"p1": "unrelated"}
-	order := []string{"p1"}
-	// No submatches path — pattern DOES match text so the submatch-less
-	// fallback does find it.
-	got := IdentifyMatchingPatterns("unrelated", nil, patterns, order, nil)
-	if len(got) != 1 {
-		t.Errorf("got %v, want [p1]", got)
-	}
-	// And when pattern genuinely doesn't match — no results.
-	got = IdentifyMatchingPatterns("no match here", nil, patterns, order, nil)
-	if len(got) != 0 {
-		t.Errorf("got %v, want []", got)
 	}
 }
 

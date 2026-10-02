@@ -188,7 +188,7 @@ func ProcessCompressed(
 				outContexts = append(outContexts, matchAsContext(line))
 				return stopAfterWindow(ev.Match.LineNumber, lastWindowLine)
 			}
-			outMatches = append(outMatches, line.withSubmatches(ev.Match, patternOrder))
+			outMatches = append(outMatches, line.withSubmatches(ev.Match))
 			matchCount++
 			if maxResults != nil && matchCount >= *maxResults {
 				lastWindowLine = ev.Match.LineNumber + contextAfter

@@ -44,7 +44,10 @@ type ContextLine struct {
 // Pattern and File are ID strings (e.g. "p1", "f1") that index into
 // TraceResponse.Patterns and TraceResponse.Files respectively. This
 // indirection matches Python's design and keeps the response compact
-// when the same pattern/file pair is reported many times.
+// when the same pattern/file pair is reported many times. A line that
+// several patterns match is one Match per pattern, and Submatches are
+// that pattern's own matches on the line, as a search for the pattern
+// alone reports them.
 //
 // One line cannot make a match unbounded. LineText is cut like a
 // ContextLine's (LineTextTruncated), and Submatches lists at most

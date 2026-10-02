@@ -665,7 +665,7 @@ func scanFrameBatch(
 	// chunked path classifies it the same way. rg's output may end in
 	// the middle of an event then, so a read error is expected too.
 	if runErr != nil && ctx.Err() != nil {
-		return matchesFromPartialBatch(events, feeder.stream(), locs, patternOrder, contextAfter)
+		return matchesFromPartialBatch(events, feeder.stream(), locs, contextAfter)
 	}
 	if readErr != nil {
 		// The output could not be parsed past some point: the batch fails
@@ -686,7 +686,7 @@ func scanFrameBatch(
 		}
 	}
 
-	matches, contexts = remapBatchEvents(events, feeder.stream(), patternOrder)
+	matches, contexts = remapBatchEvents(events, feeder.stream())
 	return matches, contexts, countedFrames(locs), nil
 }
 
@@ -736,10 +736,9 @@ func matchesFromPartialBatch(
 	events []*RgEvent,
 	stream batchStream,
 	locs []frameLoc,
-	patternOrder []string,
 	contextAfter int,
 ) ([]MatchRaw, []ContextRaw, []frameLines, error) {
-	matches, contexts := remapBatchEvents(events, stream, patternOrder)
+	matches, contexts := remapBatchEvents(events, stream)
 	matches, contexts = matchesAsContext(matches, contexts, unfinishedWindows(matches, contexts, contextAfter))
 	return matches, contexts, countedFrames(locs), context.Canceled
 }
@@ -774,7 +773,7 @@ func unfinishedWindows(matches []MatchRaw, contexts []ContextRaw, contextAfter i
 // recorded while the batch's input was written, says where each run of
 // that input came from and which lines the batch owns; a match on a
 // line it does not own comes back as a context line.
-func remapBatchEvents(events []*RgEvent, stream batchStream, patternOrder []string) ([]MatchRaw, []ContextRaw) {
+func remapBatchEvents(events []*RgEvent, stream batchStream) ([]MatchRaw, []ContextRaw) {
 	var matches []MatchRaw
 	var contexts []ContextRaw
 	for _, ev := range events {
@@ -795,7 +794,7 @@ func remapBatchEvents(events []*RgEvent, stream batchStream, patternOrder []stri
 				contexts = append(contexts, matchAsContext(line))
 				continue
 			}
-			matches = append(matches, line.withSubmatches(ev.Match, patternOrder))
+			matches = append(matches, line.withSubmatches(ev.Match))
 		case ev.Context != nil:
 			seg, ok := segmentHolding(stream.segments, ev.Context.AbsoluteOffset)
 			if !ok {
