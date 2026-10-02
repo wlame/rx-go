@@ -429,9 +429,10 @@ func TestComputePatternsHash_Stability(t *testing.T) {
 	}
 }
 
-// TestRgText_UnmarshalJSON covers all three branches of the text/bytes
-// unmarshaller: null, text form, base64 bytes form.
-func TestRgText_UnmarshalJSON(t *testing.T) {
+// ripgrep wraps every string in a payload object: {"text": …} for
+// UTF-8, {"bytes": "<base64>"} for anything else, or null. Each reads
+// into an RgText, the base64 form unchanged.
+func TestParseEvent_PayloadForms(t *testing.T) {
 	cases := []struct {
 		name  string
 		input string
@@ -444,22 +445,21 @@ func TestRgText_UnmarshalJSON(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var r RgText
-			if err := r.UnmarshalJSON([]byte(tc.input)); err != nil {
-				t.Fatalf("unmarshal: %v", err)
+			ev, err := ParseEvent([]byte(`{"type":"begin","data":{"path":` + tc.input + `}}`))
+			if err != nil {
+				t.Fatalf("ParseEvent: %v", err)
 			}
-			if r.Text != tc.want {
-				t.Errorf("Text: got %q, want %q", r.Text, tc.want)
+			if ev.Begin.Path.Text != tc.want {
+				t.Errorf("Text: got %q, want %q", ev.Begin.Path.Text, tc.want)
 			}
 		})
 	}
 }
 
-// TestRgText_UnmarshalJSON_Invalid exercises the error branch.
-func TestRgText_UnmarshalJSON_Invalid(t *testing.T) {
-	var r RgText
-	if err := r.UnmarshalJSON([]byte(`{not valid json`)); err == nil {
-		t.Errorf("expected error on malformed JSON")
+// A payload that is not an object is malformed.
+func TestParseEvent_PayloadThatIsNotAnObject(t *testing.T) {
+	if _, err := ParseEvent([]byte(`{"type":"begin","data":{"path":{not valid json}}`)); !errors.Is(err, ErrMalformedEvent) {
+		t.Errorf("ParseEvent returned %v, want ErrMalformedEvent", err)
 	}
 }
 

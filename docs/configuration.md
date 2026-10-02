@@ -46,6 +46,20 @@ See [concepts/caching](concepts/caching.md).
 
 See [concepts/chunking](concepts/chunking.md).
 
+## Long lines
+
+| Variable | Default | Description |
+|---|---|---|
+| `RX_MAX_LINE_TEXT_BYTES` | `1048576` (1 MiB) | Most bytes of one line's text a trace answer holds, for a match and for a context line. A longer line is cut at the start of a UTF-8 character and marked `line_text_truncated`; its offset and line number stay exact. |
+| `RX_MAX_SUBMATCHES_PER_LINE` | `10000` | Most submatches a trace answer lists for one line; the rest are left out and the match is marked `submatches_truncated`. |
+
+Together they bound the memory one line costs while ripgrep's output is
+read, whatever the line holds: without them a 100 MB line on which the
+pattern matches every character costs about 5 GB, and one request could
+exhaust a server. A value that is not a whole number above 0 keeps the
+default. A trace answer that cuts a line is not written to the trace
+cache. See [long lines](api/endpoints/trace.md#long-lines).
+
 ## Indexing thresholds
 
 | Variable | Default | Description |
@@ -206,7 +220,9 @@ colour off.
 
 All integer env vars (`RX_WORKERS`, `RX_MAX_SUBPROCESSES`,
 `RX_MIN_CHUNK_SIZE_MB`, `RX_LARGE_FILE_MB`, `RX_ANALYZE_WINDOW_LINES`,
-`RX_TASK_TTL_MINUTES`, `RX_SAMPLES_WAIT_SECONDS`) use Go's `strconv.Atoi`:
+`RX_TASK_TTL_MINUTES`, `RX_SAMPLES_WAIT_SECONDS`,
+`RX_MAX_LINE_TEXT_BYTES`, `RX_MAX_SUBMATCHES_PER_LINE`) use Go's
+`strconv.Atoi`:
 
 - Plain decimal digits only
 - Negative values accepted but usually produce unhelpful behavior

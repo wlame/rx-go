@@ -273,7 +273,7 @@ For each match, also prints the 2 preceding and 5 following lines. In
 `--json`, `context_lines` maps each match, keyed `pattern:file:offset`
 (`"p1:f1:60"`), to its window in file order, the matched line included;
 each entry is `{relative_line_number, absolute_line_number, line_text,
-absolute_offset}`, where `absolute_offset` is the byte offset of the
+absolute_offset, line_text_truncated}`, where `absolute_offset` is the byte offset of the
 line's first byte in the file's text, from a scan and from the trace
 cache alike. A window holds at most `--before` lines ahead of its
 match and at most `--after` lines past it, each bound on its own, and a
@@ -422,6 +422,16 @@ decompressed; without one the match keeps
     or by another seekable encoder, is scanned frame-parallel, each
     line whole even where a frame boundary cuts it. Offsets are positions in the decompressed
     text either way. See [concepts/compression](../concepts/compression.md).
+
+!!! note "A very long line is cut"
+    A matched or context line longer than `RX_MAX_LINE_TEXT_BYTES`
+    (1 MiB by default) comes back with its first bytes only,
+    `line_text_truncated: true`, and at most `RX_MAX_SUBMATCHES_PER_LINE`
+    submatches (10,000 by default), marked `submatches_truncated: true`.
+    Its offset and line number are exact, and so is every other match.
+    The human output prints such a line with ` [line truncated]` after
+    it. `rx samples --offsets=…` reads the whole line. See
+    [long lines](../api/endpoints/trace.md#long-lines).
 
 !!! note "Regex engine is ripgrep"
     Pattern syntax is Rust's `regex` crate as supported by `ripgrep`.
