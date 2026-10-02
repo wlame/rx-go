@@ -872,3 +872,42 @@ func TestFindingsRoute_UnfinishedScansAreBounded(t *testing.T) {
 		t.Fatalf("the later scan: %+v", done)
 	}
 }
+
+// A findings answer consults the file's line index (for the format and
+// the time range of the ticks, and to reach the lines of the text): it
+// is the same with the cache empty and right after the file is indexed,
+// in the file's own zone and under a file zone.
+func TestFindingsRoute_SameAnswerWithAndWithoutTheLineIndex(t *testing.T) {
+	f := newFindingsFixture(t, nil)
+	f.scanned(t, "default")
+	queries := [][]string{
+		{"text", "true", "before", "2", "ticks", "40"},
+		{"text", "true", "before", "1", "ticks", "40", "file_tz", "America/New_York"},
+		{"signature", "err-line", "after_line", "3", "ticks", "7", "file_tz", "+05:30"},
+	}
+	cold := make([]rxtypes.FindingsResponse, len(queries))
+	for i, q := range queries {
+		cold[i] = f.getFindings(t, q...)
+	}
+	status, raw := f.call(t, http.MethodPost, "/v1/index", nil, map[string]any{"path": f.log, "threshold": 0})
+	if status != http.StatusOK {
+		t.Fatalf("POST /v1/index: %d %s", status, raw)
+	}
+	var task rxtypes.TaskResponse
+	decode(t, raw, &task)
+	if done, _ := f.finish(t, task.TaskID); done.Status != "completed" {
+		t.Fatalf("index task: %+v", done)
+	}
+	// The time range of the ticks now comes from the index.
+	status, raw = f.call(t, http.MethodGet, "/v1/time-range", url.Values{"path": {f.log}}, nil)
+	var span rxtypes.TimeRangeResponse
+	decode(t, raw, &span)
+	if status != http.StatusOK || span.Source != "index" {
+		t.Fatalf("time range after the build: %d %s", status, raw)
+	}
+	for i, q := range queries {
+		if indexed := f.getFindings(t, q...); !jsonEqual(t, indexed, cold[i]) {
+			t.Errorf("%v: with the index %+v\nwithout %+v", q, indexed, cold[i])
+		}
+	}
+}
