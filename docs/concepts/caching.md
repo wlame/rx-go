@@ -93,14 +93,23 @@ from a full entry too, and then returns the first matches in file order
 (a capped scan returns whichever chunks finished first). Miss → run the scan. Only a complete scan without
 `--max-results` is written: of a plain file of `RX_LARGE_FILE_MB` or
 more, or of a seekable zstd file of 1 MB or more. Gzip, bzip2, xz and
-plain zstd files are never cached.
+plain zstd files are never cached. A scan whose answer cuts a line
+(`RX_MAX_LINE_TEXT_BYTES`) or leaves submatches out
+(`RX_MAX_SUBMATCHES_PER_LINE`) is not written either, so a dense
+pattern on very long lines is scanned every time.
 
 `--no-cache` bypasses both the read and write steps.
 
 A hit costs two things. It parses the whole entry, which grows with
 the match count. Then it reads the file once, on one core, from the
-first match it returns to the last, because the entry stores offsets
-and the line text and line numbers come from the file again. A scan
+first match it returns to the last, because the entry stores each
+match's offset and the start and end of its submatches, and the line
+text, the submatch text and the line numbers come from the file again.
+The submatches are the spans ripgrep reported in the scan, so a hit
+gives the same ones for every engine and flag, `-P` included; a hit
+under lower `RX_MAX_LINE_TEXT_BYTES` or `RX_MAX_SUBMATCHES_PER_LINE`
+bounds cuts them as a scan under those bounds does. An entry written
+before the spans were stored is a miss. A scan
 reads the file with one ripgrep per chunk in parallel. On a 465 MB log
 in the page cache, a rare pattern took 65 ms to scan and 15 ms from the
 cache, but `WARN` with 51,817 matches (a 4.9 MB entry) took 331 ms to

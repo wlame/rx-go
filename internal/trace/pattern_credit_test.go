@@ -214,9 +214,7 @@ func TestTraceCacheHitCreditsThePatternsTheScanCredited(t *testing.T) {
 		if got, want := patternLabels(cached), patternLabels(scanned); !reflect.DeepEqual(got, want) {
 			t.Errorf("%v: the cache hit labels %d matches, the scan %d", patterns, len(got), len(want))
 		}
-		if patterns[0] == "NEEDLE" {
-			traceanswer.RequireSame(t, "cache hit", cached, scanned)
-		}
+		traceanswer.RequireSame(t, "cache hit", cached, scanned)
 	}
 	scanned := traceOnce(t, path, []string{"NEEDLE", "NEED"}, Options{})
 	if needle, need := len(linesCreditedTo(scanned, "p1")), len(linesCreditedTo(scanned, "p2")); need != 2*needle {
