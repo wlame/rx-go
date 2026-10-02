@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -252,13 +253,156 @@ func TestCreditPatterns_ALineNoPatternMatchesIsAnError(t *testing.T) {
 	}
 
 	cut := MatchRaw{Offset: 0, End: int64(strings.IndexByte(string(text), '\n') + 1), LineText: "LINE 1 NEEDLE an", LineTextTruncated: true}
-	_, err := creditPatterns(context.Background(), creditRequest{
-		source:       src,
-		lines:        []MatchRaw{cut},
+	got, err := creditPatterns(context.Background(), creditRequest{
+		files:        []creditFile{{source: src, lines: []MatchRaw{cut}}},
 		patternIDs:   map[string]string{"p1": "NEEDLE", "p2": "ZZZ"},
 		patternOrder: []string{"p1", "p2"},
 	})
-	if !errors.Is(err, errLineMatchesNoPattern) {
-		t.Fatalf("err = %v, want errLineMatchesNoPattern", err)
+	if err != nil {
+		t.Fatalf("err = %v, want the failure kept to the file", err)
+	}
+	if !errors.Is(got[0].err, errLineMatchesNoPattern) {
+		t.Fatalf("err = %v, want errLineMatchesNoPattern", got[0].err)
+	}
+}
+
+// The whole lines of every file of a trace are checked together, so a
+// directory of many small files costs one ripgrep run per pattern, not
+// one per file and pattern. A file's cut lines are read again from that
+// file, in a batch of their own.
+func TestPlanCreditBatches_PoolsTheWholeLinesOfEveryFile(t *testing.T) {
+	var files []creditFile
+	for i := 0; i < 100; i++ {
+		files = append(files, creditFile{lines: []MatchRaw{{LineText: "NEEDLE"}, {LineText: "NEED"}}})
+	}
+	files[7].lines = append(files[7].lines, MatchRaw{LineText: "LINE x", LineTextTruncated: true})
+
+	batches := planCreditBatches(files)
+	if len(batches) != 2 {
+		t.Fatalf("%d batches, want 2 (every whole line, then file 7's cut line)", len(batches))
+	}
+	if whole := batches[0]; whole.fromSource || len(whole.lines) != 200 {
+		t.Errorf("first batch: %d lines, from the file %v; want the 200 whole lines, from memory", len(whole.lines), whole.fromSource)
+	}
+	if cut := batches[1]; !cut.fromSource || len(cut.lines) != 1 || cut.lines[0] != (lineRef{file: 7, line: 2}) {
+		t.Errorf("second batch: %+v, want file 7's line 2, read from the file", cut)
+	}
+}
+
+// A directory search credits every file's lines as a search of that
+// file alone does, and a file whose lines cannot be credited is skipped
+// without losing the others.
+func TestTraceCreditsEveryFileOfADirectory(t *testing.T) {
+	requireRipgrep(t)
+	dir := t.TempDir()
+	for i, text := range []string{"NEEDLE here\nNEED only\n", "nothing\nNEED NEEDLE\n", "x ошибка\nNEED\n"} {
+		if err := os.WriteFile(filepath.Join(dir, "f"+strconv.Itoa(i)+".log"), []byte(text), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	patterns := []string{"NEEDLE", "NEED", `\w+ка`}
+	resp := traceOnce(t, dir, patterns, Options{NoCache: true})
+	if len(resp.SkippedFiles) != 0 {
+		t.Fatalf("skipped %v", resp.SkippedFiles)
+	}
+	for fid, path := range resp.Files {
+		alone := traceOnce(t, path, patterns, Options{NoCache: true})
+		for pid := range resp.Patterns {
+			got := linesCreditedTo(onlyFile(resp, fid), pid)
+			if want := linesCreditedTo(alone, pid); !reflect.DeepEqual(got, want) {
+				t.Errorf("%s %s: credited %+v, the file alone %+v", path, pid, got, want)
+			}
+		}
+	}
+}
+
+// A file whose lines cannot be credited (here: a cut line changed in
+// place before it is read again) is reported as skipped, with no match,
+// and the other files of the request keep theirs.
+func TestCreditPatterns_LosesOnlyTheFileThatFails(t *testing.T) {
+	requireRipgrep(t)
+	setLineLimits(t, 16, 100)
+	text := []byte("LINE 1 NEEDLE and some more text\n")
+	path := writeTextFile(t, "changed.log", text)
+	src := pinForTest(t, path)
+	if err := os.WriteFile(path, []byte("LINE 1 nothing and some more text\n"), 0o600); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	cut := MatchRaw{End: int64(len(text)), LineText: "LINE 1 NEEDLE an", LineTextTruncated: true}
+
+	got, err := creditPatterns(context.Background(), creditRequest{
+		files:        []creditFile{{source: src, lines: []MatchRaw{cut}}, {lines: []MatchRaw{{LineText: "NEED"}}}},
+		patternIDs:   map[string]string{"p1": "NEEDLE", "p2": "NEED"},
+		patternOrder: []string{"p1", "p2"},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want the failure kept to its file", err)
+	}
+	if !errors.Is(got[0].err, errLineMatchesNoPattern) {
+		t.Errorf("first file: err = %v, want errLineMatchesNoPattern", got[0].err)
+	}
+	if got[1].err != nil || len(got[1].lines) != 1 || len(got[1].lines[0]) != 1 || got[1].lines[0][0].patternID != "p2" {
+		t.Errorf("second file: %+v, want its line credited to p2", got[1])
+	}
+}
+
+// onlyFile is resp with only the matches of file fid.
+func onlyFile(resp *rxtypes.TraceResponse, fid string) *rxtypes.TraceResponse {
+	out := *resp
+	out.Matches = nil
+	for _, m := range resp.Matches {
+		if m.File == fid {
+			out.Matches = append(out.Matches, m)
+		}
+	}
+	return &out
+}
+
+// fileCounter counts OnFile calls and the matches they report.
+type fileCounter struct {
+	files, matches int
+}
+
+func (c *fileCounter) OnFile(_ context.Context, _ string, info FileInfo) {
+	c.files++
+	c.matches += info.MatchesCount
+}
+
+func (c *fileCounter) OnMatch(context.Context, string, MatchInfo) {}
+
+// OnFile stays a progress report of a search of many files: with one
+// pattern it fires as each file's scan ends; with several, the files are
+// settled in groups, so it trails the scan by at most settleEveryFiles
+// files. Every file is reported, with its matches.
+func TestTraceReportsFilesWhileTheSearchGoesOn(t *testing.T) {
+	requireRipgrep(t)
+	dir := t.TempDir()
+	const fileCount = 2*settleEveryFiles + 3
+	for i := 0; i < fileCount; i++ {
+		name := filepath.Join(dir, "f"+strconv.Itoa(1000+i)+".log")
+		if err := os.WriteFile(name, []byte("NEEDLE here\n"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	for _, patterns := range [][]string{{"NEEDLE"}, {"NEEDLE", "NEED"}} {
+		counter := &fileCounter{}
+		var behind []int // files scanned but not yet reported, at each scan's end
+		scanned := 0
+		opts := Options{NoCache: true, HookFirer: counter, afterScan: func(string) {
+			scanned++
+			behind = append(behind, scanned-1-counter.files)
+		}}
+		traceOnce(t, dir, patterns, opts)
+
+		if counter.files != fileCount || counter.matches != fileCount*len(patterns) {
+			t.Errorf("%v: %d files with %d matches reported, want %d with %d", patterns, counter.files, counter.matches, fileCount, fileCount*len(patterns))
+		}
+		limit := 0
+		if len(patterns) > 1 {
+			limit = settleEveryFiles - 1
+		}
+		if most := slices.Max(behind); most != limit {
+			t.Errorf("%v: reports trailed the scan by up to %d files, want %d", patterns, most, limit)
+		}
 	}
 }
