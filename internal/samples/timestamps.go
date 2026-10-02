@@ -147,10 +147,18 @@ type timeFrame struct {
 
 // frameFor returns the frame req reads a file of format detected in.
 func (r Request) frameFor(detected timestamps.Format) timeFrame {
-	if r.FileZone.Location != nil {
-		return timeFrame{hasZone: false, zone: r.FileZone}
+	return frameIn(r.FileZone, detected, config.LogTZ())
+}
+
+// frameIn returns the frame a request with file zone fileZone reads a
+// file of format detected in, when the file's own zone-less wall clocks
+// are read in logZone (RX_LOG_TZ): the file zone's wall clocks when it
+// names a zone, and the file's own frame otherwise.
+func frameIn(fileZone config.Zone, detected timestamps.Format, logZone config.Zone) timeFrame {
+	if fileZone.Location != nil {
+		return timeFrame{hasZone: false, zone: fileZone}
 	}
-	return timeFrame{hasZone: detected.HasZone, zone: config.LogTZ()}
+	return timeFrame{hasZone: detected.HasZone, zone: logZone}
 }
 
 // parserFormat returns the format a Parser reading in f is built with:

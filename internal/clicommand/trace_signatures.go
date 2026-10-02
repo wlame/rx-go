@@ -5,8 +5,6 @@ import (
 	"errors"
 	"os"
 	"slices"
-	"strconv"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -102,13 +100,10 @@ type signatureTrace struct {
 	spooled []string
 }
 
-// runSignatureTrace runs a trace with signatures: the search of the
-// patterns over the paths (none when there is no pattern), then a scan
-// of every file the search covered for the selection, through the
-// findings cache (findings.Trace). The files are the search's own,
-// walked and classified once (trace.ExpandPaths), so a finding's file
-// id is the id the answer's files map gives the file; a file that is
-// not text or cannot be read is skipped with its reason, once.
+// runSignatureTrace runs a trace with signatures (findings.Search): the
+// search of the patterns over the paths (none when there is no
+// pattern), then a scan of every file the search covered for the
+// selection, through the findings cache, and the answer's cli_command.
 //
 // Every setting reaches the scan and the cache through their options:
 // RX_WORKERS, RX_SIGNATURES_LINE_BYTES, RX_FINDINGS_MAX_PER_SIGNATURE,
@@ -119,44 +114,17 @@ type signatureTrace struct {
 // --max-results caps the matches only, and the context window
 // (-B, -A, --context) adds lines around each finding too.
 func runSignatureTrace(ctx context.Context, engine *trace.Engine, run signatureTrace) (*rxtypes.TraceResponse, error) {
-	start := time.Now()
-	// The resolver runs inside RunResolved, after the patterns are
-	// checked, as for a search without signatures; the plan it makes is
-	// kept for the scan.
-	//
-	// Go note: the closure assigns the variable plan declared outside
-	// it, so once RunResolved has called it (once, before any file is
-	// read) plan holds the files the search covered.
-	var plan *trace.SearchPlan
-	resolve := func(context.Context) (*trace.SearchPlan, error) {
-		plan = trace.ExpandPaths(run.paths, !run.opts.NoRecursive)
-		return plan, nil
-	}
-	resp, err := engine.RunResolved(ctx, resolve, run.patterns, run.opts)
-	if err != nil {
-		return nil, err
-	}
-
 	findings.SetMaxScans(config.MaxSignatureScans())
-	files := make([]findings.TraceFile, len(plan.Files))
-	for i, file := range plan.Files {
-		files[i] = findings.TraceFile{
-			ID: "f" + strconv.Itoa(i+1), File: file, Spooled: slices.Contains(run.spooled, file.Path()),
-		}
-	}
 	sel := run.selection
-	answer, err := findings.Trace(ctx, files, sel.catalog, sel.sigs, signatureTraceOptions(run.params, sel.catalog))
+	resp, err := findings.Search(ctx, engine, findings.SearchRequest{
+		Paths: run.paths, Patterns: run.patterns, Search: run.opts, Spooled: run.spooled,
+		Catalogue: sel.catalog, Selection: sel.sigs, Findings: signatureTraceOptions(run.params, sel.catalog),
+	})
 	if err != nil {
 		return nil, err
 	}
-	resp.Signatures = answer.Signatures
-	resp.Findings = answer.Findings
-	resp.FindingSummary = answer.FindingSummary
-	addSkips(resp, answer.Skipped)
 	cli := webapi.BuildCLICommand("trace", signatureCLIParams(run))
 	resp.CLICommand = &cli
-	// The time of the whole run: the search and the scans.
-	resp.Time = time.Since(start).Seconds()
 	return resp, nil
 }
 
@@ -180,19 +148,6 @@ func signatureTraceOptions(p traceParams, cat *signatures.Catalogue) findings.Tr
 		TextBudget:    config.FindingsTextMaxBytes(),
 		LogZone:       config.LogTZ().Location,
 		IndexLoader:   loader,
-	}
-}
-
-// addSkips appends to the answer's skipped files the files the scan
-// passed over, each path once: a file the search already lists keeps
-// the search's reason.
-func addSkips(resp *rxtypes.TraceResponse, skipped []rxtypes.SkippedFile) {
-	for _, item := range skipped {
-		if slices.Contains(resp.SkippedFiles, item.Path) {
-			continue
-		}
-		resp.SkippedFiles = append(resp.SkippedFiles, item.Path)
-		resp.SkipReasons = append(resp.SkipReasons, item)
 	}
 }
 

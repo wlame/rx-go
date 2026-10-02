@@ -100,3 +100,12 @@ type FileFindingSummary struct {
 	// Signatures holds the count of every selected signature.
 	Signatures map[string]FindingCount `json:"signatures" doc:"Findings counts of each selected signature, by id."`
 }
+
+// FindingSeries is the bucket series a density signature keeps with its
+// findings: how many lines fell in each bucket of time, from the bucket
+// that starts at StartMS on.
+type FindingSeries struct {
+	BucketMS int64   `json:"bucket_ms" doc:"Length of each bucket in milliseconds."`
+	StartMS  int64   `json:"start_ms" doc:"Start of the first bucket, in milliseconds since the Unix epoch, as an instant read the way the answer reads the file's times."`
+	Counts   []int64 `json:"counts" nullable:"false" doc:"Lines in each bucket, in time order."`
+}

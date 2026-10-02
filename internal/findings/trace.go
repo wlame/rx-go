@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
 	"time"
 
-	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/sigscan"
-	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -45,6 +42,13 @@ type TraceOptions struct {
 	// in (RX_LOG_TZ): such a file's times are given as instants read in
 	// it, as samples gives them. Nil or UTC leaves them as scanned.
 	LogZone *time.Location
+	// FileZone, when set, reads every timestamp of a file as the wall
+	// clock its line writes, in this zone, as samples reads a file under
+	// a request's file_tz; it takes the place of LogZone. A file whose
+	// timestamps carry zones needs the offset each line writes, which
+	// only its line index gives (IndexLoader, zone_offsets): without it
+	// its findings have no time.
+	FileZone *time.Location
 	// IndexLoader, when set, gives a file's line index, which makes a
 	// compressed file's text faster to reach (samples.StoredIndex, or
 	// samples.NoIndex for --no-index). The text does not depend on it.
@@ -154,7 +158,8 @@ func signatureRefs(sel []*signatures.Signature) map[string]rxtypes.SignatureRef 
 }
 
 // scanFile scans one file (Scan) and turns its answer into wire
-// findings in the one order, with times read in the log zone.
+// findings in the one order, with times read in the log zone
+// (WireFindings).
 func (tr *tracer) scanFile(ctx context.Context, f TraceFile, cat *signatures.Catalogue, sel []*signatures.Signature, opts TraceOptions) (*fileFindings, error) {
 	scanOpts := opts.Scan
 	scanOpts.Spooled = scanOpts.Spooled || f.Spooled
@@ -172,12 +177,8 @@ func (tr *tracer) scanFile(ctx context.Context, f TraceFile, cat *signatures.Cat
 			res = &sigscan.SignatureResult{}
 		}
 		ff.summary.Signatures[sig.ID] = rxtypes.FindingCount{Count: res.Count, Stored: len(res.Findings)}
-		for _, found := range res.Findings {
-			ff.findings = append(ff.findings, wireFinding(sig.ID, f.ID, found))
-		}
 	}
-	slices.SortStableFunc(ff.findings, func(a, b rxtypes.Finding) int { return rxtypes.CompareFindings(&a, &b) })
-	if err := toInstants(ff.findings, f.File, opts.LogZone); err != nil {
+	if ff.findings, _, err = WireFindings(answer, f.File, sel, f.ID, opts); err != nil {
 		return nil, err
 	}
 	return ff, nil
@@ -191,56 +192,6 @@ func wireFinding(sigID, fileID string, f sigscan.Finding) rxtypes.Finding {
 		StartLine: f.StartLine, EndLine: f.EndLine, StartOffset: f.StartOffset, EndOffset: f.EndOffset,
 		TimeMS: f.TimeMS, Excerpt: f.Excerpt, ValueStart: f.ValueStart, ValueEnd: f.ValueEnd, Masked: f.Masked,
 	}
-}
-
-// toInstants turns the findings' times into instants. A scan keeps a
-// time in the file's own frame, as an index does: the instant for a
-// file whose timestamps carry zones, the wall clock read as UTC for one
-// whose timestamps carry none. The second kind is read in zone (the
-// log zone), as samples reads it; that needs the file's format, which
-// is detected from the head of the text (at most a mebibyte, through
-// the file's pin) only when a finding has a time and the zone is not
-// UTC. A time the zone moves outside the years 1 to 9999 becomes null.
-func toInstants(findings []rxtypes.Finding, file trace.SearchFile, zone *time.Location) error {
-	if zone == nil || zone == time.UTC || !slices.ContainsFunc(findings, func(f rxtypes.Finding) bool { return f.TimeMS != nil }) {
-		return nil
-	}
-	hasZone, err := formatHasZone(file)
-	if err != nil || hasZone {
-		return err
-	}
-	for i := range findings {
-		if ms := findings[i].TimeMS; ms != nil {
-			if instant, ok := timestamps.InstantOf(*ms, false, zone); ok {
-				findings[i].TimeMS = &instant
-			} else {
-				findings[i].TimeMS = nil
-			}
-		}
-	}
-	return nil
-}
-
-// formatHasZone reports whether the file's timestamps carry zones, by
-// the index's own detection on the head of its text, read through its
-// pin.
-func formatHasZone(file trace.SearchFile) (bool, error) {
-	f, err := file.Pinned().Open()
-	if err != nil {
-		return false, err
-	}
-	// Go note: defer runs when the function returns, on every path, so
-	// the handle is closed after the detection whatever it answers.
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return false, err
-	}
-	format, ok, err := index.DetectTimeFormat(f, info.Size(), file.Kind())
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", file.Path(), err)
-	}
-	return ok && format.HasZone, nil
 }
 
 // maskSlack is how many bytes past the line text limit a line is
@@ -308,6 +259,12 @@ func (t *traceText) fill(ctx context.Context, ff *fileFindings) error {
 	if t.spent || len(ff.findings) == 0 {
 		t.truncateFrom(ff.findings, 0)
 		return nil
+	}
+	// SECURITY: a read without the scanned end would go to the end of
+	// the file as it is now (samples.SpansRequest.TextLines 0), past the
+	// text the masked ranges describe.
+	if ff.text.lines <= 0 {
+		return fmt.Errorf("%s: %w", ff.file.File.Path(), ErrNoScannedEnd)
 	}
 	n := len(ff.findings)
 	texts := make([]findingText, n)

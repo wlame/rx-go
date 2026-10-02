@@ -95,6 +95,11 @@ type Answer struct {
 	// past it, of a file that grew since it was scanned. 0 when the
 	// answer holds no findings.
 	TextLines, TextBytes int64
+	// Cached is how many of the selected signatures the answer took
+	// from the cache rather than from a scan: every checked one for
+	// Read, the ones with a current entry for Scan (none with Force,
+	// NoCache or Spooled).
+	Cached int
 }
 
 // FileSummary is how much of the default set a file has cached, for

@@ -159,7 +159,9 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 		missing = view.missing(sel)
 	}
 	if len(missing) == 0 {
-		return newAnswer(cat, sel, view.entries, view.current, view.text), nil
+		ans := newAnswer(cat, sel, view.entries, view.current, view.text)
+		ans.Cached = len(sel)
+		return ans, nil
 	}
 
 	res, err := s.scanQueued(ctx, file, missing, scanOpts)
@@ -194,7 +196,9 @@ func (s *scheduler) scan(ctx context.Context, file trace.SearchFile, cat *signat
 	// file's; the entries taken from the cache were masked with the same
 	// ranges, since their keys hold the same redacting set and line view,
 	// and describe the same text (the identity matched).
-	return newAnswer(cat, sel, entries, current, textOf(res)), nil
+	ans := newAnswer(cat, sel, entries, current, textOf(res))
+	ans.Cached = len(sel) - len(missing)
+	return ans, nil
 }
 
 // read is Read on this scheduler.
@@ -231,7 +235,9 @@ func (s *scheduler) read(file trace.SearchFile, cat *signatures.Catalogue, sel [
 	if !meta.identity().Equal(now) {
 		return newAnswer(cat, sel, nil, nil, scannedText{}), nil
 	}
-	return newAnswer(cat, sel, view.entries, view.current, view.text), nil
+	ans := newAnswer(cat, sel, view.entries, view.current, view.text)
+	ans.Cached = len(ans.Checked)
+	return ans, nil
 }
 
 // summary is Summary on this scheduler.
