@@ -22,14 +22,21 @@ both chunks overlap it).
 `rx` carves the file into contiguous, **newline-aligned** byte ranges:
 
 - Chunk 0 starts at byte 0
-- Chunk N+1 starts at the byte **immediately after** the newline closest
-  to the desired boundary of chunk N
+- Chunk N+1 starts at the byte **immediately after** the first newline
+  at or after the desired boundary of chunk N
 
 Concretely, for each target boundary `B`:
 
 1. Seek to byte `B`
-2. Read forward up to 256 KB looking for the first `\n`
+2. Read forward, 256 KB at a time, until the first `\n`
 3. The boundary becomes `(byte position of \n) + 1`
+
+A line of any length stays whole: when the line across `B` is longer
+than one read, the search keeps reading to its end. When that line also
+covers the next desired boundary, the two boundaries collapse into one
+and the file gets one chunk fewer. That later boundary needs no read of
+its own, since the search before it already crossed it, so planning
+reads a file that is one long line once, not once per boundary.
 
 This guarantees:
 
@@ -45,15 +52,19 @@ post-processing is needed to deduplicate boundary matches.
 ### Pseudo-code
 
 ```text
-chunk_count     = min(file_size / RX_MIN_CHUNK_SIZE_MB, RX_MAX_SUBPROCESSES), at least 1
-target_size     = file_size / chunk_count
-max_line_length = 256 KB  // fixed
+chunk_count = min(file_size / RX_MIN_CHUNK_SIZE_MB, RX_MAX_SUBPROCESSES), at least 1
+target_size = file_size / chunk_count
 
-boundaries = [0]
+boundaries  = [0]
+searched_to = 0
 for i in 1..chunk_count-1:
     tentative = i * target_size
-    final     = find_next_newline(tentative, max_line_length)
-    boundaries.append(final)
+    if tentative < searched_to:
+        continue                     // inside the line the last search crossed
+    final = find_next_newline(tentative, file_size)   // file_size when none
+    searched_to = final
+    if final < file_size:
+        boundaries.append(final)
 boundaries.append(file_size)
 
 chunks = [(boundaries[i], boundaries[i+1]) for i in 0..chunk_count-1]
@@ -143,16 +154,16 @@ scan is not 5× slower than a 1-pattern scan.
 | `RX_MIN_CHUNK_SIZE_MB` | Smallest chunk. Default: `20`. A file below twice this size is one chunk. |
 | `RX_MAX_SUBPROCESSES` | Most chunks per file, and the pool size when `RX_WORKERS` is unset. Default: `20`. |
 
-The newline search at a chunk boundary reads at most 256 KB forward;
-that window is fixed.
+The newline search at a chunk boundary reads 256 KB at a time until it
+finds a newline; that read size is fixed.
 
 ## Implications
 
-- **Files must have newlines within 256 KB of any boundary.** Files
-  with million-character-long lines (some CSV exports, some JSON
-  lines with embedded blobs) won't chunk cleanly. `rx` falls back to
-  a best-effort boundary at the end of the scan window, which may
-  cause a match on a line that spans the boundary to be missed.
+- **Very long lines mean fewer chunks.** A line longer than the
+  distance between two desired boundaries (some CSV exports, JSON lines
+  with embedded blobs, minified bundles) merges the chunks it covers.
+  The answer is the same as a scan in one piece; only the parallelism
+  drops, and a file that is one line is scanned by one worker.
 - **Compressed files can't be chunked** — the decompressor has no
   random access. Scan falls back to single-worker stream mode. For
   random access, use [`rx compress`](../cli/compress.md) to produce
