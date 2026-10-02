@@ -104,12 +104,8 @@ func IsCompoundArchive(path string) bool {
 // a wrapped error — the caller can decide whether to treat it as
 // "skip this file" or propagate.
 func DetectFromPath(path string) (Format, error) {
-	if IsCompoundArchive(path) {
-		return FormatNone, nil
-	}
-
-	if f := FormatFromExtension(path); f != FormatNone {
-		return f, nil
+	if format, decided := formatFromName(path); decided {
+		return format, nil
 	}
 
 	// Extension didn't help — try magic bytes.
@@ -125,11 +121,44 @@ func DetectFromPath(path string) (Format, error) {
 	return DetectFromReader(f)
 }
 
+// DetectFromOpenFile is DetectFromPath for a file the caller already
+// has open, such as one opened through a pin: name decides first, as
+// in DetectFromPath, and otherwise the magic bytes are read from the
+// start of r. Nothing is looked up by path, so the answer is about the
+// file that is open, whatever its path leads to by now.
+//
+// Go note: io.NewSectionReader reads r by position (ReadAt), so the
+// read offset of an *os.File passed as r stays where it was.
+func DetectFromOpenFile(name string, r io.ReaderAt) (Format, error) {
+	if format, decided := formatFromName(name); decided {
+		return format, nil
+	}
+	return DetectFromReader(io.NewSectionReader(r, 0, magicProbeBytes))
+}
+
+// magicProbeBytes is how many bytes from the start of a file the magic
+// table needs: its longest entry.
+const magicProbeBytes = 6
+
+// formatFromName decides a file's format from its name alone where the
+// name settles it: a compound archive is FormatNone (callers skip it),
+// and a known extension names its format. decided is false when only
+// the file's first bytes can tell.
+func formatFromName(name string) (format Format, decided bool) {
+	if IsCompoundArchive(name) {
+		return FormatNone, true
+	}
+	if f := FormatFromExtension(name); f != FormatNone {
+		return f, true
+	}
+	return FormatNone, false
+}
+
 // DetectFromReader probes the first 6 bytes of r and returns the
 // matching format, or FormatNone if nothing matches. On read errors
 // returns FormatNone + err.
 func DetectFromReader(r io.Reader) (Format, error) {
-	buf := make([]byte, 6)
+	buf := make([]byte, magicProbeBytes)
 	n, err := io.ReadFull(r, buf)
 	// io.ErrUnexpectedEOF is fine here — we still check the prefix we got.
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {

@@ -53,7 +53,13 @@ func makeIndexedSeekable(t *testing.T, lines, frameSize int) (string, IndexLoade
 		t.Fatalf("sync: %v", err)
 	}
 
-	built, err := seekableindex.Build(zstPath)
+	// dst is open for reading too (os.Create opens read-write), and the
+	// build reads it by position, so it needs no rewind.
+	info, err := dst.Stat()
+	if err != nil {
+		t.Fatalf("stat zst: %v", err)
+	}
+	built, err := seekableindex.Build(dst, info.Size())
 	if err != nil {
 		t.Fatalf("build index: %v", err)
 	}

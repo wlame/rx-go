@@ -158,7 +158,7 @@ func WriteSeekTable(w io.Writer, frames []FrameInfo) error {
 // ReadSeekTable directly and inspect the error.
 func IsSeekable(path string) bool {
 	// Extension heuristic first — cheap and catches obvious non-matches.
-	if !strings.EqualFold(filepath.Ext(path), ".zst") {
+	if !hasSeekableExtension(path) {
 		return false
 	}
 	f, err := os.Open(path)
@@ -167,11 +167,34 @@ func IsSeekable(path string) bool {
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
-	if err != nil || info.Size() < FooterSize {
+	if err != nil {
+		return false
+	}
+	return hasSeekableFooter(f, info.Size())
+}
+
+// IsSeekableFile is IsSeekable for a file the caller already has open,
+// size bytes long, such as one opened through a pin: name gives the
+// extension, and the footer is read from r. Nothing is looked up by
+// path, so the answer is about the file that is open.
+func IsSeekableFile(name string, r io.ReaderAt, size int64) bool {
+	return hasSeekableExtension(name) && hasSeekableFooter(r, size)
+}
+
+// hasSeekableExtension reports whether name ends in .zst, in any case.
+func hasSeekableExtension(name string) bool {
+	return strings.EqualFold(filepath.Ext(name), ".zst")
+}
+
+// hasSeekableFooter reports whether the last FooterSize bytes of r, a
+// file of size bytes, carry the seek-table footer magic. A read error
+// or a file too short for a footer is false.
+func hasSeekableFooter(r io.ReaderAt, size int64) bool {
+	if size < FooterSize {
 		return false
 	}
 	var footer [FooterSize]byte
-	if _, err := f.ReadAt(footer[:], info.Size()-FooterSize); err != nil {
+	if _, err := r.ReadAt(footer[:], size-FooterSize); err != nil {
 		return false
 	}
 	return binary.LittleEndian.Uint32(footer[0:4]) == FooterMagic

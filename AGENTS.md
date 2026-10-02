@@ -373,9 +373,12 @@ Paste the output. Do not summarize it.
   time of the read. The trace engine, `samples`, `index.Build` and
   `compressfile` read a user's file only through a `paths.Pinned`. Do
   not add an `os.Open` of a user's path in them; take the pin the walk
-  or the caller made, or pin the path yourself. `Pin` records an
-  identity only for a file it reaches from the root without passing
-  through a link; keep it that way.
+  or the caller made, or pin the path yourself. A reader that needs
+  the file more than once opens the pin once and passes the handle
+  (`index.Build` hands its `*os.File` to `seekableindex`, the
+  fingerprint and format detection). `Pin` records an identity only
+  for a file it reaches from the root without passing through a link;
+  keep it that way.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
