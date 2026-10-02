@@ -229,10 +229,6 @@ release-notes version:
 serve *args:
     go run ./cmd/rx serve "$@"
 
-# List the anomaly detectors this build registers
-detectors:
-    @go run ./cmd/rx index --help | sed -n '/analyze/,$p'
-
 # Diff CLI output against rx-python for the same arguments, each passed as one word
 [positional-arguments]
 parity *args:
