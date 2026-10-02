@@ -2,6 +2,8 @@ package trace
 
 import (
 	"bytes"
+	"encoding/json"
+	"maps"
 	"os"
 	"testing"
 
@@ -21,8 +23,18 @@ func traceFromCache(t *testing.T, path string, patterns []string) *rxtypes.Trace
 	return resp
 }
 
-// A cache hit reports the chunk count of the scan that wrote the cache:
-// the cache may make an answer faster, never different.
+// requireSameChunkCount fails the test unless the cache hit reports the
+// chunk count of the scan that wrote the entry. The accelerator rule
+// does not compare file_chunks, so this is checked on its own.
+func requireSameChunkCount(t *testing.T, cached, scan *rxtypes.TraceResponse) {
+	t.Helper()
+	if !maps.Equal(cached.FileChunks, scan.FileChunks) {
+		t.Fatalf("cache hit file_chunks = %v, want %v from the scan that wrote the entry", cached.FileChunks, scan.FileChunks)
+	}
+}
+
+// A cache hit reports the chunk count of the scan that wrote the cache,
+// and every other field of its answer equals the scan's.
 func TestCacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	largeFileCacheEnv(t)
 	path, _ := writeChunkedFixture(t, "chunks.log", 4<<20)
@@ -34,6 +46,7 @@ func TestCacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	}
 	cached := traceFromCache(t, path, patterns)
 
+	requireSameChunkCount(t, cached, fresh)
 	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }
 
@@ -59,5 +72,67 @@ func TestSeekableCacheHitReportsTheFrameCountOfTheScan(t *testing.T) {
 		t.Fatal("the second trace rewrote the cache instead of reading it")
 	}
 
+	requireSameChunkCount(t, cached, fresh)
 	traceanswer.RequireSame(t, "cache hit", cached, fresh)
+}
+
+// The chunk settings are not part of the cache key, so a hit after they
+// change reports the chunk count of the scan that wrote the entry while
+// a fresh scan reports the new one. file_chunks says how an answer was
+// produced, not what it is, so the accelerator rule leaves it out: the
+// hit and the fresh scan still agree. Any other field that differs still
+// breaks the rule.
+func TestCacheHitAgreesWithAScanUnderOtherChunkSettings(t *testing.T) {
+	largeFileCacheEnv(t)
+	path, _ := writeChunkedFixture(t, "chunks.log", 4<<20)
+	patterns := []string{"NEEDLE"}
+
+	// A minimum chunk size above the file's size makes the writing scan
+	// a single chunk.
+	t.Setenv("RX_MIN_CHUNK_SIZE_MB", "20")
+	written := traceOnce(t, path, patterns, Options{})
+	t.Setenv("RX_MIN_CHUNK_SIZE_MB", "1")
+	cached := traceFromCache(t, path, patterns)
+	fresh := traceOnce(t, path, patterns, Options{NoCache: true})
+
+	if cached.FileChunks["f1"] == fresh.FileChunks["f1"] {
+		t.Fatalf("hit and fresh scan both report %d chunks; the test needs the settings to change the count", fresh.FileChunks["f1"])
+	}
+	requireSameChunkCount(t, cached, written)
+	traceanswer.RequireSame(t, "cache hit under other chunk settings", cached, fresh)
+
+	for name, change := range map[string]func(doc map[string]any){
+		"a match's line_text": func(doc map[string]any) {
+			doc["matches"].([]any)[0].(map[string]any)["line_text"] = "something else"
+		},
+		"a match's offset": func(doc map[string]any) {
+			doc["matches"].([]any)[0].(map[string]any)["offset"] = float64(1)
+		},
+		"skipped_files": func(doc map[string]any) { doc["skipped_files"] = []any{"/elsewhere.log"} },
+		"files":         func(doc map[string]any) { doc["files"] = map[string]any{"f1": "/elsewhere.log"} },
+		"max_results":   func(doc map[string]any) { doc["max_results"] = float64(5) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := answerDocument(t, cached)
+			change(changed)
+			if diff := traceanswer.Difference(changed, fresh, nil); diff == "" {
+				t.Errorf("a cache hit with a different %s agrees with the fresh scan", name)
+			}
+		})
+	}
+}
+
+// answerDocument returns resp as a parsed JSON document that a test may
+// change.
+func answerDocument(t *testing.T, resp *rxtypes.TraceResponse) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return doc
 }

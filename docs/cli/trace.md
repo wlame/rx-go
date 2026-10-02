@@ -379,8 +379,11 @@ chunk after one of them has an offset but no line number yet.
 
 So an index, the trace cache and `--no-index` never change an answer,
 with one exception: a line number that is `-1` without them may be the
-true line number with them. Every other field is equal. `-1` means "not
-computed", and a number `rx` fills in is always the right one.
+true line number with them. Every other field is equal, apart from the
+fields that describe how the answer was produced: `request_id`, `time`,
+`cli_command` and `file_chunks` (a cache hit reports the chunk count of
+the scan that wrote the entry). `-1` means "not computed", and a number
+`rx` fills in is always the right one.
 
 A seekable `.zst` is scanned frame by frame, and a capped scan can leave
 the matches of a frame unnumbered when an earlier frame was not
