@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Signatures replace the index analysis: rx finds tracebacks, crashes,
+secrets, SQL, bursts of lines and more by itself, with built-in and
+user-written signatures, and caches the findings per file. This
+release speaks HTTP wire contract 2.0 and writes line index format 11,
+and `rx serve` serves rx-viewer 0.8.0 to before 0.9.0 only: release it
+back to back with rx-viewer 0.8.0, this one first. The docs page
+History maps every removed surface to what replaces it.
+
 ### Added
 
 - Signatures: named definitions of something worth noticing in a long
@@ -53,7 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body masked as line lengths), `password-assignment`, `url-password`,
   `authorization-header`, `high-entropy-token` (the `entropy` measure
   at its defaults: nine random base64 keys in ten or more of 24 to 64
-  characters, no hex hashes or ids). The examples of the secret
+  characters, no hex hashes or ids; base64 of a short English text,
+  14 to 48 bytes, is found 53 to 70 times in 100, and about 1 in 100
+  identifiers that mix cases and digits). The examples of the secret
   signatures write one character of each token as a YAML escape, so
   the files hold no string shaped like a provider's key, and a test
   scans them, the reference page and the test data for one.
@@ -113,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that cross a chunk edge are finished across it. Each signature keeps
   its first `RX_FINDINGS_MAX_PER_SIGNATURE` findings by line with an
   exact count; an excerpt is the first line cut to 200 bytes, always
-  valid UTF-8 (each byte that is not becomes U+FFFD, after masking). For a
+  valid UTF-8 (each byte that is not part of a UTF-8 character becomes
+  U+FFFD, after masking). For a
   signature with `redact: true` every secret on that line is masked
   before the excerpt is kept: the value of every match of its anchor
   (the `capture` group, or the whole match when the group took no part)
@@ -286,7 +297,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written on since shows the bytes the scan saw: a log that grew after
   its scan (the rest of a key block appended, say) shows its new lines
   after the next scan.
-  `masked` is true when anything in the excerpt or the lines was masked.
+  `masked` is true when anything in the excerpt or the lines was
+  masked, or the finding's signature redacts.
   The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
   masked: they are the pattern's own output.
 - `RX_FINDINGS_TEXT_MAX_BYTES` (default 67108864, 1 MiB to 16 GiB): the

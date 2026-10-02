@@ -46,7 +46,17 @@ as any route the server does not have.
 
 **Every line index is built once more.** An index of format 10 is
 treated as absent; the next command that needs one builds a format 11
-index in its place, smaller by the analysis it no longer holds.
+index in its place, smaller by the analysis it no longer holds. The
+index of a seekable zstd file holds no line-length statistics any more
+(`line_length`, `longest_line`, `line_ending` and `empty_line_count`
+are `null`): only `--analyze` computed them for such a file.
+
+**Findings have a cache of their own**, `findings/` beside `indexes/`
+in the cache directory: one directory per file, one entry per
+signature ([caching](concepts/caching.md#findings)). Deleting an index
+keeps a file's findings, and a change to a signature rescans only that
+signature (a change to a redacting one rescans them all, since every
+excerpt is masked by it).
 
 **Release rx-go and rx-viewer back to back.** rx-go 0.8.0 refuses the
 viewer 0.7.1 that is installed today, and viewer 0.7.1 knows only

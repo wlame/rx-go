@@ -37,7 +37,7 @@ marks:
 | Mark | Meaning |
 |---|---|
 | `overrides` | a user signature that replaces the built-in of the same id |
-| `masked` | `redact: true`: the value of its findings is masked in every output |
+| `masked` | `redact: true`: what it matches is masked in the text of every finding and in the findings cache ([Masking](../concepts/signatures.md#masking)) |
 | `opt-in` | `default: false`: it runs only when a selection names it |
 | `disabled by file:line` | a built-in a user file switched off with `disable` |
 

@@ -211,7 +211,8 @@ walk /var/log
 
 - One `os.ReadDir` call per request
 - Per-entry metadata costs one `os.Stat`, one `os.Open` (for text
-  probe), and one index-cache lookup
+  probe), one index-cache lookup, and one read of the file's findings
+  `meta.json` (for `findings`)
 - On a directory with a thousand files, expect response time on the
   order of tens of milliseconds
 - `total_size` is a sum of direct children only — not a recursive

@@ -244,9 +244,9 @@ poll_until_done() {
         resp=$(curl -s "http://127.0.0.1:7777/v1/tasks/$task_id")
         status=$(echo "$resp" | jq -r '.status')
         case "$status" in
-            completed) echo "$resp"; return 0 ;;
-            failed)    echo "$resp"; return 1 ;;
-            *)         sleep 1 ;;
+            completed)        echo "$resp"; return 0 ;;
+            failed|cancelled) echo "$resp"; return 1 ;;
+            *)                sleep 1 ;;
         esac
     done
 }
@@ -289,14 +289,15 @@ default retention is 60 minutes after completion.
     completion. If you need a durable record of what ran, log the
     `result` body to your own store as soon as polling returns.
 
-!!! note "No cancel endpoint"
-    Once a task starts, it runs to completion or failure. There's no
-    cancel API in this release. If you need to kill a misbehaving
-    task, restart the server.
+!!! note "Only a findings task can be cancelled"
+    [`DELETE /v1/tasks/{task_id}`](#delete-v1taskstask_id) stops a
+    signature scan. An index, compress or `chain_index` task runs to
+    completion or failure; to stop one, restart the server.
 
 ## See also
 
 - [`POST /v1/index`](line-index.md#post-v1index) — create an indexing task
 - [`POST /v1/compress`](compress.md) — create a compression task
+- [`POST /v1/findings`](findings.md#post-v1findings) — create a signature scan task
 - [API conventions](../conventions.md) — request IDs, time format
 - [concepts/caching](../../concepts/caching.md) — cache layout

@@ -26,39 +26,47 @@ takes a restart. Each load error is also logged at start, as a
 
 ## Response — 200 OK
 
-An invented user file beside the built-ins (shortened to one signature):
+The built-ins beside two invented user files: `team.yml`, the example
+file of [Signatures](../../concepts/signatures.md#a-signature-file),
+and `bad.yml`, whose one signature has a regex that does not compile.
+Shortened to one signature and four of the groups:
 
 ```json
 {
   "signatures": [
     {
-      "id": "error-line",
-      "name": "Error line",
-      "group": "severity",
-      "description": "A line that says ERROR.",
-      "tags": [],
-      "level": "medium",
+      "id": "invoice-failed",
+      "name": "Invoice failed",
+      "group": "billing",
+      "description": "An invoice the billing service could not create.",
+      "tags": ["invoices"],
+      "level": "high",
       "links": [],
       "metadata": {},
       "default": true,
       "redact": false,
       "kind": "regex",
-      "keywords": [["error"]],
+      "keywords": [["invoice "], [" failed"]],
       "keywords_declared": false,
       "line_pass": false,
-      "source": {"file": "/home/you/.config/rx/signatures/team.yml", "line": 2},
+      "source": {"file": "/home/you/.config/rx/signatures/team.yml", "line": 8},
       "overrides": false,
       "disabled_by": null,
-      "examples": {"match": [], "no_match": []},
-      "regex": {"regex": "\\bERROR\\b", "not": null, "capture": 0, "entropy": null, "validate": null},
+      "examples": {
+        "match": ["2026-01-02 10:00:00 ERROR invoice 812 failed: card expired"],
+        "no_match": ["2026-01-02 10:00:01 INFO invoice 813 sent"]
+      },
+      "regex": {"regex": "\\binvoice \\d+ failed\\b", "not": null, "capture": 0, "entropy": null, "validate": null},
       "block": null,
       "run": null,
       "measure": null
     }
   ],
   "groups": [
-    {"name": "traceback", "description": "Stack traces and uncaught exceptions of programs in many languages.", "order": 1, "count": 1, "builtin": true},
-    {"name": "severity", "description": "Lines written at an error or warning level.", "order": 7, "count": 1, "builtin": true}
+    {"name": "traceback", "description": "Stack traces and uncaught exceptions of programs in many languages.", "order": 1, "count": 8, "builtin": true},
+    {"name": "severity", "description": "Lines written at an error or warning level.", "order": 7, "count": 2, "builtin": true},
+    {"name": "structure", "description": "The shape of the text, such as runs of blank or repeated lines, long lines, JSON blocks and binary bytes.", "order": 10, "count": 8, "builtin": true},
+    {"name": "billing", "description": "Events of the billing service.", "order": 12, "count": 3, "builtin": false}
   ],
   "levels": ["info", "low", "medium", "high", "critical"],
   "errors": [
@@ -73,6 +81,9 @@ An invented user file beside the built-ins (shortened to one signature):
   "files": ["/home/you/.config/rx/signatures/bad.yml", "/home/you/.config/rx/signatures/team.yml"]
 }
 ```
+
+`structure` counts 8 of its 9 built-ins because `team.yml` disables
+`blank-run`, which is still listed, with `disabled_by`.
 
 ## Response fields
 
@@ -94,7 +105,7 @@ An invented user file beside the built-ins (shortened to one signature):
 | `level` | string | `info`, `low`, `medium`, `high` or `critical` |
 | `metadata` | object | String to string; `{}` when none |
 | `default` | bool | In the default set; `false` for an opt-in signature |
-| `redact` | bool | Its values are masked in every output and in the cache |
+| `redact` | bool | What it matches is masked in the text of every finding and in the cache ([Masking](../../concepts/signatures.md#masking)) |
 | `kind` | string | `regex`, `block`, `run` or `measure`; the member of that name holds the definition, the other three are `null` |
 | `keywords` | string[][] | The keyword clauses of the anchor, lowered; `[]` when the signature runs on every line |
 | `keywords_declared` | bool | The clauses come from the signature's own `keywords` |

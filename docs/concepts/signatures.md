@@ -80,7 +80,7 @@ A file holds three keys at its top, all optional: `signatures`,
 | `links` | no | `[]` | `http` or `https` URLs, shown, never fetched |
 | `metadata` | no | `{}` | a map of text to text, shown, never interpreted |
 | `default` | no | `true` | `false`: the signature runs only when a selection names it |
-| `redact` | no | `false` | mask the value of every finding in every output; refused on a `blank` or `same` run and on a measure other than `entropy` and `base64-run`, which have no value |
+| `redact` | no | `false` | mask what the signature matches wherever finding text is shown or cached ([Masking](#masking)); refused on a `blank` or `same` run and on any measure but `entropy` and `base64-run`, since they find no value to mask |
 | `keywords` | no | derived | literals for the [keyword gate](#keywords-and-the-gate) |
 | `examples` | no (yes for built-ins) | — | `match:` and `no_match:` lists of texts; each text is one or more lines |
 
@@ -256,13 +256,20 @@ How each measure decides, in detail:
   upper-case letter, a lower-case letter and a digit, and `ratio` of
   that average over 64 symbols; with the default 0.94, nine random
   base64 keys in ten or more of 24 to 64 characters are found, and
-  words, identifiers and paths are not. A token of hex digits only
+  plain words and paths are not. A token of hex digits only
   needs `hex_ratio` of the average over 16 symbols, and with the
   default 0 is never found: a hash or a request id is as random as a
   hex key. The first token that qualifies is the finding's value; one
   finding per line. The parameters `base64` and `hex` of the earlier
   rule (fixed thresholds in bits per byte) are refused with a message
-  that names their replacement.
+  that names their replacement. Two kinds of text look as random as a
+  key to this test, and the built-in `high-entropy-token` finds them:
+  base64 of a short English text (14 to 48 bytes of text) is found in
+  53 to 70 cases of 100, since its entropy is 0.94 to 0.97 of a random
+  token's; and about 1 in 100 identifiers that mix upper- and
+  lower-case letters and digits is found. A finding of a redacting `entropy` signature is masked like
+  any secret, so such a value shows masked in the text of every finding
+  ([Masking](#masking)).
 - **`base64-run`** finds, by a scan of the bytes, a longest run of the
   base64 alphabet (`A-Z a-z 0-9 + /`) followed by up to two `=` of
   padding, `min_length` bytes or longer, padding included. The first
@@ -328,8 +335,8 @@ the same series: each chunk reports its first and last stamped lines
 and its counts, and the merge pairs and adds them in text order.
 
 With `redact: true`, `entropy` and `base64-run` mask their value as a
-regex signature masks its own, and they mask every excerpt of a line
-that holds such a value, as every redacting signature does.
+regex signature masks its own, wherever finding text shows the line
+([Masking](#masking)).
 
 ## Keywords and the gate
 
@@ -472,55 +479,13 @@ crosses into the next chunk by walking that chunk's lines again from its
 start until the walk agrees with the chunk's own; so a finding is never
 cut or doubled by an edge.
 
-**Excerpt and redaction.** A finding's excerpt is its first line's view,
-cut to 200 bytes on a UTF-8 character boundary. It is always valid
-UTF-8: each byte that is not part of a UTF-8 character becomes U+FFFD
-(`�`), after masking and before the cut, so a `binary` finding's
-excerpt shows replacement characters, and every output and the cache
-hold the same text. The file itself stays readable byte for byte
-through `rx samples`. For a signature with
-`redact: true`, every secret on that line is masked in the excerpt
-before the excerpt is kept: the value of every match of the anchor (the
-`capture` group of a regex signature, or the whole match when the group
-took no part in it; the whole match of a block's or a run's anchor), and
-every other copy of such a value on the line, so a secret echoed later
-without its `key=` is hidden as well. Copies that overlap are masked as
-one. A mask keeps a quarter of the value's characters, at most 4 (a
-20-character key shows 4, an 8-character value 2, a 3-character value
-none), and turns the rest into `*`, at most 12 of them
-(`AKIA************`).
-
-Redaction fails closed. A line whose secrets cannot all be followed
-within its bounds (more than 8 distinct values, or a value longer than
-256 bytes) shows only its text before the first secret, at most 256
-bytes, and is masked from there on; a line with more than 64 distinct
-values or 4,096 matches is masked whole. The unmasked value is never
-kept.
-
-Every excerpt is masked by every redacting signature rx has loaded,
-whether the scan selected it or not, default or opt-in: an `error-line`
-finding on a line that holds an AWS key shows the key masked, and the
-finding is marked masked. A redacting signature takes part only on a
-line that passes its keyword gate (a line that holds the Kelvin sign or
-the long s passes every gate), and only where an excerpt is kept.
-
-**Bodies of redacting blocks and runs.** The key material of a PEM
-private key is in the lines after its `BEGIN` line, and those lines hold
-no value a mask could find. So every scan also walks every redacting
-`block` and `run` signature rx has loaded, selected or not, gated by its
-keywords, and notes where their bodies lie: every line a block joined
-after its anchor line (a block shorter than its `min_lines`, which is no
-finding, and the blank lines it joined at its end, included), and every
-line of a run after its first. A finding of any signature whose first
-line is a body line has the excerpt `[masked, N bytes]`, N the line's
-length in bytes without its line ending, and is marked masked: a
-`base64-run` finding on a key line shows no byte of the key. A run's
-lines all match its anchor, so a run too short to be a finding still has
-its values masked on every line, as above. The bodies are found the same
-way for every chunking and every storage of the file, however many
-there are: a signature's first 100,000 bodies are noted line by line,
-and past that every line from its last noted body to the end of the
-file counts as a body (redaction fails closed).
+**Excerpt.** A finding's excerpt is its first line's view, masked
+([Masking](#masking)), then cut to 200 bytes on a UTF-8 character
+boundary. It is always valid UTF-8: each byte that is not part of a
+UTF-8 character becomes U+FFFD (`�`), after masking and before the
+cut, so a `binary` finding's excerpt shows replacement characters, and
+every output and the cache hold the same text. The file itself stays
+readable byte for byte through `rx samples`.
 
 **Times.** Every finding has a time: the timestamp of its first line,
 or else that of the nearest earlier line with one, when that line
@@ -542,6 +507,95 @@ time.
 **The cap.** A scan keeps the first `RX_FINDINGS_MAX_PER_SIGNATURE`
 findings of each signature (10,000 by default), by line; their count
 stays exact past it.
+
+## Masking
+
+A signature with `redact: true` finds secrets: every signature of the
+built-in `secret` group does, and so may yours. rx keeps what such
+signatures match out of every text it shows or keeps about a finding.
+This section is the whole rule; the pages of the commands and routes
+that carry finding text link here.
+
+**What is masked.**
+
+- **Values.** On every line a finding's text shows, every value a
+  loaded redacting signature matches: the value of every match of its
+  anchor, found by its position (the `capture` group of a regex
+  signature, or the whole match when the group took no part in it; the
+  whole match of a block's or a run's anchor; the token or run an
+  `entropy` or `base64-run` measure finds), and every other copy of
+  such a value on the line, so a secret echoed later without its `key=`
+  is hidden as well.
+- **The mask.** A masked span keeps a quarter of its characters, at
+  most 4, and the rest becomes `*`, at most 12: a 20-character key
+  shows 4 (`AKIA************`), an 8-character value 2, a 3-character
+  value none. Spans that overlap are masked as one: on the line
+  `login with key=AKIAIOSFODNN7EXAMPLE`, `aws-access-key` matches the
+  key and `high-entropy-token` the whole token with its `key=`, so the
+  line shows `login with key=************`.
+- **By every redacting signature.** Masking uses every redacting
+  signature rx has loaded, default or opt-in, whether the scan selected
+  it or not (a built-in switched off with `disable` takes no part): an `error-line` finding on a line that holds an AWS key
+  shows the key masked, and is marked masked. A redacting signature
+  takes part on a line that passes its keyword gate (a line that holds
+  the Kelvin sign or the long s passes every gate).
+- **Bodies of redacting blocks and runs.** The key material of a PEM
+  private key is in the lines after its `BEGIN` line, and those lines
+  hold no value a mask could find. So every scan also walks every
+  redacting `block` and `run` signature rx has loaded, selected or not,
+  gated by its keywords, and notes where their bodies lie: every line a
+  block joined after its anchor line (a block shorter than its
+  `min_lines`, which is no finding, and the blank lines it joined at
+  its end included), and every line of a run after its first. A body
+  line shows as `[masked, N bytes]`, N its length in bytes without its
+  line ending, in the text of every finding, and a finding of any
+  signature whose first line is a body line has that excerpt: a
+  `base64-run` finding on a key line shows no byte of the key. A run's
+  lines all match its anchor, so a run too short to be a finding still
+  has its values masked. The bodies are found the same way for every
+  chunking and every storage of the file: a signature's first 100,000
+  bodies are noted line by line, and past that every line from its last
+  noted body to the end of the file counts as a body.
+- **Failing closed.** A line whose secrets cannot all be followed within
+  the bounds (more than 8 distinct values, or a value longer than 256
+  bytes) shows only its text before the first secret, at most 256
+  bytes, and is masked from there on; a line with more than 64 distinct
+  values or 4,096 matches is masked whole. A line is masked before it
+  is cut at `RX_MAX_LINE_TEXT_BYTES`, so a secret the cut falls inside
+  is masked whole.
+- **Nothing past the scanned text.** The text of a finding never shows
+  a line past the end of the text its scan read. A log that grew after
+  its scan (the rest of a key block written later, say) shows its new
+  lines after the next scan, when the masked ranges cover them; until
+  then a finding at its very end has fewer `after` lines, and a last
+  line written on since shows the bytes the scan saw.
+
+`masked: true` marks a finding whose excerpt or lines had something
+masked, and every finding of a redacting signature.
+
+**Where.**
+
+| Carrier | What it holds |
+|---|---|
+| `excerpt`, in every answer | the first line, masked; `[masked, N bytes]` on a body line |
+| `lines`, `before` and `after` of `rx trace --signatures --json`, `GET /v1/trace?signatures=` and `GET /v1/findings?text=true` | every line masked, every body line as `[masked, N bytes]`, no line past the scanned text |
+| the human output of `rx trace --signatures` | the same lines as `lines`, `before` and `after` |
+| the [findings cache](caching.md#findings) | excerpts masked before they are stored, so an unmasked value is never written; `meta.ranges.json` keeps where the bodies lie, and an entry is used only with a current one |
+
+A client that shows or copies the text of findings takes it from
+`GET /v1/findings?text=true`, already masked, as rx-viewer does; never
+from `GET /v1/samples`, which returns the file as it is. rx writes no
+text of a finding to its logs or metrics.
+
+**What is not masked.**
+
+- The file itself: `rx samples`, `GET /v1/samples` and the viewer's
+  editor show it as it is.
+- The matches of a pattern: `rx trace -e PATTERN` and `regexp` on
+  `GET /v1/trace` (`line_text`, `context_lines`), with `--signatures`
+  or without. They are the output of your own regex, as `rx trace`
+  prints it without `--signatures`, not text of a finding: a pattern
+  that matches a secret prints it.
 
 ## Examples
 
@@ -669,21 +723,14 @@ rx --signatures=all,-pii -e timeout app.log          # with a pattern
   a second run answers from the cache and scans only what it lacks;
   `--no-cache` reads and writes no entry.
 - The answer lists every finding with its lines read from the file at
-  that moment, masked as the excerpt is (see [How a scan reads a
-  file](#how-a-scan-reads-a-file)): every value a loaded redacting
-  signature matches on a line, and every body line of a loaded
-  redacting block or run, which shows as `[masked, N bytes]` in the
-  lines of any finding and in the lines before and after one (`-B`,
-  `-A`, `--context`) alike. No line past the end of the text the scan
-  read is shown: a log that grew since shows its new lines after its
-  next scan. Each line
-  is cut at `RX_MAX_LINE_TEXT_BYTES`, and the text of all findings
-  together stops at `RX_FINDINGS_TEXT_MAX_BYTES`; the findings past it
-  keep their place and say `lines_truncated`.
+  that moment, and the lines before and after one (`-B`, `-A`,
+  `--context`), all masked ([Masking](#masking)). Each line is cut at
+  `RX_MAX_LINE_TEXT_BYTES`, and the text of all findings together stops
+  at `RX_FINDINGS_TEXT_MAX_BYTES`; the findings past it keep their place
+  and say `lines_truncated`.
 - The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
-  masked: they are the output of your own regex, as `rx trace` without
-  `--signatures` prints it, not text of a finding. A pattern that
-  matches a secret prints it.
+  masked ([Masking](#masking)): a pattern that matches a secret prints
+  it.
 - `--json` adds `signatures`, `findings` and `finding_summary` to the
   trace answer; a trace without `--signatures` answers as before.
 

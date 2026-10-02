@@ -179,7 +179,7 @@ It holds:
   `key` and `count` of the file's masked ranges;
 - `meta.ranges.json` — the file's masked ranges: its `key` and the
   `ranges`, `[first, last]` line numbers of the body lines of every
-  redacting block and run (see [Signatures](signatures.md#how-a-scan-reads-a-file)),
+  redacting block and run (see [Masking](signatures.md#masking)),
   sorted, the same for every chunking and storage; and the end of the
   text the scan read, `text_lines` and `text_bytes` (the decompressed
   text of a compressed file), past which no text of a finding is shown.
@@ -194,7 +194,7 @@ It holds:
 - `.lock` — the file a writing process locks.
 
 A signature checked with no findings is an entry with `count: 0`. No
-unmasked value of a redacting signature is ever written: every excerpt
+unmasked value of a redacting signature is ever written ([Masking](signatures.md#masking)): every excerpt
 is masked by every loaded redacting signature before it is stored, and
 an excerpt on a body line of a redacting block or run is stored as
 `[masked, N bytes]`. The text of a finding, read from the file when an
@@ -345,7 +345,7 @@ Per-invocation flags:
 
 | Flag | Effect |
 |---|---|
-| `--no-cache` (on `rx trace`), `no_cache=true` (on `GET /v1/trace`) | Disable trace cache for this invocation — no read, no write |
+| `--no-cache` (on `rx trace`), `no_cache=true` (on `GET /v1/trace`) | Disable trace cache for this invocation — no read, no write; with `--signatures` (`signatures=`), the findings cache too |
 | `--no-index` (on `rx trace`), `no_index=true` (on `GET /v1/trace`) | Neither read nor write a line index; count lines from the start of the file instead (same answer) |
 | `--no-index` (on `rx samples`), `RX_NO_INDEX` | Neither build nor read a line index for this lookup |
 
@@ -478,6 +478,9 @@ No hard cap. Caches grow as you index more files. Typical sizes:
   gave a 9.3 KB index with 429 checkpoints
 - **Trace cache**: grows with the match count; 51,817 matches of the
   same log took 4.3 MB
+- **Findings cache**: a few small JSON files per scanned file, one per
+  signature checked; each holds at most `RX_FINDINGS_MAX_PER_SIGNATURE`
+  findings with their excerpts of at most 200 bytes
 - **Frontend cache**: the size of the rx-viewer bundle
 
 For most developer workstations, the cache stays well under 1 GB.
@@ -486,8 +489,8 @@ growth.
 
 ### Manual pruning
 
-No built-in prune command at v1. To remove the indexes and trace
-entries whose source file no longer exists:
+No built-in prune command at v1. To remove the indexes, trace
+entries and findings whose source file no longer exists:
 
 ```bash
 # The cache base, resolved as rx resolves it.
@@ -497,6 +500,12 @@ for entry in "$cache"/indexes/*.json "$cache"/trace_cache/*/*.json; do
     [ -e "$entry" ] || continue
     src=$(jq -r '.source_path' "$entry")
     [ -e "$src" ] || rm -v "$entry"
+done
+# A file's findings are a directory; its meta.json names the source.
+for meta in "$cache"/findings/*/meta.json; do
+    [ -e "$meta" ] || continue
+    src=$(jq -r '.source_path' "$meta")
+    [ -e "$src" ] || rm -rv "$(dirname "$meta")"
 done
 ```
 

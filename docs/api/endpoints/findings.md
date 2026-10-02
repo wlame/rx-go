@@ -63,20 +63,23 @@ it.
 
 ### Response — 200 OK
 
-The invented `app.log` of the [example below](#example), after a scan,
-with `group=severity&group=secret&text=true&before=1&ticks=10&limit=2`
-(`file_tz=Europe/Berlin`):
+The invented `app.log` of the [example below](#example), after a scan
+of five built-in signatures, with
+`signatures=python-traceback,aws-access-key,private-key,error-line,blank-run`,
+`group=severity&group=secret&text=true&before=1&ticks=10&limit=2` and
+`file_tz=Europe/Berlin`. The state is `partial`: the five are current,
+the rest of the default set is not.
 
 ```json
 {
-  "state": "full",
-  "checked": ["python-traceback", "aws-access-key", "pem-key", "error-line", "blank-run"],
+  "state": "partial",
+  "checked": ["python-traceback", "aws-access-key", "private-key", "error-line", "blank-run"],
   "missing": [],
   "counts": {
     "aws-access-key": {"count": 1, "stored": 1},
     "blank-run": {"count": 0, "stored": 0},
     "error-line": {"count": 3, "stored": 3},
-    "pem-key": {"count": 1, "stored": 1},
+    "private-key": {"count": 1, "stored": 1},
     "python-traceback": {"count": 1, "stored": 1}
   },
   "series": {},
@@ -86,18 +89,18 @@ with `group=severity&group=secret&text=true&before=1&ticks=10&limit=2`
       "signature": "aws-access-key",
       "start_line": 2, "end_line": 2, "start_offset": 31, "end_offset": 101,
       "time_ms": 1768467601000,
-      "excerpt": "2026-01-15 10:00:01 ERROR login with key=AKIA************ refused",
+      "excerpt": "2026-01-15 10:00:01 ERROR login with key=************ refused",
       "value_start": 41, "value_end": 61, "masked": true,
-      "lines": ["2026-01-15 10:00:01 ERROR login with key=AKIA************ refused"],
+      "lines": ["2026-01-15 10:00:01 ERROR login with key=************ refused"],
       "before": ["2026-01-15 10:00:00 INFO start"]
     },
     {
       "signature": "error-line",
       "start_line": 2, "end_line": 2, "start_offset": 31, "end_offset": 101,
       "time_ms": 1768467601000,
-      "excerpt": "2026-01-15 10:00:01 ERROR login with key=AKIA************ refused",
+      "excerpt": "2026-01-15 10:00:01 ERROR login with key=************ refused",
       "value_start": 20, "value_end": 25, "masked": true,
-      "lines": ["2026-01-15 10:00:01 ERROR login with key=AKIA************ refused"],
+      "lines": ["2026-01-15 10:00:01 ERROR login with key=************ refused"],
       "before": ["2026-01-15 10:00:00 INFO start"]
     }
   ],
@@ -109,12 +112,12 @@ with `group=severity&group=secret&text=true&before=1&ticks=10&limit=2`
       {"column": 0, "signatures": {
         "aws-access-key": {"count": 1, "first_line": 2},
         "error-line": {"count": 2, "first_line": 2},
-        "pem-key": {"count": 1, "first_line": 7}
+        "private-key": {"count": 1, "first_line": 7}
       }},
       {"column": 9, "signatures": {"error-line": {"count": 1, "first_line": 11}}}
     ]
   },
-  "cli_command": "rx trace /var/log/app/app.log --before=1 --signatures=default"
+  "cli_command": "rx trace /var/log/app/app.log --before=1 --signatures=python-traceback,aws-access-key,private-key,error-line,blank-run"
 }
 ```
 
@@ -138,12 +141,15 @@ file and shown as every carrier of finding text shows them
 ([the text of a finding](../../cli/trace.md#the-text-of-a-finding)):
 
 - a value any loaded redacting signature matches is masked, whether or
-  not it is selected (`AKIA************`);
+  not it is selected (`key=************` above: `aws-access-key` and
+  `high-entropy-token` both match there, and are masked as one span);
 - every body line of a redacting block or run (the base64 lines of a
   private key) is `[masked, N bytes]`, in `lines` and in `before` alike;
 - no line past the text the scan read is shown, so a log that grew
   since its scan shows no line no masked range covers;
 - each line is valid UTF-8 and cut to `RX_MAX_LINE_TEXT_BYTES`.
+
+[Masking](../../concepts/signatures.md#masking) states the whole rule.
 
 The page's text together is held to `max_bytes` (or
 `RX_FINDINGS_TEXT_MAX_BYTES`), taken in line order, each line costing
@@ -169,10 +175,18 @@ it. A `density` series' `start_ms` belongs to no line: it is read the
 same way in the file's own frame, and under `file_tz` the series of a
 file whose timestamps carry zones are left out.
 
-The answer is the same with a line index and without one: the index
-only spares the read of the head of the text for the format, and of
-the end of the text for the time range of `ticks`. `rx serve` keeps
-the decoded findings of the last 8 files read (at most 64 MiB, the
+The answer is the same with a line index and without one, `ticks`
+aside: the index only spares the read of the head of the text for the
+format, and of the end of the text for the time range of `ticks`. The
+span of `ticks` is the time range `GET /v1/time-range` gives, and
+without an index that has no first or last time for a gzip, bzip2, xz
+or plain zstd file (`source: none`), nor a last time for a plain or
+seekable zstd file whose last timestamp lies more than 16 MiB before
+its end, or a seekable one whose frames are too large to read back.
+The time it lacks is then `null` in `ticks`, and `columns` is empty,
+until the file is indexed ([Ticks](#ticks)). `time_ms` and every other
+field are the same either way. `rx serve` keeps the decoded findings
+of the last 8 files read (at most 64 MiB, the
 least recently read file out first), so paging, filters and ticks of
 one file decode its cache files once; `meta.json` and the file's
 identity are still read on every request, so a kept answer is never
@@ -194,10 +208,10 @@ so `start_ms` is in column 0 and `end_ms` in column `W - 1`. `columns`
 lists each column that holds findings, in order, with, per signature,
 `count` and `first_line` (the first line of the first of them). A
 finding without a time, or with a time outside `start_ms` to `end_ms`,
-is in no column. When the time range gives no first or last timestamp
-(a stream-compressed file without an index: `source: none`), `start_ms`
-and `end_ms` are `null` and `columns` is empty; ask again once the
-file's index is built.
+is in no column. When the time range lacks a first or last timestamp
+(a stream-compressed file without an index, `source: none`, lacks both;
+see [Times](#times) for the other cases), what it lacks is `null` and
+`columns` is empty; ask again once the file's index is built.
 
 ### Status codes
 
@@ -221,7 +235,7 @@ caches what it finds.
 POST /v1/findings
 Content-Type: application/json
 
-{"path": "/var/log/app.log", "signatures": "default", "force": false}
+{"path": "/var/log/app/app.log", "signatures": "default", "force": false}
 ```
 
 | Field | Required | Description |
@@ -246,7 +260,7 @@ it.
 {
   "task_id": "440cb10b-c583-42ca-9283-840f514c8bd4",
   "status": "queued",
-  "message": "Scanning /var/log/app/app.log for 5 signatures; follow GET /v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4",
+  "message": "Scanning /var/log/app/app.log for 64 signatures; follow GET /v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4",
   "path": "/var/log/app/app.log",
   "started_at": "2026-10-11T08:49:44.199639Z"
 }
@@ -277,9 +291,8 @@ got shorter.
 
 ## Example
 
-An invented log and an invented user signature file beside the
-built-ins (`RX_SIGNATURES_PATH`), served with
-`rx serve --search-root=/var/log/app`:
+An invented log, served with `rx serve --search-root=/var/log/app`,
+scanned for five built-in signatures:
 
 ```text
 2026-01-15 10:00:00 INFO start
@@ -296,12 +309,13 @@ RkFLRUtFWUJPRFlGQUtFS0VZQk9EWQ==
 ```
 
 ```bash
-curl -s 'localhost:7777/v1/findings?path=/var/log/app/app.log'
-# {"state":"none","checked":[],"missing":["python-traceback","aws-access-key","pem-key","error-line","blank-run"], …, "total":0,"findings":[], …}
-curl -s -X POST -H 'Content-Type: application/json' -d '{"path":"/var/log/app/app.log"}' localhost:7777/v1/findings
-# {"task_id":"440cb10b-…","status":"queued", …}
+sel=python-traceback,aws-access-key,private-key,error-line,blank-run
+curl -s "localhost:7777/v1/findings?path=/var/log/app/app.log&signatures=$sel"
+# {"state":"none","checked":[],"missing":["python-traceback","aws-access-key","private-key","error-line","blank-run"], …, "total":0,"findings":[], …}
+curl -s -X POST -H 'Content-Type: application/json' -d "{\"path\":\"/var/log/app/app.log\",\"signatures\":\"$sel\"}" localhost:7777/v1/findings
+# {"task_id":"440cb10b-…","status":"queued","message":"Scanning /var/log/app/app.log for 5 signatures; …", …}
 curl -s localhost:7777/v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4
-# {"status":"completed","operation":"findings","progress":1,"bytes_read":408,"bytes_total":408,"result":{"state":"full", …,"total":6, …}}
+# {"status":"completed","operation":"findings","progress":1,"bytes_read":408,"bytes_total":408,"result":{"state":"partial", …,"total":6, …}}
 ```
 
 ## See also

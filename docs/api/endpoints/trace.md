@@ -126,9 +126,11 @@ prints for the same paths
 search covers is scanned for the selection through the findings cache,
 and the answer gains `signatures` (the selection, by id), `findings`
 (every finding of every file, with its lines and the context lines the
-window asks for, masked, within `RX_FINDINGS_TEXT_MAX_BYTES`) and
-`finding_summary` (per file id). `regexp` may then be left out: the
-answer has no pattern and no match. `no_cache` also skips the findings
+window asks for, [masked](../../concepts/signatures.md#masking), within
+`RX_FINDINGS_TEXT_MAX_BYTES`) and `finding_summary` (per file id). The
+matches of `regexp` stay unmasked, with `signatures` or without: they
+are the output of the caller's own pattern. With `signatures`, `regexp`
+may be left out: the answer then has no pattern and no match. `no_cache` also skips the findings
 cache, `no_index` the line index the findings' text reads may use, and
 `max_results` caps the matches only. A selection that names an unknown,
 refused or disabled signature answers `400` with the reason and the load
@@ -205,6 +207,9 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it, whatever the chunk settings are now. It describes how the answer was produced and is not compared when an index or the cache answers |
 | `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); each entry is the match's window, the match's own line included, as `{relative_line_number, absolute_line_number, line_text, absolute_offset, line_text_truncated}`. Without a context window an entry holds only the match's own line; see [`rx trace`](../../cli/trace.md#match-with-prepost-context) for how a window is built |
 | `before_context`, `after_context` | `int \| null` | The window used on each side, or `null` when it is `0` |
+| `signatures` | `{id: {name, group, level, kind}}` | With `signatures` only: every signature of the selection. Absent otherwise |
+| `findings` | array | With `signatures` only: every finding of every file, by file id, first line, last line and signature id, in the shape [`rx trace` › JSON](../../cli/trace.md#json) lists. Absent otherwise |
+| `finding_summary` | `{fileId: {state, signatures: {id: {count, stored}}}}` | With `signatures` only: per file, `full` or `partial` and each signature's count. Absent otherwise |
 | `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
 
 ### `matches[]` shape

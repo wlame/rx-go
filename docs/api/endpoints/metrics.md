@@ -32,7 +32,7 @@ from the start, at zero.
 
 ## Metric families
 
-These are the 40 `rx_*` families `/metrics` reports, with the Go
+These are the 38 `rx_*` families `/metrics` reports, with the Go
 runtime and process families listed after them.
 
 ### Requests

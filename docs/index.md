@@ -1,6 +1,6 @@
 # rx
 
-Regex search, indexing, sampling, and seekable compression for very large text files.
+Regex search, indexing, sampling, signature scans and seekable compression for very large text files.
 
 `rx` is a command-line tool and HTTP API server for engineers who work with
 multi-gigabyte log files, data dumps, and text corpora. It layers parallel
@@ -35,6 +35,11 @@ files in the tens of gigabytes.
   time and numbered as one text, so a line number, a time or a search
   answers as it would for the parts joined into one file, compressed
   parts and a growing active file included.
+- **Findings without writing a regex.** `rx --signatures` scans a file
+  for tracebacks, crashes, secrets, SQL, bursts of lines and more with
+  70 built-in [signatures](concepts/signatures.md) and your own from
+  YAML, in one parallel pass, and caches the findings per file and
+  signature. Secrets are masked in every finding's text.
 - **Seekable zstd output.** `rx compress` writes zstd streams as
   independent frames with an appended seek table, trading ~4-5% of
   compression ratio for random-access decompression. Later `rx samples`
@@ -52,6 +57,9 @@ rx index /var/log/app-2026-03.log
 
 # Pull lines 450000-450010 with 3 lines of context on each side.
 rx samples /var/log/app-2026-03.log --lines=450000-450010 --context=3
+
+# Find tracebacks, secrets, SQL and more with the built-in signatures.
+rx --signatures /var/log/app-2026-03.log
 
 # Turn the log into a seekable archive — random-access line lookups
 # remain O(1).

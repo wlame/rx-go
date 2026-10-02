@@ -527,7 +527,7 @@ The same rule runs once a day against a cached viewer (see
 [`rx serve`](../cli/serve.md#viewer-updates)), and every download it
 starts goes through the checksum and redirect checks above.
 
-`RX_FRONTEND_VERSION=v0.2.0` pins an exact tag and bypasses the range
+`RX_FRONTEND_VERSION=v0.8.0` pins an exact tag and bypasses the range
 check. `RX_FRONTEND_URL` bypasses release resolution entirely. Both are
 for an operator who knows what they are doing.
 
@@ -708,6 +708,11 @@ happens at all.
   [`GET /v1/time-range`](../api/endpoints/time-range.md#what-a-request-reads)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
+- Showing a secret a log holds through its findings — what a
+  redacting signature matches, and the body lines of a private key, are
+  masked in the text of every finding and in the findings cache, by
+  every redacting signature rx has loaded, failing closed past its
+  bounds; see [Masking](signatures.md#masking)
 - SSRF to internal services via hook URLs — blocked by address-range
   check + DNS resolution
 
@@ -738,6 +743,11 @@ happens at all.
 - **DNS rebinding, on rx-python only** — rx-go re-checks the address at
   connect time; rx-python validates once. Use
   `RX_HOOK_STRICT_IP_ONLY=true` there.
+- **Secrets in the file itself** — masking covers the text of findings
+  only. `rx samples`, `GET /v1/samples`, the viewer's editor and the
+  matches of a pattern (`rx trace -e`) show the file as it is: whoever
+  may read a file reads its secrets. A secret of a shape no loaded
+  redacting signature describes is neither found nor masked.
 - **Cache poisoning** — multi-user cache directories share entries;
   a user who writes a bad cache entry affects other users. Use
   per-user `RX_CACHE_DIR`.

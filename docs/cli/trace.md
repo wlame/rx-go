@@ -266,27 +266,21 @@ a compressed stream is read from its start up to its last finding.
   out and every finding after it keep their place and lose their text,
   with `lines_truncated: true`; the human output says so and gives the
   `rx samples` command.
-- Every value a redacting signature matches on a line is masked, by
-  every loaded redacting signature, in every line as in the excerpt.
-  Every body line of a redacting `block` or `run` (every line a block
-  joined after its anchor, every line of a run after its first), of
-  any loaded redacting signature, selected or not, is replaced by
-  `[masked, N bytes]` (N its length) in `lines`, `before` and `after`
-  of every finding, and an excerpt on such a line is
-  `[masked, N bytes]` too: the base64 lines of a private key never
-  show around an error line next to it.
-  A line is masked before it is cut, so a secret the cut falls inside
-  is masked as a whole. The file itself stays readable through
+- Every line is masked as [Masking](../concepts/signatures.md#masking)
+  says: every value a loaded redacting signature matches, selected or
+  not, is masked, and every body line of a redacting `block` or `run`
+  (every line a block joined after its anchor, every line of a run
+  after its first) is `[masked, N bytes]` (N its length) in `lines`,
+  `before` and `after` of every finding, so the base64 lines of a
+  private key never show around an error line next to it. A line is
+  masked before it is cut. The file itself stays readable through
   `rx samples`.
-- The text never reaches past the end of the text the scan read. A log
-  that grew since its scan (or while its text was read) shows its new
-  lines after the next scan: until then a finding at its very end has
-  fewer `after` lines, and a last line written on since shows the bytes
-  the scan saw. New lines belong to no masked range yet, so this is
-  what keeps the rest of a key block written after the scan hidden.
+- The text never reaches past the end of the text the scan read: a log
+  that grew since its scan shows its new lines after the next scan, so
+  the rest of a key block written after the scan stays hidden.
 - The matches of `-e PATTERN` (`matches[].line_text`,
   `context_lines`) are not masked: they are your own regex's output,
-  not text of a finding.
+  not text of a finding, and a pattern that matches a secret prints it.
 
 ## Examples
 

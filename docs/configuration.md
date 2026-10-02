@@ -31,6 +31,7 @@ The resolved cache base holds:
 
 - `indexes/` — line-offset indexes
 - `trace_cache/` — trace result caches
+- `findings/` — findings of signature scans, per file and signature
 - `frontend/` — `rx-viewer` SPA
 
 See [concepts/caching](concepts/caching.md).
@@ -73,7 +74,8 @@ The trace cache is turned off per invocation; there is no variable for
 it:
 
 - `--no-cache` on `rx trace`, `no_cache=true` on `GET /v1/trace` —
-  don't consult or write the trace cache
+  don't consult or write the trace cache, nor the findings cache with
+  `--signatures` (`signatures=`)
 - `--no-index` on `rx trace`, `no_index=true` on `GET /v1/trace` —
   neither read nor write a line index; lines a capped scan left
   unnumbered are counted from the start of the file instead (same
@@ -102,7 +104,7 @@ without one looks back for it:
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LOG_TZ` | `UTC` | The zone a file's timestamps were written in when they carry none. A query with a zone is turned into the file's wall-clock time with it, and `time_format.assumed_zone` reports it. |
+| `RX_LOG_TZ` | `UTC` | The zone a file's timestamps were written in when they carry none. A query with a zone is turned into the file's wall-clock time with it, and `time_format.assumed_zone` reports it. A signature finding's `time_ms` is read in it too, so it is part of every findings cache key: a change makes every file's findings stale. |
 | `RX_QUERY_TZ` | unset | The zone a time query is read in when it carries none. Unset reads such a query in the file's own frame: as the file's wall clock, or at the offset of the first timestamp of a file whose timestamps carry zones, so a time copied from a line finds that line. `local` reads it in the zone of the rx process. |
 | `RX_TIMESTAMP_LOOKBACK_KB` | `64` | How far back, in KiB, a line without a timestamp of its own looks for the line whose timestamp it carries in `line_timestamps`, and a signature finding whose first line has none for its time: the nearest earlier line with one, when that line starts at most this far before it. In a ready log chain the look back continues into the parts before ([`GET /v1/logs/samples`](api/endpoints/logs-samples.md#timestamps-across-a-part-edge)). `0` gives such a line none; at most `1024`. |
 
@@ -141,7 +143,7 @@ See [concepts/security](concepts/security.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag (e.g. `v0.2.0`), with no range check and no daily check. When unset, `rx serve` installs the newest published release inside the range it supports and checks for a newer one once a day (see [`rx serve`](cli/serve.md#viewer-updates)). |
+| `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag (e.g. `v0.8.0`), with no range check and no daily check. When unset, `rx serve` installs the newest published release inside the range it supports and checks for a newer one once a day (see [`rx serve`](cli/serve.md#viewer-updates)). |
 | `RX_FRONTEND_URL` | unset | Direct URL to a `dist.tar.gz` of the SPA. When set, `rx serve` downloads from this URL on every start. |
 | `RX_FRONTEND_PATH` | — | A directory holding a viewer build you manage, such as a local `rx-viewer` build. `rx serve` serves it as it is: no check, no download, no write, no range check, and `RX_FRONTEND_URL` and `RX_FRONTEND_VERSION` are ignored beside it. A directory without `index.html` and `assets/` serves no viewer. Tilde expansion supported. To move the cache `rx` manages, set `RX_CACHE_DIR` (see [`rx serve`](cli/serve.md#serve-a-viewer-build-you-manage)). |
 

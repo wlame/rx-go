@@ -60,7 +60,7 @@ after that (see [Viewer updates](#viewer-updates)).
 ```text
 Starting RX API server on http://127.0.0.1:7777
 Search root: /home/you/projects/example
-Viewer: v0.6.0 (cached)
+Viewer: v0.8.0 (cached)
 API docs available at http://127.0.0.1:7777/docs
 Metrics available at http://127.0.0.1:7777/metrics
 ```
@@ -94,7 +94,7 @@ when no SPA is cached. Use when:
 ### Pinned SPA version
 
 ```bash
-RX_FRONTEND_VERSION=v0.2.0 rx serve
+RX_FRONTEND_VERSION=v0.8.0 rx serve
 ```
 
 Pins to a specific `rx-viewer` release, with no range check and no daily
@@ -125,7 +125,7 @@ nothing into it, writes no `.metadata.json` in it and does not create it.
 There is no range check either. The banner names it:
 
 ```text
-Viewer: v0.6.0-6-g03013b5 from /home/you/src/rx-viewer/dist (RX_FRONTEND_PATH, served as it is)
+Viewer: v0.8.0-6-g03013b5 from /home/you/src/rx-viewer/dist (RX_FRONTEND_PATH, served as it is)
 ```
 
 The version is the one the build's `version.json` stamps (else the one a
@@ -315,14 +315,14 @@ server binds:
 
 | Cache | What `rx serve` does | Banner |
 |---|---|---|
-| None | Reads GitHub's release list and installs the newest release inside the range | `v0.6.0 (installed)` |
-| Inside the range, `last_check` under a day old | Serves it; asks GitHub nothing | `v0.6.0 (cached)` |
-| Inside the range, `last_check` a day old, missing or unreadable | Reads the release list; installs a newer release inside the range, or keeps the cache; records `last_check` | `v0.6.0 (updated from v0.2.0)` or `v0.2.0 (cached)` |
-| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `v0.6.0 (updated from v1.0.0)` or `none (/ redirects to /docs)` |
+| None | Reads GitHub's release list and installs the newest release inside the range | `v0.8.1 (installed)` |
+| Inside the range, `last_check` under a day old | Serves it; asks GitHub nothing | `v0.8.1 (cached)` |
+| Inside the range, `last_check` a day old, missing or unreadable | Reads the release list; installs a newer release inside the range, or keeps the cache; records `last_check` | `v0.8.1 (updated from v0.8.0)` or `v0.8.0 (cached)` |
+| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `v0.8.1 (updated from v0.7.1)` or `none (/ redirects to /docs)` |
 
 `--update-viewer` runs the check at once, whatever `last_check` says.
 An update that replaces a cache whose `.metadata.json` records no version
-says `v0.6.0 (replaced a cached viewer of unrecorded version)`.
+says `v0.8.1 (replaced a cached viewer of unrecorded version)`.
 
 The release list is one page of GitHub's
 `/repos/wlame/rx-viewer/releases`; drafts, pre-releases and tags that are

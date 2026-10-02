@@ -9,13 +9,13 @@ checkpoint, whatever the file size.
 ## The file format
 
 An index is stored as a JSON document with the full `UnifiedFileIndex`
-schema, format version 10. The critical field is `line_index`. The
+schema, format version 11. The critical field is `line_index`. The
 start of the index `rx samples` built for a 465 MB log (most of the
 other members trimmed; `rx index --info --json` prints all of them):
 
 ```json
 {
-  "version": 10,
+  "version": 11,
   "source_path": "/var/log/app.log-2025121008",
   "source_modified_at": "2025-12-11T09:14:22.418305",
   "source_size_bytes": 487603212,

@@ -459,6 +459,44 @@ Or build from source on the target host:
 CGO_ENABLED=0 go build -ldflags='-s -w' -o rx ./cmd/rx
 ```
 
+## A signature of yours does not run
+
+### Symptom
+
+```text
+Error: --signatures=broken: signature broken was not loaded; /home/you/.config/rx/signatures/bad.yml:6: broken: regex: error parsing regexp: missing closing ): `(unclosed`
+```
+
+Exit code 2 from `rx --signatures=…` (`400` from the HTTP routes), the
+signature missing from `rx signatures`, or a `signature_load_error`
+warning in the `rx serve` log at start.
+
+### Cause
+
+A signature file with a YAML error, an unknown top-level key or a value
+past a limit is refused whole; a signature with a bad regex, an unknown
+field, an unknown group, a duplicate id or a failing example is refused
+alone. `rx serve` reads the signature files only when it starts. See
+[Signatures](concepts/signatures.md#errors).
+
+### Fix
+
+```bash
+rx signatures check ~/.config/rx/signatures/
+```
+
+```text
+/home/you/.config/rx/signatures/bad.yml:6: broken: error: regex: error parsing regexp: missing closing ): `(unclosed`
+examples: checked
+2 files, 3 signatures: 1 error, 0 warnings
+Error: The signature files have 1 error
+```
+
+It exits 1 while an error is left. Fix each one at its file and line,
+then restart `rx serve`. `rx signatures` ends with the search path and
+the number of files it found there, in case the files are not where rx
+looks ([where rx finds signature files](concepts/signatures.md#where-rx-finds-signature-files)).
+
 ## Debug output
 
 `rx` has no debug mode that writes files. `rx trace --debug` is still

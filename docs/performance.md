@@ -147,6 +147,44 @@ the same files repeatedly, pre-building the indexes pays off:
 find /var/log -name "*.log" -size +50M -exec rx index {} \;
 ```
 
+## Signature scans
+
+`rx --signatures` reads a file's text once, in parallel, and tests a
+signature's regex only on the lines that hold its keywords
+([how a scan reads a file](concepts/signatures.md#how-a-scan-reads-a-file)).
+Its cost follows the lines the keywords let through more than the
+number of signatures. Measured on the machine above with `rx` built
+from source, on an invented 2 GiB log of 31.8 million lines written by
+a script, in the page cache, the whole command with its human output
+sent to `/dev/null`. Other work ran on the machine beside it, so the
+table gives the median and, in brackets, the range of five runs (three
+for one worker):
+
+| Scenario | Wall-clock |
+|---|---:|
+| Default set (64 signatures), 1 worker | 51.3 s (51.1–51.3) |
+| Default set, 4 workers | 19.0 s (16.2–21.9) |
+| Default set, 16 workers | 6.9 s (5.7–10.6) |
+| Default set, every entry in the findings cache | 0.60 s (0.58–0.60) |
+| Default set, its gzip copy (329 MB), 16 workers | 9.6 s (9.6–10.3) |
+| `--signatures=all`, 16 workers | 35.8 s (33.5–41.9) |
+
+- The log is dense on purpose: about one line in five holds a finding
+  of the default set (6.3 million findings, 90,239 kept under
+  `RX_FINDINGS_MAX_PER_SIGNATURE`). A log with fewer such lines scans
+  faster, since testing regexes on the lines the keywords let through
+  is most of the work. The 16-worker scan took 97 CPU-seconds and at
+  most 395 MB of memory.
+- A gzip, bzip2, xz or zstd stream is decoded by one reader that hands
+  batches of lines to the workers, so its scan is bound by the
+  decompression.
+- `all` adds the opt-in `pii` group, whose regexes have no keywords and
+  are tested on every line (`rx signatures show email-address` prints
+  `# line pass: yes`).
+- A second scan of the same selection reads its findings from the
+  [findings cache](concepts/caching.md#findings); what is left is
+  reading and masking the lines of the findings it shows.
+
 ## Compression trade-offs
 
 ### Read throughput

@@ -1,7 +1,7 @@
 # rx — Regex Tracer
 
 High-performance CLI and REST API for regex search, indexing, sampling,
-and seekable compression of very large log files. Wraps
+signature scans and seekable compression of very large log files. Wraps
 [ripgrep](https://github.com/BurntSushi/ripgrep) and adds parallel
 chunked search, native decompression (gzip, xz, bz2, zstd), frame-level
 parallel zstd, line-offset indexes, result caching, and an HTTP API
@@ -125,6 +125,7 @@ catalogue in [`docs/reference/signatures.md`](docs/reference/signatures.md).
 | `time-range` | Show the format and the first and last timestamp of each file |
 | `logs`     | Read a rotated log (`syslog`, `syslog.1`, `syslog.2.gz`, …) as one log chain: list, describe, index, sample by line or time, search |
 | `compress` | Produce a seekable zstd file for frame-parallel decompression    |
+| `signatures` | List, show and check the signatures `--signatures` scans for; print a template file |
 | `serve`    | REST API (`chi` + `huma` v2) with Swagger UI, metrics, SPA       |
 
 ### HTTP API (via `rx serve`)
@@ -156,7 +157,7 @@ Configured via environment variables. The most common ones:
 
 | Variable              | Default         | Description                           |
 |-----------------------|-----------------|---------------------------------------|
-| `RX_CACHE_DIR`        | `~/.cache/rx`   | Indexes + cached trace results        |
+| `RX_CACHE_DIR`        | `~/.cache/rx`   | Indexes, cached trace results and findings |
 | `RX_SEARCH_ROOTS`     | `serve`: the current directory; other commands: no sandbox | Path sandbox, `:`-separated; `--search-root` wins |
 | `RX_MAX_SUBPROCESSES` | `20`            | Most chunks per file, and most `rg` processes at once |
 | `RX_LARGE_FILE_MB`    | `50`            | Size from which a file is indexed and its trace answers cached |
@@ -193,8 +194,12 @@ just clean        # remove build and coverage artifacts
 - `internal/seekable/` · `internal/compression/` — zstd + format detection.
 - `internal/index/` · `internal/samples/` — line-offset index and resolver.
 - `internal/logchain/` — log chains: the files of a rotated log read as one.
+- `internal/signatures/` · `internal/sigscan/` · `internal/findings/` — the
+  signature catalogue and its YAML loader, the scan engine, and the
+  findings cache.
 - `pkg/rxtypes/` — public wire types (shared JSON schemas).
-- `docs/` — architecture, CLI, API, concepts (30+ pages).
+- `docs/` — architecture, CLI, API, concepts and the built-in signatures
+  (47 pages).
 
 ## Documentation
 

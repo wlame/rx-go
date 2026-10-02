@@ -84,7 +84,7 @@ the position, with a range sorting by its left-hand value
 | Where | What |
 |---|---|
 | `cmd/rx/main.go` | Entry point. `preprocessArgs` routes a bare pattern to `trace`; a new subcommand joins `knownSubcommands` there |
-| `internal/clicommand/` | One file per subcommand: `trace`, `index`, `samples`, `time-range`, `compress`, `serve`; `logs` and its subcommands (`list`, `show`, `time-range`, `index`, `samples`, `trace`) in `logs*.go` |
+| `internal/clicommand/` | One file per subcommand: `trace` (its `--signatures` part in `trace_signatures.go`), `index`, `samples`, `time-range`, `compress`, `signatures`, `serve`; `logs` and its subcommands (`list`, `show`, `time-range`, `index`, `samples`, `trace`) in `logs*.go` |
 | `internal/webapi/` | HTTP layer (chi + huma v2), middleware, OpenAPI, SPA fallback, `runDetached` |
 | `internal/trace/` | Search engine: `chunker.go`, `worker.go` (rg subprocess), `seekable.go`, `compressed.go`, `cache.go` |
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
@@ -99,7 +99,7 @@ the position, with a range sorting by its left-hand value
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
 | `internal/frontend/` | Downloads and extracts the viewer bundle |
-| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress`, the index builds `GET /v1/samples` waits for, and the index task of each log chain (`chain_index`, `internal/webapi/chain_index.go`): a lock key apart from the path it shows (`CreateKeyed`, the chain directory's device and inode with its name), part builds as subtasks whose finished entries are capped apart from other tasks (`CreateSubtask`), and a `Watch` that keeps how a task ended; a task's done channel and progress |
+| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress`, the index builds `GET /v1/samples` waits for, and the index task of each log chain (`chain_index`, `internal/webapi/chain_index.go`): a lock key apart from the path it shows (`CreateKeyed`, the chain directory's device and inode with its name), part builds as subtasks whose finished entries are capped apart from other tasks (`CreateSubtask`), and a `Watch` that keeps how a task ended; a task's done channel and progress. Findings scans (`POST /v1/findings`) are the one kind a client can cancel: `CreateCancellable` hands the scan a context, `Cancel` (`DELETE /v1/tasks/{task_id}`) ends it `cancelled`, and `Settle` refuses a cancel once the scan writes its answer |
 | `internal/prometheus/` | Metrics behind an `atomic.Bool` enable gate (off in CLI, on in `serve`) |
 | `internal/output/` | Shared human-readable formatting |
 | `internal/testparity/` | Harness that runs `../rx-python` and diffs output |
@@ -308,7 +308,12 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
 
    The findings cache (`internal/findings`) is an accelerator held to
    the same rule: a file's findings are the same from the cache as from
-   a fresh scan, and the same with a line index or without one.
+   a fresh scan, and the same with a line index or without one. The one
+   field a line index fills in is the span of `GET /v1/findings`
+   `ticks`, which is the file's time range as `GET /v1/time-range`
+   gives it: without an index that time range may lack its first or
+   last time (a stream-compressed file lacks both), and the span is then
+   `null` ("not computed"), as `first_ms` and `last_ms` are there.
 
    Bump `index.Version` whenever the on-disk shape or the meaning of a
    field changes. rx-python shares the cache directory and treats an index
@@ -556,6 +561,18 @@ Paste the output. Do not summarize it.
   file made with `O_EXCL`, then a rename (`--force`) or a hard link
   (without it) to the output name. Do not add a write that opens the
   output by its path.
+- **The text of a finding is masked on every carrier.** An excerpt is
+  masked by every loaded redacting signature before it is kept or
+  cached, and the lines of a finding (`lines`, `before`, `after`, the
+  human output) go through `findings.FillText` or the trace's text
+  read, which mask each line with `sigscan.NewLineMasker`, show a body
+  line of a redacting block or run as `sigscan.MaskedLineText`, and
+  stop at the end of the text the scan read. A new surface that shows
+  finding text reuses them and never shows a line read for a finding
+  without that masking (`GET /v1/samples` returns the file as it is,
+  and a client must not build finding text from it). The matches of
+  `-e` stay unmasked by design. The rules: `docs/concepts/signatures.md`,
+  "Masking".
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
