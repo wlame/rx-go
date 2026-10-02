@@ -75,8 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its text before the first secret, and one with more than 64 distinct
   values or 4,096 matches is masked whole. Every excerpt is masked by
   every loaded redacting signature, selected or not, so a finding of a
-  signature that does not redact never shows a secret either. The commands that scan come
-  next.
+  signature that does not redact never shows a secret either.
 - Every finding of a signature scan has a time: the timestamp of its
   first line, or else that of the nearest earlier line with one when
   that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` before it (the
@@ -164,7 +163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renames into place while it is being opened is checked again, up to
   three times, and never logged. A missing opt-in signature
   never keeps a file from full; a file scanned only with opt-in
-  signatures is partial. The commands that scan come next.
+  signatures is partial.
 - `RX_MAX_SIGNATURE_SCANS` (default 1, 1 to 64): how many signature
   scans read files at once in `rx serve`; later ones wait their turn,
   and a scan answered from the cache does not wait.
