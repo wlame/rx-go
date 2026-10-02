@@ -11,10 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Signatures: named definitions of something worth noticing in a long
   file, such as a Python traceback, an AWS access key or a run of blank
-  lines. rx has built-in signatures (this release: `python-traceback`,
-  `aws-access-key`, `blank-run`, in eleven built-in groups) and reads
-  more from YAML files: every `*.yml` and `*.yaml` file in the
-  directories or files of `RX_SIGNATURES_PATH` (separated by `:`), else
+  lines. rx has built-in signatures (70 in eleven groups, listed
+  below) and reads more from YAML files: every `*.yml` and `*.yaml`
+  file in the directories or files of `RX_SIGNATURES_PATH` (separated
+  by `:`), else
   in `$XDG_CONFIG_HOME/rx/signatures/`, else in
   `~/.config/rx/signatures/`. A signature has an id, a name, a group,
   tags, a level, a description, links, metadata, `default`, `redact`,
@@ -35,6 +35,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses that signature. Only the commands that use signatures read
   the files. The docs page Concepts / Signatures describes the model and
   the file format.
+- The built-in signature catalogue: 70 signatures in eleven groups, each
+  with a description that says what it finds and its main false
+  positive, links to its sources, and invented examples that every load
+  runs. `traceback`: `python-traceback` (chained exceptions and
+  exception groups in one finding), `java-exception` (`Caused by:`,
+  `Suppressed:`, `... N more`), `dotnet-exception`, `js-error`,
+  `go-panic` (goroutine dumps, the `goroutine N gp=… [status]:` form,
+  up to `exit status N`), `ruby-backtrace` (both quote styles),
+  `php-fatal`, `rust-panic`. `crash`: `sanitizer-report`,
+  `glibc-abort`, `killed-by-signal`, `kernel-segfault`,
+  `systemd-coredump`, `kernel-oops`, `oom-killer`, `k8s-crash-loop`,
+  `jvm-fatal-error`. `secret`, every one masked: `aws-access-key`,
+  `aws-secret-key`, `github-token`, `gitlab-token`, `slack-token`,
+  `slack-webhook`, `stripe-key`, `google-api-key`, `anthropic-key`,
+  `openai-key`, `jwt`, `private-key` (the whole PEM or PGP block, its
+  body masked as line lengths), `password-assignment`, `url-password`,
+  `authorization-header`, `high-entropy-token` (the `entropy` measure
+  at its defaults: nine random base64 keys in ten or more of 24 to 64
+  characters, no hex hashes or ids). The examples of the secret
+  signatures write one character of each token as a YAML escape, so
+  the files hold no string shaped like a provider's key, and a test
+  scans them, the reference page and the test data for one.
+  `pii`, opt-in: `email-address`, `ipv4-address`, `ipv6-address`,
+  `card-number` (Luhn), `iban` (mod 97). `sql`: `sql-statement`,
+  `dangerous-sql` (DROP, TRUNCATE, DELETE or UPDATE without WHERE),
+  `postgres-explain`, `postgres-slow-statement`, `postgres-deadlock`,
+  `postgres-lock-wait`, `mysql-slow-query`. `http`: `http-5xx` (common
+  and combined access logs, JSON `status`, logfmt). `severity`:
+  `error-line` (upper-case level words) and the opt-in `warning-line`.
+  `system`: `disk-full`, `too-many-open-files`, `out-of-memory`,
+  `connection-failure`, `network-timeout`, `tls-failure`, `dns-failure`.
+  `lifecycle`: `signal-received`, `exit-status`, `systemd-unit-change`.
+  `structure`: `blank-run`, `long-line`, `repeated-lines`,
+  `repeat-suppressed`, `json-block`, `binary-bytes`, `base64-blob` (the
+  `base64-run` measure), `hex-dump`, `unprefixed-run`. `time`:
+  `log-burst`, `time-gap`, `time-backwards`. 64 of them are in the
+  default set. They find every case the nine detectors of
+  `rx index --analyze` found. Some ranges differ: a chained Python
+  exception is one finding where `traceback-python` gave one per
+  traceback; a kernel oops runs from its `BUG`, `Oops` or `kernel BUG
+  at` line to its `end trace` line; a private key covers its whole
+  block where `secrets-scan` marked the BEGIN line; a secret is a
+  finding of its line with the secret as the value span. `long-line`
+  compares a line with the 100 lines on each side of it where the
+  `long-line` detector compared it with the whole file's percentiles,
+  so lines as long as their neighbours are no longer found. The
+  reference page Reference / Built-in signatures is
+  generated from the catalogue (`just docs-signatures`), and a test
+  fails when it is not current.
 - `rx signatures` lists the signatures by group with their level, kind,
   source and marks (`overrides`, `masked`, `opt-in`, `disabled by
   file:line`), then the load errors and the search path; `--group=`
@@ -99,9 +148,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compressed copy give the same times. A scan reads the head of the
   file once more for the format.
 - The signature scan runs the measures `entropy` (tokens of
-  `[A-Za-z0-9+/=_-]` of `min_length` bytes or more whose Shannon
-  entropy reaches `base64`, or `hex` for hex digits only; UUIDs and
-  digit-only tokens skipped; the first token is the value),
+  `[A-Za-z0-9+/=_-]` of `min_length` bytes or more, default 20, whose
+  Shannon entropy reaches `ratio`, default 0.94, of the entropy a
+  random token of the same length has on average over the 64 base64
+  characters, and which hold an upper-case letter, a lower-case letter
+  and a digit; a token of hex digits only needs `hex_ratio` of a random
+  hex token's average and is never found at its default 0, since
+  hashes and request ids are as random as hex keys; UUIDs and
+  digit-only tokens skipped; the first token is the value; the
+  parameters `base64` and `hex` of fixed thresholds are refused with a
+  message that names their replacement),
   `base64-run` (a run of base64 bytes with up to two `=`, found by a
   byte scan; the run is the value), `binary` (runs of lines that hold a
   NUL byte or bytes that are not UTF-8) and `unprefixed` (runs of lines

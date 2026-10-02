@@ -1,0 +1,29 @@
+# Built-in signatures of the http group. Their examples use the
+# documentation address range 203.0.113.0/24.
+signatures:
+  - id: http-5xx
+    name: HTTP server error
+    group: http
+    tags: [http, access-log]
+    level: medium
+    description: |
+      A request answered with a 5xx status: an access-log line in the
+      common or combined format ('host ident user [time] "request"
+      5xx size'), a JSON log with "status" (or "status_code",
+      "statusCode") of 5xx, or a logfmt status=5xx. A log of many failed
+      requests has one finding per request.
+    links:
+      - https://httpd.apache.org/docs/2.4/logs.html
+      - https://raw.githubusercontent.com/logstash-plugins/logstash-patterns-core/main/patterns/ecs-v1/httpd
+    regex:
+      - '\S+ \S+ \S+ \[[^\]]+\] "[^"]*" 5\d\d (?:\d+|-)'
+      - '"status(?:_code|Code)?"\s*:\s*"?5\d\d\b'
+      - '\bstatus=5\d\d\b'
+    examples:
+      match:
+        - '203.0.113.7 - - [01/Mar/2026:10:00:00 +0000] "GET /api/orders HTTP/1.1" 503 512 "-" "curl/8.0"'
+        - '{"time":"2026-03-01T10:00:00Z","method":"POST","path":"/pay","status":502}'
+        - 'time=2026-03-01T10:00:00Z method=GET path=/health status=500 duration=12ms'
+      no_match:
+        - '203.0.113.7 - - [01/Mar/2026:10:00:00 +0000] "GET /api/orders HTTP/1.1" 200 512 "-" "curl/8.0"'
+        - '{"time":"2026-03-01T10:00:00Z","path":"/pay","status":404,"bytes":5000}'

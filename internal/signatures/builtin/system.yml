@@ -1,0 +1,149 @@
+# Built-in signatures of the system group: resource and network
+# failures, by the error texts of the C library, Go and the JVM. Case
+# does not matter: Go writes these texts in lower case. Their examples
+# are invented.
+signatures:
+  - id: disk-full
+    name: Disk full
+    group: system
+    tags: [disk, errno]
+    level: high
+    description: |
+      A write that failed because the file system is full, over quota or
+      read-only: "No space left on device" (ENOSPC), "Disk quota
+      exceeded" (EDQUOT), "Read-only file system" (EROFS).
+    links:
+      - https://raw.githubusercontent.com/bminor/glibc/master/sysdeps/gnu/errlist.h
+    regex: '(?i)no space left on device|disk quota exceeded|read-only file system|\bENOSPC\b'
+    examples:
+      match:
+        - 'write /var/lib/app/queue.db: no space left on device'
+        - 'ERROR cannot rotate the log: Read-only file system'
+      no_match:
+        - 'INFO 40 GB of space left on /var'
+
+  - id: too-many-open-files
+    name: Too many open files
+    group: system
+    tags: [files, errno]
+    level: high
+    description: |
+      A process or the system out of file descriptors: "Too many open
+      files" (EMFILE) or "Too many open files in system" (ENFILE).
+    links:
+      - https://raw.githubusercontent.com/bminor/glibc/master/sysdeps/gnu/errlist.h
+    regex: '(?i)too many open files|\bEMFILE\b|\bENFILE\b'
+    examples:
+      match:
+        - 'accept tcp [::]:8080: accept4: too many open files'
+      no_match:
+        - 'INFO 1024 open files allowed'
+
+  - id: out-of-memory
+    name: Out of memory
+    group: system
+    tags: [memory, errno]
+    level: high
+    description: |
+      An allocation that failed: "Cannot allocate memory" (ENOMEM), "out
+      of memory", Java's OutOfMemoryError, Node's "JavaScript heap out
+      of memory" or Python's MemoryError. The kernel OOM killer's own
+      lines are found by oom-killer as well.
+    links:
+      - https://raw.githubusercontent.com/bminor/glibc/master/sysdeps/gnu/errlist.h
+      - https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/OutOfMemoryError.html
+    regex: '(?i)cannot allocate memory|\bout of memory\b|\bOutOfMemoryError\b|\bENOMEM\b|\bMemoryError\b'
+    examples:
+      match:
+        - 'fork: Cannot allocate memory'
+        - 'Exception in thread "worker" java.lang.OutOfMemoryError: Java heap space'
+      no_match:
+        - 'INFO memory usage 41% of the limit'
+
+  - id: connection-failure
+    name: Connection failure
+    group: system
+    tags: [network, errno]
+    level: medium
+    description: |
+      A connection that could not be made or broke: "Connection refused"
+      (ECONNREFUSED), "Connection reset by peer" (ECONNRESET), "No route
+      to host" (EHOSTUNREACH), "Address already in use" (EADDRINUSE),
+      "Broken pipe" (EPIPE). A client that retries often logs each try.
+    links:
+      - https://raw.githubusercontent.com/bminor/glibc/master/sysdeps/gnu/errlist.h
+    regex: '(?i)connection refused|connection reset by peer|no route to host|address already in use|broken pipe|\bECONNREFUSED\b|\bECONNRESET\b|\bEHOSTUNREACH\b|\bEADDRINUSE\b|\bEPIPE\b'
+    examples:
+      match:
+        - 'dial tcp 10.0.0.5:5432: connect: connection refused'
+        - 'write: broken pipe'
+      no_match:
+        - 'INFO connection pool ready with 10 connections'
+
+  - id: network-timeout
+    name: Network timeout
+    group: system
+    tags: [network, timeout]
+    level: medium
+    description: |
+      A network operation that timed out: Go's "i/o timeout" and
+      "context deadline exceeded", "Client.Timeout exceeded", "TLS
+      handshake timeout", "Connection timed out" (ETIMEDOUT), "operation
+      timed out", "read timed out", "request timed out". A context
+      deadline is not always a network one.
+    links:
+      - https://raw.githubusercontent.com/golang/go/master/src/internal/poll/fd.go
+      - https://raw.githubusercontent.com/golang/go/master/src/context/context.go
+      - https://raw.githubusercontent.com/bminor/glibc/master/sysdeps/gnu/errlist.h
+    regex: '(?i)\bi/o timeout\b|context deadline exceeded|Client\.Timeout exceeded|TLS handshake timeout|connection timed out|operation timed out|\bread timed? ?out\b|request timed out|\bETIMEDOUT\b'
+    examples:
+      match:
+        - 'read tcp 10.0.0.2:41000->10.0.0.5:443: i/o timeout'
+        - 'upstream call failed: context deadline exceeded'
+      no_match:
+        - 'INFO timeout set to 30s'
+
+  - id: tls-failure
+    name: TLS failure
+    group: system
+    tags: [network, tls]
+    level: medium
+    description: |
+      A TLS handshake or certificate check that failed: Go's "http: TLS
+      handshake error" and "x509: certificate ..." errors, TLS alerts
+      such as "tls: bad certificate", OpenSSL's "SSL routines", "certificate
+      verify failed", Java's SSLHandshakeException and "PKIX path
+      building failed".
+    links:
+      - https://raw.githubusercontent.com/golang/go/master/src/crypto/x509/verify.go
+      - https://raw.githubusercontent.com/golang/go/master/src/crypto/tls/alert.go
+      - https://raw.githubusercontent.com/golang/go/master/src/net/http/server.go
+    regex: '(?i)TLS handshake error|x509: certificate|tls: (?:handshake failure|bad certificate|unknown certificate authority|protocol version not supported|internal error|first record does not look like a TLS handshake)|SSL routines|certificate verify failed|SSLHandshakeException|PKIX path building failed'
+    examples:
+      match:
+        - 'http: TLS handshake error from 203.0.113.9:51000: remote error: tls: bad certificate'
+        - 'x509: certificate signed by unknown authority'
+      no_match:
+        - 'INFO TLS 1.3 enabled'
+
+  - id: dns-failure
+    name: DNS failure
+    group: system
+    tags: [network, dns]
+    level: medium
+    description: |
+      A name that could not be resolved: Go's "no such host" and "server
+      misbehaving", "Temporary failure in name resolution", "Name or
+      service not known", "Could not resolve host", Node's "getaddrinfo
+      ENOTFOUND", Java's UnknownHostException, or the DNS answers
+      NXDOMAIN and SERVFAIL. A DNS server's query log holds an NXDOMAIN
+      for every unknown name asked, and each is a finding.
+    links:
+      - https://raw.githubusercontent.com/golang/go/master/src/net/net.go
+      - https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.1
+    regex: '(?i)no such host|\bNXDOMAIN\b|\bSERVFAIL\b|temporary failure in name resolution|name or service not known|server misbehaving|could not resolve host|UnknownHostException|getaddrinfo (?:ENOTFOUND|EAI_AGAIN)'
+    examples:
+      match:
+        - 'dial tcp: lookup db.internal.example: no such host'
+      no_match:
+        - 'INFO resolved db.internal.example to 10.0.0.5'

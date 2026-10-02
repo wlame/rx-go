@@ -1,0 +1,45 @@
+# Built-in signatures of the severity group: lines written at an error
+# or warning level. Their examples are invented.
+signatures:
+  - id: error-line
+    name: Error line
+    group: severity
+    tags: [level]
+    level: medium
+    description: |
+      A line that holds an upper-case error level word: FATAL, CRITICAL,
+      CRIT, EMERG, ALERT, PANIC, SEVERE, ERROR or ERR, as a whole word.
+      Lower-case "error" is common in ordinary messages ("0 errors") and
+      is not found, so a log that writes its levels in lower case
+      ("level=error") gives no findings here. The keyword gate compares
+      without case, so every line holding "err" is tested.
+    links:
+      - https://raw.githubusercontent.com/logstash-plugins/logstash-patterns-core/main/patterns/ecs-v1/grok-patterns
+      - https://docs.lnav.org/en/latest/formats.html
+    regex: '\b(?:FATAL|CRITICAL|CRIT|EMERG|ALERT|PANIC|SEVERE|ERROR|ERR)\b'
+    examples:
+      match:
+        - '2026-03-01 10:00:00 ERROR payment declined order=42'
+        - '[FATAL] cannot open the queue'
+      no_match:
+        - '2026-03-01 10:00:00 INFO 0 errors in 42 files'
+        - '2026-03-01 10:00:00 INFO error_count=0 ERRORS=none'
+
+  - id: warning-line
+    name: Warning line
+    group: severity
+    tags: [level]
+    level: low
+    default: false
+    description: |
+      A line that holds an upper-case warning level word, WARN or
+      WARNING, as a whole word. Opt-in: most logs hold many warnings.
+      Lower-case "warning" is not found.
+    links:
+      - https://raw.githubusercontent.com/logstash-plugins/logstash-patterns-core/main/patterns/ecs-v1/grok-patterns
+    regex: '\b(?:WARN|WARNING)\b'
+    examples:
+      match:
+        - '2026-03-01 10:00:00 WARN disk 91% full'
+      no_match:
+        - '2026-03-01 10:00:00 INFO warnings: none'

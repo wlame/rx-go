@@ -1,0 +1,13 @@
+inbound request id=42
+Exception in thread "http-nio-8080-exec-1" java.lang.RuntimeException: wrapper failure
+	at com.example.app.Service.handle(Service.java:88)
+	at com.example.app.Service.dispatch(Service.java:55)
+	at com.example.app.Http.route(Http.java:120)
+Caused by: java.io.IOException: disk quota exceeded
+	at com.example.app.Storage.write(Storage.java:201)
+	at com.example.app.Service.handle(Service.java:85)
+	... 2 more
+Caused by: java.nio.file.FileSystemException: /data: No space left on device
+	at sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)
+	... 4 more
+request failed id=42

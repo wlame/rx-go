@@ -44,7 +44,7 @@ const selectionFile = `signatures:
 // selectionCatalogue loads the built-ins and selectionFile.
 func selectionCatalogue(t *testing.T) (*Catalogue, string) {
 	t.Helper()
-	path := writeSignatureFile(t, t.TempDir(), "sel.yml", selectionFile)
+	path := writeSignatureFile(t, t.TempDir(), "sel.yml", selectionFile+disableBuiltinsExcept(t, testBuiltins...))
 	return loadFiles(path), path
 }
 
@@ -153,7 +153,7 @@ func TestResolve_RefusedSignature(t *testing.T) {
 // A disabled built-in named in a selection is an error that says where
 // it was disabled; a removal of it is no error, and groups leave it out.
 func TestResolve_DisabledBuiltin(t *testing.T) {
-	path := writeSignatureFile(t, t.TempDir(), "d.yml", "disable: [blank-run]\n")
+	path := writeSignatureFile(t, t.TempDir(), "d.yml", disableBuiltinsExcept(t, "python-traceback", "aws-access-key"))
 	cat := loadFiles(path)
 	_, err := cat.Resolve("blank-run")
 	var sel *SelectionError

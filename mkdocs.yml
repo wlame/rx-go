@@ -205,4 +205,6 @@ nav:
       - Signatures: concepts/signatures.md
       - Analyzers: concepts/analyzers.md
       - Security: concepts/security.md
+  - Reference:
+      - Built-in signatures: reference/signatures.md
   - History: MIGRATION.md

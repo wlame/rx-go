@@ -1,0 +1,10 @@
+starting up
+Traceback (most recent call last):
+  File "/app/main.py", line 15, in <module>
+    run()
+  File "/app/main.py", line 10, in run
+    process(cfg)
+  File "/app/worker.py", line 87, in process
+    raise RuntimeError("boom")
+RuntimeError: boom
+shutting down

@@ -106,7 +106,7 @@ func TestSignatures_CheckRunsTheExamples(t *testing.T) {
 		t.Errorf("exit %d, want 1 and the line %q and \"examples: checked\"\nstdout: %s\nstderr: %s", code, want, stdout, stderr)
 	}
 	code, stdout, _ = runRxEnv(t, signatureEnv(t.TempDir()), "signatures", "show", "python-traceback")
-	if code != 0 || !strings.Contains(stdout, "# examples: 1 match, 1 no_match, all pass") {
+	if code != 0 || !strings.Contains(stdout, "# examples: 3 match, 2 no_match, all pass") {
 		t.Errorf("rx signatures show of a built-in: exit %d\n%s", code, stdout)
 	}
 }

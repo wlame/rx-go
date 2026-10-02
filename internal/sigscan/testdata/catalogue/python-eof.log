@@ -1,0 +1,7 @@
+process crashing now
+Traceback (most recent call last):
+  File "/app/main.py", line 5, in <module>
+    main()
+  File "/app/main.py", line 2, in main
+    raise SystemExit(1)
+SystemExit: 1

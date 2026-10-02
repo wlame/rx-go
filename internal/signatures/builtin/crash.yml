@@ -1,0 +1,258 @@
+# Built-in signatures of the crash group: sanitizer reports, aborts,
+# processes killed by a signal, kernel faults and the OOM killer. Their
+# examples are invented.
+signatures:
+  - id: sanitizer-report
+    name: Sanitizer report
+    group: crash
+    tags: [asan, sanitizer, c, cpp]
+    level: critical
+    description: |
+      A report of AddressSanitizer, LeakSanitizer, MemorySanitizer,
+      ThreadSanitizer or UndefinedBehaviorSanitizer: from the
+      "==PID==ERROR: ...Sanitizer:" line (or ThreadSanitizer's
+      "WARNING: ThreadSanitizer:") through the "SUMMARY:" line, the
+      shadow-byte map after it and "==PID==ABORTING". A report cut off
+      before its summary runs to max_lines. False positives are rare.
+    links:
+      - https://github.com/google/sanitizers/wiki/AddressSanitizer
+    block:
+      max_lines: 400
+      states:
+        - {state: start, regex: '^==\d+==ERROR: (?:Address|HWAddress|Leak|Memory|Thread|UndefinedBehavior)Sanitizer: ', next: body}
+        - {state: start, regex: '^WARNING: ThreadSanitizer: ', next: body}
+        - {state: body, regex: '^==\d+==ABORTING', end: true}
+        - {state: body, regex: '^SUMMARY: \w+Sanitizer: ', next: tail}
+        - {state: body, regex: '^', next: body}
+        - {state: tail, regex: '^==\d+==ABORTING', end: true}
+        - {state: tail, regex: '^(?:\s|Shadow byte)', next: tail}
+    examples:
+      match:
+        - |
+          ==4242==ERROR: AddressSanitizer: heap-use-after-free on address 0x602000000010 at pc 0x0000004c1a2e bp 0x7ffd0000a0a0 sp 0x7ffd0000a098
+          READ of size 4 at 0x602000000010 thread T0
+              #0 0x4c1a2d in parse_header /src/parser.c:88:12
+              #1 0x4c0f11 in main /src/main.c:20:5
+          SUMMARY: AddressSanitizer: heap-use-after-free /src/parser.c:88:12 in parse_header
+          ==4242==ABORTING
+      no_match:
+        - 'INFO built with AddressSanitizer: enabled'
+
+  - id: glibc-abort
+    name: glibc fatal error
+    group: crash
+    tags: [glibc, c]
+    level: critical
+    description: |
+      A fatal error glibc printed before it aborted the process: "***
+      stack smashing detected ***: terminated", "*** buffer overflow
+      detected ***", the older "*** Error in `prog'" form, and the heap
+      checks such as "free(): double free detected in tcache 2" or
+      "corrupted size vs. prev_size". The backtrace and memory map that
+      older releases print, and the shell's "Aborted (core dumped)"
+      after them, are kept in the same finding.
+    links:
+      - https://raw.githubusercontent.com/bminor/glibc/master/debug/fortify_fail.c
+      - https://raw.githubusercontent.com/bminor/glibc/master/debug/stack_chk_fail.c
+    block:
+      start:
+        - '\*\*\* .+ \*\*\*: (?:\S+ )?terminated$'
+        - '\*\*\* Error in [`''][^'']*'': .+'
+        - '^(?:free|malloc|realloc|munmap_chunk|malloc_consolidate|_int_free|_int_malloc)\(\): [a-z]'
+        - '^(?:double free or corruption|corrupted size vs\. prev_size|corrupted double-linked list)\b'
+      end: '(?:^|: )Aborted(?: \(core dumped\))?$'
+      continue: '^=======|^\S+\([^)]*\)\[0x[0-9a-f]+\]$|^[0-9a-f]{8,16}-[0-9a-f]{8,16} [r-][w-][x-][ps-] '
+    examples:
+      match:
+        - |
+          *** stack smashing detected ***: terminated
+          Aborted (core dumped)
+        - 'free(): double free detected in tcache 2'
+      no_match:
+        - INFO *** build finished ***
+
+  - id: killed-by-signal
+    name: Process killed by a signal
+    group: crash
+    tags: [shell, signal]
+    level: high
+    description: |
+      A shell or supervisor reporting that a process died of a signal:
+      "Segmentation fault", "Killed", "Aborted", "Bus error", "Illegal
+      instruction", "Floating point exception" or "Trace/breakpoint
+      trap", at the start of a line or after ": " and at its end, with
+      "(core dumped)" on the same or the next line; or the shell's job
+      form "script: line N: PID Killed  command". "Killed" is a common
+      word, so it is found only in those positions.
+    links:
+      - https://raw.githubusercontent.com/bminor/glibc/master/sysdeps/generic/siglist.h
+    block:
+      start:
+        - '(?:^|: )(?:Segmentation fault|Killed|Aborted|Bus error|Illegal instruction|Floating point exception|Trace/breakpoint trap)(?: \(core dumped\))?$'
+        - ': line \d+: +\d+ (?:Segmentation fault|Killed|Aborted|Bus error|Illegal instruction|Floating point exception)\b'
+      continue: '^\(core dumped\)$'
+    examples:
+      match:
+        - Segmentation fault (core dumped)
+        - './run.sh: line 12:  4242 Killed                  ./worker --queue=jobs'
+      no_match:
+        - INFO the job was Killed by the operator and restarted
+        - WARN a Segmentation fault was reported by a test and ignored
+
+  - id: kernel-segfault
+    name: Kernel segfault report
+    group: crash
+    tags: [kernel, linux]
+    level: high
+    description: |
+      The kernel's report of a user process that touched memory it may
+      not: "prog[PID]: segfault at ADDR ip ADDR sp ADDR error N".
+      False positives are rare.
+    links:
+      - https://raw.githubusercontent.com/torvalds/linux/master/arch/x86/mm/fault.c
+    regex: '\S+\[\d+\]: segfault at [0-9a-f]+ ip [0-9a-f]+ sp [0-9a-f]+ error [0-9a-f]+'
+    examples:
+      match:
+        - 'kernel: [ 4242.123456] worker[4242]: segfault at 0 ip 000055d0c0ffee10 sp 00007ffd0000a0a0 error 4 in worker[55d0c0ff0000+2000]'
+      no_match:
+        - 'INFO worker[4242]: segfault handler installed'
+
+  - id: systemd-coredump
+    name: systemd core dump
+    group: crash
+    tags: [systemd, linux]
+    level: high
+    description: |
+      systemd-coredump recording a process that crashed: "Process PID
+      (name) of user UID dumped core." or "terminated abnormally without
+      generating a coredump.". False positives are rare.
+    links:
+      - https://raw.githubusercontent.com/systemd/systemd/main/src/coredump/coredump-submit.c
+    regex: 'Process \d+ \(.+\) of user \d+ (?:dumped core\.|terminated abnormally without generating a coredump\.)'
+    examples:
+      match:
+        - 'systemd-coredump[911]: Process 4242 (worker) of user 1000 dumped core.'
+      no_match:
+        - 'systemd-coredump[911]: Removed old coredump core.worker.1000.lz4.'
+
+  - id: kernel-oops
+    name: Kernel oops or panic
+    group: crash
+    tags: [kernel, linux]
+    level: critical
+    description: |
+      A kernel oops, BUG or panic: "BUG: kernel NULL pointer
+      dereference", "BUG: unable to handle page fault", "kernel BUG at
+      file:line!", "Oops: ... [#N]", "Kernel panic - not syncing:", or a
+      "Call Trace:" of its own, through the "---[ end trace ... ]---"
+      line. Lines join while they carry the kernel's bracketed time or a
+      "kernel:" tag, or look like an oops body (registers, frames,
+      "Code:"). In dmesg or the journal every kernel line carries one of
+      those, so an oops without its end line runs on through the kernel
+      lines after it, up to 200 lines.
+    links:
+      - https://raw.githubusercontent.com/torvalds/linux/master/arch/x86/kernel/dumpstack.c
+      - https://raw.githubusercontent.com/torvalds/linux/master/kernel/panic.c
+      - https://raw.githubusercontent.com/torvalds/linux/master/arch/x86/mm/fault.c
+    block:
+      start:
+        - 'BUG: kernel NULL pointer dereference'
+        - 'BUG: unable to handle (?:page fault|kernel paging request)'
+        - 'kernel BUG at \S+:\d+!'
+        - 'Oops: .+ \[#\d+\]'
+        - 'Kernel panic - not syncing: '
+        - '\bCall Trace:'
+      end: '---\[ end (?:trace [0-9a-f]+|Kernel panic - not syncing: .*) \]---'
+      continue: '^\[\s*\d+\.\d+\]|\bkernel: |^\s|^(?:RIP|RSP|RAX|RBX|RCX|RDX|RSI|RDI|RBP|R\d+|FS|GS|CS|CR\d|DR\d|Code|Modules linked in|Hardware name|CPU|PGD|Call Trace|Tainted)\b|^</?TASK>'
+    examples:
+      match:
+        - |
+          [ 4242.000001] BUG: kernel NULL pointer dereference, address: 0000000000000008
+          [ 4242.000002] #PF: supervisor read access in kernel mode
+          [ 4242.000003] Oops: 0000 [#1] PREEMPT SMP NOPTI
+          [ 4242.000004] Call Trace:
+          [ 4242.000005]  <TASK>
+          [ 4242.000006]  example_read+0x1a/0x40 [example]
+          [ 4242.000007]  </TASK>
+          [ 4242.000008] ---[ end trace 0000000000000000 ]---
+      no_match:
+        - '[ 4242.000001] usb 1-1: new high-speed USB device number 2 using xhci_hcd'
+
+  - id: oom-killer
+    name: OOM killer
+    group: crash
+    tags: [kernel, linux, memory]
+    level: high
+    description: |
+      The kernel's out-of-memory killer at work: from "PROG invoked
+      oom-killer: gfp_mask=" through the "Out of memory: Killed process
+      PID" (or "Memory cgroup out of memory: Killed process") line, with
+      the memory report between them. Lines join while they carry the
+      kernel's bracketed time, a "kernel:" tag or an indent.
+    links:
+      - https://raw.githubusercontent.com/torvalds/linux/master/mm/oom_kill.c
+    block:
+      max_lines: 1000
+      start: '\S+ invoked oom-killer: gfp_mask='
+      end: '(?:Out of memory|Memory cgroup out of memory)(?: \(oom_kill_allocating_task\))?: Killed process \d+|oom_reaper: reaped process \d+'
+      continue: '^\[\s*\d+\.\d+\]|\bkernel: |^\s'
+    examples:
+      match:
+        - |
+          [ 4242.000001] worker invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+          [ 4242.000002] Mem-Info:
+          [ 4242.000003] active_anon:123456 inactive_anon:0 isolated_anon:0
+          [ 4242.000004] Out of memory: Killed process 4242 (worker) total-vm:4194304kB, anon-rss:2097152kB, file-rss:0kB, shmem-rss:0kB, UID:1000 pgtables:4096kB oom_score_adj:0
+      no_match:
+        - INFO oom-killer is not enabled for this cgroup
+
+  - id: k8s-crash-loop
+    name: Kubernetes container restarts
+    group: crash
+    tags: [kubernetes]
+    level: high
+    description: |
+      A Kubernetes container that keeps failing: "CrashLoopBackOff", the
+      kubelet's "Back-off restarting failed container" event, or the
+      termination reason "OOMKilled". False positives are rare.
+    links:
+      - https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+      - https://raw.githubusercontent.com/kubernetes/kubernetes/master/pkg/kubelet/kuberuntime/kuberuntime_manager.go
+    regex: 'CrashLoopBackOff|Back-off restarting failed container|\bOOMKilled\b'
+    examples:
+      match:
+        - 'Warning  BackOff  3m  kubelet  Back-off restarting failed container worker in pod worker-0_jobs'
+        - '  reason: CrashLoopBackOff'
+      no_match:
+        - INFO pod worker-0 is Running
+
+  - id: jvm-fatal-error
+    name: JVM fatal error
+    group: crash
+    tags: [java, jvm]
+    level: critical
+    description: |
+      The banner the JVM prints when it crashes in native code or runs
+      out of native memory: "# A fatal error has been detected by the
+      Java Runtime Environment:" or "# There is insufficient memory for
+      the Java Runtime Environment to continue.", with the "#" lines
+      that follow it (the signal, the JRE version and the name of the
+      hs_err file).
+    links:
+      - https://docs.oracle.com/javase/8/docs/technotes/guides/troubleshoot/felog.html
+    block:
+      start: '^# (?:A fatal error has been detected by the Java Runtime Environment|There is insufficient memory for the Java Runtime Environment to continue)'
+      continue: '^#'
+    examples:
+      match:
+        - |
+          #
+          # A fatal error has been detected by the Java Runtime Environment:
+          #
+          #  SIGSEGV (0xb) at pc=0x00007f0000001234, pid=4242, tid=4243
+          #
+          # JRE version: OpenJDK Runtime Environment (17.0.9+9) (build 17.0.9+9)
+          # An error report file with more information is saved as:
+          # /tmp/hs_err_pid4242.log
+      no_match:
+        - '# A comment line in a settings file'

@@ -2,7 +2,8 @@
 
 A **signature** is a named definition of something worth noticing in a
 long file: a Python traceback, an AWS access key, a run of blank lines.
-rx has built-in signatures and reads more from YAML files you write.
+rx has [built-in signatures](../reference/signatures.md) and reads more
+from YAML files you write.
 [`rx signatures`](../cli/signatures.md) lists them, shows one, checks
 your files and prints a template to start from.
 
@@ -197,8 +198,8 @@ signature.
 | `long-line` | `min_bytes` | `1024` | 1 to 1073741824 |
 | `binary` | — | — | — |
 | `entropy` | `min_length` | `20` | 8 to 1024 |
-| `entropy` | `base64` | `4.5` | 1 to 6 |
-| `entropy` | `hex` | `3` | 1 to 4 |
+| `entropy` | `ratio` | `0.94` | 0.1 to 1.5 |
+| `entropy` | `hex_ratio` | `0` | 0 to 1.5 |
 | `json-block` | `max_lines` | `200` | 2 to 10000 |
 | `unprefixed` | `min` | `5` | 1 to 1000000 |
 | `unprefixed` | `min_share` | `0.5` | 0 to 1 |
@@ -217,7 +218,7 @@ What each measure finds:
 |---|---|
 | `long-line` | a line whose length is at least `max(min_bytes, factor × the median length of the window lines on each side)` |
 | `binary` | a run of lines that hold a NUL byte or bytes that are not UTF-8 |
-| `entropy` | a token of `min_length` or more base64-like characters whose entropy reaches `base64` bits per byte (`hex` for a token of hex digits only); UUIDs and tokens of digits only are skipped |
+| `entropy` | a token of `min_length` or more base64-like characters with an upper-case letter, a lower-case letter and a digit, whose entropy reaches `ratio` of a random token's of its length (hex tokens: `hex_ratio`, off at 0); UUIDs and tokens of digits only are skipped |
 | `json-block` | a line that is only `{` or `[`, through its matching closer at the same indent |
 | `unprefixed` | a run of `min` or more lines without a timestamp at their start, when stamped lines are at least `min_share` of the file |
 | `base64-run` | a run of at least `min_length` base64 bytes inside a line |
@@ -247,11 +248,21 @@ How each measure decides, in detail:
 - **`entropy`** cuts the line view into tokens, the longest runs of
   `A-Z a-z 0-9 + / = _ -`, and keeps those of `min_length` bytes or
   more. A UUID (`8-4-4-4-12` hex digits) and a token of digits only are
-  skipped. A token of hex digits only needs `hex` bits per byte of
-  Shannon entropy, any other `base64`. The first token that reaches its
-  threshold is the finding's value; one finding per line. A random
-  40-character key has about 5.3 bits per byte; a run of English words
-  joined by `_` about 4.4.
+  skipped. A token's Shannon entropy, in bits per byte, is compared
+  with the entropy a random token of the same length has on average
+  over its alphabet (a random token repeats some characters, so this
+  is below log2 of its length: 4.25 bits at 24 characters, 5.18 at 64
+  over the 64 base64 characters). Any token but a hex one needs an
+  upper-case letter, a lower-case letter and a digit, and `ratio` of
+  that average over 64 symbols; with the default 0.94, nine random
+  base64 keys in ten or more of 24 to 64 characters are found, and
+  words, identifiers and paths are not. A token of hex digits only
+  needs `hex_ratio` of the average over 16 symbols, and with the
+  default 0 is never found: a hash or a request id is as random as a
+  hex key. The first token that qualifies is the finding's value; one
+  finding per line. The parameters `base64` and `hex` of the earlier
+  rule (fixed thresholds in bits per byte) are refused with a message
+  that names their replacement.
 - **`base64-run`** finds, by a scan of the bytes, a longest run of the
   base64 alphabet (`A-Z a-z 0-9 + /`) followed by up to two `=` of
   padding, `min_length` bytes or longer, padding included. The first
@@ -590,6 +601,9 @@ only.
 
 The built-in groups, in order: `traceback`, `crash`, `secret`, `pii`,
 `sql`, `http`, `severity`, `system`, `lifecycle`, `structure`, `time`.
+[Built-in signatures](../reference/signatures.md) lists the 70
+built-in signatures group by group, with what each finds and its
+keywords.
 
 ## Errors
 

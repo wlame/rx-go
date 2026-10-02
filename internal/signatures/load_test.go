@@ -28,6 +28,24 @@ func loadFiles(paths ...string) *Catalogue {
 	return Load(LoadOptions{Paths: paths})
 }
 
+// testBuiltins are the built-ins the loader and selection tests reason
+// about: one block, one redacting regex and one run, in three groups.
+var testBuiltins = []string{"python-traceback", "aws-access-key", "blank-run"}
+
+// disableBuiltinsExcept returns a `disable:` line that switches off
+// every built-in but keep, so a test sees a small, fixed set of
+// built-ins whatever the catalogue holds.
+func disableBuiltinsExcept(t *testing.T, keep ...string) string {
+	t.Helper()
+	var off []string
+	for _, s := range Load(LoadOptions{Paths: []string{}}).Signatures() {
+		if !slices.Contains(keep, s.ID) {
+			off = append(off, s.ID)
+		}
+	}
+	return "disable: [" + strings.Join(off, ", ") + "]\n"
+}
+
 // requireNoErrors fails the test when the load found any problem.
 func requireNoErrors(t *testing.T, cat *Catalogue) {
 	t.Helper()
@@ -385,6 +403,9 @@ func TestLoad_SignatureRefusals(t *testing.T) {
 		{"unknown measure", header + "    measure: {name: sparkle}\n", 11, `unknown measure "sparkle"`},
 		{"unknown measure parameter", header + "    measure: {name: long-line, widow: 3}\n", 11, `"widow"`},
 		{"measure parameter out of range", header + "    measure: {name: long-line, window: 0}\n", 11, "window"},
+		{"entropy's old base64 threshold", header + "    measure: {name: entropy, base64: 4.5}\n", 11, "base64 was replaced by ratio"},
+		{"entropy's old hex threshold", header + "    measure: {name: entropy, hex: 3}\n", 11, "hex was replaced by hex_ratio"},
+		{"entropy ratio out of range", header + "    measure: {name: entropy, ratio: 3}\n", 11, "ratio"},
 		{"duration without a unit", header + "    measure: {name: time-gap, min_gap: 60}\n", 11, "min_gap"},
 		{"days past the duration limit", header + "    measure: {name: time-gap, min_gap: 213504d}\n", 11, "min_gap"},
 		{"hours past the duration limit", header + "    measure: {name: time-gap, min_gap: 99999999999h}\n", 11, "min_gap"},
@@ -757,7 +778,7 @@ func TestMeasureParams(t *testing.T) {
 	want := map[string]MeasureParams{
 		"long-line":      LongLineParams{Window: 100, Factor: 10, MinBytes: 1024},
 		"binary":         BinaryParams{},
-		"entropy":        EntropyParams{MinLength: 20, Base64: 4.5, Hex: 3},
+		"entropy":        EntropyParams{MinLength: 20, Ratio: 0.94, HexRatio: 0},
 		"json-block":     JSONBlockParams{MaxLines: 200},
 		"unprefixed":     UnprefixedParams{Min: 5, MinShare: 0.5},
 		"base64-run":     Base64RunParams{MinLength: 100},
@@ -842,7 +863,7 @@ func TestLoad_SignatureOrder(t *testing.T) {
 	path := writeSignatureFile(t, t.TempDir(), "o.yml", `signatures:
   - {id: z-traceback, name: Z, group: traceback, description: D., regex: 'zzz'}
   - {id: a-severity, name: A, group: severity, description: D., regex: 'aaa'}
-`)
+`+disableBuiltinsExcept(t, testBuiltins...))
 	cat := loadFiles(path)
 	requireNoErrors(t, cat)
 	var ids []string
@@ -891,7 +912,8 @@ func TestCatalogue_Redactors(t *testing.T) {
 	dir := t.TempDir()
 	body := "signatures:\n" +
 		"  - id: opt-in-secret\n    name: S\n    group: secret\n    description: S.\n    default: false\n    redact: true\n    regex: 'tok_[a-z]{8}'\n" +
-		"  - id: plain-one\n    name: P\n    group: severity\n    description: P.\n    regex: 'ERROR'\n"
+		"  - id: plain-one\n    name: P\n    group: severity\n    description: P.\n    regex: 'ERROR'\n" +
+		disableBuiltinsExcept(t, testBuiltins...)
 	cat := loadFiles(writeSignatureFile(t, dir, "team.yml", body))
 	var ids []string
 	for _, s := range cat.Redactors() {
@@ -900,7 +922,7 @@ func TestCatalogue_Redactors(t *testing.T) {
 	if !slices.Equal(ids, []string{"aws-access-key", "opt-in-secret"}) {
 		t.Errorf("redactors %v, want the built-in key and the opt-in secret", ids)
 	}
-	disabling := writeSignatureFile(t, t.TempDir(), "off.yml", "disable: [aws-access-key]\n")
+	disabling := writeSignatureFile(t, t.TempDir(), "off.yml", disableBuiltinsExcept(t))
 	if got := loadFiles(disabling).Redactors(); len(got) != 0 {
 		t.Errorf("a disabled built-in redacts: %v", got)
 	}

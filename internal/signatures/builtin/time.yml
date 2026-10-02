@@ -1,0 +1,214 @@
+# Built-in signatures of the time group: the timing of a log's lines,
+# read with the timestamp format rx detects in the file. A file without
+# a timestamp format gives none of these findings. Their examples are
+# invented.
+signatures:
+  - id: log-burst
+    name: Burst of log lines
+    group: time
+    tags: [density]
+    level: medium
+    description: |
+      A burst of lines: consecutive time buckets that each hold at least
+      five times the median number of lines per bucket, a modified
+      z-score over 3.5 and at least 100 lines. The bucket size is chosen
+      for about 1,000 buckets over the file's time span. The counts per
+      bucket are kept with the findings, for a density chart.
+    links:
+      - https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm
+      - https://www.elastic.co/guide/en/machine-learning/current/ml-count-functions.html
+    measure: {name: density}
+    examples:
+      match:
+        - |
+          2026-03-01 10:00:00 INFO tick 0
+          2026-03-01 10:00:01 INFO tick 1
+          2026-03-01 10:00:02 INFO tick 2
+          2026-03-01 10:00:03 INFO tick 3
+          2026-03-01 10:00:04 INFO tick 4
+          2026-03-01 10:00:05 INFO tick 5
+          2026-03-01 10:00:06 INFO tick 6
+          2026-03-01 10:00:07 INFO tick 7
+          2026-03-01 10:00:08 INFO tick 8
+          2026-03-01 10:00:09 INFO tick 9
+          2026-03-01 10:00:10 WARN retry 1
+          2026-03-01 10:00:10 WARN retry 2
+          2026-03-01 10:00:10 WARN retry 3
+          2026-03-01 10:00:10 WARN retry 4
+          2026-03-01 10:00:10 WARN retry 5
+          2026-03-01 10:00:10 WARN retry 6
+          2026-03-01 10:00:10 WARN retry 7
+          2026-03-01 10:00:10 WARN retry 8
+          2026-03-01 10:00:10 WARN retry 9
+          2026-03-01 10:00:10 WARN retry 10
+          2026-03-01 10:00:10 WARN retry 11
+          2026-03-01 10:00:10 WARN retry 12
+          2026-03-01 10:00:10 WARN retry 13
+          2026-03-01 10:00:10 WARN retry 14
+          2026-03-01 10:00:10 WARN retry 15
+          2026-03-01 10:00:10 WARN retry 16
+          2026-03-01 10:00:10 WARN retry 17
+          2026-03-01 10:00:10 WARN retry 18
+          2026-03-01 10:00:10 WARN retry 19
+          2026-03-01 10:00:10 WARN retry 20
+          2026-03-01 10:00:10 WARN retry 21
+          2026-03-01 10:00:10 WARN retry 22
+          2026-03-01 10:00:10 WARN retry 23
+          2026-03-01 10:00:10 WARN retry 24
+          2026-03-01 10:00:10 WARN retry 25
+          2026-03-01 10:00:10 WARN retry 26
+          2026-03-01 10:00:10 WARN retry 27
+          2026-03-01 10:00:10 WARN retry 28
+          2026-03-01 10:00:10 WARN retry 29
+          2026-03-01 10:00:10 WARN retry 30
+          2026-03-01 10:00:10 WARN retry 31
+          2026-03-01 10:00:10 WARN retry 32
+          2026-03-01 10:00:10 WARN retry 33
+          2026-03-01 10:00:10 WARN retry 34
+          2026-03-01 10:00:10 WARN retry 35
+          2026-03-01 10:00:10 WARN retry 36
+          2026-03-01 10:00:10 WARN retry 37
+          2026-03-01 10:00:10 WARN retry 38
+          2026-03-01 10:00:10 WARN retry 39
+          2026-03-01 10:00:10 WARN retry 40
+          2026-03-01 10:00:10 WARN retry 41
+          2026-03-01 10:00:10 WARN retry 42
+          2026-03-01 10:00:10 WARN retry 43
+          2026-03-01 10:00:10 WARN retry 44
+          2026-03-01 10:00:10 WARN retry 45
+          2026-03-01 10:00:10 WARN retry 46
+          2026-03-01 10:00:10 WARN retry 47
+          2026-03-01 10:00:10 WARN retry 48
+          2026-03-01 10:00:10 WARN retry 49
+          2026-03-01 10:00:10 WARN retry 50
+          2026-03-01 10:00:10 WARN retry 51
+          2026-03-01 10:00:10 WARN retry 52
+          2026-03-01 10:00:10 WARN retry 53
+          2026-03-01 10:00:10 WARN retry 54
+          2026-03-01 10:00:10 WARN retry 55
+          2026-03-01 10:00:10 WARN retry 56
+          2026-03-01 10:00:10 WARN retry 57
+          2026-03-01 10:00:10 WARN retry 58
+          2026-03-01 10:00:10 WARN retry 59
+          2026-03-01 10:00:10 WARN retry 60
+          2026-03-01 10:00:10 WARN retry 61
+          2026-03-01 10:00:10 WARN retry 62
+          2026-03-01 10:00:10 WARN retry 63
+          2026-03-01 10:00:10 WARN retry 64
+          2026-03-01 10:00:10 WARN retry 65
+          2026-03-01 10:00:10 WARN retry 66
+          2026-03-01 10:00:10 WARN retry 67
+          2026-03-01 10:00:10 WARN retry 68
+          2026-03-01 10:00:10 WARN retry 69
+          2026-03-01 10:00:10 WARN retry 70
+          2026-03-01 10:00:10 WARN retry 71
+          2026-03-01 10:00:10 WARN retry 72
+          2026-03-01 10:00:10 WARN retry 73
+          2026-03-01 10:00:10 WARN retry 74
+          2026-03-01 10:00:10 WARN retry 75
+          2026-03-01 10:00:10 WARN retry 76
+          2026-03-01 10:00:10 WARN retry 77
+          2026-03-01 10:00:10 WARN retry 78
+          2026-03-01 10:00:10 WARN retry 79
+          2026-03-01 10:00:10 WARN retry 80
+          2026-03-01 10:00:10 WARN retry 81
+          2026-03-01 10:00:10 WARN retry 82
+          2026-03-01 10:00:10 WARN retry 83
+          2026-03-01 10:00:10 WARN retry 84
+          2026-03-01 10:00:10 WARN retry 85
+          2026-03-01 10:00:10 WARN retry 86
+          2026-03-01 10:00:10 WARN retry 87
+          2026-03-01 10:00:10 WARN retry 88
+          2026-03-01 10:00:10 WARN retry 89
+          2026-03-01 10:00:10 WARN retry 90
+          2026-03-01 10:00:10 WARN retry 91
+          2026-03-01 10:00:10 WARN retry 92
+          2026-03-01 10:00:10 WARN retry 93
+          2026-03-01 10:00:10 WARN retry 94
+          2026-03-01 10:00:10 WARN retry 95
+          2026-03-01 10:00:10 WARN retry 96
+          2026-03-01 10:00:10 WARN retry 97
+          2026-03-01 10:00:10 WARN retry 98
+          2026-03-01 10:00:10 WARN retry 99
+          2026-03-01 10:00:10 WARN retry 100
+          2026-03-01 10:00:11 INFO tick 11
+      no_match:
+        - |
+          2026-03-01 10:00:00 INFO tick 0
+          2026-03-01 10:00:01 INFO tick 1
+          2026-03-01 10:00:02 INFO tick 2
+          2026-03-01 10:00:03 INFO tick 3
+          2026-03-01 10:00:04 INFO tick 4
+          2026-03-01 10:00:05 INFO tick 5
+          2026-03-01 10:00:06 INFO tick 6
+          2026-03-01 10:00:07 INFO tick 7
+          2026-03-01 10:00:08 INFO tick 8
+          2026-03-01 10:00:09 INFO tick 9
+          2026-03-01 10:00:10 INFO tick 10
+          2026-03-01 10:00:11 INFO tick 11
+          2026-03-01 10:00:12 INFO tick 12
+          2026-03-01 10:00:13 INFO tick 13
+          2026-03-01 10:00:14 INFO tick 14
+          2026-03-01 10:00:15 INFO tick 15
+          2026-03-01 10:00:16 INFO tick 16
+          2026-03-01 10:00:17 INFO tick 17
+          2026-03-01 10:00:18 INFO tick 18
+          2026-03-01 10:00:19 INFO tick 19
+
+  - id: time-gap
+    name: Silence in the log
+    group: time
+    tags: [gap]
+    level: low
+    description: |
+      A silence: at least a minute, and at least 50 times the median
+      interval between stamped lines, with no stamped line. The finding
+      is the line before the silence and the first stamped line after
+      it. A log that only writes when something happens has many.
+    links:
+      - https://www.elastic.co/guide/en/machine-learning/current/ml-count-functions.html
+    measure: {name: time-gap}
+    examples:
+      match:
+        - |
+          2026-03-01 10:00:00 INFO tick 1
+          2026-03-01 10:00:01 INFO tick 2
+          2026-03-01 10:00:02 INFO tick 3
+          2026-03-01 10:00:03 INFO tick 4
+          2026-03-01 10:00:04 INFO tick 5
+          2026-03-01 10:10:04 INFO tick 6
+      no_match:
+        - |
+          2026-03-01 10:00:00 INFO tick 1
+          2026-03-01 10:00:01 INFO tick 2
+          2026-03-01 10:00:02 INFO tick 3
+          2026-03-01 10:00:03 INFO tick 4
+          2026-03-01 10:00:04 INFO tick 5
+          2026-03-01 10:00:05 INFO tick 6
+
+  - id: time-backwards
+    name: Timestamp going backwards
+    group: time
+    tags: [clock]
+    level: low
+    description: |
+      A line stamped more than a second earlier than the stamped line
+      before it: a clock step, two writers with different clocks, or
+      records merged out of order. Small steps back from concurrent
+      writers are within the tolerance.
+    links:
+      - https://docs.lnav.org/en/latest/formats.html
+    measure: {name: time-backwards}
+    examples:
+      match:
+        - |
+          2026-03-01 10:00:00 INFO tick 1
+          2026-03-01 10:00:01 INFO tick 2
+          2026-03-01 10:00:02 INFO tick 3
+          2026-03-01 09:59:00 INFO tick 4
+      no_match:
+        - |
+          2026-03-01 10:00:00.000 INFO tick 1
+          2026-03-01 10:00:01.000 INFO tick 2
+          2026-03-01 10:00:02.000 INFO tick 3
+          2026-03-01 10:00:01.500 INFO tick 4

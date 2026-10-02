@@ -1,0 +1,7 @@
+service starting up
+request received id=abc
+{
+  "user": "alice",
+  "action": "login"
+}
+continuing processing

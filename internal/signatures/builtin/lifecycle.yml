@@ -1,0 +1,71 @@
+# Built-in signatures of the lifecycle group: signals, exit statuses and
+# systemd unit changes. Their examples are invented.
+signatures:
+  - id: signal-received
+    name: Signal received
+    group: lifecycle
+    tags: [signal]
+    level: low
+    description: |
+      A process reporting a signal it received: "received", "got",
+      "caught" or "handling" then "signal" and a name, or a SIG name
+      (SIGTERM, SIGINT, SIGHUP, SIGQUIT, SIGKILL, SIGUSR1, SIGUSR2,
+      SIGABRT, SIGPIPE, SIGALRM), or the names Go prints ("terminated",
+      "interrupt", "hangup"); or nginx's "signal N (SIGNAME) received".
+      The usual sign of a stop, a reload or a restart.
+    links:
+      - https://man7.org/linux/man-pages/man7/signal.7.html
+    regex:
+      - '(?i)\b(?:received|got|caught|handling) (?:signal:? (?:SIG)?(?:TERM|INT|HUP|QUIT|KILL|USR1|USR2|ABRT|PIPE|ALRM|terminated|interrupt|hangup)|SIG(?:TERM|INT|HUP|QUIT|KILL|USR1|USR2|ABRT|PIPE|ALRM))\b'
+      - '\bsignal \d+ \(SIG[A-Z0-9]+\) received\b'
+    examples:
+      match:
+        - 'INFO received signal: terminated, shutting down'
+        - 'worker 42: got SIGHUP, reloading the settings'
+      no_match:
+        - 'INFO received int value 5 from the client'
+
+  - id: exit-status
+    name: Non-zero exit status
+    group: lifecycle
+    tags: [exit]
+    level: low
+    description: |
+      A process that ended with a non-zero exit status or code: "exit
+      status 2", "exited with code 1", "exit code=137", or systemd's
+      "code=exited, status=1/FAILURE". A zero status is not found.
+    links:
+      - https://man7.org/linux/man-pages/man3/exit.3.html
+      - https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Process%20Exit%20Codes
+    regex:
+      - '(?i)\b(?:exit|exited) (?:status|code)[ =:]+[1-9]\d*'
+      - '(?i)\bexited with (?:status|code) [1-9]'
+      - '\bcode=exited, status=[1-9]\d*/'
+    examples:
+      match:
+        - 'job 42 failed: exit status 2'
+        - 'worker.service: Main process exited, code=exited, status=1/FAILURE'
+      no_match:
+        - 'job 42 done: exit status 0'
+
+  - id: systemd-unit-change
+    name: systemd unit change
+    group: lifecycle
+    tags: [systemd, linux]
+    level: info
+    description: |
+      systemd (PID 1) starting, stopping, reloading or failing a unit:
+      "systemd[1]:" then a unit name ending in .service, .socket,
+      .timer, .mount and the like, and Started, Stopped, Reloaded,
+      "Failed with result", "Main process exited" or "Scheduled restart
+      job". A host that starts a session or a timer every minute logs
+      one finding each time.
+    links:
+      - https://www.freedesktop.org/software/systemd/man/latest/systemd.html
+    regex: '\bsystemd\[1\]: (?:(?:[\w@.\\:-]+\.(?:service|socket|timer|mount|target|path|scope|slice|device|swap): )?(?:Started|Stopped|Starting|Stopping|Reloaded|Reloading|Failed to start|Deactivated successfully|Scheduled restart job)|[\w@.\\:-]+\.(?:service|socket|timer|mount|scope): (?:Failed with result|Main process exited))'
+    examples:
+      match:
+        - 'Mar  1 10:00:00 host systemd[1]: worker.service: Failed with result ''exit-code''.'
+        - 'Mar  1 10:00:00 host systemd[1]: Stopped Worker for the job queue.'
+      no_match:
+        - 'Mar  1 10:00:00 host systemd[1]: Reached target Graphical Interface.'

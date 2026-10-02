@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -51,14 +52,32 @@ const traceSignatureFile = `signatures:
     regex: '[a-z]+@[a-z]+\.com'
 `
 
+// traceTestBuiltins are the built-ins the tests below keep beside
+// traceSignatureFile; every other built-in is switched off, so the
+// default set and the findings stay those of a small fixed catalogue.
+var traceTestBuiltins = []string{"python-traceback", "aws-access-key", "blank-run"}
+
+// disableOtherBuiltins returns a `disable:` line that switches off every
+// built-in signature but keep.
+func disableOtherBuiltins(keep ...string) string {
+	var off []string
+	for _, s := range signatures.Load(signatures.LoadOptions{Paths: []string{}}).Signatures() {
+		if !slices.Contains(keep, s.ID) && !strings.Contains(traceSignatureFile, "- id: "+s.ID+"\n") {
+			off = append(off, s.ID)
+		}
+	}
+	return "disable: [" + strings.Join(off, ", ") + "]\n"
+}
+
 // withTraceSignatures points the signature search path at
-// traceSignatureFile and the cache at a fresh directory, and returns
-// the cache directory.
+// traceSignatureFile, with every built-in but traceTestBuiltins
+// switched off, and the cache at a fresh directory, and returns the
+// cache directory.
 func withTraceSignatures(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "team.yml")
-	if err := os.WriteFile(path, []byte(traceSignatureFile), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(traceSignatureFile+disableOtherBuiltins(traceTestBuiltins...)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("RX_SIGNATURES_PATH", path)

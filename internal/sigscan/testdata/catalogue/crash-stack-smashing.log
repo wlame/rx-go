@@ -1,0 +1,12 @@
+launching vulnerable binary
+about to call function with overflow
+*** stack smashing detected ***: terminated
+======= Backtrace: =========
+/lib/x86_64-linux-gnu/libc.so.6(__fortify_fail+0x37)[0x7f2e9c8bf107]
+/lib/x86_64-linux-gnu/libc.so.6(+0x1210e2)[0x7f2e9c8bf0e2]
+/app/bin/vuln(+0x1199)[0x55a7d8f2a199]
+======= Memory map: ========
+55a7d8f29000-55a7d8f2b000 r-xp 00000000 fd:01 131072  /app/bin/vuln
+7f2e9c7a0000-7f2e9c9a0000 r-xp 00000000 fd:01 262144  /lib/x86_64-linux-gnu/libc.so.6
+Aborted (core dumped)
+parent shell reporting exit

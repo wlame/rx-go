@@ -1,12 +1,18 @@
-# Built-in signatures of the structure group.
+# Built-in signatures of the structure group: the shape of the text
+# rather than its words. Their examples are invented.
 signatures:
   - id: blank-run
     name: Run of blank lines
     group: structure
+    tags: [blank]
     level: info
     description: |
       Three or more consecutive lines that are empty or hold only spaces
-      and tabs.
+      and tabs (a line ending in "\r\n" counts as empty). A log written
+      with blank lines between its records has one finding per gap of
+      three or more.
+    links:
+      - https://raw.githubusercontent.com/BurntSushi/ripgrep/master/GUIDE.md
     run:
       blank: true
       min: 3
@@ -15,3 +21,191 @@ signatures:
         - "first\n\n\n\nlast\n"
       no_match:
         - "first\n\nlast\n"
+
+  - id: long-line
+    name: Long line
+    group: structure
+    tags: [length]
+    level: low
+    description: |
+      A line much longer than the lines around it: at least ten times
+      the median length of the 100 lines on each side, and at least
+      1,024 bytes. A file whose lines are all long has none; a log that
+      writes large payloads now and then has one finding per payload.
+    links:
+      - https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm
+    measure: {name: long-line}
+    examples:
+      match:
+        - "2026-03-01 10:00:00 INFO request started\n2026-03-01 10:00:01 INFO payload=EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-\n2026-03-01 10:00:02 INFO request done\n"
+      no_match:
+        - "2026-03-01 10:00:00 INFO request started\n2026-03-01 10:00:01 INFO payload=EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-EXAMPLE-\n2026-03-01 10:00:02 INFO request done\n"
+
+  - id: repeated-lines
+    name: Repeated lines
+    group: structure
+    tags: [repeat]
+    level: low
+    description: |
+      Five or more consecutive lines equal byte for byte: a loop that
+      logs the same message, often a retry storm. Lines that differ only
+      by a timestamp or a counter are not equal and are not found.
+    links:
+      - https://raw.githubusercontent.com/systemd/systemd/main/src/journal/journald-manager.c
+    run:
+      same: true
+      min: 5
+    examples:
+      match:
+        - "connection lost, retrying\nconnection lost, retrying\nconnection lost, retrying\nconnection lost, retrying\nconnection lost, retrying\n"
+      no_match:
+        - "connection lost, retrying\nconnection lost, retrying\nconnection lost, retrying\nconnection lost, retrying\nconnected\n"
+
+  - id: repeat-suppressed
+    name: Repeated messages suppressed
+    group: structure
+    tags: [repeat, syslog]
+    level: low
+    description: |
+      A logger saying it dropped repeats of a message: journald's
+      "Suppressed N messages from UNIT", rsyslog's "message repeated N
+      times", the older "last message repeated N times", the kernel's
+      "N callbacks suppressed". A sign of a storm the log does not show
+      in full.
+    links:
+      - https://raw.githubusercontent.com/systemd/systemd/main/src/journal/journald-manager.c
+      - https://docs.rsyslog.com/doc//configuration/action/rsconf1_repeatedmsgreduction.html
+    regex: 'Suppressed \d+ messages from|message repeated \d+ times|[Ll]ast (?:message|line) repeated \d+ times|\b\d+ callbacks suppressed'
+    examples:
+      match:
+        - 'Mar  1 10:00:00 host systemd-journald[300]: Suppressed 1234 messages from worker.service'
+        - 'Mar  1 10:00:00 host rsyslogd: message repeated 12 times: [ worker: connection lost]'
+      no_match:
+        - 'INFO repeated the request 3 times'
+
+  - id: json-block
+    name: JSON block
+    group: structure
+    tags: [json]
+    level: info
+    description: |
+      A JSON object or array printed over several lines: a line that is
+      only "{" or "[" through the matching closer at the same indent,
+      counted with strings taken into account (braces inside a string do
+      not count). A JSON document on one line is not found.
+    links:
+      - https://datatracker.ietf.org/doc/html/rfc8259
+    measure: {name: json-block}
+    examples:
+      match:
+        - |
+          payload follows
+          {
+            "id": 42,
+            "items": ["a", "b"]
+          }
+      no_match:
+        - '{"id": 42, "items": ["a", "b"]}'
+
+  - id: binary-bytes
+    name: Binary bytes
+    group: structure
+    tags: [binary]
+    level: medium
+    description: |
+      A run of lines that hold a NUL byte or bytes that are not UTF-8: a
+      binary dump or a corrupted write inside a text log. ripgrep stops
+      reading a file at a NUL byte unless told otherwise, so this also
+      shows where other tools would stop. A file with a NUL byte in its
+      first 8 KiB is not text and is not scanned at all.
+    links:
+      - https://raw.githubusercontent.com/BurntSushi/ripgrep/master/GUIDE.md
+    measure: {name: binary}
+    examples:
+      match:
+        - "header\n\0\0\0 data\nfooter\n"
+      no_match:
+        - "header\nplain text\nfooter\n"
+
+  - id: base64-blob
+    name: Base64 blob
+    group: structure
+    tags: [base64]
+    level: low
+    description: |
+      A run of at least 100 base64 characters (A-Z a-z 0-9 + /, with "="
+      padding) inside a line: an encoded attachment, image, key or
+      payload. Long hex strings are base64 characters too and are found.
+    links:
+      - https://datatracker.ietf.org/doc/html/rfc4648#section-4
+    measure: {name: base64-run}
+    examples:
+      match:
+        - 'attachment=RVhBTVBMRSBFWEFNUExFIEVYQU1QTEUgRVhBTVBMRSBFWEFNUExFIEVYQU1QTEUgRVhBTVBMRSBFWEFNUExFIEVYQU1QTEUgRVhBTVBMRSBFWEFNUExFIEVYQU1QTEUg'
+      no_match:
+        - 'attachment=RVhBTVBMRSBFWEFNUExFIEVYQU1QTEUgRVhBTVBMRSBFWEFNUExFIA=='
+
+  - id: hex-dump
+    name: Hex dump
+    group: structure
+    tags: [hex, binary]
+    level: low
+    description: |
+      Two or more consecutive lines of a hex dump: an offset, then eight
+      to sixteen two-digit hex bytes (hexdump -C, od, a debugger), or
+      the xxd form with groups of four digits. A table of small numbers
+      can look the same.
+    links:
+      - https://man7.org/linux/man-pages/man1/hexdump.1.html
+    run:
+      # One ^ outside the alternation, so the regex is tried at the start
+      # of the line only; eight byte groups decide as well as sixteen.
+      match: '^(?:\s*(?:0x)?[0-9a-fA-F]{4,16}:?(?:\s+[0-9a-fA-F]{2}){8}|[0-9a-fA-F]{8}:(?: [0-9a-fA-F]{4}){4})'
+      min: 2
+    examples:
+      match:
+        - |
+          00000000  48 65 6c 6c 6f 2c 20 77  6f 72 6c 64 21 0a 00 00  |Hello, world!...|
+          00000010  00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f  |................|
+      no_match:
+        - '00000000  48 65 6c 6c 6f 2c 20 77  6f 72 6c 64 21 0a 00 00  |Hello, world!...|'
+
+  - id: unprefixed-run
+    name: Lines without a timestamp
+    group: structure
+    tags: [timestamps]
+    level: info
+    description: |
+      Five or more consecutive lines without a timestamp at their start
+      in a log whose lines mostly have one: a multi-line message, a dump
+      or a stack trace written without the log's prefix. Not looked for
+      when fewer than half of the lines are stamped.
+    links:
+      - https://docs.lnav.org/en/latest/formats.html
+    measure: {name: unprefixed}
+    examples:
+      match:
+        - |
+          2026-03-01 10:00:00 INFO start
+          2026-03-01 10:00:01 INFO loading
+          2026-03-01 10:00:02 INFO dump follows
+          state: loading
+          queue: 42
+          workers: 8
+          memory: 512M
+          cache: warm
+          2026-03-01 10:00:03 INFO dump done
+          2026-03-01 10:00:04 INFO ready
+          2026-03-01 10:00:05 INFO serving
+      no_match:
+        - |
+          2026-03-01 10:00:00 INFO start
+          2026-03-01 10:00:01 INFO loading
+          2026-03-01 10:00:02 INFO dump follows
+          state: loading
+          queue: 42
+          workers: 8
+          memory: 512M
+          2026-03-01 10:00:03 INFO dump done
+          2026-03-01 10:00:04 INFO ready
+          2026-03-01 10:00:05 INFO serving

@@ -67,9 +67,9 @@ func TestScan_BinaryMeasure(t *testing.T) {
 // bits per byte.
 const entropyToken = "Zx8Qp2Lm9Rt4Wv7YbN3kD5fH1jS6gA0cEuTo+IqB"
 
-// entropyFixture: a random base64 token and a random hex token are
-// found, the first one per line; a UUID, a 32-digit number and a run of
-// English words (4.4 bits per byte) are not.
+// entropyFixture: a random base64 token is found, the first one per
+// line; a UUID, a 32-digit number, a run of English words and a hex
+// hash (hex tokens are off by default) are not.
 var entropyFixture = one("entropy tokens", measureSig("ent", "entropy", ""),
 	lines(
 		"login key "+entropyToken+" accepted",
@@ -87,14 +87,14 @@ func TestScan_EntropyMeasure(t *testing.T) {
 	entropyFixture.run(t)
 	res := scanOne(t, entropyFixture.text, loadSigs(t, sigFile(entropyFixture.def), "ent"), Options{})
 	f := res.BySignature["ent"].Findings[1]
-	if *f.ValueStart != 7 || *f.ValueEnd != 39 {
-		t.Errorf("the hex token is the first on line 5: value %d-%d, want 7-39", *f.ValueStart, *f.ValueEnd)
+	if *f.ValueStart != 47 || *f.ValueEnd != 87 {
+		t.Errorf("the hex hash on line 5 is passed over for the token after it: value %d-%d, want 47-87", *f.ValueStart, *f.ValueEnd)
 	}
-	// A UUID never reaches 4.5 bits (17 symbols), so its skip shows only
-	// with a lower threshold.
-	low := loadSigs(t, sigFile(measureSig("low", "entropy", "base64: 2.0")), "low")
-	if got := scanOne(t, lines("request 550e8400-e29b-41d4-a716-446655440000 done"), low, Options{}).BySignature["low"]; got.Count != 0 {
-		t.Errorf("a UUID is a finding at 2 bits per byte: %d", got.Count)
+	// A mixed-case UUID holds the three character classes, so its skip
+	// shows with a low ratio.
+	low := loadSigs(t, sigFile(measureSig("low", "entropy", "ratio: 0.1")), "low")
+	if got := scanOne(t, lines("request 550E8400-e29b-41D4-a716-446655440000 done"), low, Options{}).BySignature["low"]; got.Count != 0 {
+		t.Errorf("a UUID is a finding at ratio 0.1: %d", got.Count)
 	}
 }
 

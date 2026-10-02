@@ -186,6 +186,10 @@ docs-build:
 docs-serve:
     uv run --no-project --with-requirements=docs/requirements.txt mkdocs serve
 
+# Write docs/reference/signatures.md from the built-in signature files
+docs-signatures:
+    ./scripts/test-isolated-home.sh go test -count=1 -run='^TestReferencePage$' ./internal/signatures/ -update-reference
+
 # ── release ──────────────────────────────────────────────────────────────
 
 # Print the version a build would stamp

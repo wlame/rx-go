@@ -1,4 +1,6 @@
-# Built-in signatures of the traceback group.
+# Built-in signatures of the traceback group: stack traces and uncaught
+# exceptions. A block starts at the header line and joins the frames
+# that follow; its examples are invented.
 signatures:
   - id: python-traceback
     name: Python traceback
@@ -7,13 +9,32 @@ signatures:
     level: high
     description: |
       An uncaught Python exception: the "Traceback (most recent call
-      last):" header, the indented frames, and the exception line that
-      ends it.
-    links: [https://docs.python.org/3/library/traceback.html]
+      last):" header at the start of a line, the indented frames, and
+      the exception line that ends it. Chained exceptions ("During
+      handling of the above exception..." and "The above exception was
+      the direct cause...") and exception groups ("Exception Group
+      Traceback", with their "|" and "+" margins) stay in one finding.
+      False positives are rare: the header is specific. A traceback
+      whose lines carry a log prefix (a timestamp before "Traceback")
+      is not found.
+    links:
+      - https://docs.python.org/3/library/traceback.html
+      - https://raw.githubusercontent.com/python/cpython/main/Lib/traceback.py
+      - https://raw.githubusercontent.com/GoogleCloudPlatform/fluent-plugin-detect-exceptions/master/lib/fluent/plugin/exception_detector.rb
     block:
-      start: '^Traceback \(most recent call last\):'
-      continue: '^\s'
-      end: '^[A-Za-z_][\w.]*(?::|$)'
+      max_lines: 400
+      states:
+        - {state: start, regex: '^Traceback \(most recent call last\):', next: frames}
+        - {state: start, regex: '^\s*\+?\s*Exception Group Traceback \(most recent call last\):', next: group}
+        - {state: frames, regex: '^\s', next: frames}
+        - {state: frames, regex: '^[A-Za-z_][\w.]*(?::|$)', next: after}
+        - {state: group, regex: '^\s*[|+]', next: group}
+        - {state: group, regex: '^\s*$', next: after}
+        - {state: after, regex: '^\s*$', next: after}
+        - {state: after, regex: '^(?:During handling of the above exception, another exception occurred|The above exception was the direct cause of the following exception):', next: chained}
+        - {state: chained, regex: '^\s*$', next: chained}
+        - {state: chained, regex: '^Traceback \(most recent call last\):', next: frames}
+        - {state: chained, regex: '^\s*\+?\s*Exception Group Traceback \(most recent call last\):', next: group}
     examples:
       match:
         - |
@@ -21,5 +42,292 @@ signatures:
             File "app.py", line 3, in <module>
               main()
           ValueError: bad input
+        - |
+          Traceback (most recent call last):
+            File "loader.py", line 22, in load
+              data = json.loads(raw)
+          json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+          The above exception was the direct cause of the following exception:
+
+          Traceback (most recent call last):
+            File "loader.py", line 30, in handle
+              payload = load(raw)
+          ValueError: bad payload
+        - |
+          ERROR the job runner stopped
+            + Exception Group Traceback (most recent call last):
+            |   File "jobs.py", line 12, in <module>
+            |     run_all()
+            | ExceptionGroup: 2 jobs failed (2 sub-exceptions)
+            +-+---------------- 1 ----------------
+              | ValueError: job 1
+              +---------------- 2 ----------------
+              | KeyError: 'job 2'
+              +------------------------------------
       no_match:
         - INFO traceback collection is off
+        - ERROR see Traceback (most recent call last) in the attached report
+
+  - id: java-exception
+    name: Java exception
+    group: traceback
+    tags: [java, jvm]
+    level: high
+    description: |
+      A JVM exception with its stack trace: a line that starts with a
+      dotted class name ending in Exception, Error or Throwable
+      (optionally after 'Exception in thread "name"'), then at least one
+      "at" frame, with "Caused by:", "Suppressed:" and "... N more"
+      lines kept in the same finding. An exception line without frames
+      is not a finding, so a message that only names an exception class
+      is not reported. Kotlin and Scala print the same shape.
+    links:
+      - https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Throwable.html
+      - https://raw.githubusercontent.com/GoogleCloudPlatform/fluent-plugin-detect-exceptions/master/lib/fluent/plugin/exception_detector.rb
+      - https://www.elastic.co/guide/en/beats/filebeat/current/multiline-examples.html
+    block:
+      start: '^(?:Exception in thread "[^"]*" )?(?:[a-zA-Z_$][\w$]*\.)+[A-Za-z_$][\w$]*(?:Exception|Error|Throwable)(?::|$)'
+      continue: '^\s+(?:eval )?at |^\s*(?:Caused by|Suppressed|Wrapped by): |^\s*\.\.\. \d+ (?:more|common frames omitted)|^\s*nested exception is: '
+      min_lines: 2
+    examples:
+      match:
+        - |
+          com.example.orders.OrderNotFoundException: order 42 not found
+              at com.example.orders.OrderService.load(OrderService.java:88)
+              at com.example.orders.OrderController.get(OrderController.java:31)
+          Caused by: java.sql.SQLException: connection closed
+              at com.example.db.Pool.borrow(Pool.java:120)
+              ... 2 more
+        - |
+          Exception in thread "main" java.lang.IllegalStateException: queue is closed
+              at com.example.queue.Queue.put(Queue.java:57)
+      no_match:
+        - 'java.lang.IllegalStateException: shutdown requested'
+        - INFO retrying after an IOException in the upload worker
+
+  - id: dotnet-exception
+    name: .NET exception
+    group: traceback
+    tags: [dotnet, csharp]
+    level: high
+    description: |
+      A .NET exception with its stack trace: a line that starts with a
+      capitalised dotted type name ending in "Exception: " (optionally
+      after "Unhandled exception. "), then at least one "at" frame, with
+      inner exceptions (" ---> ") and "--- End of ... stack trace ---"
+      separators kept in the same finding. An exception line without
+      frames is not a finding.
+    links:
+      - https://learn.microsoft.com/en-us/dotnet/api/system.exception.stacktrace
+      - https://raw.githubusercontent.com/GoogleCloudPlatform/fluent-plugin-detect-exceptions/master/lib/fluent/plugin/exception_detector.rb
+    block:
+      start: '^(?:Unhandled [Ee]xception\. )?(?:[A-Z]\w*\.)+[A-Z]\w*Exception: '
+      continue: '^\s+at \S|^\s*--- End of |^\s*---> '
+      min_lines: 2
+    examples:
+      match:
+        - |
+          Unhandled exception. System.InvalidOperationException: Sequence contains no elements
+             at System.Linq.ThrowHelper.ThrowNoElementsException()
+             at Example.Billing.InvoiceJob.Run() in /src/InvoiceJob.cs:line 42
+        - |
+          System.AggregateException: One or more errors occurred. (Timeout)
+           ---> System.TimeoutException: Timeout
+             at Example.Net.Client.Send() in /src/Client.cs:line 17
+             --- End of inner exception stack trace ---
+             at Example.Program.Main() in /src/Program.cs:line 9
+      no_match:
+        - 'System.TimeoutException: Timeout'
+        - INFO System.Net.Http is ready
+
+  - id: js-error
+    name: JavaScript error
+    group: traceback
+    tags: [javascript, node]
+    level: high
+    description: |
+      A JavaScript error with its V8 stack trace: a line that starts with
+      an error name ending in "Error: " (optionally after "Uncaught " or
+      "UnhandledPromiseRejectionWarning: "), then at least one
+      "    at ..." frame. An error line without frames is not a finding.
+      V8 keeps ten frames by default.
+    links:
+      - https://v8.dev/docs/stack-trace-api
+      - https://raw.githubusercontent.com/GoogleCloudPlatform/fluent-plugin-detect-exceptions/master/lib/fluent/plugin/exception_detector.rb
+    block:
+      start: '^(?:Uncaught |UnhandledPromiseRejectionWarning: )?(?:[A-Z][A-Za-z]*)?Error(?: \[[A-Z_]+\])?: '
+      continue: '^\s+at (?:async |new )?\S'
+      min_lines: 2
+    examples:
+      match:
+        - |
+          TypeError: Cannot read properties of undefined (reading 'id')
+              at handler (/srv/app/routes/user.js:42:17)
+              at async Router.dispatch (/srv/app/router.js:88:12)
+        - |
+          UnhandledPromiseRejectionWarning: Error: database connection lost
+              at Connection.onTimeout (/srv/app/db.js:88:12)
+      no_match:
+        - 'ValidationError: name is required'
+        - INFO no Error found in the bundle
+
+  - id: go-panic
+    name: Go panic
+    group: traceback
+    tags: [go]
+    level: high
+    description: |
+      A Go panic or fatal runtime error with its goroutine dump: "panic:",
+      "fatal error:" or "http: panic serving", then the goroutine
+      headers (also the "goroutine N gp=... m=... [status]:" form the
+      runtime prints while throwing), the frames, "created by" lines and
+      the blank lines between goroutines, up to "exit status N". A
+      stand-alone goroutine dump is found from its first goroutine
+      header. A "panic:" line with nothing after it is not a finding,
+      which keeps out C compilers' "fatal error:" lines.
+    links:
+      - https://pkg.go.dev/runtime
+      - https://raw.githubusercontent.com/golang/go/master/src/runtime/panic.go
+      - https://raw.githubusercontent.com/golang/go/master/src/runtime/traceback.go
+      - https://raw.githubusercontent.com/golang/go/master/src/net/http/server.go
+    block:
+      max_lines: 2000
+      min_lines: 2
+      states:
+        - {state: start, regex: '^(?:panic: |fatal error: |SIGQUIT: quit|SIGABRT: abort)', next: head}
+        - {state: start, regex: 'http: panic serving ', next: head}
+        - {state: start, regex: '^goroutine \d+ .*\[[^\]]+\]:$', next: frames}
+        - {state: head, regex: '^exit status \d+$', end: true}
+        - {state: head, regex: '^goroutine \d+ .*\[[^\]]+\]:$', next: frames}
+        - {state: head, regex: '^(?:\[signal |panic: |\s)', next: head}
+        - {state: head, regex: '^$', next: gap}
+        - {state: gap, regex: '^goroutine \d+ .*\[[^\]]+\]:$', next: frames}
+        - {state: gap, regex: '^exit status \d+$', end: true}
+        - {state: frames, regex: '^exit status \d+$', end: true}
+        - {state: frames, regex: '^goroutine \d+ .*\[[^\]]+\]:$', next: frames}
+        - {state: frames, regex: '^(?:\s|created by |\.\.\.additional frames elided\.\.\.$|\[originating from goroutine \d+\]:$)', next: frames}
+        - {state: frames, regex: '^[\w./*()\[\]{}~%-]+\(.*\)$', next: frames}
+        - {state: frames, regex: '^$', next: gap}
+    examples:
+      match:
+        - |
+          panic: runtime error: invalid memory address or nil pointer dereference
+          [signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x4a5f8c]
+
+          goroutine 1 [running]:
+          main.(*Server).handle(0x0)
+          	/src/server.go:55 +0x2c
+          main.main()
+          	/src/main.go:17 +0x35
+          exit status 2
+        - |
+          fatal error: concurrent map writes
+
+          goroutine 7 gp=0xc000102380 m=3 mp=0xc000080008 [running]:
+          main.worker()
+          	/src/worker.go:31 +0x85
+          created by main.main in goroutine 1
+          	/src/main.go:12 +0x6f
+
+          goroutine 1 gp=0xc000002380 m=nil [chan receive]:
+          main.main()
+          	/src/main.go:15 +0x8a
+      no_match:
+        - 'INFO no panic: every worker is healthy'
+        - 'fatal error: settings.h: No such file or directory'
+
+  - id: ruby-backtrace
+    name: Ruby backtrace
+    group: traceback
+    tags: [ruby]
+    level: high
+    description: |
+      An uncaught Ruby exception: "file.rb:LINE:in 'method': message
+      (Class)" at the start of a line, then at least one indented
+      "from file:LINE:in ..." frame. Both quote styles are found: the
+      backtick of Ruby before 3.4 and the single quote of 3.4 and later.
+    links:
+      - https://www.ruby-lang.org/en/news/2024/12/25/ruby-3-4-0-released/
+      - https://raw.githubusercontent.com/GoogleCloudPlatform/fluent-plugin-detect-exceptions/master/lib/fluent/plugin/exception_detector.rb
+    block:
+      start: '^\S+\.rb:\d+:in [`''][^`'']*'': .* \([\w:]+\)$'
+      continue: '^\s+from \S+:\d+:in '
+      min_lines: 2
+    examples:
+      match:
+        - |
+          app.rb:3:in 'Integer#/': divided by 0 (ZeroDivisionError)
+          	from app.rb:3:in 'Object#ratio'
+          	from app.rb:7:in '<main>'
+        - |
+          lib/report.rb:12:in `fetch': key not found: :total (KeyError)
+          	from lib/report.rb:30:in `build'
+          	from bin/report:5:in `<main>'
+      no_match:
+        - "app.rb:3:in 'Integer#/': divided by 0 (ZeroDivisionError)"
+        - INFO loaded settings from app.rb
+
+  - id: php-fatal
+    name: PHP fatal error
+    group: traceback
+    tags: [php]
+    level: high
+    description: |
+      A PHP fatal or parse error, with its "Stack trace:" and "#N" frames
+      and the "thrown in" line when PHP printed them, or an uncaught
+      exception in the older "exception 'Class' with message" form. A
+      fatal error without a trace is a finding of one line. PHP warnings
+      and notices are not fatal and are not found.
+    links:
+      - https://raw.githubusercontent.com/GoogleCloudPlatform/fluent-plugin-detect-exceptions/master/lib/fluent/plugin/exception_detector.rb
+    block:
+      start: 'PHP (?:Fatal error|Parse error): |exception ''[^'']+'' with message '''
+      continue: '^(?:PHP )?Stack trace:|^(?:PHP )?#\d+ |^\s*thrown in |^PHP +\d+\. '
+    examples:
+      match:
+        - |
+          [01-Mar-2026 10:00:00 UTC] PHP Fatal error:  Uncaught RuntimeException: queue offline in /srv/www/queue.php:14
+          Stack trace:
+          #0 /srv/www/index.php(8): Queue->push()
+          #1 {main}
+            thrown in /srv/www/queue.php on line 14
+        - 'PHP Parse error:  syntax error, unexpected token "}" in /srv/www/form.php on line 9'
+      no_match:
+        - 'PHP Warning:  Undefined variable $total in /srv/www/cart.php on line 20'
+
+  - id: rust-panic
+    name: Rust panic
+    group: traceback
+    tags: [rust]
+    level: high
+    description: |
+      A Rust panic: "thread 'name' panicked at file:line:col" (the thread
+      id in parentheses that newer releases print included), the message
+      on the next line in the current format, the "note:" lines and,
+      with RUST_BACKTRACE set, the "stack backtrace:" and its numbered
+      frames. The older format, with the message inside the header line,
+      is found too.
+    links:
+      - https://doc.rust-lang.org/book/ch09-01-unrecoverable-errors-with-panic.html
+    block:
+      states:
+        - {state: start, regex: '^thread ''[^'']*''(?: \(\d+\))? panicked at \S+:\d+:\d+:$', next: message}
+        - {state: start, regex: '^thread ''[^'']*''(?: \(\d+\))? panicked at ', next: body}
+        - {state: message, regex: '^', next: body}
+        - {state: body, regex: '^(?:note: |stack backtrace:|\s+\d+: |\s+at )', next: body}
+    examples:
+      match:
+        - |
+          thread 'main' panicked at src/main.rs:4:5:
+          index out of bounds: the len is 3 but the index is 99
+          note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+        - |
+          thread 'worker' panicked at 'called `Option::unwrap()` on a `None` value', src/queue.rs:20:31
+          stack backtrace:
+             0: rust_begin_unwind
+             1: core::panicking::panic_fmt
+                       at /rustc/library/core/src/panicking.rs:72:14
+          note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+      no_match:
+        - INFO thread 'main' finished

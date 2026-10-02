@@ -10,18 +10,19 @@ import (
 // filled in, and the simple block form as written.
 func TestDefinitionYAML_Builtin(t *testing.T) {
 	cat := Load(LoadOptions{Paths: []string{}})
-	got := string(mustLookup(t, cat, "python-traceback").DefinitionYAML())
+	got := string(mustLookup(t, cat, "java-exception").DefinitionYAML())
 	for _, want := range []string{
-		"id: python-traceback\n",
+		"id: java-exception\n",
 		"level: high\n",
 		"default: true\n",
 		"redact: false\n",
-		"tags: [python]\n",
-		"links: ['https://docs.python.org/3/library/traceback.html']\n",
+		"tags: [java, jvm]\n",
+		"links: ['https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Throwable.html', ",
 		"metadata: {}\n",
-		"block:\n  start: '^Traceback \\(most recent call last\\):'\n  continue: '^\\s'\n",
-		"  min_lines: 1\n  max_lines: 200\n",
-		"examples:\n  match:\n    - |\n      Traceback (most recent call last):\n",
+		"block:\n  start: '^(?:Exception in thread \"[^\"]*\" )?",
+		"\n  continue: '^\\s+(?:eval )?at |",
+		"  min_lines: 2\n  max_lines: 200\n",
+		"examples:\n  match:\n    - |\n      com.example.orders.OrderNotFoundException: order 42 not found\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the definition lacks %q:\n%s", want, got)

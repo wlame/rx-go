@@ -49,15 +49,20 @@ rx signatures
 ```
 
 ```text
-traceback  1 signature
-  python-traceback  critical  block  /home/me/.config/rx/signatures/team.yml:27  overrides
-secret  1 signature
-  aws-access-key    high      regex  built-in                                    masked
-structure  0 signatures
-  blank-run         info      run    built-in                                    disabled by /home/me/.config/rx/signatures/team.yml:1
+traceback  8 signatures
+  python-traceback         critical  block    /home/me/.config/rx/signatures/team.yml:27  overrides
+  java-exception           high      block    built-in
+  …
+secret  16 signatures
+  aws-access-key           high      regex    built-in                                    masked
+  …
+structure  8 signatures
+  long-line                low       measure  built-in
+  …
+  blank-run                info      run      built-in                                    disabled by /home/me/.config/rx/signatures/team.yml:1
 billing  2 signatures
-  invoice-failed    high      regex  /home/me/.config/rx/signatures/team.yml:8
-  slow-invoice      medium    regex  /home/me/.config/rx/signatures/team.yml:19  opt-in
+  invoice-failed           high      regex    /home/me/.config/rx/signatures/team.yml:8
+  slow-invoice             medium    regex    /home/me/.config/rx/signatures/team.yml:19  opt-in
 
 Errors (1)
   /home/me/.config/rx/signatures/draft.yml:6: refund-spike: regex: error parsing regexp: missing closing ): `(refund`
@@ -65,7 +70,9 @@ Errors (1)
 Search path: /home/me/.config/rx/signatures (2 files)
 ```
 
-A group without a signature to list is left out.
+A group without a signature to list is left out. The example is
+shortened at each `…`: the built-in signatures are 70, listed with their
+definitions in [Built-in signatures](../reference/signatures.md).
 
 ### Flags
 

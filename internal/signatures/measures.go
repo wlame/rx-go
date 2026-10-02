@@ -41,11 +41,15 @@ type LongLineParams struct{ Window, Factor, MinBytes int }
 type BinaryParams struct{}
 
 // EntropyParams are the parameters of "entropy": a token of at least
-// MinLength bytes whose entropy reaches Base64 bits per byte, or Hex
-// for a token of hex digits only.
+// MinLength bytes whose Shannon entropy reaches a share of the entropy a
+// random token of its length has on average. A token of the base64
+// alphabet needs Ratio of it over 64 symbols and an upper-case letter,
+// a lower-case letter and a digit; a token of hex digits only needs
+// HexRatio of it over 16 symbols, and a HexRatio of 0 leaves every hex
+// token alone.
 type EntropyParams struct {
-	MinLength   int
-	Base64, Hex float64
+	MinLength       int
+	Ratio, HexRatio float64
 }
 
 // JSONBlockParams are the parameters of "json-block".
@@ -97,7 +101,7 @@ func (p BinaryParams) Canonical() []byte { return canonical("binary", p.Fields()
 
 // Fields lists the parameters of entropy.
 func (p EntropyParams) Fields() []Param {
-	return []Param{{"min_length", p.MinLength}, {"base64", p.Base64}, {"hex", p.Hex}}
+	return []Param{{"min_length", p.MinLength}, {"ratio", p.Ratio}, {"hex_ratio", p.HexRatio}}
 }
 
 // Canonical gives the deterministic bytes of the parameters.
@@ -221,6 +225,9 @@ func (v paramValues) duration(name string) time.Duration {
 type measureDef struct {
 	params []paramSpec
 	build  func(paramValues) MeasureParams
+	// removed names parameters an earlier form of the measure took,
+	// each with the message that refuses it and says what replaced it.
+	removed map[string]string
 }
 
 // day is the length of the "d" duration unit.
@@ -247,11 +254,15 @@ var measureDefs = map[string]measureDef{
 	"entropy": {
 		params: []paramSpec{
 			{name: "min_length", kind: paramInt, def: 20, min: 8, max: 1024},
-			{name: "base64", kind: paramFloat, def: 4.5, min: 1, max: 6},
-			{name: "hex", kind: paramFloat, def: 3.0, min: 1, max: 4},
+			{name: "ratio", kind: paramFloat, def: 0.94, min: 0.1, max: 1.5},
+			{name: "hex_ratio", kind: paramFloat, def: 0, min: 0, max: 1.5},
 		},
 		build: func(v paramValues) MeasureParams {
-			return EntropyParams{MinLength: v.int("min_length"), Base64: v.float("base64"), Hex: v.float("hex")}
+			return EntropyParams{MinLength: v.int("min_length"), Ratio: v.float("ratio"), HexRatio: v.float("hex_ratio")}
+		},
+		removed: map[string]string{
+			"base64": "base64 was replaced by ratio: a token needs ratio (default 0.94) times the entropy a random token of its length has",
+			"hex":    "hex was replaced by hex_ratio: hex tokens are left alone unless hex_ratio is set, as a share of a random hex token's entropy",
 		},
 	},
 	"json-block": {

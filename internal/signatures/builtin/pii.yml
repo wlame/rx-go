@@ -1,0 +1,107 @@
+# Built-in signatures of the pii group: personal data. They are opt-in
+# (default: false): logs hold addresses and numbers for good reasons,
+# and none of these regexes has a keyword to gate it, so each one tests
+# every line. The examples use documentation addresses and published
+# test numbers.
+signatures:
+  - id: email-address
+    name: E-mail address
+    group: pii
+    tags: [email]
+    level: low
+    default: false
+    description: |
+      An e-mail address: a local part, "@", and a domain with a dot.
+      user@host forms of SSH logs and git authors are found too.
+    links:
+      - https://datatracker.ietf.org/doc/html/rfc5322#section-3.4.1
+    regex: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    examples:
+      match:
+        - 'sent the receipt to alice@example.com'
+      no_match:
+        - 'listening on @localhost'
+
+  - id: ipv4-address
+    name: IPv4 address
+    group: pii
+    tags: [ip, network]
+    level: low
+    default: false
+    description: |
+      An IPv4 address: four numbers from 0 to 255 joined by dots, checked
+      as an address. Version strings with four parts (1.2.3.4) look the
+      same and are found too.
+    links:
+      - https://raw.githubusercontent.com/logstash-plugins/logstash-patterns-core/main/patterns/ecs-v1/grok-patterns
+    regex: '\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b'
+    validate: ipv4
+    examples:
+      match:
+        - 'connection from 192.0.2.10 accepted'
+      no_match:
+        - 'connection from 192.0.2.300 refused'
+
+  - id: ipv6-address
+    name: IPv6 address
+    group: pii
+    tags: [ip, network]
+    level: low
+    default: false
+    description: |
+      An IPv6 address in full (eight groups) or with "::", checked as an
+      address. Times such as 12:34:56 and MAC addresses do not have the
+      shape. The first candidate on a line decides: when it is not an
+      address, the line is not a finding.
+    links:
+      - https://datatracker.ietf.org/doc/html/rfc4291#section-2.2
+    regex: '(?i)\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b|\b(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}:){0,5}[0-9a-f]{1,4}\b'
+    validate: ipv6
+    examples:
+      match:
+        - 'connection from 2001:db8::42 accepted'
+      no_match:
+        - '12:34:56 heartbeat from 00:1a:2b:3c:4d:5e'
+
+  - id: card-number
+    name: Payment card number
+    group: pii
+    tags: [payment, card]
+    level: high
+    default: false
+    description: |
+      A payment card number: 13 to 19 digits, in groups or not, that
+      start like a Visa, Mastercard, American Express or Discover number
+      and pass the Luhn check. About one digit string in ten passes the
+      check by chance, so order numbers with those first digits are
+      found too.
+    links:
+      - https://en.wikipedia.org/wiki/Luhn_algorithm
+      - https://en.wikipedia.org/wiki/Payment_card_number
+    regex: '\b(?:4\d{3}|5[1-5]\d{2}|2[2-7]\d{2}|3[47]\d{2}|6(?:011|5\d{2}))(?:[ -]?\d){9,15}\b'
+    validate: luhn
+    examples:
+      match:
+        - 'charge declined for card 4111 1111 1111 1111'
+      no_match:
+        - 'charge declined for card 4111 1111 1111 1112'
+
+  - id: iban
+    name: IBAN
+    group: pii
+    tags: [payment, bank]
+    level: high
+    default: false
+    description: |
+      An international bank account number: two letters, two check
+      digits and up to 30 letters and digits, in groups of four or not,
+      checked by its country's length and the mod-97 rule.
+    links:
+      - https://en.wikipedia.org/wiki/International_Bank_Account_Number
+    regex: '\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b'
+    validate: iban
+    examples:
+      match:
+        - 'refund to GB82 WEST 1234 5698 7654 32'
+      no_match:
+        - 'refund to GB83 WEST 1234 5698 7654 32'

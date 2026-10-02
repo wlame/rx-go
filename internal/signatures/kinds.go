@@ -347,6 +347,10 @@ func (p *sigParser) readMeasure(f pair) {
 		if mp.key == "name" {
 			continue
 		}
+		if msg, gone := def.removed[mp.key]; gone {
+			p.fail(newFieldError(mp.keyAt, "%s", msg))
+			continue
+		}
 		spec, found := findParam(def.params, mp.key)
 		if !found {
 			p.fail(newFieldError(mp.keyAt, "unknown parameter %q of %s (it takes %s)", mp.key, name, paramNames(def.params)))

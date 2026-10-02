@@ -35,7 +35,7 @@ import (
 const (
 	longLineVersion      = 1
 	binaryVersion        = 1
-	entropyVersion       = 1
+	entropyVersion       = 2
 	jsonBlockVersion     = 1
 	unprefixedVersion    = 1
 	base64RunVersion     = 1
@@ -108,7 +108,7 @@ type valueMatcher interface {
 func newValueMatcher(p signatures.MeasureParams) valueMatcher {
 	switch p := p.(type) {
 	case signatures.EntropyParams:
-		return entropyMatcher{minLength: p.MinLength, base64: p.Base64, hex: p.Hex}
+		return entropyMatcher{minLength: p.MinLength, ratio: p.Ratio, hexRatio: p.HexRatio}
 	case signatures.Base64RunParams:
 		return base64Matcher{minLength: p.MinLength}
 	}
@@ -172,12 +172,25 @@ func runOf(view []byte, i int, set *byteSet) int {
 
 // entropyMatcher finds tokens of high entropy: maximal runs of
 // [A-Za-z0-9+/=_-] of at least minLength bytes whose Shannon entropy,
-// in bits per byte, reaches hex for a token of hex digits only and
-// base64 for any other. A UUID and a token of digits only are skipped:
-// they are ids and numbers, not secrets.
+// in bits per byte, reaches a share of the entropy a random token of
+// the same length has on average (randomEntropy). A token of hex digits
+// only is held to hexRatio of a random hex token's entropy, and is
+// never found when hexRatio is 0: a hash or a request id is as random
+// as a hex key, so no statistic tells them apart. Any other token is
+// held to ratio of a random base64 token's entropy and needs an
+// upper-case letter, a lower-case letter and a digit, which words,
+// identifiers and most paths lack. A UUID and a token of digits only
+// are skipped: they are ids and numbers, not secrets.
+//
+// The share is taken of the average entropy at the token's length,
+// not of the most a token of that length could have (log2 of its
+// length or of the alphabet's size): a random 64-character token
+// reaches only about 86% of that maximum on average, against 93% at 24
+// characters, so one share of the maximum cannot find most random keys
+// at both lengths.
 type entropyMatcher struct {
-	minLength   int
-	base64, hex float64
+	minLength       int
+	ratio, hexRatio float64
 }
 
 func (m entropyMatcher) next(view []byte, from int) (span, bool) {
@@ -200,11 +213,27 @@ func (m entropyMatcher) qualifies(token []byte) bool {
 	if isUUID(token) || onlyBytesOf(token, digitBytes) {
 		return false
 	}
-	threshold := m.base64
 	if onlyBytesOf(token, hexBytes) {
-		threshold = m.hex
+		return m.hexRatio > 0 && shannonEntropy(token) >= m.hexRatio*randomEntropy(hexSymbols, len(token))
 	}
-	return shannonEntropy(token) >= threshold
+	return holdsLetterCasesAndDigit(token) && shannonEntropy(token) >= m.ratio*randomEntropy(base64Symbols, len(token))
+}
+
+// holdsLetterCasesAndDigit reports whether b holds an upper-case
+// letter, a lower-case letter and a digit.
+func holdsLetterCasesAndDigit(b []byte) bool {
+	var upper, lower, digit bool
+	for _, c := range b {
+		switch {
+		case 'A' <= c && c <= 'Z':
+			upper = true
+		case 'a' <= c && c <= 'z':
+			lower = true
+		case '0' <= c && c <= '9':
+			digit = true
+		}
+	}
+	return upper && lower && digit
 }
 
 // onlyBytesOf reports whether every byte of b is in set.

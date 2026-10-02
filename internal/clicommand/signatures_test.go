@@ -48,30 +48,56 @@ func exitCode(err error) int {
 
 // The list shows each group in order with its count and opt-in mark,
 // a row per signature with its level, kind, source and marks, then the
-// errors and the search path.
+// errors and the search path. Rows are compared with their columns'
+// spacing folded to one space, and every row starts its columns at the
+// same places.
 func TestSignaturesList_Human(t *testing.T) {
 	out, err := runSignatures(t)
 	if err != nil {
 		t.Fatalf("rx signatures: %v", err)
 	}
-	want := `traceback  1 signature
-  python-traceback  high    block  built-in
-secret  0 signatures
-  aws-access-key    high    regex  built-in                         masked, disabled by testdata/signatures/team.yml:1
-structure  1 signature
-  blank-run         low     run    testdata/signatures/team.yml:6   overrides
-billing  3 signatures
-  invoice-failed    high    regex  testdata/signatures/team.yml:12
-  slow-invoice      medium  regex  testdata/signatures/team.yml:19  opt-in
-  any-digit         medium  regex  testdata/signatures/team.yml:26  opt-in
-
-Errors (1)
-  testdata/signatures/broken.yml:6: broken-one: regex: error parsing regexp: missing closing ): ` + "`(oops`" + `
-
-Search path: testdata/signatures (2 files)
-`
-	if out != want {
-		t.Errorf("output:\n%s\nwant:\n%s", out, want)
+	want := []string{
+		"traceback 8 signatures",
+		"  python-traceback high block built-in",
+		"secret 15 signatures",
+		"  aws-access-key high regex built-in masked, disabled by testdata/signatures/team.yml:1",
+		"pii 5 signatures, opt-in",
+		"  email-address low regex built-in opt-in",
+		"structure 9 signatures",
+		"  blank-run low run testdata/signatures/team.yml:6 overrides",
+		"time 3 signatures",
+		"billing 3 signatures",
+		"  invoice-failed high regex testdata/signatures/team.yml:12",
+		"  slow-invoice medium regex testdata/signatures/team.yml:19 opt-in",
+		"  any-digit medium regex testdata/signatures/team.yml:26 opt-in",
+		"",
+		"Errors (1)",
+		"  testdata/signatures/broken.yml:6: broken-one: regex: error parsing regexp: missing closing ): `(oops`",
+		"",
+		"Search path: testdata/signatures (2 files)",
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	next := 0
+	columns := -1
+	for _, line := range lines {
+		folded := strings.Join(strings.Fields(line), " ")
+		if strings.HasPrefix(line, "  ") {
+			folded = "  " + folded
+		}
+		if next < len(want) && folded == want[next] {
+			next++
+		}
+		if fields := strings.Fields(line); strings.HasPrefix(line, "  ") && len(fields) >= 4 && !strings.HasPrefix(line, "  testdata/") {
+			at := strings.Index(line, " "+fields[1]+" ") + 1
+			if columns < 0 {
+				columns = at
+			} else if at != columns {
+				t.Errorf("the level column starts at %d, not %d: %q", at, columns, line)
+			}
+		}
+	}
+	if next < len(want) {
+		t.Errorf("output lacks %q (in this order after the lines before it):\n%s", want[next], out)
 	}
 }
 
@@ -157,11 +183,11 @@ func TestSignaturesShow_Builtin(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# source: built-in\n",
-		"# keywords (derived): [traceback (most recent call last):]\n",
+		"# keywords (derived): [traceback (most recent call last):, exception group traceback (most recent call last):]\n",
 		"# line pass: no\n",
 		"# examples: not checked in this build\n",
 		"id: python-traceback\n",
-		"  max_lines: 200\n",
+		"  max_lines: 400\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("show lacks %q:\n%s", want, out)

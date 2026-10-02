@@ -1,0 +1,5 @@
+starting
+java.lang.IllegalStateException: something broke
+	at com.example.app.Boot.start(Boot.java:55)
+	at com.example.app.Boot.main(Boot.java:12)
+done

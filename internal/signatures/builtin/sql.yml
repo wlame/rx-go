@@ -1,0 +1,198 @@
+# Built-in signatures of the sql group: SQL statements, dangerous
+# statements, PostgreSQL plans, slow statements and lock problems, and
+# MySQL's slow query log. Their examples are invented.
+signatures:
+  - id: sql-statement
+    name: SQL statement
+    group: sql
+    tags: [sql]
+    level: info
+    description: |
+      A line that holds an SQL statement: SELECT with a column list and
+      FROM a table, INSERT INTO a table with VALUES or a column list,
+      UPDATE a table SET a column, DELETE FROM a table, CREATE, ALTER or
+      DROP of a table, index, view, schema or database, or TRUNCATE
+      TABLE, with spaces or tabs between the words. Case does not
+      matter. The shapes keep out most English ("select a file from the
+      list"), but a sentence such as "select one from the menu" is still
+      found.
+    links:
+      - https://www.postgresql.org/docs/current/runtime-config-logging.html
+    regex:
+      - '(?i)\bselect[ \t]+(?:distinct[ \t]+|top[ \t]+\d+[ \t]+)?(?:\*|[\w."\[\]()*]+(?:[ \t]+as[ \t]+\w+)?(?:[ \t]*,[ \t]*[^,]+?)*)[ \t]+from[ \t]+[\w."\[\]]+'
+      - '(?i)\binsert[ \t]+into[ \t]+[\w."\[\]]+[ \t]*(?:\(|values\b|select\b|default\b)'
+      - '(?i)\bupdate[ \t]+[\w."\[\]]+[ \t]+set[ \t]+[\w."\[\]]+[ \t]*='
+      - '(?i)\bdelete[ \t]+from[ \t]+[\w."\[\]]+'
+      - '(?i)\b(?:create|alter|drop)[ \t]+(?:unique[ \t]+)?(?:table|index|view|schema|database)[ \t]+(?:if[ \t]+(?:not[ \t]+)?exists[ \t]+)?[\w."\[\]]+'
+      - '(?i)\btruncate[ \t]+table[ \t]+[\w."\[\]]+'
+    # Every match holds a statement verb and the space or tab after it.
+    # Derived from the regex, the gate would be the bare verbs, and
+    # "update", "drop" and "select" are on a tenth of some logs' lines.
+    keywords: ["select ", "select\t", "insert ", "insert\t", "update ", "update\t", "delete ", "delete\t",
+      "create ", "create\t", "alter ", "alter\t", "drop ", "drop\t", "truncate ", "truncate\t"]
+    examples:
+      match:
+        - '2026-03-01 10:00:00 LOG:  statement: SELECT id, total FROM orders WHERE customer_id = 42'
+        - 'executing update accounts set balance = balance - 10 where id = 7'
+        - 'INSERT INTO audit (id, action) VALUES (1, ''login'')'
+        - "SELECT\tid\tFROM\torders"
+      no_match:
+        - INFO please select a file from the list
+        - INFO an update is available for the agent
+
+  - id: dangerous-sql
+    name: Dangerous SQL statement
+    group: sql
+    tags: [sql]
+    level: high
+    description: |
+      A statement that removes data wholesale: DROP TABLE, DATABASE or
+      SCHEMA, TRUNCATE, or a DELETE or UPDATE on a line without WHERE.
+      A statement whose WHERE clause is on a later line of the log is
+      found too, since only its first line is read.
+    links:
+      - https://dev.mysql.com/doc/refman/8.4/en/mysql-tips.html
+      - https://docs.github.com/en/code-security/reference/secret-security/custom-patterns
+      - https://github.com/google/re2/wiki/Syntax
+    regex:
+      - '(?i)\bdrop[ \t]+(?:table|database|schema)\b'
+      - '(?i)\btruncate[ \t]+table[ \t]+[\w."\[\]]+'
+      - '\bTRUNCATE[ \t]+(?:ONLY[ \t]+)?[\w."]+[ \t]*(?:;|$)'
+      - '(?i)\bdelete[ \t]+from[ \t]+[\w."\[\]]+'
+      - '(?i)\bupdate[ \t]+[\w."\[\]]+[ \t]+set[ \t]+[\w."\[\]]+[ \t]*='
+    # As for sql-statement: the verb and the space or tab after it.
+    keywords: ["drop ", "drop\t", "truncate ", "truncate\t", "delete ", "delete\t", "update ", "update\t"]
+    not: '(?i)\bwhere\b'
+    examples:
+      match:
+        - 'executing DELETE FROM sessions'
+        - 'migration ran: DROP TABLE audit_2025;'
+        - 'executing UPDATE users SET active = false;'
+        - "DELETE\tFROM\tsessions"
+      no_match:
+        - 'executing DELETE FROM sessions WHERE expires_at < now()'
+        - 'INFO drop the table cloth on the left'
+
+  - id: postgres-explain
+    name: PostgreSQL query plan
+    group: sql
+    tags: [postgres, sql]
+    level: info
+    description: |
+      A PostgreSQL EXPLAIN or EXPLAIN ANALYZE plan, as psql or
+      auto_explain prints it: from the first node line with its
+      "(cost=A..B rows=N width=W)" through the indented node and detail
+      lines and the "Execution Time:" line. False positives are rare:
+      the cost shape is specific.
+    links:
+      - https://www.postgresql.org/docs/current/using-explain.html
+      - https://www.postgresql.org/docs/current/auto-explain.html
+    block:
+      max_lines: 400
+      start: '\(cost=\d+\.\d+\.\.\d+\.\d+ rows=\d+ width=\d+\)'
+      end: '^\s*Execution Time: [\d.]+ ms'
+      continue: '^\s+\S'
+    examples:
+      match:
+        - "                             QUERY PLAN\n------------------------------------------------------------\n Seq Scan on orders  (cost=0.00..35.50 rows=2550 width=4) (actual time=0.010..0.200 rows=2550 loops=1)\n   Filter: (total > 100)\n Planning Time: 0.050 ms\n Execution Time: 0.300 ms\n(4 rows)\n"
+      no_match:
+        - 'INFO cost=12 rows=3 for the batch'
+
+  - id: postgres-slow-statement
+    name: PostgreSQL slow statement
+    group: sql
+    tags: [postgres, sql, performance]
+    level: medium
+    description: |
+      A statement PostgreSQL logged because it ran longer than
+      log_min_duration_statement: "duration: N ms  statement:" (or
+      execute, parse, bind). A server that logs every statement's
+      duration fills a log with these lines, and each is a finding.
+    links:
+      - https://www.postgresql.org/docs/current/runtime-config-logging.html
+      - https://raw.githubusercontent.com/postgres/postgres/master/src/backend/tcop/postgres.c
+    regex: 'duration: \d+(?:\.\d+)? ms +(?:statement|execute|parse|bind)\b'
+    examples:
+      match:
+        - '2026-03-01 10:00:00.123 UTC [4242] LOG:  duration: 1532.118 ms  statement: SELECT * FROM orders WHERE note LIKE ''%x%'''
+      no_match:
+        - '2026-03-01 10:00:00.123 UTC [4242] LOG:  duration: 0.118 ms'
+
+  - id: postgres-deadlock
+    name: PostgreSQL deadlock
+    group: sql
+    tags: [postgres, sql, locks]
+    level: high
+    description: |
+      A deadlock PostgreSQL detected and broke: the "ERROR: deadlock
+      detected" line, the DETAIL lines naming the processes and the
+      locks each waits for, and the HINT, CONTEXT and STATEMENT lines
+      that follow. False positives are rare.
+    links:
+      - https://raw.githubusercontent.com/postgres/postgres/master/src/backend/storage/lmgr/deadlock.c
+      - https://www.postgresql.org/docs/current/explicit-locking.html#LOCKING-DEADLOCKS
+    block:
+      max_lines: 50
+      start: 'ERROR:\s+deadlock detected'
+      continue: '\b(?:DETAIL|HINT|CONTEXT|STATEMENT):\s|^\s'
+    examples:
+      match:
+        - |
+          2026-03-01 10:00:00.123 UTC [4242] ERROR:  deadlock detected
+          2026-03-01 10:00:00.123 UTC [4242] DETAIL:  Process 4242 waits for ShareLock on transaction 900; blocked by process 4243.
+          	Process 4243 waits for ShareLock on transaction 901; blocked by process 4242.
+          2026-03-01 10:00:00.123 UTC [4242] HINT:  See server log for query details.
+          2026-03-01 10:00:00.123 UTC [4242] STATEMENT:  UPDATE accounts SET balance = 0 WHERE id = 7
+      no_match:
+        - '2026-03-01 10:00:00.123 UTC [4242] LOG:  checkpoint complete'
+
+  - id: postgres-lock-wait
+    name: PostgreSQL lock wait
+    group: sql
+    tags: [postgres, sql, locks]
+    level: medium
+    description: |
+      A PostgreSQL process still waiting for a lock after
+      deadlock_timeout, logged with log_lock_waits: "process N still
+      waiting for LOCK on OBJECT after T ms". False positives are rare.
+    links:
+      - https://raw.githubusercontent.com/postgres/postgres/master/src/backend/storage/lmgr/proc.c
+      - https://www.postgresql.org/docs/current/runtime-config-logging.html
+    regex: 'process \d+ still waiting for \w+ on .+ after \d+(?:\.\d+)? ms'
+    examples:
+      match:
+        - '2026-03-01 10:00:00.123 UTC [4242] LOG:  process 4242 still waiting for ShareLock on transaction 900 after 1000.123 ms'
+      no_match:
+        - '2026-03-01 10:00:00.123 UTC [4242] LOG:  process 4242 acquired ShareLock on transaction 900 after 1500.000 ms'
+
+  - id: mysql-slow-query
+    name: MySQL slow query
+    group: sql
+    tags: [mysql, sql, performance]
+    level: medium
+    description: |
+      An entry of MySQL's slow query log: the "# Time:" or "#
+      User@Host:" header, the "# Query_time:" line, "SET timestamp=N;"
+      and the statement, through its closing ";".
+    links:
+      - https://dev.mysql.com/doc/refman/8.4/en/slow-query-log.html
+      - https://raw.githubusercontent.com/mysql/mysql-server/trunk/sql/log.cc
+    block:
+      max_lines: 100
+      states:
+        - {state: start, regex: '^# (?:Time: \d|User@Host: )', next: head}
+        - {state: head, regex: '^# ', next: head}
+        - {state: head, regex: '^(?:use \S+|SET timestamp=\d+);$', next: statement}
+        - {state: statement, regex: '^(?:use \S+|SET timestamp=\d+);$', next: statement}
+        - {state: statement, regex: ';\s*$', end: true}
+        - {state: statement, regex: '^(?:$|[^#]|#[^ ])', next: statement}
+    examples:
+      match:
+        - |
+          # Time: 2026-03-01T10:00:00.123456Z
+          # User@Host: app[app] @ localhost []  Id:    42
+          # Query_time: 12.345678  Lock_time: 0.000123 Rows_sent: 1  Rows_examined: 1000000
+          SET timestamp=1772359200;
+          SELECT * FROM orders WHERE note LIKE '%x%';
+      no_match:
+        - '# Time: is the header of each slow query entry'
