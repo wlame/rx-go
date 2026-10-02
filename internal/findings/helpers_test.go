@@ -267,9 +267,13 @@ func newRecordedScheduler(maxScans int) (*scheduler, *recorder) {
 }
 
 // requireSameFindings fails unless two answers hold equal findings,
-// field by field (nil and empty told apart), for the same signatures.
+// field by field (nil and empty told apart), for the same signatures,
+// and the same masked ranges.
 func requireSameFindings(t testing.TB, got, want *Answer) {
 	t.Helper()
+	if !slices.Equal(got.MaskedRanges, want.MaskedRanges) {
+		t.Fatalf("masked ranges differ: got %v, want %v", got.MaskedRanges, want.MaskedRanges)
+	}
 	if !reflect.DeepEqual(got.BySignature, want.BySignature) {
 		for id, w := range want.BySignature {
 			if g := got.BySignature[id]; !reflect.DeepEqual(g, w) {

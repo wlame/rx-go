@@ -395,6 +395,53 @@ func TestTraceSignatures_SecretsAreMaskedEverywhere(t *testing.T) {
 	}
 }
 
+// The lines around findings next to a private key (--before=4,
+// --after=3) show its body lines as [masked, N bytes], in the JSON and
+// in the human output, while the pem-key signature is only loaded, not
+// selected: no byte of the key is printed.
+func TestTraceSignatures_KeyBodyIsMaskedAroundOtherFindings(t *testing.T) {
+	withTraceSignatures(t)
+	keyA, keyB := strings.Repeat("RkFLRUtFWUFB", 6)[:64], strings.Repeat("RkFLRUtFWUJC", 6)[:64]
+	text := "LINE 1 ERROR before\n-----BEGIN PRIVATE KEY-----\n" + keyA + "\n" + keyB +
+		"\n-----END PRIVATE KEY-----\nLINE 6 ERROR after\n"
+	path := writeText(t, t.TempDir(), "app.log", text)
+	args := []string{"--signatures=error-line", "--before=4", "--after=3", path}
+	jsonOut, err := runTraceCmd(t, append(args, "--json")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := runTraceCmd(t, append(args, "--no-color")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, out := range map[string]string{"json": jsonOut, "human": human} {
+		for _, secret := range []string{keyA, keyB, keyA[:16], keyB[:16]} {
+			if strings.Contains(out, secret) {
+				t.Errorf("%s output holds %q:\n%s", name, secret, out)
+			}
+		}
+	}
+	var resp rxtypes.TraceResponse
+	if err := json.Unmarshal([]byte(jsonOut), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Findings) != 2 {
+		t.Fatalf("findings %+v", resp.Findings)
+	}
+	first, last := resp.Findings[0], resp.Findings[1]
+	if want := []string{"----************", "[masked, 64 bytes]", "[masked, 64 bytes]"}; !slices.Equal(first.After, want) || !first.Masked {
+		t.Errorf("line 1: after %q masked %v, want %q", first.After, first.Masked, want)
+	}
+	if want := []string{"----************", "[masked, 64 bytes]", "[masked, 64 bytes]", "[masked, 25 bytes]"}; !slices.Equal(last.Before, want) || !last.Masked {
+		t.Errorf("line 6: before %q masked %v, want %q", last.Before, last.Masked, want)
+	}
+	for _, line := range []string{"  3- [masked, 64 bytes]", "  4- [masked, 64 bytes]", "  5- [masked, 25 bytes]"} {
+		if !strings.Contains(human, line) {
+			t.Errorf("human output lacks %q:\n%s", line, human)
+		}
+	}
+}
+
 // The human output of a block of lines 4-403: lines 4 to 23, then the
 // count of the rest and the samples command for them; -B 1 adds line 3
 // before it.

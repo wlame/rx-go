@@ -95,9 +95,9 @@ func newTracer() *tracer {
 type fileFindings struct {
 	file     TraceFile
 	findings []rxtypes.Finding
-	// redacts[i] says findings[i]'s signature redacts a block or a run:
-	// every line of it after the first is replaced, not masked.
-	redacts []bool
+	// ranges are the file's masked ranges (Answer.MaskedRanges): the
+	// bodies of redacting blocks and runs, whose lines no carrier shows.
+	ranges  [][2]int64
 	summary rxtypes.FileFindingSummary
 }
 
@@ -161,30 +161,20 @@ func (tr *tracer) scanFile(ctx context.Context, f TraceFile, cat *signatures.Cat
 	if err != nil {
 		return nil, err
 	}
-	ff := &fileFindings{file: f, summary: rxtypes.FileFindingSummary{
+	ff := &fileFindings{file: f, ranges: answer.MaskedRanges, summary: rxtypes.FileFindingSummary{
 		State: string(answer.State), Signatures: make(map[string]rxtypes.FindingCount, len(sel)),
 	}}
-	type entry struct {
-		finding rxtypes.Finding
-		redacts bool
-	}
-	var entries []entry
 	for _, sig := range sel {
 		res := answer.BySignature[sig.ID]
 		if res == nil {
 			res = &sigscan.SignatureResult{}
 		}
 		ff.summary.Signatures[sig.ID] = rxtypes.FindingCount{Count: res.Count, Stored: len(res.Findings)}
-		redacts := sig.Redact && (sig.Kind == signatures.KindBlock || sig.Kind == signatures.KindRun)
 		for _, found := range res.Findings {
-			entries = append(entries, entry{finding: wireFinding(sig.ID, f.ID, found), redacts: redacts})
+			ff.findings = append(ff.findings, wireFinding(sig.ID, f.ID, found))
 		}
 	}
-	slices.SortStableFunc(entries, func(a, b entry) int { return rxtypes.CompareFindings(&a.finding, &b.finding) })
-	for _, e := range entries {
-		ff.findings = append(ff.findings, e.finding)
-		ff.redacts = append(ff.redacts, e.redacts)
-	}
+	slices.SortStableFunc(ff.findings, func(a, b rxtypes.Finding) int { return rxtypes.CompareFindings(&a, &b) })
 	if err := toInstants(ff.findings, f.File, opts.LogZone); err != nil {
 		return nil, err
 	}
@@ -340,15 +330,10 @@ func (t *traceText) fill(ctx context.Context, ff *fileFindings) error {
 		}
 		if cached.number != line.Number {
 			cached.number = line.Number
-			cached.text, cached.masked = t.maskedLine(line)
+			cached.text, cached.masked = t.maskedLine(line, ff.ranges)
 		}
 		f, ft := &ff.findings[i], &texts[i]
 		text, masked := cached.text, cached.masked
-		if ff.redacts[i] && line.Number > f.StartLine && line.Number <= f.EndLine {
-			// SECURITY: a redacting block or run hides every line after
-			// its first; only the length of each is shown.
-			text, masked = fmt.Sprintf("[masked, %d bytes]", line.Length), true
-		}
 		switch {
 		case line.Number < f.StartLine:
 			ft.before = append(ft.before, text)
@@ -423,7 +408,14 @@ func (t *traceText) truncateFrom(findings []rxtypes.Finding, from int) {
 // by every redacting signature (sigscan.LineMasker), valid UTF-8, cut
 // to the line text limit on a character boundary; line 1 without its
 // byte-order mark. masked says a mask is in it.
-func (t *traceText) maskedLine(line samples.SpanLine) (string, bool) {
+//
+// SECURITY: a line in one of ranges, the body of a redacting block or
+// run (a PEM key's base64 lines), shows only its length: in the lines
+// of any finding and in the lines before and after one alike.
+func (t *traceText) maskedLine(line samples.SpanLine, ranges [][2]int64) (string, bool) {
+	if sigscan.InMaskedRanges(ranges, line.Number) {
+		return sigscan.MaskedLineText(line.Length), true
+	}
 	text := line.Text
 	if line.Number == 1 {
 		text = bytes.TrimPrefix(text, byteOrderMark)

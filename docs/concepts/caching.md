@@ -54,6 +54,7 @@ a missing cache directory gracefully return "no cache".
 ├── findings/                               — findings of signature scans
 │   └── <basename>_<path_hash16>/
 │       ├── meta.json
+│       ├── meta.ranges.json
 │       └── <signature-id>.json
 └── frontend/                               — rx-viewer SPA (checked daily)
     ├── index.html
@@ -180,7 +181,13 @@ It holds:
   `source_device`, `source_ctime_ns`, `source_fingerprint`), the cache
   format `version` (1) and, per signature, its `key`, its `count` (the
   findings in the file, past the cap too), how many are `stored`, and
-  when it was scanned (`scanned_at`, UTC);
+  when it was scanned (`scanned_at`, UTC); and `masked_ranges`, the
+  `key` and `count` of the file's masked ranges;
+- `meta.ranges.json` — the file's masked ranges: its `key` and the
+  `ranges`, `[first, last]` line numbers of the body lines of every
+  redacting block and run (see [Signatures](signatures.md#how-a-scan-reads-a-file)),
+  sorted, the same for every chunking and storage. Every scan writes
+  it, since every scan walks every loaded redacting block and run;
 - `<signature-id>.json` — one entry: its `key`, its `findings` (lines,
   text offsets, `time_ms`, the excerpt with every secret masked, the
   value span, `masked`) and, for a `density` measure, its bucket
@@ -189,7 +196,12 @@ It holds:
 
 A signature checked with no findings is an entry with `count: 0`. No
 unmasked value of a redacting signature is ever written: every excerpt
-is masked by every loaded redacting signature before it is stored.
+is masked by every loaded redacting signature before it is stored, and
+an excerpt on a body line of a redacting block or run is stored as
+`[masked, N bytes]`. The text of a finding, read from the file when an
+answer is made, shows every line of a masked range as
+`[masked, N bytes]`, so cached entries are used only together with a
+current `meta.ranges.json`.
 
 **Current entries.** An entry is current when `meta.json` still
 describes the file (the identity check below) and the entry's key is
@@ -207,6 +219,14 @@ it.
 | a signature's name, description, group, tags, level, links, metadata, examples, `default` | nothing: read from the catalogue when the answer is made |
 | `RX_WORKERS`, the chunk sizes | nothing: they never change a finding |
 | the cache format version | the directory counts as absent |
+
+The masked ranges have a key of their own: the engine's version,
+`RX_SIGNATURES_LINE_BYTES` (the line view decides whether a line opens
+or continues a block) and the redacting signatures. A file whose
+`meta.ranges.json` is missing, unreadable, of another key or count
+than `meta.json` records, or not sorted as a scan writes it, has no
+current entry: its signatures are scanned again, and `meta.ranges.json`
+is written anew.
 
 A stale entry is overwritten the next time its signature is scanned;
 nothing prunes the directories of deleted files, as for `indexes/`. The
@@ -384,7 +404,8 @@ A findings cache directory is written in a fixed order, under an
 advisory lock (`flock` on its `.lock` file) that keeps other processes
 from writing it at the same time:
 
-1. each new `<signature-id>.json`, by temporary file and rename;
+1. each new `<signature-id>.json`, then `meta.ranges.json`, by
+   temporary file and rename;
 2. `meta.json` read again: an entry another process added since this
    scan read the cache is kept, when `meta.json` still describes the same
    file;
@@ -395,10 +416,11 @@ from writing it at the same time:
 Every operation on the cache goes through the per-file directory opened
 as a root that cannot be left, and nothing below `findings/` is
 followed as a symbolic link. A per-file directory that is a link (to
-anywhere, inside the cache or out), or a `meta.json`, an entry file or
-a `.lock` that is a link or a special file, is never read, written or
+anywhere, inside the cache or out), or a `meta.json`, a
+`meta.ranges.json`, an entry file or a `.lock` that is a link or a
+special file, is never read, written or
 deleted through: that file's findings are scanned and not cached, an
-entry that is a link counts as missing (a later write replaces the link
+entry or `meta.ranges.json` that is a link counts as missing (a later write replaces the link
 with a file of the cache), and the first such case of a process is
 logged at Warn level as `findings_cache_unsafe_entry` with its path. A
 removal removes a link itself, never what it points at. Another local

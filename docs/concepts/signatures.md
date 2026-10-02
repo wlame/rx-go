@@ -657,11 +657,17 @@ rx --signatures=all,-pii -e timeout app.log          # with a pattern
 - The answer lists every finding with its lines read from the file at
   that moment, masked as the excerpt is (see [How a scan reads a
   file](#how-a-scan-reads-a-file)): every value a loaded redacting
-  signature matches on a line, and every line after the first of a
-  redacting block or run, which shows as `[masked, N bytes]`. Each line
+  signature matches on a line, and every body line of a loaded
+  redacting block or run, which shows as `[masked, N bytes]` in the
+  lines of any finding and in the lines before and after one (`-B`,
+  `-A`, `--context`) alike. Each line
   is cut at `RX_MAX_LINE_TEXT_BYTES`, and the text of all findings
   together stops at `RX_FINDINGS_TEXT_MAX_BYTES`; the findings past it
   keep their place and say `lines_truncated`.
+- The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
+  masked: they are the output of your own regex, as `rx trace` without
+  `--signatures` prints it, not text of a finding. A pattern that
+  matches a secret prints it.
 - `--json` adds `signatures`, `findings` and `finding_summary` to the
   trace answer; a trace without `--signatures` answers as before.
 

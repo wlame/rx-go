@@ -268,11 +268,19 @@ a compressed stream is read from its start up to its last finding.
   `rx samples` command.
 - Every value a redacting signature matches on a line is masked, by
   every loaded redacting signature, in every line as in the excerpt.
-  For a `block` or `run` finding of a redacting signature, every line
-  after the first is replaced by `[masked, N bytes]` (N its length).
+  Every body line of a redacting `block` or `run` (every line a block
+  joined after its anchor, every line of a run after its first), of
+  any loaded redacting signature, selected or not, is replaced by
+  `[masked, N bytes]` (N its length) in `lines`, `before` and `after`
+  of every finding, and an excerpt on such a line is
+  `[masked, N bytes]` too: the base64 lines of a private key never
+  show around an error line next to it.
   A line is masked before it is cut, so a secret the cut falls inside
   is masked as a whole. The file itself stays readable through
   `rx samples`.
+- The matches of `-e PATTERN` (`matches[].line_text`,
+  `context_lines`) are not masked: they are your own regex's output,
+  not text of a finding.
 
 ## Examples
 

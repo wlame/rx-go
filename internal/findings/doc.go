@@ -13,7 +13,8 @@
 // after its base name and a hash of its absolute path:
 //
 //	<dir>/<safe_basename>_<sha256(abs path)[:16]>/
-//	    meta.json            the commit point: the file's identity and one summary per signature
+//	    meta.json            the commit point: the file's identity, one summary per signature, the ranges' key
+//	    meta.ranges.json     the file's masked ranges: the body lines of every redacting block and run
 //	    <signature-id>.json  one entry: its key, its findings and its density series
 //	    .lock                taken (flock) while a process writes the directory
 //
@@ -27,10 +28,15 @@
 // settings that change answers and the redacting signatures; name,
 // description, group and the other descriptive fields are not in it.
 //
+// The masked ranges have a key of their own (the engine version, the
+// line view and the redacting signatures). Entries are used only
+// together with current ranges, since the text of a cached finding is
+// masked by them when it is read: without them every entry is missing.
+//
 // # Writing
 //
 // A scan writes each new entry first (a temporary file, then a rename),
-// then meta.json (the same way). A reader trusts only what meta.json
+// then the masked ranges, then meta.json (the same way). A reader trusts only what meta.json
 // names, and checks each entry file's key against it, so a crash
 // between the two steps leaves the old answer readable; the entry file
 // meta.json does not name is removed at the next write. Before it

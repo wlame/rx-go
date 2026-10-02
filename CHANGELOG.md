@@ -142,11 +142,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The findings cache: the findings of a signature scan are kept in
   `<cache>/findings/`, beside `indexes/` and `trace_cache/`, one
   directory per file (`<basename>_<path hash>`) with `meta.json` (the
-  file's identity, as the line index records it, and per signature its
-  key, count, stored findings and scan time) and one
-  `<signature-id>.json` per signature (its findings with their times,
-  masked excerpts, value spans and `masked` flags, and a density
-  measure's bucket series). A later scan of the file answers every
+  file's identity, as the line index records it, per signature its
+  key, count, stored findings and scan time, and the key and count of
+  the masked ranges), `meta.ranges.json` (the file's masked ranges: the
+  body lines of every redacting block and run, keyed by the engine
+  version, `RX_SIGNATURES_LINE_BYTES` and the redacting signatures) and
+  one `<signature-id>.json` per signature (its findings with their
+  times, masked excerpts, value spans and `masked` flags, and a density
+  measure's bucket series). Cached entries are used only with a current
+  `meta.ranges.json`; without one the file's signatures are scanned
+  again. A later scan of the file answers every
   signature with a current entry from the cache, equal field by field,
   and scans only the others, in one pass. An entry is stale when the
   file changes (size, mtime, inode, device, ctime or fingerprint), when
@@ -215,9 +220,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file, each cut at `RX_MAX_LINE_TEXT_BYTES` and made valid UTF-8, and
   masked as excerpts are: every value a loaded redacting signature
   matches on the line, before the line is cut, so a secret the cut falls
-  inside is masked whole; every line after the first of a `block` or
-  `run` finding of a redacting signature becomes `[masked, N bytes]`.
+  inside is masked whole; every body line of a loaded redacting `block`
+  or `run`, selected or not, becomes `[masked, N bytes]` in the lines of
+  every finding and in the lines before and after one, so a private
+  key's base64 lines never show around an error line next to it.
   `masked` is true when anything in the excerpt or the lines was masked.
+  The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
+  masked: they are the pattern's own output.
 - `RX_FINDINGS_TEXT_MAX_BYTES` (default 67108864, 1 MiB to 16 GiB): the
   most bytes of text the findings of one answer hold together, in their
   order, each line counted with one byte more for its line break; the

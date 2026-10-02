@@ -81,6 +81,15 @@ type Answer struct {
 	// ScannedAt is when each checked signature's findings were scanned,
 	// in UTC to the second.
 	ScannedAt map[string]time.Time
+	// MaskedRanges are the file's masked ranges (sigscan.Result's): the
+	// bodies of every redacting block and run of the catalogue, as
+	// [first, last] lines, sorted and disjoint. Every carrier of the
+	// text of a finding (its lines, the lines before and after it) shows
+	// a line in one of them as sigscan.MaskedLineText of its length. A
+	// fresh scan gives them; a cached answer reads them from the cache,
+	// and an answer holds cached findings only together with their
+	// ranges. Nil when the answer holds no findings.
+	MaskedRanges [][2]int64
 }
 
 // FileSummary is how much of the default set a file has cached, for

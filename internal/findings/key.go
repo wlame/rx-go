@@ -39,10 +39,16 @@ func Key(sig *signatures.Signature, cat *signatures.Catalogue, opts ScanOptions)
 }
 
 // keyScope is what every key of one call shares: the settings and the
-// redacting set, as canonical bytes, and the measure versions.
+// redacting set, as canonical bytes, and the measure versions; and the
+// key of the masked ranges file.
 type keyScope struct {
 	// shared is the canonical JSON of keySettings.
 	shared []byte
+	// rangesKey is the key of the file's masked ranges: the hex sha256 of
+	// the engine version, the line view and the redacting set, which
+	// decide where the bodies of redacting blocks and runs lie (the
+	// view decides whether a line opens or continues a block).
+	rangesKey string
 	// measureVersion is sigscan.MeasureVersion (tests give another).
 	measureVersion func(name string) int
 }
@@ -84,7 +90,21 @@ func scopeFor(cat *signatures.Catalogue, opts ScanOptions, engine int, measureVe
 	if settings.Cap <= 0 {
 		settings.Cap = sigscan.DefaultCap
 	}
-	return keyScope{shared: canonicalJSON(settings), measureVersion: measureVersion}
+	ranges := rangesSettings{Format: rangesKeyFormat, Engine: engine, LineBytes: settings.LineBytes, Redactors: settings.Redactors}
+	sum := sha256.Sum256(canonicalJSON(ranges))
+	return keyScope{shared: canonicalJSON(settings), rangesKey: hex.EncodeToString(sum[:]), measureVersion: measureVersion}
+}
+
+// rangesKeyFormat names the layout of the bytes a ranges key hashes.
+const rangesKeyFormat = "rx-findings-ranges/1"
+
+// rangesSettings is what the key of a file's masked ranges hashes.
+type rangesSettings struct {
+	Format    string `json:"format"`
+	Engine    int    `json:"engine"`
+	LineBytes int    `json:"line_bytes"`
+	// Redactors is the hex sha256 of the redacting set (redactorsHash).
+	Redactors string `json:"redactors"`
 }
 
 // key is the hex sha256 of the shared bytes and sig's matching part,

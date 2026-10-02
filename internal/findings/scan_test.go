@@ -633,13 +633,13 @@ func TestScan_CacheLayout(t *testing.T) {
 		t.Fatalf("cache directories %v", dirs)
 	}
 	dir := filepath.Join(opts.Dir, dirs[0])
-	if names := entryFiles(t, dir); !slices.Equal(names, []string{".lock", "err-line.json", "line-burst.json", "meta.json"}) {
+	if names := entryFiles(t, dir); !slices.Equal(names, []string{".lock", "err-line.json", "line-burst.json", "meta.json", "meta.ranges.json"}) {
 		t.Fatalf("files %v", names)
 	}
 	var meta map[string]any
 	readJSONFile(t, filepath.Join(dir, "meta.json"), &meta)
 	for _, field := range []string{"version", "source_path", "source_size_bytes", "source_mtime_ns", "source_inode",
-		"source_device", "source_ctime_ns", "source_fingerprint", "signatures"} {
+		"source_device", "source_ctime_ns", "source_fingerprint", "signatures", "masked_ranges"} {
 		if _, ok := meta[field]; !ok {
 			t.Errorf("meta.json lacks %s: %v", field, meta)
 		}

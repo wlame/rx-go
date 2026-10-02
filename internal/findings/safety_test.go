@@ -178,7 +178,7 @@ func TestScan_FileLinksInTheCacheDirectoryAreNotFollowed(t *testing.T) {
 		}},
 	}
 	for _, tc := range cases {
-		for _, name := range []string{"err-line.json", metaName} {
+		for _, name := range []string{"err-line.json", metaName, rangesName} {
 			t.Run(name+" "+tc.name, func(t *testing.T) {
 				captureWarnings(t)
 				file := classify(t, writeLog(t, t.TempDir(), "app.log", text))
@@ -287,7 +287,7 @@ func TestScan_IDNoLoaderGivesIsAnsweredNotCached(t *testing.T) {
 		t.Fatalf("answer: checked %v", got.Checked)
 	}
 	dir := cacheDir(opts.Dir, file.Path())
-	if names := entryFiles(t, dir); !slices.Equal(names, []string{lockName, "err-line.json", metaName}) {
+	if names := entryFiles(t, dir); !slices.Equal(names, []string{lockName, "err-line.json", metaName, rangesName}) {
 		t.Errorf("files %v", names)
 	}
 	if names := entryFiles(t, opts.Dir); len(names) != 1 {
@@ -321,12 +321,12 @@ func TestRead_ReadsOnlyTheCacheFilesItNeeds(t *testing.T) {
 	if err != nil || !slices.Equal(read.Checked, []string{"py-trace", "err-line"}) {
 		t.Fatalf("read: %+v (%v)", read, err)
 	}
-	if want := []string{metaName, "py-trace.json", "err-line.json"}; !slices.Equal(opened, want) {
+	if want := []string{metaName, rangesName, "py-trace.json", "err-line.json"}; !slices.Equal(opened, want) {
 		t.Errorf("opened %v, want %v", opened, want)
 	}
 	dir := cacheDir(opts.Dir, file.Path())
 	var want int64
-	for _, name := range []string{metaName, "py-trace.json", "err-line.json"} {
+	for _, name := range []string{metaName, rangesName, "py-trace.json", "err-line.json"} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {
 			t.Fatal(err)
@@ -334,7 +334,7 @@ func TestRead_ReadsOnlyTheCacheFilesItNeeds(t *testing.T) {
 		want += info.Size()
 	}
 	if cacheBytes != want {
-		t.Errorf("read %d bytes of the cache, want %d (the three files once)", cacheBytes, want)
+		t.Errorf("read %d bytes of the cache, want %d (the four files once)", cacheBytes, want)
 	}
 	const fingerprintBytes = 2 * 64 << 10
 	if got := rec.sourceBytes.Load(); got != fingerprintBytes {
@@ -406,7 +406,7 @@ func TestRead_ConcurrentRenameBetweenLstatAndOpenIsNoMiss(t *testing.T) {
 		t.Fatalf("read during a rewrite: checked %v missing %v (%v)", read.Checked, read.Missing, err)
 	}
 	requireSameFindings(t, read, scanned)
-	if want := []string{metaName, "err-line.json", "warn-line.json"}; !reflect.DeepEqual(sortedKeys(renamed), sortedStrings(want)) {
+	if want := []string{metaName, rangesName, "err-line.json", "warn-line.json"}; !reflect.DeepEqual(sortedKeys(renamed), sortedStrings(want)) {
 		t.Errorf("renamed %v, want each of %v once", sortedKeys(renamed), want)
 	}
 	if strings.Contains(logs.String(), "findings_cache_unsafe_entry") {

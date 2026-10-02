@@ -37,6 +37,9 @@ const (
 	// "meta", whose plain name would be meta.json. Ids never hold a
 	// dot, so no other id gives this name.
 	metaEntryName = "meta.signature.json"
+	// rangesName is the file of the file's masked ranges, one per
+	// cache directory. It holds dots, so no id gives it.
+	rangesName = "meta.ranges.json"
 )
 
 // The bounds of what a read of the cache takes into memory. meta.json
@@ -49,6 +52,9 @@ const (
 	maxMetaBytes       = 16 << 20
 	maxFindingBytes    = 2 << 10
 	maxEntryExtraBytes = 4 << 20
+	// maxRangeBytes is one masked range in JSON: two numbers of at most
+	// 19 digits, brackets and commas.
+	maxRangeBytes = 48
 )
 
 // The directory lock. A writer polls a held lock every lockPoll and
@@ -272,9 +278,9 @@ func openCacheFile(root *os.Root, name string) (io.ReadCloser, error) {
 }
 
 // metaFile is meta.json: the identity of the file the entries describe
-// (named as the line index names these fields) and one summary per
-// signature. It is the commit point: an entry it does not name is not
-// part of the cache.
+// (named as the line index names these fields), one summary per
+// signature, and the summary of the masked ranges file. It is the
+// commit point: an entry it does not name is not part of the cache.
 type metaFile struct {
 	Version           int                  `json:"version"`
 	SourcePath        string               `json:"source_path"`
@@ -285,6 +291,45 @@ type metaFile struct {
 	SourceCtimeNs     *int64               `json:"source_ctime_ns"`
 	SourceFingerprint *string              `json:"source_fingerprint"`
 	Signatures        map[string]metaEntry `json:"signatures"`
+	MaskedRanges      rangesMeta           `json:"masked_ranges"`
+}
+
+// rangesMeta is meta.json's summary of the masked ranges file: its key
+// (keyScope.rangesKey) and how many ranges it holds. A meta.json
+// without it (an empty key) has no current entry.
+type rangesMeta struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
+// rangesFile is meta.ranges.json: the file's masked ranges, as a scan
+// with the key's redacting set and line view found them.
+type rangesFile struct {
+	Key    string     `json:"key"`
+	Ranges [][2]int64 `json:"ranges"`
+}
+
+// maxRangesBytes bounds the masked ranges file of a catalogue with
+// redactors redacting signatures: each keeps at most
+// sigscan.MaxBodiesPerSignature bodies and one range past them, and
+// joined ranges are never more than the bodies.
+func maxRangesBytes(redactors int) int64 {
+	return int64(redactors+1)*(sigscan.MaxBodiesPerSignature+1)*maxRangeBytes + maxEntryExtraBytes
+}
+
+// validRanges reports whether ranges are as a scan gives them: lines
+// from 1, each range's first line at most its last, sorted, with a line
+// between one range and the next. A file that holds anything else is
+// not read.
+func validRanges(ranges [][2]int64) bool {
+	prev := int64(-1)
+	for _, r := range ranges {
+		if r[0] < 1 || r[0] > r[1] || r[0] <= prev+1 {
+			return false
+		}
+		prev = r[1]
+	}
+	return true
 }
 
 // metaEntry is meta.json's summary of one signature's entry.
@@ -575,7 +620,7 @@ func removeUnnamed(root *os.Root, meta *metaFile, lockHeld bool) {
 	if err != nil {
 		return
 	}
-	named := map[string]bool{metaName: true, lockName: true}
+	named := map[string]bool{metaName: true, lockName: true, rangesName: true}
 	for id := range meta.Signatures {
 		if name, ok := entryName(id); ok {
 			named[name] = true
