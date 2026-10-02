@@ -388,6 +388,13 @@ Paste the output. Do not summarize it.
   keep it that way. A line index loaded for a pinned file goes through
   `index.LoadForPinned` (or `DescribesPinned`), which drops an index of
   another inode.
+- **A file rx writes for a user goes through its directory's root.**
+  `compressfile` opens the output's directory with `paths.OpenDir`
+  (reached from the search root without passing a link) and creates,
+  renames, links and removes only through that `*os.Root`: a temporary
+  file made with `O_EXCL`, then a rename (`--force`) or a hard link
+  (without it) to the output name. Do not add a write that opens the
+  output by its path.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading

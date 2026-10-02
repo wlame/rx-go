@@ -258,7 +258,11 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 		return entry, ExitGenericError
 	}
 
-	if _, existsErr := os.Stat(outputPath); existsErr == nil && !p.force {
+	// Lstat, not Stat: a symbolic link holds the name even when it
+	// leads nowhere, and only --force replaces it. Compress applies the
+	// same rule again at the moment it puts the output in place, so a
+	// file created after this check is not overwritten either.
+	if _, existsErr := os.Lstat(outputPath); existsErr == nil && !p.force {
 		entry["error"] = fmt.Sprintf(
 			"output file already exists: %s (use --force to overwrite)", outputPath)
 		return entry, ExitGenericError
@@ -274,6 +278,7 @@ func compressOneFile(inputPath string, p compressParams, frameBytes int64, worke
 		Level:            p.level,
 		Workers:          workers,
 		ReencodeSeekable: p.force,
+		Overwrite:        p.force,
 	})
 	if err != nil {
 		entry["error"] = compressErrorMessage(err)
@@ -321,6 +326,7 @@ var compressRefusalHints = []struct {
 }{
 	{compressfile.ErrAlreadySeekable, " (use --force to re-encode it)"},
 	{compressfile.ErrOutputIsInput, " (use --output to name another file)"},
+	{compressfile.ErrOutputExists, " (use --force to overwrite)"},
 }
 
 // compressErrorMessage words a compressfile error for the CLI, with the
