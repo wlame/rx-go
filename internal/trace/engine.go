@@ -7,7 +7,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -630,7 +629,9 @@ type contextWithFile struct {
 // parity). When recursive is false (CLI `--no-recursive`), only the
 // top-level directory entries are scanned.
 //
-// Binary files and unreadable files go into `skipped`. Compressed
+// A directory is walked by sandbox.WalkDir, which follows a symlink
+// only when naming its target would be allowed. A symlink it refuses
+// goes into `skipped`, as do binary and unreadable files. Compressed
 // archives (gzip/xz/bz2/zst) are treated as text because ripgrep can
 // read them via decompressors.
 func expandPaths(paths []string, recursive bool) (files, scannedDirs, skipped []string) {
@@ -640,85 +641,38 @@ func expandPaths(paths []string, recursive bool) (files, scannedDirs, skipped []
 			skipped = append(skipped, p)
 			continue
 		}
-		if fi.IsDir() {
-			scannedDirs = append(scannedDirs, p)
-			if recursive {
-				// Walk the subtree. Directory-stat errors terminate the
-				// walk for THAT subtree but don't abort the whole scan.
-				walkErr := walkDirForTextFiles(p, &files, &skipped)
-				if walkErr != nil {
-					// Falling through to the non-recursive path would mask
-					// the error. Append to skipped so the caller sees it.
-					skipped = append(skipped, p)
-				}
-				continue
-			}
-			// Non-recursive: top-level entries only.
-			entries, rerr := os.ReadDir(p)
-			if rerr != nil {
+		if !fi.IsDir() {
+			if !isTextFile(p) {
 				skipped = append(skipped, p)
 				continue
 			}
-			for _, entry := range entries {
-				if entry.IsDir() || sandbox.SkipEntry(entry.Name()) {
-					continue
-				}
-				full := p
-				if !strings.HasSuffix(full, "/") {
-					full += "/"
-				}
-				full += entry.Name()
-				if !isTextFile(full) {
-					skipped = append(skipped, full)
-					continue
-				}
-				files = append(files, full)
-			}
+			files = append(files, p)
 			continue
 		}
-		if !isTextFile(p) {
+
+		scannedDirs = append(scannedDirs, p)
+		entries, walkErr := sandbox.WalkDir(p, recursive)
+		if walkErr != nil {
+			// The directory itself cannot be listed: report it rather
+			// than answer as if it were empty.
 			skipped = append(skipped, p)
 			continue
 		}
-		files = append(files, p)
+		for _, entry := range entries {
+			switch {
+			case entry.ReadErr != nil:
+				// A subdirectory that cannot be listed (permission
+				// denied) is passed over; the rest of the tree is
+				// still searched.
+				continue
+			case entry.Refused != "", !isTextFile(entry.Path):
+				skipped = append(skipped, entry.Path)
+			default:
+				files = append(files, entry.Path)
+			}
+		}
 	}
 	return files, scannedDirs, skipped
-}
-
-// walkDirForTextFiles walks dir recursively, appending text files to
-// *files and non-text / unreadable files to *skipped. We don't use
-// filepath.Walk because its func-callback style makes it awkward to
-// thread two output slices; a simple explicit recursion is clearer.
-func walkDirForTextFiles(dir string, files, skipped *[]string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		// Hidden entries are skipped before the recursion, so a hidden
-		// directory is not descended into either.
-		if sandbox.SkipEntry(entry.Name()) {
-			continue
-		}
-		full := dir
-		if !strings.HasSuffix(full, "/") {
-			full += "/"
-		}
-		full += entry.Name()
-		if entry.IsDir() {
-			// Subdirectory: recurse. Don't propagate the error — a
-			// permission-denied subdir should skip, not fail the outer
-			// scan.
-			_ = walkDirForTextFiles(full, files, skipped)
-			continue
-		}
-		if !isTextFile(full) {
-			*skipped = append(*skipped, full)
-			continue
-		}
-		*files = append(*files, full)
-	}
-	return nil
 }
 
 // isTextFile returns true when the first 8 KB of the file contains no

@@ -359,6 +359,12 @@ Paste the output. Do not summarize it.
   in the directory walkers: hiding an entry from a listing does nothing
   about a caller who knows the path. Components of a `--search-root`
   itself are exempt. The error message is part of the contract.
+- **A directory walk reads only what naming the path would allow.**
+  Every walk of a user's directory goes through `paths.WalkDir` (or
+  `paths.ResolveEntry` for a one-level listing such as `/v1/tree`): a
+  symlink is resolved and its target checked like a named path, and a
+  refused one is reported with a reason, never read. Do not add a walk
+  that calls `os.ReadDir` and opens what it finds.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
