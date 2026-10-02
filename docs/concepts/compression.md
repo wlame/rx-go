@@ -82,6 +82,21 @@ when the header records one, is the table's decompressed size for it.
 Checking that reads the table and one frame header (at most 18 bytes)
 per frame, never a frame's data.
 
+rx reads the seek-table footer (its last 9 bytes) in two layouts:
+
+| Layout | Fields, in order (bytes) | Checksum flag |
+|---|---|---|
+| zstd seekable format specification | frame count (4), descriptor (1), magic `0x8F92EAB1` (4) | descriptor bit 7 |
+| legacy rx (rx-go up to v0.3.0, rx-python) | magic `0x8F92EAB1` (4), frame count (4), flags (1) | flags bit 0 |
+
+All fields are little-endian. When the specification's magic is in
+place, rx reads that layout first, so a file written by another tool
+that follows the specification (t2sz, the zstd `contrib` library) is
+seekable for rx. A footer whose checksum flag is set has 12-byte
+entries (two sizes and a checksum); rx reads past the checksums and
+does not check them. A specification footer with a reserved
+descriptor bit (6 to 2) set is not trusted.
+
 A table that does not add up is not used. Two seekable files joined
 with `cat` end with the second file's table alone, and a damaged table
 places the frames wrongly; either way the file is still a valid zstd

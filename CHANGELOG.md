@@ -98,6 +98,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A seekable zstd file written by another tool to the zstd seekable
+  format specification (facebook/zstd, `contrib/seekable_format`) is
+  now seekable for rx. Its seek-table footer is frame count,
+  descriptor, magic, and rx read only its own order (magic, frame
+  count, flags), so such a file was read as one plain zstd stream:
+  `file_chunks` 1, no frame index, every lookup decompressing from the
+  start. rx now reads both footer layouts and prefers the
+  specification's; a footer whose descriptor sets the checksum flag
+  (bit 7, not bit 0 as rx tested) has 12-byte entries, read past
+  without checking the checksums, and one that sets a reserved bit is
+  not trusted. A table in either layout is still trusted only when it
+  describes the file, and rx's own files keep working with their
+  stored indexes.
+
 - A `.zst` file is read as seekable only when its seek table describes
   it: the table's skippable frame runs to the end of the file, the
   frames it lists end where it starts, and each starts with a zstd
