@@ -155,14 +155,15 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 	// that cannot be stated.
 	src, err := paths.Pin(validated)
 	if err != nil {
-		return nil, ErrForbidden(err.Error())
+		return nil, ErrFileAccess(req.Path, err)
 	}
 	if src.Info().IsDir() {
 		return nil, ErrBadRequest(fmt.Sprintf("Path is a directory, not a file: %s", req.Path))
 	}
 	kind, err := filekind.OfPinned(src)
 	if err != nil {
-		return nil, ErrForbidden(err.Error())
+		// A file the server may not read is a 403 on every route.
+		return nil, ErrFileAccess(req.Path, err)
 	}
 	if !kind.IsText() {
 		return nil, ErrBadRequest(fmt.Sprintf("%s: %s", kind.NotText, req.Path))

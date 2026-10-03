@@ -188,7 +188,7 @@ client-side and iterate accordingly.
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
 | `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory; the file is not text |
-| `403 Forbidden` | Path outside `--search-root` |
+| `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |
 | `500 Internal Server Error` | Resolver failure; logged with stack |

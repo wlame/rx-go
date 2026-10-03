@@ -165,8 +165,8 @@ in-process CLI) and the `RX_ANALYZE_WINDOW_LINES` env var. See
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued. Poll `GET /v1/tasks/{task_id}` |
-| `400 Bad Request` | Below size threshold; `analyze` conflicts with cache reuse |
-| `403 Forbidden` | Path outside `--search-root` |
+| `400 Bad Request` | Below size threshold; `analyze` conflicts with cache reuse; a directory; a file that is not text (`not a text file: …: <path>`) |
+| `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`) |
 | `404 Not Found` | File doesn't exist |
 | `409 Conflict` | A task for the same path is already running — an index or a compress task |
 

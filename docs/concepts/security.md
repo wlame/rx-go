@@ -308,9 +308,20 @@ each directory through a handle checked the same way, so a directory
 swapped for a link while the walk runs cannot lend it the files of
 another directory.
 
+What a file is — its format, whether a seek table describes it, and
+whether its text is text — is decided from the same pinned handle
+(see [Compression](compression.md#how-rx-decides-what-a-file-is)), by
+reading its first bytes, its seek table and at most the first 8 KiB of
+its text; never from its name and never by opening the path again. A
+file that is not text is refused before any index is built for it.
+
 A refused file is reported, never read: a trace lists it in
-`skipped_files`, and `samples` fails with `file changed after it was
-checked`. The path you named is what every answer reports, also when
+`skipped_files` with the reason in `skip_reasons`, and `samples` fails
+with `file changed after it was checked`. A file the process may not
+read is refused alike everywhere: `permission denied: <path>` with
+exit code 4 from the CLI, `403 Permission denied: <path>` over HTTP,
+and in a directory search it is skipped with the reason
+`permission denied`. The path you named is what every answer reports, also when
 it is a link.
 
 The identity itself is taken by walking down from the search root one
