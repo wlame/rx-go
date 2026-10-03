@@ -335,6 +335,13 @@ chunk after one of them has an offset but no line number yet.
 - With `--no-index`, `rx` neither reads nor writes an index and counts
   the lines from the start of the file up to the last such match. The
   answer is the one the index gives; only the time to reach it differs.
+- From the trace cache, `rx` reads the file again from the nearest
+  checkpoint, or from the first byte, and numbers every line it returns.
+
+So an index, the trace cache and `--no-index` never change an answer,
+with one exception: a line number that is `-1` without them may be the
+true line number with them. Every other field is equal. `-1` means "not
+computed", and a number `rx` fills in is always the right one.
 
 A seekable `.zst` is scanned frame by frame, and a capped scan can leave
 the matches of a frame unnumbered when an earlier frame was not
