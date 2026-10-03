@@ -274,8 +274,10 @@ numbers unknown, and whole across the edges of chunks and frames: a
 scan, the trace cache and `--no-index` give the same windows. The
 context section of the human output prints only lines with a known
 number. Without a context
-flag every window is just the matched line. Over HTTP there is no context window; see
-[`GET /v1/trace`](../api/endpoints/trace.md).
+flag every window is just the matched line. Over HTTP the same window
+comes from the `context`, `before_context` and `after_context`
+parameters of [`GET /v1/trace`](../api/endpoints/trace.md#context-window),
+at most 100 lines per side.
 
 ### Bypass the cache
 

@@ -99,7 +99,9 @@ recovered panic.
   `1` / `0`, `on` / `off`
 - **Integers**: decimal, non-negative unless documented otherwise
 - **Sentinel `-1`**: on `/v1/samples`, `context`, `before_context`, and
-  `after_context` accept `-1` to mean "not provided, use default"
+  `after_context` accept `-1` to mean "not provided, use default"; on
+  `/v1/trace`, `before_context` and `after_context` accept `-1` to mean
+  "not provided, take `context`"
 
 ## Path validation
 

@@ -2286,6 +2286,81 @@
               "description": "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)",
               "type": "boolean"
             }
+          },
+          {
+            "description": "Context lines before and after each match (rx trace --context). Fills context_lines, before_context and after_context of the answer.",
+            "explode": false,
+            "in": "query",
+            "name": "context",
+            "schema": {
+              "default": 0,
+              "description": "Context lines before and after each match (rx trace --context). Fills context_lines, before_context and after_context of the answer.",
+              "examples": [
+                3
+              ],
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Context lines before each match (rx trace --before); wins over context, 0 included. -1 = the context value.",
+            "explode": false,
+            "in": "query",
+            "name": "before_context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines before each match (rx trace --before); wins over context, 0 included. -1 = the context value.",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Context lines after each match (rx trace --after); wins over context, 0 included. -1 = the context value.",
+            "explode": false,
+            "in": "query",
+            "name": "after_context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines after each match (rx trace --after); wins over context, 0 included. -1 = the context value.",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Neither read nor write the trace cache (rx trace --no-cache)",
+            "explode": false,
+            "in": "query",
+            "name": "no_cache",
+            "schema": {
+              "description": "Neither read nor write the trace cache (rx trace --no-cache)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Read and write no line index; a match a capped scan left unnumbered is numbered by counting lines from the start of the file (rx trace --no-index)",
+            "explode": false,
+            "in": "query",
+            "name": "no_index",
+            "schema": {
+              "description": "Read and write no line index; a match a capped scan left unnumbered is numbered by counting lines from the start of the file (rx trace --no-index)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Search only the files directly inside a directory path, not its subdirectories (rx trace --no-recursive)",
+            "explode": false,
+            "in": "query",
+            "name": "no_recursive",
+            "schema": {
+              "description": "Search only the files directly inside a directory path, not its subdirectories (rx trace --no-recursive)",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
