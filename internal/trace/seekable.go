@@ -881,8 +881,8 @@ func scanFrameBatch(
 		if errors.As(runErr, &ex) {
 			code := ex.ExitCode()
 			if code != 0 && code != 1 {
-				return nil, nil, nil, fmt.Errorf("rg exit %d: %s",
-					code, strings.TrimSpace(stderr.String()))
+				return nil, nil, nil, ripgrepExitError(
+					code, strings.TrimSpace(stderr.String()), patternIDs, patternOrder)
 			}
 		} else if !errors.Is(runErr, context.Canceled) {
 			return nil, nil, nil, fmt.Errorf("rg run: %w", runErr)

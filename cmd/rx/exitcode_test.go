@@ -170,6 +170,26 @@ func TestExitCode_InvalidRegexIsTwo(t *testing.T) {
 	}
 }
 
+// A pattern PCRE2 cannot compile is the same usage error as one the
+// default engine cannot: exit 2 with PCRE2's reason, never "no matches"
+// with the file skipped. A ripgrep without PCRE2 refuses -P with exit 2
+// as well, and says so.
+func TestExitCode_InvalidPCRE2PatternIsTwo(t *testing.T) {
+	_, path := writeLog(t)
+
+	code, stdout, stderr := runRx(t, "trace", "-P", "-e", "(", path, "--json")
+
+	if code != 2 {
+		t.Errorf("exit code: got %d, want 2 (stderr: %s)", code, stderr)
+	}
+	if !strings.Contains(stderr, "PCRE2") {
+		t.Errorf("stderr should carry PCRE2's reason: %s", stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout should be empty on a fatal error, got: %s", stdout)
+	}
+}
+
 func TestExitCode_InvalidRegexWithJSONPrintsNothingOnStdout(t *testing.T) {
 	_, path := writeLog(t)
 

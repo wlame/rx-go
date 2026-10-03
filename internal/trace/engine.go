@@ -96,8 +96,10 @@ func New() *Engine { return &Engine{} }
 // RunWithOptions is the top-level search, used by the CLI, the HTTP
 // handler and tests. It:
 //
-//  1. Resolves each input path (file vs. directory, validated).
-//  2. Assigns file IDs ("f1", "f2", ...) and pattern IDs ("p1", ...).
+//  1. Assigns pattern IDs ("p1", ...) and checks that rg compiles the
+//     patterns with the request's flags (validatePatterns), then
+//     resolves each input path (file vs. directory, validated).
+//  2. Assigns file IDs ("f1", "f2", ...).
 //  3. Classifies each file into one of four buckets:
 //     a. Regular        — chunked + parallel ProcessChunk
 //     b. Compressed     — ProcessCompressed (single-stream)
@@ -131,6 +133,19 @@ func (e *Engine) RunWithOptions(
 	// -------------------------------------------------------------------
 	// Phase 0: validate & expand inputs
 	// -------------------------------------------------------------------
+	// Pattern IDs are the caller's patterns in order: p1, p2, ...
+	patternIDs := patternIDsMap(patterns)
+	patternOrder := make([]string, 0, len(patterns))
+	for i := range patterns {
+		patternOrder = append(patternOrder, "p"+strconv.Itoa(i+1))
+	}
+	// A pattern rg cannot compile fails the request here, before any
+	// path is walked or file read, the way rg itself compiles before it
+	// searches. Every later rg run classifies a pattern error the same
+	// way (ripgrepExitError), so none can pass for a file error.
+	if err := validatePatterns(ctx, patternIDs, patternOrder, opts.RgExtraArgs); err != nil {
+		return nil, err
+	}
 	files, scannedDirs, skipped := expandPaths(paths, !opts.NoRecursive)
 	if len(files) == 0 {
 		// Nothing to search still answers with the request it was
@@ -139,7 +154,7 @@ func (e *Engine) RunWithOptions(
 		return &rxtypes.TraceResponse{
 			RequestID:    opts.RequestID,
 			Path:         emptyIfNilStrings(append([]string(nil), paths...)),
-			Patterns:     patternIDsMap(patterns),
+			Patterns:     patternIDs,
 			Files:        map[string]string{},
 			Matches:      []rxtypes.Match{},
 			ScannedFiles: []string{},
@@ -156,13 +171,8 @@ func (e *Engine) RunWithOptions(
 	}
 
 	// -------------------------------------------------------------------
-	// Phase 1: assign IDs
+	// Phase 1: assign file IDs
 	// -------------------------------------------------------------------
-	patternIDs := patternIDsMap(patterns)
-	patternOrder := make([]string, 0, len(patterns))
-	for i := range patterns {
-		patternOrder = append(patternOrder, "p"+strconv.Itoa(i+1))
-	}
 	// Each file is reported under the caller's spelling of its path, and
 	// read only through its pin (sources), which refuses a path that no
 	// longer leads to the file expandPaths checked.

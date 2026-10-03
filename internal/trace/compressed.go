@@ -235,8 +235,8 @@ func ProcessCompressed(
 		if errors.As(rgWaitErr, &ex) {
 			code := ex.ExitCode()
 			if code != 0 && code != 1 {
-				return nil, nil, elapsed, fmt.Errorf(
-					"rg exit %d: %s", code, strings.TrimSpace(rgStderr.String()))
+				return nil, nil, elapsed, ripgrepExitError(
+					code, strings.TrimSpace(rgStderr.String()), patternIDs, patternOrder)
 			}
 		} else {
 			return nil, nil, elapsed, fmt.Errorf("rg wait: %w", rgWaitErr)

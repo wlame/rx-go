@@ -73,7 +73,10 @@ GET /v1/trace?path=/var/log/app.log&regexp=connection%20reset&ignore_case=true
 
 A value is `true` or `false` (`1` and `0` also work); anything else is a
 `422`. A look-around or backreference without `pcre2=true` is a `400`,
-like any other pattern ripgrep cannot compile. These parameters arrived
+like any other pattern ripgrep cannot compile. So is a pattern PCRE2
+cannot compile under `pcre2=true`, with PCRE2's reason in `detail`, and
+`pcre2=true` against a ripgrep built without PCRE2. The patterns are
+checked before any file is read. These parameters arrived
 with contract version 1.3; a client can read the version from
 [`GET /health`](health.md) before relying on them.
 
