@@ -45,9 +45,10 @@ type Finding struct {
 	// block or run.
 	ValueStart *int `json:"value_start,omitempty" doc:"Start of the finding's value, in bytes from the first line's first byte."`
 	ValueEnd   *int `json:"value_end,omitempty" doc:"End of the finding's value (exclusive), in bytes from the first line's first byte."`
-	// Masked is true when anything in the excerpt or the lines of the
-	// finding was masked, or the signature itself redacts.
-	Masked bool `json:"masked,omitempty" doc:"True when a value in the excerpt or the lines was masked, or the signature redacts."`
+	// Masked is true when anything in the excerpt, the lines of the
+	// finding or the lines before and after it was masked, or the
+	// signature itself redacts.
+	Masked bool `json:"masked,omitempty" doc:"True when a value in the excerpt, the lines, or the lines before and after was masked, or the signature redacts."`
 	// Lines are the finding's lines, StartLine to EndLine, each without
 	// its line ending. Trace answers always fill them, until the text
 	// budget (RX_FINDINGS_TEXT_MAX_BYTES) runs out.

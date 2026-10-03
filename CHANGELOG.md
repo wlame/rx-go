@@ -458,6 +458,13 @@ History maps every removed surface to what replaces it.
   line-length statistics are described in Concepts / Line indexes, the
   signatures in Concepts / Signatures.
 
+### Fixed
+
+- The OpenAPI description of a finding's `masked` is corrected: it
+  names the lines before and after the finding as well as the excerpt
+  and the lines, as the field covers all of them. The field itself is
+  unchanged.
+
 ## [0.7.0] - 2026-10-10
 
 ### Changed
