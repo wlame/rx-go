@@ -18,6 +18,7 @@ func boolPtr(b bool) *bool { return &b }
 
 var (
 	isoAnchored     = Format{Family: FamilyISO, Anchored: true}
+	isoZoned        = Format{Family: FamilyISO, Anchored: true, HasZone: true}
 	isoWindowed     = Format{Family: FamilyISO}
 	clfWindowed     = Format{Family: FamilyCLF, HasZone: true}
 	ctimeAnchored   = Format{Family: FamilyCtime, Anchored: true}
@@ -75,16 +76,16 @@ func TestOwn_ISO(t *testing.T) {
 		{"one-digit second and colon millis", isoAnchored, "2025-2-15 12:34:5:123 x", wall(utcMs(2025, 2, 15, 12, 34, 5, 123)), true},
 		{"dot millis", isoAnchored, "2025-12-10 12:34:56.123 [main] INFO", wall(utcMs(2025, 12, 10, 12, 34, 56, 123)), true},
 		{"comma millis", isoAnchored, "2025-12-10 12:34:56,123 [main] [WARN]", wall(utcMs(2025, 12, 10, 12, 34, 56, 123)), true},
-		{"UTC word converts", isoAnchored, "2025-12-10 07:49:50 UTC [123]: LOG", zoned(utcMs(2025, 12, 10, 7, 49, 50, 0), 0), true},
-		{"GMT word converts", isoAnchored, "2025-12-10 07:49:50 GMT x", zoned(utcMs(2025, 12, 10, 7, 49, 50, 0), 0), true},
+		{"UTC word converts", isoZoned, "2025-12-10 07:49:50 UTC [123]: LOG", zoned(utcMs(2025, 12, 10, 7, 49, 50, 0), 0), true},
+		{"GMT word converts", isoZoned, "2025-12-10 07:49:50 GMT x", zoned(utcMs(2025, 12, 10, 7, 49, 50, 0), 0), true},
 		{"MST word stays zone-less", isoAnchored, "2025-12-10 07:00:30 MST [4242]: [12-1]", wall(utcMs(2025, 12, 10, 7, 0, 30, 0)), true},
 		{"CEST word stays zone-less", isoAnchored, "2025-12-10 07:00:30 CEST x", wall(utcMs(2025, 12, 10, 7, 0, 30, 0)), true},
-		{"RFC 3339 with offset", isoAnchored, "2026-10-06T12:34:56.123+02:00 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 123), 120), true},
-		{"Z", isoAnchored, "2026-10-06T12:34:56Z msg", zoned(utcMs(2026, 10, 6, 12, 34, 56, 0), 0), true},
-		{"offset without colon", isoAnchored, "2026-10-06T12:34:56+0200 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 0), 120), true},
-		{"offset hours only", isoAnchored, "2026-10-06T12:34:56+02 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 0), 120), true},
-		{"negative half-hour offset", isoAnchored, "2026-10-06T12:34:56-05:30 msg", zoned(utcMs(2026, 10, 6, 18, 4, 56, 0), -330), true},
-		{"space then numeric offset", isoAnchored, "2026-10-06 12:34:56 +0200 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 0), 120), true},
+		{"RFC 3339 with offset", isoZoned, "2026-10-06T12:34:56.123+02:00 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 123), 120), true},
+		{"Z", isoZoned, "2026-10-06T12:34:56Z msg", zoned(utcMs(2026, 10, 6, 12, 34, 56, 0), 0), true},
+		{"offset without colon", isoZoned, "2026-10-06T12:34:56+0200 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 0), 120), true},
+		{"offset hours only", isoZoned, "2026-10-06T12:34:56+02 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 0), 120), true},
+		{"negative half-hour offset", isoZoned, "2026-10-06T12:34:56-05:30 msg", zoned(utcMs(2026, 10, 6, 18, 4, 56, 0), -330), true},
+		{"space then numeric offset", isoZoned, "2026-10-06 12:34:56 +0200 msg", zoned(utcMs(2026, 10, 6, 10, 34, 56, 0), 120), true},
 		{"slashes in the date", isoAnchored, "2026/10/06 12:34:56 x", wall(utcMs(2026, 10, 6, 12, 34, 56, 0)), true},
 		{"one fraction digit", isoAnchored, "2026-10-06 12:34:56.5 x", wall(utcMs(2026, 10, 6, 12, 34, 56, 500)), true},
 		{"nine fraction digits truncate", isoAnchored, "2026-10-06 12:34:56.123456789 x", wall(utcMs(2026, 10, 6, 12, 34, 56, 123)), true},
@@ -108,6 +109,30 @@ func TestOwn_ISO(t *testing.T) {
 		{"mixed date separators", isoAnchored, "2026-10/06 12:34:56 x", Stamp{}, false},
 		{"five-digit year", isoAnchored, "12026-10-06 12:34:56 x", Stamp{}, false},
 		{"offset hour 24", isoAnchored, "2026-10-06T12:34:56+24:00 x", Stamp{}, false},
+	}, mtime2025)
+}
+
+// A file's values are in one frame. In a file whose format has zones,
+// every line is a UTC instant, and a line without a zone is read as
+// UTC. In a file whose format has none, every line is a wall-clock
+// reading, and a line that does carry a zone keeps the wall clock it
+// shows: a host on -07:00 that writes zone-less lines and, from another
+// component, `2025-12-10T07:00:07.953-0700` lines writes one clock, and
+// reading the zoned ones as instants would put them seven hours after
+// their neighbors. Zoned and OffsetMinutes still say what was written.
+func TestOwn_OneFramePerFile(t *testing.T) {
+	gcLine := "[2025-12-10T07:00:07.953-0700][512.004s][info][gc] GC(57) Pause Young"
+	runOwnCases(t, []ownCase{
+		{"zoned line, zone-less file", isoAnchored, gcLine,
+			Stamp{Ms: utcMs(2025, 12, 10, 7, 0, 7, 953), Zoned: true, OffsetMinutes: -420}, true},
+		{"zoned line, zoned file", isoZoned, gcLine,
+			zoned(utcMs(2025, 12, 10, 14, 0, 7, 953), -420), true},
+		{"zone-less line, zoned file", isoZoned, "2025-12-10 07:00:04.574 INFO x",
+			wall(utcMs(2025, 12, 10, 7, 0, 4, 574)), true},
+		{"UTC line, zone-less file", isoAnchored, "2025-12-10 07:49:50 UTC [123]: LOG",
+			zoned(utcMs(2025, 12, 10, 7, 49, 50, 0), 0), true},
+		{"numeric zone, windowed zone-less file", isoWindowed, "host app 2026-10-06T12:34:56+02:00 msg",
+			Stamp{Ms: utcMs(2026, 10, 6, 12, 34, 56, 0), Zoned: true, OffsetMinutes: 120}, true},
 	}, mtime2025)
 }
 

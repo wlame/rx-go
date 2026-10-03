@@ -30,10 +30,14 @@
 // # Values
 //
 // A timestamp is an int64 count of milliseconds since the Unix epoch.
-// Digits past the millisecond are dropped. A timestamp written with a
-// zone (`Z`, `+02:00`, `UTC`, …) becomes the UTC instant it names. A
-// timestamp written without a zone keeps its wall-clock reading as if it
-// were UTC: the "file frame". The zone such a file was written in is only
-// known to the caller, which applies it when it compares a query with the
-// file (see [ResolveContext]).
+// Digits past the millisecond are dropped. Every value of one file is
+// in one frame, which its [Format] decides. In a file whose timestamps
+// carry a zone (`Z`, `+02:00`, `UTC`, …) a value is the UTC instant it
+// names, and a line without a zone is read as UTC. In a file whose
+// timestamps carry none, a value is the wall-clock reading as if it were
+// UTC, the "file frame", and a line that does carry a zone keeps the
+// wall clock it shows. The zone such a file was written in is only known
+// to the caller, which applies it when it compares a query with the file
+// (see [ResolveContext]). A query that carries a zone is always the UTC
+// instant it names.
 package timestamps
