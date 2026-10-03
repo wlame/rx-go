@@ -25,7 +25,7 @@ import (
 // Both backends and the viewer's release checklist carry the same rule.
 const (
 	MinViewerVersion          = "0.2.0"
-	MaxViewerVersionExclusive = "0.5.0"
+	MaxViewerVersionExclusive = "0.6.0"
 )
 
 // viewerVersionCompatible reports whether a viewer release may be
