@@ -24,8 +24,8 @@ For the cache directory:
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_CACHE_DIR` | — | Base directory for `rx` caches. Appended with `rx`, so `RX_CACHE_DIR=/tmp` yields `/tmp/rx`. |
-| `XDG_CACHE_HOME` | — | Standard XDG variable; used when `RX_CACHE_DIR` is unset. |
+| `RX_CACHE_DIR` | — | Base directory for `rx` caches. Appended with `rx`, so `RX_CACHE_DIR=/tmp` yields `/tmp/rx`. A relative value is taken against the directory `rx` starts in. |
+| `XDG_CACHE_HOME` | — | Standard XDG variable; used when `RX_CACHE_DIR` is unset. A relative value is taken against the directory `rx` starts in. |
 
 The resolved cache base holds:
 
