@@ -3,6 +3,7 @@ package trace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/index"
-	"github.com/wlame/rx-go/internal/seekable"
 )
 
 // captureDefaultLog sends slog's default logger to a buffer for the
@@ -54,17 +54,16 @@ func TestSaveScannedFile_FailureWarnsOnce(t *testing.T) {
 	}
 }
 
-// ripgrep's output for a seekable batch is parsed after rg exits. A
-// line the parser cannot read must fail the batch rather than silently
-// drop every match after it.
-func TestRemapBatchEvents_ReportsAnUnreadableStream(t *testing.T) {
+// A line of ripgrep's output for a seekable batch that the parser
+// cannot read must fail the batch rather than silently drop every match
+// after it.
+func TestReadBatchEvents_ReportsAnUnreadableStream(t *testing.T) {
 	out := []byte(`{"type":"begin","data":{}}` + "\n" + "this is not json" + "\n" +
 		`{"type":"match","data":{"lines":{"text":"x\\n"},"line_number":1,"absolute_offset":0,"submatches":[]}}` + "\n")
-	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: 100}}}
 
-	_, _, err := remapBatchEvents(context.Background(), out, wholeStream(segments), []string{"p1"})
+	_, err := readBatchEvents(context.Background(), bytes.NewReader(out))
 
-	if err == nil {
-		t.Error("remapBatchEvents returned no error for a stream it could not read")
+	if !errors.Is(err, ErrMalformedEvent) {
+		t.Errorf("readBatchEvents returned %v, want ErrMalformedEvent", err)
 	}
 }

@@ -147,7 +147,9 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
       "line_text":             "2026-03-14 08:23:51 ERROR timeout 5023ms",
       "submatches": [
         { "text": "timeout", "start": 29, "end": 36 }
-      ]
+      ],
+      "line_text_truncated":   false,
+      "submatches_truncated":  false
     }
   ],
   "scanned_files": ["/var/log/app-2026-03.log"],
@@ -177,7 +179,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `skipped_files` | `string[]` | Files skipped (binary, size limit, etc.) |
 | `max_results` | `int \| null` | The cap that was applied, or null |
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it |
-| `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); each entry is the match's window, the match's own line included, as `{relative_line_number, absolute_line_number, line_text, absolute_offset}`. Without a context window an entry holds only the match's own line; see [`rx trace`](../../cli/trace.md#match-with-prepost-context) for how a window is built |
+| `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); each entry is the match's window, the match's own line included, as `{relative_line_number, absolute_line_number, line_text, absolute_offset, line_text_truncated}`. Without a context window an entry holds only the match's own line; see [`rx trace`](../../cli/trace.md#match-with-prepost-context) for how a window is built |
 | `before_context`, `after_context` | `int \| null` | The window used on each side, or `null` when it is `0` |
 | `cli_command` | string | Equivalent CLI command. A `request_id` and `hook_on_*` URLs the request gave appear as `--request-id` and `--hook-on-*`; a generated ID and the `RX_HOOK_*` fallbacks do not, since the command reads its own environment. See [conventions](../conventions.md#the-equivalent-cli-command) |
 
@@ -190,8 +192,34 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `offset` | int64 | Byte offset of the line start |
 | `relative_line_number` | int | The same number as `absolute_line_number` when that is known; otherwise the line's number within the chunk or frame that found it, counted from its first line |
 | `absolute_line_number` | int | The line's 1-based number in the file, or `-1` when a scan cut short by `max_results` did not read the bytes before the match |
-| `line_text` | string | Full matched line |
-| `submatches` | array | `{text, start, end}` per regex submatch |
+| `line_text` | string | The matched line without its line break: the whole line, or its first `RX_MAX_LINE_TEXT_BYTES` bytes (see [Long lines](#long-lines)) |
+| `submatches` | array | `{text, start, end}` per regex submatch, at most `RX_MAX_SUBMATCHES_PER_LINE` of them |
+| `line_text_truncated` | bool | `true` when `line_text` holds only the first bytes of a longer line |
+| `submatches_truncated` | bool | `true` when `submatches` may leave some out: the line had more than the cap, or `line_text` is cut |
+
+### Long lines
+
+One line cannot make an answer, or the server's memory, unbounded.
+ripgrep reports a matched line whole, plus about 50 bytes for every
+submatch on it, so a 100 MB line on which the pattern matches every
+character would otherwise cost about 5 GB to read. rx reads ripgrep's
+output without holding it and keeps, per line:
+
+- at most `RX_MAX_LINE_TEXT_BYTES` bytes of its text (1 MiB by
+  default). A longer line is cut at the start of the UTF-8 character
+  that holds that byte and marked `line_text_truncated: true`, in
+  `matches` and in `context_lines` alike;
+- at most `RX_MAX_SUBMATCHES_PER_LINE` submatches (10,000 by default),
+  and only those that start inside the text kept. A submatch that runs
+  past the cut keeps its true `start` and `end` and the part of its text
+  that `line_text` holds. `submatches_truncated: true` says the list may
+  be incomplete; it is always `true` on a cut line.
+
+`offset`, both line numbers and every other match are exact whatever
+the line's length. A cut line is reported under every pattern of the
+request, since the part left out may match any of them. A scan whose
+answer cuts a line is not written to the trace cache. To read the whole
+line, ask [`GET /v1/samples`](samples.md) for its offset.
 
 Every chunk counts the newlines it reads, so a scan that runs to the
 end numbers every match. A scan cut short by `max_results` can stop a

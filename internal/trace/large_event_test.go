@@ -2,7 +2,6 @@ package trace
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -145,11 +144,14 @@ func storedForms() []storedForm {
 	}
 }
 
-// A ripgrep event has no size limit, so neither may the parser: a line
-// whose event is larger than 16 MiB is answered like any other, along
-// with every match after it, whichever way the file is stored.
+// A ripgrep event has no size limit, so the parser puts none on what it
+// reads: a line whose event is larger than 16 MiB is answered like any
+// other, along with every match after it, whichever way the file is
+// stored. With the per-line bounds raised past the line, the answer is
+// the whole line and every submatch on it.
 func TestTraceAnswersALineWhoseRipgrepEventExceeds16MiB(t *testing.T) {
 	requireRipgrep(t)
+	setLineLimits(t, 1<<30, 1<<30)
 	for _, tc := range largeEventCases() {
 		for _, form := range storedForms() {
 			t.Run(tc.name+"/"+form.name, func(t *testing.T) {
@@ -249,8 +251,7 @@ func TestOutputTheParserRejectsEndsTheScanWithAnError(t *testing.T) {
 
 			// rg was killed because of the parse error; the error the
 			// scan reports is that cause, not rg's "killed" exit.
-			var syntaxErr *json.SyntaxError
-			if !errors.As(err, &syntaxErr) {
+			if !errors.Is(err, ErrMalformedEvent) {
 				t.Fatalf("the scan reported %v, want the JSON parse error", err)
 			}
 		})

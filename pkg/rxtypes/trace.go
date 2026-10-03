@@ -21,11 +21,17 @@ type Submatch struct {
 // RelativeLineNumber holds its number counted from the first line of
 // its chunk: 0 or below for a line read just before the chunk to
 // complete a window.
+//
+// LineText holds at most RX_MAX_LINE_TEXT_BYTES bytes of the line (1 MiB
+// by default). A longer line is cut at the start of a UTF-8 character
+// at or before that many bytes, and LineTextTruncated says so; the
+// offset and numbers are still the whole line's.
 type ContextLine struct {
 	RelativeLineNumber int    `json:"relative_line_number"`
 	AbsoluteLineNumber int    `json:"absolute_line_number"`
 	LineText           string `json:"line_text"`
 	AbsoluteOffset     int64  `json:"absolute_offset"`
+	LineTextTruncated  bool   `json:"line_text_truncated" doc:"True when line_text holds only the first RX_MAX_LINE_TEXT_BYTES bytes of a longer line."`
 }
 
 // Match is a single matched line returned by the trace engine.
@@ -39,14 +45,26 @@ type ContextLine struct {
 // TraceResponse.Patterns and TraceResponse.Files respectively. This
 // indirection matches Python's design and keeps the response compact
 // when the same pattern/file pair is reported many times.
+//
+// One line cannot make a match unbounded. LineText is cut like a
+// ContextLine's (LineTextTruncated), and Submatches lists at most
+// RX_MAX_SUBMATCHES_PER_LINE of the line's submatches (10,000 by
+// default), only those that start inside LineText. SubmatchesTruncated
+// is true when the list may leave some out: the line had more than the
+// cap, or LineText is cut and the list covers only the text it holds. A
+// submatch that runs past the end of a cut LineText keeps its true Start
+// and End and the part of its text that LineText holds. Offset and the
+// line numbers are always the whole line's.
 type Match struct {
-	Pattern            string     `json:"pattern"`
-	File               string     `json:"file"`
-	Offset             int64      `json:"offset"`
-	RelativeLineNumber *int       `json:"relative_line_number"`
-	AbsoluteLineNumber int        `json:"absolute_line_number"`
-	LineText           *string    `json:"line_text"`
-	Submatches         []Submatch `json:"submatches"`
+	Pattern             string     `json:"pattern"`
+	File                string     `json:"file"`
+	Offset              int64      `json:"offset"`
+	RelativeLineNumber  *int       `json:"relative_line_number"`
+	AbsoluteLineNumber  int        `json:"absolute_line_number"`
+	LineText            *string    `json:"line_text"`
+	Submatches          []Submatch `json:"submatches"`
+	LineTextTruncated   bool       `json:"line_text_truncated" doc:"True when line_text holds only the first RX_MAX_LINE_TEXT_BYTES bytes of a longer line."`
+	SubmatchesTruncated bool       `json:"submatches_truncated" doc:"True when submatches may leave some of the line's submatches out: the line had more than RX_MAX_SUBMATCHES_PER_LINE, or line_text is cut and the list covers only the text it holds."`
 }
 
 // TraceResponse is the full response shape for GET /v1/trace.

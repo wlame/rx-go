@@ -91,6 +91,8 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 	defer func() { _ = src.close() }()
 
 	flags := matchFlagsFrom(req.RgExtraArgs)
+	limits := currentEventLimits()
+	var lineBuf []byte // reused by every line read
 	matches := make([]rxtypes.Match, 0, len(cached))
 	var ctxLines []rxtypes.ContextLine
 	ends := map[int64]int64{} // where each line returned ends, by where it starts
@@ -110,12 +112,16 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 		if lastLineToRead > 0 && line > lastLineToRead {
 			break
 		}
-		raw, readErr := r.ReadBytes('\n')
-		if len(raw) == 0 && readErr != nil {
+		// A line is read in bounded memory and cut as a scan cuts it, so
+		// a line of any length costs at most the line text limit.
+		var size int64
+		var readErr error
+		lineBuf, size, readErr = readBoundedLine(r, lineBuf, limits.lineTextBytes+lineBreakRoom)
+		if size == 0 && readErr != nil {
 			break
 		}
-		text := trimTrailingNewline(string(raw))
-		end := pos + int64(len(raw))
+		text, cut := boundedLineText(lineBuf, size, limits.lineTextBytes)
+		end := pos + size
 
 		if afterWanted > 0 && !emitted[line] {
 			emitted[line] = true
@@ -125,6 +131,7 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 				AbsoluteLineNumber: line,
 				LineText:           text,
 				AbsoluteOffset:     pos,
+				LineTextTruncated:  cut,
 			})
 			afterWanted--
 		}
@@ -146,12 +153,14 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 					AbsoluteLineNumber: prev.number,
 					LineText:           prev.text,
 					AbsoluteOffset:     prev.offset,
+					LineTextTruncated:  prev.cut,
 				})
 			}
 			emitted[line] = true
 			ends[pos] = end
+			read := readLine{text: text, cut: cut, number: line}
 			for _, cm := range cached[first:next] {
-				m, mErr := matchFromCached(cm, text, line, req, flags)
+				m, mErr := matchFromCached(cm, read, req, flags, limits.submatches)
 				if mErr != nil {
 					continue
 				}
@@ -165,7 +174,7 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 			}
 		}
 
-		before.push(ringLine{number: line, offset: pos, end: end, text: text})
+		before.push(ringLine{number: line, offset: pos, end: end, text: text, cut: cut})
 		pos, line = end, line+1
 		if readErr != nil {
 			if !errors.Is(readErr, io.EOF) {
@@ -192,30 +201,80 @@ func contextReachPastLastMatch(after int) int {
 	return after
 }
 
-// matchFromCached turns one cached record plus the text of the line it
-// points into a full match.
+// readLine is a line a reconstruction pass read: its text as an answer
+// reports it (cut at the line text limit when longer), whether it was
+// cut, and its number.
+type readLine struct {
+	text   string
+	cut    bool
+	number int
+}
+
+// matchFromCached turns one cached record plus the line it points into
+// into a full match. Submatches are found in the text the line keeps and
+// capped at maxSubmatches; like a scan's, the list is marked as possibly
+// incomplete when it hit the cap or the line was cut.
 func matchFromCached(
 	cm rxtypes.TraceCacheMatch,
-	text string,
-	line int,
+	line readLine,
 	req ReconstructRequest,
 	flags matchFlags,
+	maxSubmatches int,
 ) (rxtypes.Match, error) {
 	if cm.PatternIndex < 0 || cm.PatternIndex >= len(req.Patterns) {
 		return rxtypes.Match{}, fmt.Errorf(
 			"reconstruct: pattern_index %d out of range (have %d patterns)",
 			cm.PatternIndex, len(req.Patterns))
 	}
-	lineText := text
+	lineText := line.text
+	subs, capped := submatchesFromPattern(req.Patterns[cm.PatternIndex], line.text, flags, maxSubmatches)
 	return rxtypes.Match{
-		Pattern:            fmt.Sprintf("p%d", cm.PatternIndex+1),
-		File:               req.FileID,
-		Offset:             cm.Offset,
-		RelativeLineNumber: ptrInt(line),
-		AbsoluteLineNumber: line,
-		LineText:           &lineText,
-		Submatches:         submatchesFromPattern(req.Patterns[cm.PatternIndex], text, flags),
+		Pattern:             fmt.Sprintf("p%d", cm.PatternIndex+1),
+		File:                req.FileID,
+		Offset:              cm.Offset,
+		RelativeLineNumber:  ptrInt(line.number),
+		AbsoluteLineNumber:  line.number,
+		LineText:            &lineText,
+		Submatches:          subs,
+		LineTextTruncated:   line.cut,
+		SubmatchesTruncated: capped || line.cut,
 	}, nil
+}
+
+// readBoundedLine reads the next line of r, its break included, keeping
+// at most keep of its bytes in buf, whose memory it reuses. It returns
+// the kept bytes, the line's whole length and the read error, as
+// ReadBytes does: a last line without a break comes with io.EOF.
+//
+// bufio.Reader.ReadSlice hands out the line a buffer at a time
+// (bufio.ErrBufferFull until the break), so nothing past keep is held
+// however long the line is.
+func readBoundedLine(r *bufio.Reader, buf []byte, keep int) (kept []byte, size int64, err error) {
+	kept = buf[:0]
+	for {
+		piece, err := r.ReadSlice('\n')
+		if room := keep - len(kept); room > 0 {
+			kept = append(kept, piece[:min(room, len(piece))]...)
+		}
+		size += int64(len(piece))
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return kept, size, err
+		}
+	}
+}
+
+// boundedLineText is a line's text as an answer reports it, from the
+// first bytes readBoundedLine kept (at least limit+lineBreakRoom of
+// them, or the whole line) and its whole length: without its break,
+// and cut at limit, at the start of a character, when longer. It cuts
+// exactly where the scan's parser cuts the same line.
+func boundedLineText(kept []byte, size int64, limit int) (text string, cut bool) {
+	if size <= int64(len(kept)) {
+		if whole := trimTrailingNewline(string(kept)); len(whole) <= limit {
+			return whole, false
+		}
+	}
+	return string(kept[:formText.cutAt(kept, limit)]), true
 }
 
 // ============================================================================
@@ -292,6 +351,7 @@ type ringLine struct {
 	offset int64
 	end    int64
 	text   string
+	cut    bool // the text holds only the line's first bytes
 }
 
 // lineRing remembers the last n lines read, which is what a match needs
@@ -339,19 +399,25 @@ func (r *lineRing) lines() []ringLine {
 // ============================================================================
 
 // submatchesFromPattern re-runs the pattern against the line and returns
-// the byte positions of every hit, sorted by start.
+// the byte positions of its first max hits, sorted by start, and
+// whether there were more.
 //
 // The pattern is compiled by compileLikeRipgrep, the same way
 // identification compiles it, so a rebuilt submatch covers the text rg
 // matched under the request's -i, -w, -x and -F. A pattern Go cannot
 // compile (PCRE2 under -P) yields no submatches; the match itself is
 // still reported, because the cache recorded which pattern it was.
-func submatchesFromPattern(pattern, line string, flags matchFlags) []rxtypes.Submatch {
+func submatchesFromPattern(pattern, line string, flags matchFlags, maxHits int) ([]rxtypes.Submatch, bool) {
 	re, err := compileLikeRipgrep(pattern, flags)
 	if err != nil {
-		return nil
+		return nil, false
 	}
-	locs := re.FindAllStringIndex(line, -1)
+	// One hit past the cap says whether the cap left any out.
+	locs := re.FindAllStringIndex(line, maxHits+1)
+	capped := len(locs) > maxHits
+	if capped {
+		locs = locs[:maxHits]
+	}
 	subs := make([]rxtypes.Submatch, 0, len(locs))
 	for _, l := range locs {
 		subs = append(subs, rxtypes.Submatch{
@@ -360,7 +426,7 @@ func submatchesFromPattern(pattern, line string, flags matchFlags) []rxtypes.Sub
 			End:   l[1],
 		})
 	}
-	return subs
+	return subs, capped
 }
 
 // ptrInt helper — returns &v.
