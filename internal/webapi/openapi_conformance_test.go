@@ -446,6 +446,39 @@ func TestOpenAPIConformance_TraceWithoutRipgrepAnswersAsDeclared(t *testing.T) {
 		query: url.Values{"path": {"/tmp/any.log"}, "regexp": {"x"}}, want: http.StatusServiceUnavailable})
 }
 
+// A lookup in a file whose index is still being built answers 202 with
+// the build's task once the server's wait runs out. A queued index task
+// the manager holds for the file stands in for a long build, so the 202
+// does not depend on how fast a real one is.
+func TestOpenAPIConformance_SamplesWhileTheIndexBuildsAnswersAsDeclared(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	root := conformanceFixtures(t)
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	manager := tasks.New(tasks.Config{})
+	ts := httptest.NewServer(NewServer(Config{
+		AppVersion: "conformance-test", TaskManager: manager, SamplesIndexWait: 10 * time.Millisecond,
+	}))
+	t.Cleanup(ts.Close)
+	run := &conformanceRun{t: t, base: ts.URL, contract: loadContract(t), answered: map[string][]int{}}
+
+	held, err := paths.ValidatePathWithinRoots(filepath.Join(root, "app.log.gz"))
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	task, _ := manager.Create(held, "index")
+	pending := run.check(apiCall{label: "samples while the index builds", method: http.MethodGet,
+		template: "/v1/samples", path: "/v1/samples",
+		query: url.Values{"path": {held}, "lines": {"10"}}, want: http.StatusAccepted})
+	if pending["task_id"] != task.TaskID {
+		t.Fatalf("202 names task %v, want the build's %s", pending["task_id"], task.TaskID)
+	}
+	run.check(apiCall{label: "the build's task while it runs", method: http.MethodGet, template: "/v1/tasks/{task_id}",
+		path: "/v1/tasks/" + task.TaskID, want: http.StatusOK})
+}
+
 func TestContractMismatch_FindsEachKindOfDeparture(t *testing.T) {
 	c := loadContract(t)
 	const method, template = http.MethodPost, "/v1/compress"

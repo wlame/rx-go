@@ -22,7 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the OpenAPI document declares the bound. The contract version is now
   1.4.
 
+- `GET /v1/tasks/{task_id}` reports `progress`: the share of an index
+  task's input read so far, from 0 to 1, or `null` for a task that does
+  not report it (a compress task, or an index task that reused a stored
+  index). Part of contract 1.4.
+
 ### Changed
+
+- `GET /v1/samples` no longer builds a file's line index inside the
+  request. The build runs as a background `index` task, visible at
+  `GET /v1/tasks/{task_id}`, and every request for the same file, in
+  the same state, waits for that one build instead of starting its own;
+  a running `POST /v1/index` task for the file is waited for as well. A
+  request waits up to `RX_SAMPLES_WAIT_SECONDS` (default 5): when the
+  build ends in time it answers `200` as before, otherwise `202` with
+  the task (`task_id`, `status`, `message`, `path`, `started_at`), and
+  the client polls the task and asks again. A client that disconnects
+  stops waiting, not the build. `rx samples` still waits for the build
+  however long it takes. Part of contract 1.4.
 
 - The docs state the one way a line index, the trace cache or
   `--no-index` may change a trace answer: a line number that is `-1`

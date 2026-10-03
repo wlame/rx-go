@@ -69,6 +69,11 @@ type BuildOptions struct {
 	// mostly for tests that want deterministic detector sets.
 	Detectors []analyzer.LineDetector
 
+	// Progress, when set, counts how far the build has read, for a
+	// caller that reports it while the build runs (a background index
+	// task). Nil costs nothing.
+	Progress *Progress
+
 	// beforeWalk, when set, runs after the file is stated and before it
 	// is read. Tests use it to change the file at that moment.
 	beforeWalk func()
@@ -165,7 +170,12 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 		// Close error ignored — file was opened read-only.
 		_ = f.Close()
 	}()
-	statedBytes := io.LimitReader(f, info.Size())
+	// The progress counts the file's own bytes, before any
+	// decompression, so its total is the size the stat saw.
+	if opts.Progress != nil {
+		opts.Progress.start(info.Size())
+	}
+	statedBytes := opts.Progress.countReads(io.LimitReader(f, info.Size()))
 
 	// A compressed file is indexed through its decompressor, so the
 	// line numbers and byte offsets describe the text inside it. Read
@@ -650,10 +660,15 @@ func buildSeekable(
 		stats  *walkStats
 		err    error
 	)
+	if opts.Progress != nil {
+		if progressErr := startSeekableProgress(opts.Progress, sourcePath); progressErr != nil {
+			return nil, progressErr
+		}
+	}
 	if coord == nil {
-		frames, err = seekableindex.Build(sourcePath)
+		frames, err = seekableindex.BuildAndCopyText(sourcePath, opts.Progress.countWrites(io.Discard))
 	} else {
-		frames, stats, err = buildFramesAndWalkText(sourcePath, step, coord)
+		frames, stats, err = buildFramesAndWalkText(sourcePath, step, coord, opts.Progress)
 	}
 	if err != nil {
 		return nil, err
@@ -701,6 +716,30 @@ func buildSeekable(
 	return idx, nil
 }
 
+// startSeekableProgress sets the total of a seekable file's build: the
+// length of its text, which its seek table records. The build decodes
+// frame after frame by position rather than reading the file as one
+// stream, so the text it writes is what the progress counts.
+func startSeekableProgress(progress *Progress, sourcePath string) error {
+	f, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", sourcePath, err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", sourcePath, err)
+	}
+	table, err := seekable.ReadSeekTable(f, info.Size())
+	if err != nil {
+		return fmt.Errorf("read seek table of %s: %w", sourcePath, err)
+	}
+	if len(table.Frames) > 0 {
+		progress.start(table.Frames[len(table.Frames)-1].DecompressedEnd())
+	}
+	return nil
+}
+
 // buildFramesAndWalkText makes one decompression pass over a seekable
 // file that both builds its frame table and walks its text through
 // walkLines, which feeds every line to coord.
@@ -718,10 +757,13 @@ func buildSeekable(
 // that error, which ends the walk; a walk failure closes the read end,
 // which makes the next write fail and ends the decoding. The decode
 // error is the one reported when both happen, because it is the cause.
+//
+// progress, when not nil, counts the text as the decoder writes it.
 func buildFramesAndWalkText(
 	sourcePath string,
 	step int64,
 	coord *analyzer.Coordinator,
+	progress *Progress,
 ) (*seekableindex.Result, *walkStats, error) {
 	textReader, textWriter := io.Pipe()
 
@@ -734,7 +776,7 @@ func buildFramesAndWalkText(
 	}
 	decoded := make(chan framesResult, 1)
 	go func() {
-		frames, err := seekableindex.BuildAndCopyText(sourcePath, textWriter)
+		frames, err := seekableindex.BuildAndCopyText(sourcePath, progress.countWrites(textWriter))
 		// CloseWithError(nil) is a plain Close: the walk reads io.EOF
 		// after the last frame. A non-nil error is what the walk's next
 		// read returns instead.

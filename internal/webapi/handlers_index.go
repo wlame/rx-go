@@ -220,10 +220,14 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 	if req.Analyze {
 		detectors = analyzer.LineDetectorSnapshot()
 	}
+	// The build counts its reads into progress, and a status request
+	// reads it from another goroutine while the build runs.
+	progress := &index.Progress{}
 	buildOpts := index.BuildOptions{
 		Analyze:     req.Analyze,
 		WindowLines: windowLines,
 		Detectors:   detectors,
+		Progress:    progress,
 	}
 
 	// Reuse a valid cached index unless the caller asked for force or
@@ -240,6 +244,7 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 
 	// Fresh build. index.Build() opens/stats the file itself, so an
 	// open failure surfaces here.
+	mgr.ReportProgress(taskID, progress.Fraction)
 	idx, err := index.Build(absPath, buildOpts)
 	if err != nil {
 		mgr.Fail(taskID, fmt.Sprintf("build index: %v", err))
