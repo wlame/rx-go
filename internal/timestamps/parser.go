@@ -51,13 +51,23 @@ func NewParser(f Format, mtimeNs int64) (*Parser, error) {
 		mtimeYear: time.Unix(0, mtimeNs).UTC().Year(),
 	}
 	if f.DayFirst != nil {
+		// Keep a private copy: the caller's pointer must not be able to
+		// change a Parser that other goroutines may be using.
 		p.dayFirst = *f.DayFirst
+		p.format.DayFirst = boolValue(p.dayFirst)
 	}
 	return p, nil
 }
 
-// Format returns the format the Parser reads.
-func (p *Parser) Format() Format { return p.format }
+// Format returns the format the Parser reads. The result is a copy that
+// shares nothing with the Parser.
+func (p *Parser) Format() Format {
+	f := p.format
+	if f.DayFirst != nil {
+		f.DayFirst = boolValue(*f.DayFirst)
+	}
+	return f
+}
 
 // String describes the parser for logs and error messages.
 func (p *Parser) String() string {
