@@ -26,17 +26,29 @@ import (
 //     with a reason, and the walk goes on.
 //   - a link that cannot be resolved (it leads nowhere, or to itself)
 //     is refused too.
-//   - a link back to a directory the walk is already inside is refused,
-//     so a loop cannot make the walk run for ever.
+//
+// Each directory is searched at most once per walk, so the work is
+// bounded by the number of real directories, however many links lead
+// into them. A second way into a directory already searched is refused
+// with the path it was searched under; a link back to a directory the
+// walk is inside is refused as a loop. Links to directories are followed
+// only after every real directory below the walked one, so a directory
+// reached both directly and through a link is searched under its own
+// path.
 //
 // Without a sandbox (the CLI without --search-root) there is no root to
 // stay inside: a link is followed wherever it leads, as naming it would
-// be allowed. Loops and unresolvable links are still refused.
+// be allowed. Loops, second ways in and unresolvable links are still
+// refused.
 //
 // Entries whose own name is hidden are left out silently, as before and
-// as ripgrep does (SkipEntry). An entry that is not a link is never
-// checked: a real entry below a validated directory is inside the same
-// root by construction.
+// as ripgrep does (SkipEntry). An entry that is not a link is not put
+// through the root check: a real entry below a checked directory is
+// inside the same root by construction. The walk makes that hold even
+// while the tree changes under it: each directory is listed through a
+// handle checked to be the directory that was pinned (ListDir), and
+// every file is reported as a Pinned, so a later read refuses a file
+// that is not the one the walk found.
 
 // Reasons a walk gives for not following a symbolic link. The index
 // command reports them as skip reasons.
@@ -47,82 +59,180 @@ const (
 	// already inside, such as `logs/all -> ..`.
 	ReasonLinkLoop = "symlink loop: leads back to a directory the walk is inside"
 
+	// reasonAlreadySearchedFormat takes the path the directory was
+	// searched under, earlier in the same walk.
+	reasonAlreadySearchedFormat = "directory already searched through '%s'"
+
 	// reasonLinkHiddenFormat takes the hidden component, as the error
 	// for a named hidden path does.
 	reasonLinkHiddenFormat = "symlink leads into hidden entry '%s'; " +
 		"pass --hidden (or set RX_HIDDEN=true) to include hidden files and directories"
 	// reasonLinkUnresolvedFormat takes the resolution error.
 	reasonLinkUnresolvedFormat = "cannot resolve symlink: %v"
+	// reasonUnreadableEntryFormat takes the error of the stat of an
+	// entry that is not a link (it vanished, or cannot be stated).
+	reasonUnreadableEntryFormat = "cannot stat entry: %v"
 )
 
-// EntryTarget describes where one directory entry leads.
-type EntryTarget struct {
-	// IsDir reports whether the entry is, or leads to, a directory.
-	IsDir bool
-	// Canonical is the location a symlink leads to, every symlink on
-	// the way resolved. It is empty for an entry that is not a symlink.
-	Canonical string
-	// Refused is non-empty when the entry is a symlink that must not
-	// be followed, and says why. IsDir is meaningful only when the
-	// target could be resolved.
+// ListedEntry is one entry of a directory listed by ListDir.
+type ListedEntry struct {
+	// Name is the entry's name in the directory.
+	Name string
+	// Path is the listed directory's path, as the caller spelled it,
+	// followed by Name.
+	Path string
+	// Target is what the entry leads to: the entry itself, or the
+	// target of a symbolic link. It is the zero Pinned when Refused is
+	// set.
+	Target Pinned
+	// IsLink reports whether the entry is a symbolic link.
+	IsLink bool
+	// Refused is non-empty for an entry that must not be followed, and
+	// says why: a link the named-path check refuses or that cannot be
+	// resolved, or an entry that could not be stated.
 	Refused string
+	// refusedDir records, for a refused link, whether it leads to a
+	// directory, so a walk that does not descend can pass over it
+	// silently like any other directory.
+	refusedDir bool
 }
 
-// ResolveEntry tells where the directory entry at path leads and
-// whether a walk or a listing may follow it. entry is what os.ReadDir
-// returned for path; its type says whether path is a symlink without
-// another system call.
+// IsDir reports whether the entry is, or leads to, a directory. For a
+// refused link it says where the link leads, when that could be told.
+func (e ListedEntry) IsDir() bool {
+	if e.Target.IsZero() {
+		return e.refusedDir
+	}
+	return e.Target.Info().IsDir()
+}
+
+// ListDir lists the directory dir, sorted by name, leaving out entries
+// whose own name is hidden (SkipEntry). Each symbolic link is resolved
+// and its target put through the named-path check; every entry that
+// passes is returned with its target pinned.
 //
-// An entry that is not a symlink costs nothing: it is what it is.
-func ResolveEntry(path string, entry fs.DirEntry) EntryTarget {
-	if entry.Type()&fs.ModeSymlink == 0 {
-		return EntryTarget{IsDir: entry.IsDir()}
+// The listing is read through a handle checked to be dir's directory,
+// and each entry that is not a link is stated relative to that handle,
+// so a directory swapped for another (or for a link) after dir was
+// pinned can neither be listed nor lend its files. Such a swap fails
+// the listing with an error wrapping ErrFileChanged.
+func ListDir(dir Pinned) ([]ListedEntry, error) {
+	if dir.IsZero() {
+		return nil, errors.New("list: no checked directory")
 	}
-	// EvalSymlinks follows every link on the way, so a chain of links
-	// ends at the real file. It fails on a link that leads nowhere and
-	// on a cycle of links ("too many links"), never loops.
-	canonical, err := filepath.EvalSymlinks(path)
+	// Go note: os.Root holds the open directory; every name given to its
+	// methods is resolved relative to that handle, not to a path that
+	// could have changed since.
+	r, err := os.OpenRoot(dir.path)
 	if err != nil {
-		return EntryTarget{Refused: fmt.Sprintf(reasonLinkUnresolvedFormat, err)}
+		return nil, err
 	}
-	info, err := os.Stat(canonical)
+	defer func() { _ = r.Close() }()
+	opened, err := r.Stat(".")
 	if err != nil {
-		return EntryTarget{Refused: fmt.Sprintf(reasonLinkUnresolvedFormat, err)}
+		return nil, err
 	}
-	return EntryTarget{
-		IsDir:     info.IsDir(),
-		Canonical: canonical,
-		Refused:   targetRefusal(path, canonical),
+	if !os.SameFile(dir.info, opened) {
+		return nil, dir.changed()
 	}
+	names, err := readNames(r)
+	if err != nil {
+		return nil, err
+	}
+
+	listed := make([]ListedEntry, 0, len(names))
+	for _, name := range names {
+		// Hidden entries are skipped before anything else, so a hidden
+		// directory is not descended into either.
+		if SkipEntry(name) {
+			continue
+		}
+		listed = append(listed, listEntry(r, dir, name))
+	}
+	return listed, nil
 }
 
-// targetRefusal applies the named-path check to a symlink's resolved
-// target and words the outcome as a reason; "" means "follow it".
-func targetRefusal(path, canonical string) string {
-	roots := GetSearchRoots()
-	if len(roots) == 0 {
-		// No sandbox: nothing to stay inside.
-		return ""
+// readNames returns the names in the directory r holds, sorted, as
+// os.ReadDir sorts them.
+func readNames(r *os.Root) ([]string, error) {
+	d, err := r.Open(".")
+	if err != nil {
+		return nil, err
 	}
-	err := checkCanonical(path, canonical, roots)
-	if err == nil {
-		return ""
+	defer func() { _ = d.Close() }()
+	// -1: every name in one call.
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return nil, err
 	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// listEntry describes the entry name of the directory r holds, which is
+// dir.
+func listEntry(r *os.Root, dir Pinned, name string) ListedEntry {
+	entry := ListedEntry{Name: name, Path: joinWalkPath(dir.path, name)}
+	// Lstat through r: relative to the checked directory handle, and a
+	// link is described as a link rather than followed.
+	info, err := r.Lstat(name)
+	if err != nil {
+		entry.Refused = fmt.Sprintf(reasonUnreadableEntryFormat, err)
+		return entry
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		entry.Target = Pinned{path: entry.Path, canonical: filepath.Join(dir.canonical, name), info: info}
+		return entry
+	}
+
+	entry.IsLink = true
+	// Resolve the link from the directory's canonical location: the
+	// same link, without walking again through every link of the
+	// caller's spelling. Whatever it resolves to is checked on its own.
+	canonical, err := filepath.EvalSymlinks(filepath.Join(dir.canonical, name))
+	if err != nil {
+		entry.Refused = fmt.Sprintf(reasonLinkUnresolvedFormat, err)
+		return entry
+	}
+	target, err := pinCanonical(entry.Path, canonical)
+	if err != nil {
+		entry.Refused = linkRefusal(err)
+		// Only the type is taken from the refused target; nothing of
+		// it is read.
+		if info, statErr := os.Stat(canonical); statErr == nil {
+			entry.refusedDir = info.IsDir()
+		}
+		return entry
+	}
+	entry.Target = target
+	return entry
+}
+
+// linkRefusal words the outcome of a link target's check as a reason.
+func linkRefusal(err error) string {
 	var hidden *ErrHiddenPath
 	if errors.As(err, &hidden) {
 		return fmt.Sprintf(reasonLinkHiddenFormat, hidden.Component)
 	}
-	return ReasonLinkOutsideRoots
+	var outside *ErrPathOutsideRoots
+	if errors.As(err, &outside) {
+		return ReasonLinkOutsideRoots
+	}
+	return fmt.Sprintf(reasonLinkUnresolvedFormat, err)
 }
 
-// WalkEntry is one thing a directory walk reports: a file to read, a
-// symlink it refused, or a subdirectory it could not list.
+// WalkEntry is one thing a directory walk reports: a file to read, an
+// entry it refused, or a subdirectory it could not list.
 type WalkEntry struct {
 	// Path is the entry as the walk reached it: the walked directory
 	// followed by entry names. Symlinks in it are not resolved, so a
 	// file reached through a link is reported under the link's path.
 	Path string
-	// Refused is non-empty for a symlink the walk did not follow, and
+	// File is the file to read, pinned to the file the walk checked.
+	// Read it through File.Open. It is the zero Pinned when Refused or
+	// ReadErr is set.
+	File Pinned
+	// Refused is non-empty for an entry the walk did not follow, and
 	// says why.
 	Refused string
 	// ReadErr is set for a directory below the walked one that could
@@ -131,20 +241,36 @@ type WalkEntry struct {
 }
 
 // WalkDir lists the files a search of dir covers, in a stable order:
-// os.ReadDir's (by name), depth first. When recursive is false only
-// the entries directly inside dir are considered, and a directory, or a
-// link to one, is passed over without being reported.
+// the real directories first, depth first and by name, then the
+// directories reached through links, in the order the links were met.
+// When recursive is false only the entries directly inside dir are
+// considered, and a directory, or a link to one, is passed over without
+// being reported.
 //
-// dir itself is not checked here: the caller has already validated it
-// as a named path. The error is non-nil only when dir cannot be listed.
+// dir is pinned first (Pin), which checks it again as a named path. The
+// error is non-nil only when dir cannot be pinned or listed.
 func WalkDir(dir string, recursive bool) ([]WalkEntry, error) {
-	canonical, err := filepath.EvalSymlinks(dir)
+	top, err := Pin(dir)
 	if err != nil {
 		return nil, err
 	}
-	w := walker{recursive: recursive}
-	if err := w.walk(dir, []string{canonical}); err != nil {
+	return WalkPinned(top, recursive)
+}
+
+// WalkPinned is WalkDir for a directory the caller has already pinned.
+func WalkPinned(dir Pinned, recursive bool) ([]WalkEntry, error) {
+	w := walker{
+		recursive: recursive,
+		searched:  map[string]string{dir.canonical: dir.path},
+	}
+	if err := w.walk(dir); err != nil {
 		return nil, err
+	}
+	// Links to directories wait until every real directory has been
+	// walked. Following one can queue more, so the loop reads the length
+	// on every round instead of ranging over a copy.
+	for i := 0; i < len(w.deferred); i++ {
+		w.followLink(w.deferred[i])
 	}
 	return w.entries, nil
 }
@@ -153,57 +279,88 @@ func WalkDir(dir string, recursive bool) ([]WalkEntry, error) {
 type walker struct {
 	recursive bool
 	entries   []WalkEntry
+	// searched maps the canonical path of every directory the walk has
+	// entered to the path it entered it under. It is what bounds a walk
+	// by the number of real directories.
+	searched map[string]string
+	// deferred holds the links to directories met so far and not yet
+	// followed.
+	deferred []dirLink
 }
 
-// walk lists dir and recurses into its subdirectories. ancestors holds
-// the canonical path of dir and of every directory above it in this
-// walk; a link that leads to one of them would start the walk over
-// again, which is how a loop is recognized.
-func (w *walker) walk(dir string, ancestors []string) error {
-	entries, err := os.ReadDir(dir)
+// dirLink is a link to a directory, waiting to be followed.
+type dirLink struct {
+	// target is the directory the link leads to, under the link's path.
+	target Pinned
+	// from is the canonical path of the directory that holds the link.
+	from string
+}
+
+// walk lists dir, reports its files and its refused entries, descends
+// into its real subdirectories and queues its links to directories.
+func (w *walker) walk(dir Pinned) error {
+	listed, err := ListDir(dir)
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		// Hidden entries are skipped before anything else, so a hidden
-		// directory is not descended into either.
-		if SkipEntry(entry.Name()) {
+	for _, entry := range listed {
+		switch {
+		case entry.IsDir() && !w.recursive:
 			continue
-		}
-		path := joinWalkPath(dir, entry.Name())
-		target := ResolveEntry(path, entry)
-		if target.IsDir && !w.recursive {
-			continue
-		}
-		if target.Refused != "" {
-			w.entries = append(w.entries, WalkEntry{Path: path, Refused: target.Refused})
-			continue
-		}
-		if !target.IsDir {
-			w.entries = append(w.entries, WalkEntry{Path: path})
-			continue
-		}
-
-		// A real subdirectory's canonical path is its parent's plus its
-		// name; a linked one's was resolved above.
-		canonical := target.Canonical
-		if canonical == "" {
-			canonical = filepath.Join(ancestors[len(ancestors)-1], entry.Name())
-		}
-		if slices.Contains(ancestors, canonical) {
-			w.entries = append(w.entries, WalkEntry{Path: path, Refused: ReasonLinkLoop})
-			continue
-		}
-		// A fresh slice per descent: sibling directories never share
-		// (and overwrite) one backing array for their ancestor lists.
-		below := make([]string, 0, len(ancestors)+1)
-		below = append(below, ancestors...)
-		below = append(below, canonical)
-		if err := w.walk(path, below); err != nil {
-			w.entries = append(w.entries, WalkEntry{Path: path, ReadErr: err})
+		case entry.Refused != "":
+			w.refuse(entry.Path, entry.Refused)
+		case !entry.IsDir():
+			w.entries = append(w.entries, WalkEntry{Path: entry.Path, File: entry.Target})
+		case entry.IsLink:
+			w.deferred = append(w.deferred, dirLink{target: entry.Target, from: dir.canonical})
+		default:
+			w.enter(entry.Target)
 		}
 	}
 	return nil
+}
+
+// enter walks the directory dir unless the walk has searched it
+// already, which a real directory only meets through a bind mount or a
+// directory hard link.
+func (w *walker) enter(dir Pinned) {
+	if first, ok := w.searched[dir.canonical]; ok {
+		w.refuse(dir.path, fmt.Sprintf(reasonAlreadySearchedFormat, first))
+		return
+	}
+	w.searched[dir.canonical] = dir.path
+	if err := w.walk(dir); err != nil {
+		w.entries = append(w.entries, WalkEntry{Path: dir.path, ReadErr: err})
+	}
+}
+
+// followLink walks the directory a link leads to, or refuses the link:
+// as a loop when the directory holds the link, and as a second way in
+// when the walk searched the directory elsewhere.
+func (w *walker) followLink(link dirLink) {
+	target := link.target.canonical
+	if _, ok := w.searched[target]; ok && isSameOrAncestor(target, link.from) {
+		w.refuse(link.target.path, ReasonLinkLoop)
+		return
+	}
+	w.enter(link.target)
+}
+
+// refuse reports path as an entry the walk did not follow.
+func (w *walker) refuse(path, reason string) {
+	w.entries = append(w.entries, WalkEntry{Path: path, Refused: reason})
+}
+
+// isSameOrAncestor reports whether dir is path itself or a directory
+// above it. Both are canonical.
+func isSameOrAncestor(dir, path string) bool {
+	if dir == path {
+		return true
+	}
+	if !strings.HasSuffix(dir, string(filepath.Separator)) {
+		dir += string(filepath.Separator)
+	}
+	return strings.HasPrefix(path, dir)
 }
 
 // joinWalkPath appends name to dir without cleaning dir, so the paths a

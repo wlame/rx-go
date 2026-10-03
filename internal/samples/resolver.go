@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -31,7 +31,14 @@ func NoIndex(string) (*rxtypes.UnifiedFileIndex, error) { return nil, nil }
 // must be non-empty. Context / BeforeContext / AfterContext are
 // caller-resolved (Resolve does not apply defaults).
 type Request struct {
-	Path          string
+	// Path is the file as the caller named it; the response reports it
+	// back unchanged.
+	Path string
+	// Source is Path pinned when the caller checked it (paths.Pin).
+	// Every read of the file goes through it, so a path that leads to
+	// another file by then is refused rather than read. When it is the
+	// zero value, Resolve pins Path itself before the first read.
+	Source        paths.Pinned
 	Offsets       []OffsetOrRange
 	Lines         []OffsetOrRange
 	BeforeContext int
@@ -61,9 +68,11 @@ const (
 )
 
 // Resolve executes the request and returns a populated SamplesResponse.
-// Path validation / compression detection / sandboxing are the caller's
-// responsibility — this function assumes the path exists and is a text
-// file.
+// Compression detection and the caller's error mapping stay with the
+// caller, which also checks the path first to answer a refusal the way
+// its surface does. Resolve reads the file only through req.Source, and
+// pins req.Path itself (the same sandbox check) when the caller passed
+// no pin, so it never reads a file that check would refuse.
 //
 // Offsets mode (byte offset → line):
 //
@@ -82,6 +91,13 @@ const (
 // Negative single values are resolved against file size (byte mode) or
 // total line count (lines mode). Ranges must have both ends >= 0.
 func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
+	if req.Source.IsZero() {
+		src, err := paths.Pin(req.Path)
+		if err != nil {
+			return nil, err
+		}
+		req.Source = src
+	}
 	resp := &rxtypes.SamplesResponse{
 		Path:          req.Path,
 		Offsets:       map[string]int64{},
@@ -426,7 +442,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 		if ix != nil && ix.LineCount != nil && *ix.LineCount > 0 {
 			totalLines = *ix.LineCount
 		} else {
-			n, err := countLines(req.Path)
+			n, err := countLines(req.Source)
 			if err != nil {
 				return err
 			}
@@ -443,7 +459,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 				return err
 			}
 			lines, err := readLineRangeWithIndex(
-				req.Path, v.Start, *v.End, ix,
+				req.Source, v.Start, *v.End, ix,
 			)
 			if err != nil {
 				return err
@@ -482,7 +498,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 			return err
 		}
 		lines, targetOffset, err := readLinesWithTarget(
-			req.Path, startLine, endLine, target, ix,
+			req.Source, startLine, endLine, target, ix,
 		)
 		if err != nil {
 			return err
@@ -531,8 +547,11 @@ type readSeekCloser interface {
 // var to a function that wraps *os.File in counting.File, observe
 // counter.Load() after the operation, and restore the original in
 // t.Cleanup. See resolver_budget_test.go.
-var openFileForSamples = func(path string) (readSeekCloser, error) {
-	return os.Open(path)
+//
+// Every file the package reads is opened here or through the same pin:
+// Pinned.Open refuses a path that no longer leads to the checked file.
+var openFileForSamples = func(src paths.Pinned) (readSeekCloser, error) {
+	return src.Open()
 }
 
 // readLinesWithTarget reads lines [startLine, endLine] (1-based,
@@ -558,7 +577,7 @@ var openFileForSamples = func(path string) (readSeekCloser, error) {
 // files (1.3 GB file, lines=1-1000 range: 2.8 ms Python vs 636 ms Go
 // before fix; ~30-60 ms after fix).
 func readLinesWithTarget(
-	path string, startLine, endLine, targetLine int64,
+	src paths.Pinned, startLine, endLine, targetLine int64,
 	idx *rxtypes.UnifiedFileIndex,
 ) (lines []string, targetOffset int64, err error) {
 	if startLine < 1 {
@@ -571,7 +590,7 @@ func readLinesWithTarget(
 	// Decide seek origin: closest checkpoint <= startLine, or 0.
 	seekOffset, seekLine := chooseSeekOrigin(idx, startLine)
 
-	f, err := openFileForSamples(path)
+	f, err := openFileForSamples(src)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -636,17 +655,17 @@ func readLinesWithTarget(
 // readLinesWithTarget. Returns only the lines in [startLine, endLine];
 // the byte offset is not needed for range queries (Python returns -1).
 func readLineRangeWithIndex(
-	path string, startLine, endLine int64,
+	src paths.Pinned, startLine, endLine int64,
 	idx *rxtypes.UnifiedFileIndex,
 ) ([]string, error) {
-	lines, _, err := readLinesWithTarget(path, startLine, endLine, -1, idx)
+	lines, _, err := readLinesWithTarget(src, startLine, endLine, -1, idx)
 	return lines, err
 }
 
 // readLineRange is the index-free sibling used by the byte-offset path.
 // Returns the lines and the offset of startLine (classic signature).
-func readLineRange(path string, startLine, endLine int64) ([]string, int64, error) {
-	lines, off, err := readLinesWithTarget(path, startLine, endLine, startLine, nil)
+func readLineRange(src paths.Pinned, startLine, endLine int64) ([]string, int64, error) {
+	lines, off, err := readLinesWithTarget(src, startLine, endLine, startLine, nil)
 	return lines, off, err
 }
 
@@ -668,8 +687,8 @@ func chooseSeekOrigin(idx *rxtypes.UnifiedFileIndex, targetLine int64) (offset, 
 }
 
 // lineNumberForOffset returns the 1-based line number containing offset.
-func lineNumberForOffset(path string, offset int64) (int64, error) {
-	lines, err := lineNumbersForOffsets(path, []int64{offset}, nil)
+func lineNumberForOffset(src paths.Pinned, offset int64) (int64, error) {
+	lines, err := lineNumbersForOffsets(src, []int64{offset}, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -689,7 +708,7 @@ func lineNumberForOffset(path string, offset int64) (int64, error) {
 // starts at the beginning, which is the only place a line count can
 // start from.
 func lineNumbersForOffsets(
-	path string,
+	src paths.Pinned,
 	offsets []int64,
 	idx *rxtypes.UnifiedFileIndex,
 ) (map[int64]int64, error) {
@@ -708,7 +727,7 @@ func lineNumbersForOffsets(
 		}
 	}
 
-	f, err := openFileForSamples(path)
+	f, err := openFileForSamples(src)
 	if err != nil {
 		return nil, err
 	}
@@ -745,8 +764,8 @@ func lineNumbersForOffsets(
 
 // countLines returns the number of '\n' bytes + 1 if the final chunk
 // has unterminated content. Matches Python's `sum(1 for _ in open(p, 'rb'))`.
-func countLines(path string) (int64, error) {
-	f, err := os.Open(path)
+func countLines(src paths.Pinned) (int64, error) {
+	f, err := src.Open()
 	if err != nil {
 		return 0, err
 	}

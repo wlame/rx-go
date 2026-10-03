@@ -28,7 +28,7 @@ func TestProcessChunk_SingleChunkMatchesAllLines(t *testing.T) {
 	content := []byte("hello error\nworld\nfinal error line\n")
 	p := mustWriteFile(t, content)
 
-	task := FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))}
+	task := FileTask{TaskID: 0, Source: pinForTest(t, p), Offset: 0, Count: int64(len(content))}
 	patterns := map[string]string{"p1": "error"}
 	order := []string{"p1"}
 
@@ -65,7 +65,7 @@ func TestProcessChunk_NoMatches(t *testing.T) {
 	p := mustWriteFile(t, content)
 
 	res, err := ProcessChunk(context.Background(), ChunkRequest{
-		Task:         FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))},
+		Task:         FileTask{TaskID: 0, Source: pinForTest(t, p), Offset: 0, Count: int64(len(content))},
 		PatternIDs:   map[string]string{"p1": "nomatchpossible"},
 		PatternOrder: []string{"p1"},
 	})
@@ -89,7 +89,7 @@ func TestProcessChunk_DedupFilter(t *testing.T) {
 	content := []byte("alpha error\nbeta error\ngamma error\ndelta error\n")
 	p := mustWriteFile(t, content)
 
-	task0 := FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: 24} // covers "alpha\nbeta" with boundary after "beta\n"
+	task0 := FileTask{TaskID: 0, Source: pinForTest(t, p), Offset: 0, Count: 24} // covers "alpha\nbeta" with boundary after "beta\n"
 	res, err := ProcessChunk(context.Background(), ChunkRequest{
 		Task:         task0,
 		PatternIDs:   map[string]string{"p1": "error"},
@@ -123,7 +123,7 @@ func TestProcessChunk_IncompatibleArgsAreFiltered(t *testing.T) {
 	// We can't easily verify the exact argv, but we CAN verify that
 	// passing these doesn't blow up and still returns the match.
 	res, err := ProcessChunk(context.Background(), ChunkRequest{
-		Task:         FileTask{TaskID: 0, FilePath: p, Offset: 0, Count: int64(len(content))},
+		Task:         FileTask{TaskID: 0, Source: pinForTest(t, p), Offset: 0, Count: int64(len(content))},
 		PatternIDs:   map[string]string{"p1": "hello"},
 		PatternOrder: []string{"p1"},
 		RgExtraArgs:  []string{"--byte-offset", "--only-matching"},
@@ -147,9 +147,9 @@ func TestProcessAllChunks_PreservesTaskOrdering(t *testing.T) {
 	p := mustWriteFile(t, content)
 
 	tasks := []FileTask{
-		{TaskID: 0, FilePath: p, Offset: 0, Count: 12},  // alpha error\n
-		{TaskID: 1, FilePath: p, Offset: 12, Count: 11}, // beta error\n
-		{TaskID: 2, FilePath: p, Offset: 23, Count: int64(len(content)) - 23},
+		{TaskID: 0, Source: pinForTest(t, p), Offset: 0, Count: 12},  // alpha error\n
+		{TaskID: 1, Source: pinForTest(t, p), Offset: 12, Count: 11}, // beta error\n
+		{TaskID: 2, Source: pinForTest(t, p), Offset: 23, Count: int64(len(content)) - 23},
 	}
 	allMatchesResults, err := ProcessAllChunks(
 		context.Background(), tasks,

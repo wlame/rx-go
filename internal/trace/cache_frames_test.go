@@ -9,7 +9,7 @@ import (
 // bytes hold offset, from the file's seek table.
 func frameOfOffset(t *testing.T, path string, offset int64) int {
 	t.Helper()
-	tbl, err := readSeekTable(path)
+	tbl, err := readSeekTable(pinForTest(t, path))
 	if err != nil {
 		t.Fatalf("read seek table: %v", err)
 	}

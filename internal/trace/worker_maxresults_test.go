@@ -41,7 +41,9 @@ func writeAllMatchingFile(t *testing.T, name string, lines int) (string, int64) 
 // splitIntoTasks builds n FileTasks covering the whole file by hand,
 // bypassing CreateFileTasks so the chunk boundaries do not depend on the
 // configured minimum chunk size.
-func splitIntoTasks(path string, size int64, n int) []FileTask {
+func splitIntoTasks(t *testing.T, path string, size int64, n int) []FileTask {
+	t.Helper()
+	src := pinForTest(t, path)
 	chunkSize := size / int64(n)
 	tasks := make([]FileTask, 0, n)
 	for i := range n {
@@ -51,7 +53,7 @@ func splitIntoTasks(path string, size int64, n int) []FileTask {
 			count = size - off
 		}
 		tasks = append(tasks, FileTask{
-			TaskID: i, FilePath: path, Offset: off, Count: count,
+			TaskID: i, Source: src, Offset: off, Count: count,
 		})
 	}
 	return tasks
@@ -77,7 +79,7 @@ func TestProcessAllChunks_MaxResultsCancelsSiblings(t *testing.T) {
 
 	const numChunks = 8
 	path, size := writeAllMatchingFile(t, "many-matches.txt", 30_000)
-	tasks := splitIntoTasks(path, size, numChunks)
+	tasks := splitIntoTasks(t, path, size, numChunks)
 
 	maxResults := 5
 	allMatchesResults, err := ProcessAllChunks(
@@ -128,7 +130,7 @@ func TestProcessAllChunks_CanceledContextSkipsEveryChunk(t *testing.T) {
 
 	const numChunks = 4
 	path, size := writeAllMatchingFile(t, "never-scanned.txt", 4_000)
-	tasks := splitIntoTasks(path, size, numChunks)
+	tasks := splitIntoTasks(t, path, size, numChunks)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -159,7 +161,7 @@ func TestProcessAllChunks_NilMaxResultsScansEverything(t *testing.T) {
 
 	const numChunks = 4
 	path, size := writeAllMatchingFile(t, "full-scan.txt", 1_000)
-	tasks := splitIntoTasks(path, size, numChunks)
+	tasks := splitIntoTasks(t, path, size, numChunks)
 
 	allMatchesResults, err := ProcessAllChunks(
 		context.Background(), tasks,
@@ -191,7 +193,7 @@ func TestProcessAllChunks_MaxResultsLargerThanFile(t *testing.T) {
 	requireRipgrep(t)
 
 	path, size := writeAllMatchingFile(t, "cap-too-big.txt", 500)
-	tasks := []FileTask{{TaskID: 0, FilePath: path, Offset: 0, Count: size}}
+	tasks := []FileTask{{TaskID: 0, Source: pinForTest(t, path), Offset: 0, Count: size}}
 
 	limit := 100_000
 	allMatchesResults, err := ProcessAllChunks(

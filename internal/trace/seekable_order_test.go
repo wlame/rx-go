@@ -27,7 +27,7 @@ func TestProcessSeekable_CapKeepsTheEarliestMatchesInFileOrder(t *testing.T) {
 
 	limit := 3
 	matches, _, _, err := ProcessSeekable(
-		context.Background(), p,
+		context.Background(), pinForTest(t, p),
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, &limit,
 	)

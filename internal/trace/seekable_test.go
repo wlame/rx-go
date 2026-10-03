@@ -55,7 +55,7 @@ func TestProcessSeekable_BasicMatches(t *testing.T) {
 
 	matches, _, _, err := ProcessSeekable(
 		context.Background(),
-		p,
+		pinForTest(t, p),
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, nil,
 	)
@@ -89,7 +89,7 @@ func TestProcessSeekable_MaxResultsTruncates(t *testing.T) {
 	cap := 5
 	matches, _, _, err := ProcessSeekable(
 		context.Background(),
-		p,
+		pinForTest(t, p),
 		map[string]string{"p1": "error"}, []string{"p1"},
 		nil, 0, 0, &cap,
 	)
@@ -105,7 +105,7 @@ func TestProcessSeekable_MaxResultsTruncates(t *testing.T) {
 func TestReadSeekTable_RoundTripsOurEncoder(t *testing.T) {
 	content := []byte("a\nb\nc\nd\n")
 	p := writeSeekableZstdFile(t, content, 4)
-	tbl, err := readSeekTable(p)
+	tbl, err := readSeekTable(pinForTest(t, p))
 	if err != nil {
 		t.Fatalf("readSeekTable: %v", err)
 	}

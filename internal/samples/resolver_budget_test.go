@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -47,8 +48,8 @@ func withCountingOpen(t *testing.T) *atomic.Int64 {
 	t.Helper()
 	counter := new(atomic.Int64)
 	orig := openFileForSamples
-	openFileForSamples = func(path string) (readSeekCloser, error) {
-		raw, err := os.Open(path)
+	openFileForSamples = func(src paths.Pinned) (readSeekCloser, error) {
+		raw, err := src.Open()
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +135,7 @@ func TestBudget_LinesRangeRequest_StopsAtEndLine(t *testing.T) {
 	// Request lines 100-200 from a 10k-line file.
 	const startLine = int64(100)
 	const endLine = int64(200)
-	lines, err := readLineRangeWithIndex(path, startLine, endLine, nil)
+	lines, err := readLineRangeWithIndex(pinForTest(t, path), startLine, endLine, nil)
 	if err != nil {
 		t.Fatalf("readLineRangeWithIndex: %v", err)
 	}
@@ -210,7 +211,7 @@ func TestBudget_LinesRangeMidFile_SeekSkipsPrefix(t *testing.T) {
 	// Request lines 5100-5200. With the index the resolver should seek
 	// to checkpoint 5001 and read from there — about 200 lines * 150 =
 	// 30 KB, not 5200 * 150 = 780 KB.
-	lines, err := readLineRangeWithIndex(path, 5100, 5200, idx)
+	lines, err := readLineRangeWithIndex(pinForTest(t, path), 5100, 5200, idx)
 	if err != nil {
 		t.Fatalf("readLineRangeWithIndex: %v", err)
 	}
@@ -243,7 +244,7 @@ func TestBudget_LinesSingleWithContext_StopsAfterContext(t *testing.T) {
 
 	// Single line 150 with ±5 context → read lines 145..155, capture
 	// offset of line 150.
-	lines, targetOffset, err := readLinesWithTarget(path, 145, 155, 150, nil)
+	lines, targetOffset, err := readLinesWithTarget(pinForTest(t, path), 145, 155, 150, nil)
 	if err != nil {
 		t.Fatalf("readLinesWithTarget: %v", err)
 	}
@@ -292,15 +293,15 @@ func TestBudget_ByteOffsetRange_StopsAtEndOffset(t *testing.T) {
 	startOff := int64(15000)
 	endOff := int64(30000)
 
-	startLine, err := lineNumberForOffset(path, startOff)
+	startLine, err := lineNumberForOffset(pinForTest(t, path), startOff)
 	if err != nil {
 		t.Fatalf("lineNumberForOffset(start): %v", err)
 	}
-	endLine, err := lineNumberForOffset(path, endOff)
+	endLine, err := lineNumberForOffset(pinForTest(t, path), endOff)
 	if err != nil {
 		t.Fatalf("lineNumberForOffset(end): %v", err)
 	}
-	lines, _, err := readLineRange(path, startLine, endLine)
+	lines, _, err := readLineRange(pinForTest(t, path), startLine, endLine)
 	if err != nil {
 		t.Fatalf("readLineRange: %v", err)
 	}
@@ -339,7 +340,7 @@ func TestBudget_LinesRangeNoIndex_FullScanExpected(t *testing.T) {
 
 	// Range that extends to line 500 without an index. The resolver
 	// MUST scan from the top (no seek), but MUST STILL stop at line 500.
-	lines, err := readLineRangeWithIndex(path, 1, 500, nil)
+	lines, err := readLineRangeWithIndex(pinForTest(t, path), 1, 500, nil)
 	if err != nil {
 		t.Fatalf("readLineRangeWithIndex: %v", err)
 	}

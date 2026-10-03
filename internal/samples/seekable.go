@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -20,10 +20,16 @@ import (
 // the answer is the same either way, only slower.
 var errNoFrameIndex = errors.New("samples: no frame index for this file")
 
-// decodeSeekableFrame decompresses one frame of a seekable file. It is
-// a variable so a test can count the frames a request decodes.
-var decodeSeekableFrame = func(d *seekable.Decoder, path string, frame int, table *seekable.SeekTable) ([]byte, error) {
-	return d.DecompressFrame(path, frame, table)
+// decodeSeekableFrame decompresses one frame of a seekable file, read
+// through its pin. It is a variable so a test can count the frames a
+// request decodes.
+var decodeSeekableFrame = func(d *seekable.Decoder, src paths.Pinned, frame int, table *seekable.SeekTable) ([]byte, error) {
+	f, err := src.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return d.DecompressFrameAt(f, frame, table)
 }
 
 // resolveSeekableLines answers a line-mode request on a seekable-zstd
@@ -47,7 +53,7 @@ func resolveSeekableLines(req Request, resp *rxtypes.SamplesResponse) error {
 	}
 	frames := *idx.Frames
 
-	file, err := os.Open(req.Path)
+	file, err := req.Source.Open()
 	if err != nil {
 		return err
 	}
@@ -129,7 +135,7 @@ func answerOneWindow(
 	resp.Samples[key] = nil
 	resp.Lines[key] = -1
 
-	lines, offsets, err := readLinesFromFrames(req.Path, frames, table, decoder, first, last)
+	lines, offsets, err := readLinesFromFrames(req.Source, frames, table, decoder, first, last)
 	if err != nil {
 		return err
 	}
@@ -155,7 +161,7 @@ func answerOneWindow(
 // every wanted line is complete. The run's own first line can be a
 // partial one, and it is never in the wanted range.
 func readLinesFromFrames(
-	path string,
+	src paths.Pinned,
 	frames []rxtypes.FrameLineInfo,
 	table *seekable.SeekTable,
 	decoder *seekable.Decoder,
@@ -168,7 +174,12 @@ func readLinesFromFrames(
 
 	startOffset := frames[startFrame].DecompressedOffset
 	endOffset := frames[endFrame].DecompressedOffset + frames[endFrame].DecompressedSize
-	data, err := decoder.DecompressRange(context.Background(), path, table, startOffset, endOffset-startOffset)
+	file, err := src.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := decoder.DecompressRangeAt(context.Background(), file, table, startOffset, endOffset-startOffset)
 	if err != nil {
 		return nil, nil, err
 	}

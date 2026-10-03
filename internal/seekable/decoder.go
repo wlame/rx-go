@@ -45,15 +45,22 @@ func NewDecoder() *Decoder {
 // goroutines that aren't sharing file descriptors. For hot paths that
 // decompress many frames from one file, use DecompressFrames instead.
 func (d *Decoder) DecompressFrame(path string, idx int, tbl *SeekTable) ([]byte, error) {
-	if idx < 0 || idx >= tbl.NumFrames {
-		return nil, fmt.Errorf("%w: idx=%d numFrames=%d", ErrFrameIndexOutOfRange, idx, tbl.NumFrames)
-	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %q: %w", path, err)
 	}
 	defer func() { _ = f.Close() }() // read-only: close-error is informational
-	return d.decompressFrameFromReaderAt(f, tbl.Frames[idx])
+	return d.DecompressFrameAt(f, idx, tbl)
+}
+
+// DecompressFrameAt is DecompressFrame for a file the caller has
+// already opened, such as one opened through a pin that checked it is
+// the file that was validated.
+func (d *Decoder) DecompressFrameAt(r io.ReaderAt, idx int, tbl *SeekTable) ([]byte, error) {
+	if idx < 0 || idx >= tbl.NumFrames {
+		return nil, fmt.Errorf("%w: idx=%d numFrames=%d", ErrFrameIndexOutOfRange, idx, tbl.NumFrames)
+	}
+	return d.decompressFrameFromReaderAt(r, tbl.Frames[idx])
 }
 
 // DecompressFrames decodes a set of frames in parallel and returns a
@@ -67,18 +74,24 @@ func (d *Decoder) DecompressFrames(ctx context.Context, path string, frameIndice
 	if len(frameIndices) == 0 {
 		return map[int][]byte{}, nil
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }() // read-only: close-error is informational
+	return d.DecompressFramesAt(ctx, f, frameIndices, tbl)
+}
+
+// DecompressFramesAt is DecompressFrames for a file the caller has
+// already opened. r must be safe for concurrent ReadAt calls, as an
+// *os.File is.
+func (d *Decoder) DecompressFramesAt(ctx context.Context, f io.ReaderAt, frameIndices []int, tbl *SeekTable) (map[int][]byte, error) {
 	// Validate indices up front — cheaper than failing mid-goroutine.
 	for _, idx := range frameIndices {
 		if idx < 0 || idx >= tbl.NumFrames {
 			return nil, fmt.Errorf("%w: idx=%d numFrames=%d", ErrFrameIndexOutOfRange, idx, tbl.NumFrames)
 		}
 	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %q: %w", path, err)
-	}
-	defer func() { _ = f.Close() }() // read-only: close-error is informational
 
 	result := make(map[int][]byte, len(frameIndices))
 	var mu sync.Mutex
@@ -137,6 +150,21 @@ func (d *Decoder) DecompressRange(ctx context.Context, path string, tbl *SeekTab
 	if length <= 0 {
 		return []byte{}, nil
 	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }() // read-only: close-error is informational
+	return d.DecompressRangeAt(ctx, f, tbl, startOffset, length)
+}
+
+// DecompressRangeAt is DecompressRange for a file the caller has
+// already opened. r must be safe for concurrent ReadAt calls, as an
+// *os.File is.
+func (d *Decoder) DecompressRangeAt(ctx context.Context, r io.ReaderAt, tbl *SeekTable, startOffset, length int64) ([]byte, error) {
+	if length <= 0 {
+		return []byte{}, nil
+	}
 	endOffset := startOffset + length
 	var need []int
 	for _, f := range tbl.Frames {
@@ -147,7 +175,7 @@ func (d *Decoder) DecompressRange(ctx context.Context, path string, tbl *SeekTab
 	if len(need) == 0 {
 		return []byte{}, nil
 	}
-	frames, err := d.DecompressFrames(ctx, path, need, tbl)
+	frames, err := d.DecompressFramesAt(ctx, r, need, tbl)
 	if err != nil {
 		return nil, err
 	}

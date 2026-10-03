@@ -77,7 +77,14 @@ func registerTreeHandlers(_ *Server, api huma.API) {
 			return nil, ErrBadRequest(fmt.Sprintf("Path is not a directory: %s", validated))
 		}
 
-		entries, err := os.ReadDir(validated)
+		// The listing is read through the directory as it is pinned now,
+		// so a directory swapped for a link after the check above is
+		// refused rather than listed.
+		dir, err := paths.Pin(validated)
+		if err != nil {
+			return nil, ErrForbidden(fmt.Sprintf("Permission denied: %s", validated))
+		}
+		entries, err := paths.ListDir(dir)
 		if err != nil {
 			return nil, ErrForbidden(fmt.Sprintf("Permission denied: %s", validated))
 		}
@@ -105,8 +112,13 @@ func listSearchRoots() rxtypes.TreeResponse {
 	}
 	out := make([]rxtypes.TreeEntry, 0, len(roots))
 	for _, root := range roots {
-		entry := buildEntryMetadata(root, filepath.Base(root), true)
-		out = append(out, entry)
+		pinned, err := paths.Pin(root)
+		if err != nil {
+			// A root that cannot be stated is still listed by name.
+			out = append(out, rxtypes.TreeEntry{Name: filepath.Base(root), Path: root, Type: "directory"})
+			continue
+		}
+		out = append(out, buildEntryMetadata(pinned, filepath.Base(root)))
 	}
 	return rxtypes.TreeResponse{
 		Path:         "/",
@@ -120,32 +132,38 @@ func listSearchRoots() rxtypes.TreeResponse {
 // buildTreeResponse turns a directory listing into the full TreeResponse.
 // Entries are sorted dirs-first (alphabetical), files-second (alphabetical)
 // matching Python's sort order at rx-python/src/rx/web.py:2091-2102.
-func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeResponse {
+//
+// A listing shows what a caller can open by name. paths.ListDir already
+// leaves out hidden entries; a symlink it refused — out of every search
+// root, into a hidden entry, or nowhere — is left out here, since
+// listing it would only offer a link that returns 403 and show the size
+// and type of a file outside the roots. A symlink to a directory inside
+// the roots is listed as a directory.
+func buildTreeResponse(absPath string, entries []paths.ListedEntry) rxtypes.TreeResponse {
 	// Split dirs and files, sort each alphabetically (case-insensitive).
-	dirs := make([]os.DirEntry, 0, len(entries))
-	files := make([]os.DirEntry, 0, len(entries))
+	dirs := make([]paths.ListedEntry, 0, len(entries))
+	files := make([]paths.ListedEntry, 0, len(entries))
 	for _, e := range entries {
-		isDir, listed := listedEntry(absPath, e)
-		if !listed {
+		switch {
+		case e.Refused != "":
 			continue
-		}
-		if isDir {
+		case e.IsDir():
 			dirs = append(dirs, e)
-		} else {
+		default:
 			files = append(files, e)
 		}
 	}
 	sort.Slice(dirs, func(i, j int) bool {
-		return strings.ToLower(dirs[i].Name()) < strings.ToLower(dirs[j].Name())
+		return strings.ToLower(dirs[i].Name) < strings.ToLower(dirs[j].Name)
 	})
 	sort.Slice(files, func(i, j int) bool {
-		return strings.ToLower(files[i].Name()) < strings.ToLower(files[j].Name())
+		return strings.ToLower(files[i].Name) < strings.ToLower(files[j].Name)
 	})
 
 	// Copy into a fresh slice so we don't mutate dirs (gocritic's
 	// appendAssign check flags the alternate pattern). The new slice's
 	// underlying array is owned by this function alone.
-	merged := make([]os.DirEntry, 0, len(dirs)+len(files))
+	merged := make([]paths.ListedEntry, 0, len(dirs)+len(files))
 	merged = append(merged, dirs...)
 	merged = append(merged, files...)
 
@@ -166,9 +184,8 @@ func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeRespon
 
 	out := make([]rxtypes.TreeEntry, 0, len(merged))
 	var totalSize int64
-	for i, e := range merged {
-		// The first len(dirs) entries of merged are the directories.
-		entry := buildEntryMetadata(filepath.Join(absPath, e.Name()), e.Name(), i < len(dirs))
+	for _, e := range merged {
+		entry := buildEntryMetadata(e.Target, e.Name)
 		out = append(out, entry)
 		if entry.Size != nil {
 			totalSize += *entry.Size
@@ -190,30 +207,15 @@ func buildTreeResponse(absPath string, entries []os.DirEntry) rxtypes.TreeRespon
 	return resp
 }
 
-// listedEntry reports whether the entry e of directory dir belongs in a
-// listing, and whether it is (or leads to) a directory.
-//
-// A listing shows what a caller can open by name. A hidden entry is
-// unreachable while --hidden is off, and so is a symlink that leads out
-// of every search root, into a hidden entry, or nowhere; listing one
-// would only offer a link that returns 403, and would show the size and
-// type of a file outside the roots. A symlink to a directory inside the
-// roots is listed as a directory.
-func listedEntry(dir string, e os.DirEntry) (isDir, listed bool) {
-	if paths.SkipEntry(e.Name()) {
-		return false, false
-	}
-	target := paths.ResolveEntry(filepath.Join(dir, e.Name()), e)
-	if target.Refused != "" {
-		return false, false
-	}
-	return target.IsDir, true
-}
-
-// buildEntryMetadata computes all TreeEntry fields for a single path.
+// buildEntryMetadata computes all TreeEntry fields for one entry, from
+// the file or directory it was pinned to when it was listed. Every stat
+// and read goes through the pin, so an entry retargeted since cannot
+// lend it the size, type or children of a file elsewhere.
 // Best-effort: if stat fails we return what we have; the frontend
 // tolerates missing fields (they're all pointer types).
-func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
+func buildEntryMetadata(target paths.Pinned, name string) rxtypes.TreeEntry {
+	entryPath := target.Path()
+	isDir := target.Info().IsDir()
 	entry := rxtypes.TreeEntry{
 		Name: name,
 		Path: entryPath,
@@ -224,7 +226,7 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 		entry.Type = "file"
 	}
 
-	info, err := os.Stat(entryPath)
+	info, err := target.Stat()
 	if err != nil {
 		return entry // best-effort — still emit the name + path
 	}
@@ -232,11 +234,12 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 	entry.ModifiedAt = &mtime
 
 	if isDir {
-		// Count children (non-recursive).
-		if children, err := os.ReadDir(entryPath); err == nil {
+		// Count children (non-recursive): what a listing of the
+		// directory would show.
+		if children, err := paths.ListDir(target); err == nil {
 			count := 0
 			for _, child := range children {
-				if _, listed := listedEntry(entryPath, child); listed {
+				if child.Refused == "" {
 					count++
 				}
 			}
@@ -265,7 +268,7 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 	} else {
 		f := false
 		entry.IsCompressed = &f
-		isText := looksLikeTextFile(entryPath)
+		isText := looksLikeTextFile(target)
 		entry.IsText = &isText
 	}
 
@@ -288,8 +291,8 @@ func buildEntryMetadata(entryPath, name string, isDir bool) rxtypes.TreeEntry {
 // looksLikeTextFile returns true if the first 512 bytes of path contain
 // no NUL bytes. Same heuristic as internal/trace/engine.go:isTextFile.
 // Kept private here to avoid a circular import.
-func looksLikeTextFile(path string) bool {
-	f, err := os.Open(path)
+func looksLikeTextFile(target paths.Pinned) bool {
+	f, err := target.Open()
 	if err != nil {
 		return false
 	}

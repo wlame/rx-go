@@ -45,7 +45,7 @@ func TestProcessSeekableReturnsWhenCancelled(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, _, _, err := ProcessSeekable(
-			ctx, path,
+			ctx, pinForTest(t, path),
 			map[string]string{"p1": "NEEDLE"}, []string{"p1"},
 			nil, 0, 0, nil,
 		)
@@ -80,7 +80,7 @@ func TestProcessSeekableWithACapReturns(t *testing.T) {
 			done := make(chan result, 1)
 			go func() {
 				m, _, _, err := ProcessSeekable(
-					context.Background(), path,
+					context.Background(), pinForTest(t, path),
 					map[string]string{"p1": "NEEDLE"}, []string{"p1"},
 					nil, 0, 0, &cap,
 				)
