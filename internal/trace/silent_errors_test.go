@@ -55,11 +55,11 @@ func TestSaveScannedFile_FailureWarnsOnce(t *testing.T) {
 }
 
 // ripgrep's output for a seekable batch is parsed after rg exits. A
-// line the parser cannot read (one longer than its buffer) must fail
-// the batch rather than silently drop every match after it.
+// line the parser cannot read must fail the batch rather than silently
+// drop every match after it.
 func TestRemapBatchEvents_ReportsAnUnreadableStream(t *testing.T) {
-	tooLong := strings.Repeat("x", 17*1024*1024)
-	out := []byte(`{"type":"begin","data":{}}` + "\n" + tooLong + "\n")
+	out := []byte(`{"type":"begin","data":{}}` + "\n" + "this is not json" + "\n" +
+		`{"type":"match","data":{"lines":{"text":"x\\n"},"line_number":1,"absolute_offset":0,"submatches":[]}}` + "\n")
 	segments := []streamSegment{{frame: seekable.FrameInfo{DecompressedSize: 100}}}
 
 	_, _, err := remapBatchEvents(context.Background(), out, wholeStream(segments), []string{"p1"})

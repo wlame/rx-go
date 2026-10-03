@@ -312,48 +312,91 @@ func ParseEvent(line []byte) (*RgEvent, error) {
 	return ev, nil
 }
 
+// eventReadBufferSize is the size of StreamEvents' read buffer. It is
+// not a limit: an event longer than this is gathered piece by piece.
+// Most events (one log line and its submatches) fit in it, and those
+// are parsed straight out of the buffer without a copy.
+const eventReadBufferSize = 64 * 1024
+
 // StreamEvents reads r line-by-line and returns events one at a time
 // via a callback. The callback receives each successfully-parsed event
 // and an error for parsing failures. Return a non-nil error from the
 // callback to stop iteration early (it will propagate up).
 //
-// Uses bufio.Scanner with a custom buffer size so lines longer than
-// 64 KB (the default limit) don't truncate on very long matched lines.
-// Python's file-backed reader has no fixed line limit, so we bump ours
-// to 16 MB, which is way above anything rg emits for real log lines.
+// An event has no length limit, because ripgrep puts none on it: a
+// matched line of any length is one event, and every submatch on the
+// line adds an object to it, so a 1 MB line on which the pattern
+// matches each character makes an event of about 50 MB. Such a line
+// is answered like any other, at the cost of holding its event in
+// memory while it is parsed — ripgrep holds the line itself too.
+//
+// A caller that stops reading before r ends must also stop the process
+// writing r, or that process blocks on a full pipe for ever. ProcessChunk
+// and ProcessCompressed kill rg when StreamEvents returns an error.
 func StreamEvents(ctx context.Context, r io.Reader, cb func(*RgEvent, error) error) error {
-	scanner := bufio.NewScanner(r)
-	// Python's default reader has no line limit; we match this in
-	// spirit with a generous 16 MB cap. A log line bigger than this is
-	// pathological anyway — ripgrep caps single-line search at 10 MB
-	// by default, so we stay just above that.
-	const maxLine = 16 * 1024 * 1024
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, maxLine)
+	reader := bufio.NewReaderSize(r, eventReadBufferSize)
+	// long is reused across events for the ones larger than the buffer.
+	var long []byte
+	for {
+		var line []byte
+		var readErr error
+		line, long, readErr = readEventLine(reader, long[:0])
+		// A last event without a final newline arrives together with
+		// io.EOF, so the line is handled before the error is.
+		if len(line) > 0 {
+			// Check cancellation between lines. The caller can bail out
+			// at any time without waiting for the subprocess to close
+			// stdout.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if cbErr := handleEventLine(line, cb); cbErr != nil {
+				return cbErr
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
 
-	for scanner.Scan() {
-		// Check cancellation between lines. The caller can bail out at
-		// any time without waiting for the subprocess to close stdout.
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		ev, err := ParseEvent(scanner.Bytes())
-		// Swallow ErrUnknownEvent unless the callback cares — the
-		// default sentinel behavior is "skip unknowns", so we
-		// pass (ev, nil) in that case, matching Python's semantics.
-		if errors.Is(err, ErrUnknownEvent) {
-			err = nil
-		}
-		if ev == nil && err == nil {
-			// Empty/blank line — nothing to do.
+// readEventLine returns the next line of reader, newline included.
+//
+// bufio.Reader.ReadSlice returns a view into the reader's own buffer,
+// valid until the next read, and bufio.ErrBufferFull when the line does
+// not fit in it. In that case the pieces are appended to long, which
+// grows as far as the line needs; the grown slice is returned so the
+// caller can reuse its capacity for the next long line. The returned
+// line is valid only until the next call.
+func readEventLine(reader *bufio.Reader, long []byte) (line, grown []byte, err error) {
+	for {
+		piece, err := reader.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			long = append(long, piece...)
 			continue
 		}
-		if cbErr := cb(ev, err); cbErr != nil {
-			return cbErr
+		if len(long) == 0 {
+			// The whole line fitted in the buffer: no copy.
+			return piece, long, err
 		}
+		long = append(long, piece...)
+		return long, long, err
 	}
-	if err := scanner.Err(); err != nil {
-		return err
+}
+
+// handleEventLine parses one line of rg's output and hands it to cb.
+// Unknown event types and blank lines are skipped, as rx-python skips
+// them; a line that is not valid JSON reaches cb as its error argument.
+func handleEventLine(line []byte, cb func(*RgEvent, error) error) error {
+	ev, err := ParseEvent(line)
+	if errors.Is(err, ErrUnknownEvent) {
+		err = nil
 	}
-	return nil
+	if ev == nil && err == nil {
+		return nil
+	}
+	return cb(ev, err)
 }

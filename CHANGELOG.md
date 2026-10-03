@@ -77,6 +77,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(set "output_path" to another file)`. The `output_path` description in
   the OpenAPI document says so; the contract stays 1.3.
 
+### Fixed
+
+- `rx trace` and `GET /v1/trace` answer a line whose ripgrep JSON event
+  is larger than 16 MiB: a matched line that long, or a shorter one on
+  which the pattern matches very often (a 1 MB line of `x` searched
+  for `x` makes a 50 MB event). Such an event used to stop the parser.
+  On a plain file and on a gzip, bzip2, xz or plain zstd stream, rx then
+  waited for ever on an `rg` that still had output to write — the CLI
+  never returned and an HTTP request held its `rg` until the client gave
+  up; on a seekable zstd file the whole file was listed in
+  `skipped_files` with 0 matches. Events now have no size limit, and
+  whenever rx stops reading ripgrep's output early it kills `rg` before
+  waiting for it, so a failure ends with an error or a skipped file,
+  never a hang. A seekable-zstd scan that meets a line of ripgrep output
+  it cannot parse now fails like the other paths, rather than dropping
+  that line's match.
+
 ### Security
 
 - A directory search no longer follows a symbolic link out of

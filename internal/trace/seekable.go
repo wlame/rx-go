@@ -653,8 +653,8 @@ func scanFrameBatch(
 	// without the context lines rg wrote after it, a window cut short.
 	matches, contexts, err = remapBatchEvents(context.WithoutCancel(ctx), stdout.Bytes(), feeder.stream(), patternOrder)
 	if err != nil {
-		// The output could not be read past some point (a line longer
-		// than the parser's buffer): the batch fails.
+		// The output could not be parsed past some point: the batch
+		// fails rather than report the matches before it as all.
 		return matches, contexts, countedFrames(locs), fmt.Errorf("read rg output: %w", err)
 	}
 	return matches, contexts, countedFrames(locs), nil
@@ -748,13 +748,16 @@ func remapBatchEvents(
 ) ([]MatchRaw, []ContextRaw, error) {
 	var matches []MatchRaw
 	var contexts []ContextRaw
-	// A line that is not a valid event reaches the callback as parseErr
-	// and is skipped, as the chunked path skips it. What StreamEvents
-	// returns is worse: the stream could not be read past some point (a
-	// line longer than its buffer) or the scan was canceled, and every
-	// match after that point is missing. That goes back to the caller.
+	// A line that is not a valid event stops the parse, as it stops the
+	// chunked and the stream paths: every match after it would be
+	// missing, so the error goes back to the caller beside the matches
+	// parsed so far. rg's output is already complete in memory here, so
+	// stopping early leaves no process blocked on a pipe.
 	streamErr := StreamEvents(ctx, bytes.NewReader(rgStdout), func(ev *RgEvent, parseErr error) error {
-		if parseErr != nil || ev == nil {
+		if parseErr != nil {
+			return parseErr
+		}
+		if ev == nil {
 			return nil
 		}
 		switch ev.Type {

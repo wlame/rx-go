@@ -179,6 +179,31 @@ func TestStreamEvents_Cancellation(t *testing.T) {
 	}
 }
 
+// An event has no length limit: one larger than 16 MiB is read whole,
+// and the events after it are read too. A last event without a final
+// newline is read as well.
+func TestStreamEvents_ReadsAnEventOfAnyLength(t *testing.T) {
+	longText := strings.Repeat("x", 17*1024*1024)
+	stream := `{"type":"match","data":{"lines":{"text":"` + longText + `\n"},"line_number":1,"absolute_offset":0,"submatches":[]}}` + "\n" +
+		`{"type":"match","data":{"lines":{"text":"y\n"},"line_number":2,"absolute_offset":17825793,"submatches":[]}}`
+
+	var sizes []int
+	err := StreamEvents(context.Background(), strings.NewReader(stream), func(ev *RgEvent, parseErr error) error {
+		if parseErr != nil {
+			return parseErr
+		}
+		sizes = append(sizes, ev.Match.Lines.Size)
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("StreamEvents: %v", err)
+	}
+	if want := fmt.Sprint([]int{len(longText) + 1, 2}); fmt.Sprint(sizes) != want {
+		t.Errorf("line sizes %v, want %s", sizes, want)
+	}
+}
+
 // A line's Size is its length in bytes as ripgrep read it, line break
 // included, for a UTF-8 line and for one ripgrep sends as base64
 // because it is not valid UTF-8. The next line starts that many bytes
