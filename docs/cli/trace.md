@@ -197,6 +197,14 @@ searched and is listed in `skipped_files`. A NUL byte further on is one
 more byte of its line, as in `rg --text`: the line keeps its number,
 its offset and its whole text, NUL included (`\u0000` in JSON).
 
+A UTF-8 byte-order mark is three bytes of the file, as in
+`rg --encoding=none`: offsets count it, line 1's `line_text` starts with
+it (U+FEFF, kept as its three bytes in JSON), as `rx samples` shows
+that line, and submatch positions on line 1 count its three bytes. A
+pattern anchored with `^` does not match a line that starts with the
+mark. rx does not transcode UTF-16: a plain UTF-16 file is binary and
+skipped, and a compressed copy is searched as its bytes.
+
 ### Structured output for piping
 
 ```bash
