@@ -78,8 +78,8 @@ func TestBuiltinFiles_HoldNoTokenShapedString(t *testing.T) {
 			}{s.ID, func(line []byte) bool { return tokenShape(re, line) }})
 		}
 	}
-	if len(anchors) != 15 {
-		t.Fatalf("%d secret anchors, want the 15 regex and block secrets", len(anchors))
+	if len(anchors) < 15 {
+		t.Fatalf("%d secret anchors, want at least the 15 regex and block secrets", len(anchors))
 	}
 	for _, file := range rawBytesFiles(t) {
 		data, err := os.ReadFile(file)

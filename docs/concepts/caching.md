@@ -38,8 +38,10 @@ curl -s http://127.0.0.1:7777/health | jq '.constants.CACHE_DIR'
 # "/home/you/.cache/rx"
 ```
 
-The cache base directory is **not created automatically** — callers
-that write to it do their own `mkdir` as needed. Read attempts against
+The directory this order resolves to — `$RX_CACHE_DIR/rx`,
+`$XDG_CACHE_HOME/rx` or `~/.cache/rx` — is the *cache base*, which
+`/health` reports as `CACHE_DIR`. It is **not created automatically** —
+callers that write to it do their own `mkdir` as needed. Read attempts against
 a missing cache directory gracefully return "no cache".
 
 ## Layout

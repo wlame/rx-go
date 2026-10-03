@@ -127,8 +127,8 @@ func (m *secretMaker) line() string {
 }
 
 // hiddenWindows returns the 8-byte pieces of a secret that hold at
-// least one byte its mask must hide (past the characters ruling's
-// quarter keeps).
+// least one byte its mask must hide (past the first characters the mask
+// keeps: a quarter of them, at most maskKeepChars).
 func hiddenWindows(s string) []string {
 	kept := keptBytes([]byte(s))
 	var out []string
