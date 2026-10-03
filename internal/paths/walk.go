@@ -63,15 +63,18 @@ const (
 	// searched under, earlier in the same walk.
 	reasonAlreadySearchedFormat = "directory already searched through '%s'"
 
-	// reasonLinkHiddenFormat takes the hidden component, as the error
-	// for a named hidden path does.
-	reasonLinkHiddenFormat = "symlink leads into hidden entry '%s'; " +
+	// ReasonLinkHidden: the link leads into a hidden entry. It does not
+	// name the entry: the link's target is not the caller's to learn.
+	ReasonLinkHidden = "symlink leads into a hidden entry; " +
 		"pass --hidden (or set RX_HIDDEN=true) to include hidden files and directories"
-	// reasonLinkUnresolvedFormat takes the resolution error.
-	reasonLinkUnresolvedFormat = "cannot resolve symlink: %v"
-	// reasonUnreadableEntryFormat takes the error of the stat of an
-	// entry that is not a link (it vanished, or cannot be stated).
-	reasonUnreadableEntryFormat = "cannot stat entry: %v"
+	// reasonLinkUnresolvedPrefix starts the reason of a link that
+	// cannot be resolved; FailureReason's wording follows, never the
+	// resolution error, whose text names the target.
+	reasonLinkUnresolvedPrefix = "cannot resolve symlink: "
+	// reasonUnreadableEntryPrefix starts the reason of an entry that is
+	// not a link and cannot be stated (it vanished); FailureReason's
+	// wording follows.
+	reasonUnreadableEntryPrefix = "cannot stat entry: "
 )
 
 // ListedEntry is one entry of a directory listed by ListDir.
@@ -177,7 +180,7 @@ func listEntry(r *os.Root, dir Pinned, name string) ListedEntry {
 	// link is described as a link rather than followed.
 	info, err := r.Lstat(name)
 	if err != nil {
-		entry.Refused = fmt.Sprintf(reasonUnreadableEntryFormat, err)
+		entry.Refused = reasonUnreadableEntryPrefix + FailureReason(err)
 		return entry
 	}
 	if info.Mode()&fs.ModeSymlink == 0 {
@@ -191,7 +194,7 @@ func listEntry(r *os.Root, dir Pinned, name string) ListedEntry {
 	// caller's spelling. Whatever it resolves to is checked on its own.
 	canonical, err := filepath.EvalSymlinks(filepath.Join(dir.canonical, name))
 	if err != nil {
-		entry.Refused = fmt.Sprintf(reasonLinkUnresolvedFormat, err)
+		entry.Refused = reasonLinkUnresolvedPrefix + FailureReason(err)
 		return entry
 	}
 	target, err := pinCanonical(entry.Path, canonical)
@@ -212,13 +215,13 @@ func listEntry(r *os.Root, dir Pinned, name string) ListedEntry {
 func linkRefusal(err error) string {
 	var hidden *ErrHiddenPath
 	if errors.As(err, &hidden) {
-		return fmt.Sprintf(reasonLinkHiddenFormat, hidden.Component)
+		return ReasonLinkHidden
 	}
 	var outside *ErrPathOutsideRoots
 	if errors.As(err, &outside) {
 		return ReasonLinkOutsideRoots
 	}
-	return fmt.Sprintf(reasonLinkUnresolvedFormat, err)
+	return reasonLinkUnresolvedPrefix + FailureReason(err)
 }
 
 // WalkEntry is one thing a directory walk reports: a file to read, an

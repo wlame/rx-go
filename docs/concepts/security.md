@@ -240,9 +240,25 @@ inside the directory:
 | A directory inside a search root, not hidden, not searched yet | Descends into it (recursive walks only) |
 | A directory the walk has already searched | Skips it, reason `directory already searched through '<path>'` |
 | Outside every search root | Skips it, reason `symlink leads outside all search roots` |
-| Into a hidden entry, without `--hidden` | Skips it, reason `symlink leads into hidden entry '.name'; …` |
+| Into a hidden entry, without `--hidden` | Skips it, reason `symlink leads into a hidden entry; pass --hidden …` |
 | Back to a directory the walk is already inside | Skips it, reason `symlink loop: …`, so a loop cannot hang the walk |
-| Nowhere, or to itself | Skips it, reason `cannot resolve symlink: …` |
+| Nowhere, or to itself | Skips it, reason `cannot resolve symlink: no such file or directory` (or `cannot be read`) |
+
+A reason never says where a refused link leads, never names a search
+root and never carries an operating-system error's own text, which
+names the path it failed on: it is one of a fixed set of wordings
+(`permission denied`, `no such file or directory`, `outside all search
+roots`, `cannot be read`, …), shown next to the path the walk met. The
+error itself goes to the server's log when it is not one of those.
+
+A file name can hold terminal control sequences (ESC, BEL, a C1
+control). The human output of `rx trace`, `rx samples`, `rx index` and
+`rx compress`, and every `Error:` line, writes such bytes out in every
+path and reason (`\x1b[31m`), so listing a hostile directory cannot
+recolor, clear or retitle the terminal. The text of matched and sampled
+lines is the file's content and is printed as it is, as ripgrep and
+grep print it. `--json` and HTTP answers escape control characters by
+JSON's own rules.
 
 Each directory is searched at most once per walk, so the work is
 bounded by the number of real directories, however many links lead

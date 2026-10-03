@@ -15,6 +15,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compressfile"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/output"
 )
 
 // NewCompressCommand builds the `rx compress` cobra command.
@@ -393,14 +394,15 @@ func compressErrorMessage(err error) string {
 func writeCompressHuman(out io.Writer, r compressResult) {
 	for _, e := range r.Files {
 		if ok, _ := e["success"].(bool); !ok {
-			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %v\n", e["input"], e["error"])
+			_, _ = fmt.Fprintf(os.Stderr, "Error: %s: %s\n",
+				output.Printable(fmt.Sprint(e["input"])), output.Printable(fmt.Sprint(e["error"])))
 			continue
 		}
-		_, _ = fmt.Fprintf(out, "wrote %v (%v bytes → %v bytes, %.2fx) in %v frames\n",
-			e["output"], e["decompressed_size"], e["compressed_size"],
+		_, _ = fmt.Fprintf(out, "wrote %s (%v bytes → %v bytes, %.2fx) in %v frames\n",
+			output.Printable(fmt.Sprint(e["output"])), e["decompressed_size"], e["compressed_size"],
 			e["compression_ratio"], e["frame_count"])
 		if msg, ok := e["index_error"].(string); ok {
-			_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", output.Printable(msg))
 		}
 	}
 }

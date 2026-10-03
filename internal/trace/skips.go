@@ -2,7 +2,7 @@ package trace
 
 import (
 	"errors"
-	"io/fs"
+	"log/slog"
 
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
@@ -70,41 +70,47 @@ func (s *skipList) reasons() []rxtypes.SkippedFile {
 // start with notSearchedInFull, so a caller can tell such a file, whose
 // matches are kept, from one passed over whole.
 const (
-	notSearchedInFull = "not searched in full"
-	// reasonIncompleteStream is followed by the decoder's error.
+	notSearchedInFull      = "not searched in full"
 	reasonIncompleteStream = notSearchedInFull + ": the compressed stream ends early; the matches before its end are kept"
-	// reasonDamagedFrames is followed by the frames that are damaged.
-	reasonDamagedFrames = notSearchedInFull + ": the lines of a damaged frame are left out; the matches of every other line are kept"
+	// reasonDamagedFrames is followed by the numbers of the frames.
+	reasonDamagedFrames = notSearchedInFull + ": the lines of damaged frames are left out; the matches of every other line are kept"
 )
 
-// skipReasons words the errors a search meets for the file it skips, by
-// the sentinel each wraps (errors.Is), first match wins. withDetail adds
-// the error's own text after the reason, where it says more (which
-// frame is damaged); a permission error says all it has to in two
-// words.
+// skipReasons words the errors a search meets for a file it skips, by
+// the sentinel each wraps (errors.Is), first match wins. Every wording
+// is fixed text: an error's own text names paths (for a link, its
+// target, which can be outside every search root) and other internals,
+// so it never reaches an answer. A damaged seekable file's reason adds
+// the frame numbers, which are positions in the file the caller named.
 var skipReasons = []struct {
-	err        error
-	reason     string
-	withDetail bool
+	err    error
+	reason string
 }{
-	{fs.ErrPermission, "permission denied", false},
-	{sandbox.ErrFileChanged, "the path leads to another file than the one that was checked", false},
-	{ErrIncompleteStream, reasonIncompleteStream, true},
-	{seekable.ErrDamagedFrame, reasonDamagedFrames, true},
-	{errLineMatchesNoPattern, "a matched line matches none of the patterns alone, so which pattern it belongs to cannot be told", false},
+	{ErrIncompleteStream, reasonIncompleteStream},
+	{seekable.ErrDamagedFrame, reasonDamagedFrames},
+	{errLineMatchesNoPattern, "a matched line matches none of the patterns alone, so which pattern it belongs to cannot be told"},
 }
 
 // skipReason is the reason the answer gives for a file skipped because
-// of err: the wording skipReasons holds for it, or the error's own text.
+// of err: the wording skipReasons holds for it, or the fixed wording
+// sandbox.FailureReason gives a failure to reach a file ("permission
+// denied", "cannot be read", …). An error that gets the catch-all
+// "cannot be read" is logged whole, so the operator still has the
+// detail the answer leaves out.
 func skipReason(err error) string {
 	for _, known := range skipReasons {
 		if !errors.Is(err, known.err) {
 			continue
 		}
-		if known.withDetail {
-			return known.reason + " (" + err.Error() + ")"
+		var damaged *damagedFramesError
+		if errors.As(err, &damaged) {
+			return known.reason + " (frames " + damaged.frames + ")"
 		}
 		return known.reason
 	}
-	return err.Error()
+	reason := sandbox.FailureReason(err)
+	if reason == sandbox.ReasonUnreadable {
+		slog.Default().Warn("trace_file_unreadable", "error", err.Error())
+	}
+	return reason
 }
