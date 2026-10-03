@@ -251,6 +251,15 @@ names the path it failed on: it is one of a fixed set of wordings
 roots`, `cannot be read`, …), shown next to the path the walk met. The
 error itself goes to the server's log when it is not one of those.
 
+A path that leads to a named pipe, a socket or a device is never
+opened: a read of a named pipe waits for a writer that may never come,
+and would hold a request, or the command, for ever. A walk skips such
+an entry with the reason `not a regular file`; named directly it is
+refused at once, with exit code 2 or `400 Not a regular file: <path>`.
+A file is opened without blocking (`O_NONBLOCK`), so one swapped for a
+named pipe after its check is refused as changed rather than waited
+on.
+
 A file name can hold terminal control sequences (ESC, BEL, a C1
 control). The human output of `rx trace`, `rx samples`, `rx index` and
 `rx compress`, and every `Error:` line, writes such bytes out in every

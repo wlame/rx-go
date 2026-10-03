@@ -58,7 +58,7 @@ All subcommands share the same exit-code scheme:
 |-----:|---------|
 | 0 | Success |
 | 1 | Generic error (subprocess failure, IO error, rebuild failed) |
-| 2 | Usage error (bad flag combination, missing required argument, regex that does not compile) |
+| 2 | Usage error (bad flag combination, missing required argument, regex that does not compile, a path that is a named pipe, a socket or a device) |
 | 3 | File not found |
 | 4 | Access denied: a path outside `--search-root`, or a file the user named that the process may not read (`permission denied: <path>`, the same in `trace`, `samples` and `index`) |
 | 5 | Interrupted by signal (SIGINT or SIGTERM) |

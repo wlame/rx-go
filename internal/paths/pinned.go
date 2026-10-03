@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // A check of a path and a later open of the same path are two separate
@@ -32,6 +33,13 @@ import (
 // was checked: it was replaced, or a symbolic link on the way to it was
 // retargeted, after the check.
 var ErrFileChanged = errors.New("file changed after it was checked")
+
+// ErrNotRegularFile reports that a path leads to something that is
+// neither a regular file nor a directory: a named pipe, a socket or a
+// device. rx reads none of them. Opening a named pipe for reading
+// blocks until a writer comes, and a device can be endless, so such a
+// path is refused before it is opened.
+var ErrNotRegularFile = errors.New("not a regular file")
 
 // pinBeforeStat, when set, runs inside Pin after the path has been
 // resolved and checked and before the identity of its file is recorded.
@@ -85,7 +93,15 @@ func (p Pinned) Open() (*os.File, error) {
 	if p.IsZero() {
 		return nil, errors.New("open: no checked file")
 	}
-	f, err := os.Open(p.path)
+	if !isRegularOrDir(p.info) {
+		return nil, fmt.Errorf("%w: %s", ErrNotRegularFile, p.path)
+	}
+	// SECURITY: O_NONBLOCK makes the open return at once even when the
+	// path was swapped for a named pipe since the check, where a plain
+	// open would wait for a writer for ever. The fstat below then finds
+	// another file and refuses it. On a regular file or a directory the
+	// flag changes nothing: their reads never block.
+	f, err := os.OpenFile(p.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +118,12 @@ func (p Pinned) Open() (*os.File, error) {
 		return nil, p.changed()
 	}
 	return f, nil
+}
+
+// isRegularOrDir reports whether info describes a regular file or a
+// directory, the only two kinds rx opens.
+func isRegularOrDir(info os.FileInfo) bool {
+	return info.Mode().IsRegular() || info.IsDir()
 }
 
 // Stat returns the current stat of the path when it still leads to the

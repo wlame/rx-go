@@ -24,6 +24,9 @@ const (
 	// ReasonChanged: the path leads to another file than the one the
 	// check saw.
 	ReasonChanged = "the path leads to another file than the one that was checked"
+	// ReasonNotRegularFile: the path leads to a named pipe, a socket or
+	// a device, which rx never opens.
+	ReasonNotRegularFile = "not a regular file"
 	// ReasonUnreadable is the wording of any other failure to reach a
 	// file. The error itself goes to the log, not into an answer.
 	ReasonUnreadable = "cannot be read"
@@ -38,6 +41,7 @@ var failureReasons = []struct {
 }{
 	{func(err error) bool { return errors.Is(err, fs.ErrPermission) }, ReasonPermissionDenied},
 	{func(err error) bool { return errors.Is(err, ErrFileChanged) }, ReasonChanged},
+	{func(err error) bool { return errors.Is(err, ErrNotRegularFile) }, ReasonNotRegularFile},
 	{func(err error) bool { var e *ErrPathOutsideRoots; return errors.As(err, &e) }, ReasonOutsideRoots},
 	{func(err error) bool { var e *ErrHiddenPath; return errors.As(err, &e) }, ReasonHidden},
 	{func(err error) bool { return errors.Is(err, fs.ErrNotExist) }, ReasonNotFound},
