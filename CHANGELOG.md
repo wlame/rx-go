@@ -110,6 +110,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- When the line index could not be stored (a read-only cache directory,
+  `RX_CACHE_DIR` naming a regular file, or a log whose base name made
+  the cache file name longer than 255 bytes), every `rx samples` call on
+  a compressed or large file built the whole index and threw it away,
+  silently: about 1.5 s per lookup on a 465 MB log instead of 0.01 s,
+  and over HTTP one index task per request. `rx samples` and
+  `GET /v1/samples` now check that the index can be stored before they
+  build it; when it cannot, they build nothing, read the file without
+  an index (the same answer) and log one `index_not_stored` warning per
+  process naming the cause. `rx index` and `POST /v1/index` fail before
+  reading the file, with an error that starts `cannot store the line
+  index:` and names the cause, instead of failing at the save after a
+  full build. A stored index that cannot be read is now rebuilt by the
+  next lookup even for a plain file below the large-file size, so it no
+  longer warns on every lookup.
+- A log whose base name is longer than about 233 bytes got no line
+  index ("file name too long") and no trace cache entry. Both cache file
+  names now cut the base name so the whole name fits in 255 bytes; the
+  hash of the full path keeps two such names apart. A name that already
+  fitted keeps its file name, so no stored entry moves.
+- With `RX_CACHE_DIR` naming a regular file, each `rx trace` of a large
+  file logged `trace_cache_unreadable` beside `trace_cache_write_failed`,
+  and each lookup of a line index logged `index_unreadable`, as if a
+  stored entry were damaged. A cache location that cannot hold an entry
+  is now an ordinary miss; only the failed write is reported, once.
 - `rx samples --no-index`, `RX_NO_INDEX=1` and `GET /v1/samples` under
   `RX_NO_INDEX` skipped only the index build and still read a stored
   index, so the flag meant for a suspect index answered from it. They

@@ -197,8 +197,14 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		// the build takes longer, so the first look at a 50 GB file does
 		// not hold its HTTP request open while all of it is read. Any
 		// other request waits for the build and answers the lines.
+		//
+		// When the cache cannot store the index, no task is started:
+		// it would read the whole file for an index nobody keeps, once
+		// per request. The request reads the file without an index,
+		// and the server logs the cause once (samples.ShouldBuildIndex).
+		// RX_NO_INDEX is checked first, so it never touches the cache.
 		noIndex := config.GetBoolEnv("RX_NO_INDEX", false)
-		if !noIndex && samples.NeedsIndexBuild(validated, stat.Size()) {
+		if !noIndex && samples.ShouldBuildIndex(validated, stat.Size()) {
 			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
 			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
 			stopDeadline()

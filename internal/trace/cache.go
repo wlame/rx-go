@@ -166,6 +166,13 @@ func appendJSONStringArray(buf []byte, xs []string) []byte {
 //	<cache_base>/trace_cache/<patterns_hash>/<path_hash>_<basename>.json
 //
 // path_hash = first 16 hex chars of sha256(abs_path).
+//
+// The basename is cut so the file name is at most
+// index.MaxCacheFileNameBytes long (233 bytes of basename): a longer
+// name cannot be created, and every scan of the file would fail to
+// store its entry. A basename that fits keeps the name it always had.
+// The path hash is of the whole path, so two names that differ only
+// after the cut still get two entries.
 func CachePath(sourcePath string, patterns, rgFlags []string) string {
 	abs, err := filepath.Abs(sourcePath)
 	if err != nil {
@@ -174,7 +181,8 @@ func CachePath(sourcePath string, patterns, rgFlags []string) string {
 	pathHash := sha256.Sum256([]byte(abs))
 	pathHashHex := hex.EncodeToString(pathHash[:])[:16]
 	patternsHash := ComputePatternsHash(patterns, rgFlags)
-	baseName := filepath.Base(sourcePath)
+	maxBaseName := index.MaxCacheFileNameBytes - len(pathHashHex) - len("_") - len(".json")
+	baseName := index.TrimCacheNamePart(filepath.Base(sourcePath), maxBaseName)
 	cacheFilename := fmt.Sprintf("%s_%s.json", pathHashHex, baseName)
 	return filepath.Join(config.GetTraceCacheDir(), patternsHash, cacheFilename)
 }
@@ -184,8 +192,9 @@ func CachePath(sourcePath string, patterns, rgFlags []string) string {
 // ============================================================================
 
 // LoadCache reads a trace cache JSON file from disk. Returns (nil, ErrCacheMiss)
-// if the file doesn't exist. Returns a non-nil error for any other
-// failure (corrupt JSON, permission issues).
+// if no file can be there (index.IsNoCacheEntry: it does not exist, or
+// the cache directory is under a regular file). Returns a non-nil error
+// for any other failure (corrupt JSON, permission issues).
 //
 // Version mismatch is treated as a "miss" — callers should regenerate
 // the cache. We emit no error because Python's behavior is to return
@@ -194,7 +203,10 @@ func LoadCache(cachePath string) (*rxtypes.TraceCacheData, error) {
 	start := time.Now()
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		// A location that cannot hold an entry is a miss, not an
+		// unreadable entry: the write after the scan fails for the same
+		// reason and reports it once as trace_cache_write_failed.
+		if index.IsNoCacheEntry(err) {
 			return nil, ErrCacheMiss
 		}
 		return nil, fmt.Errorf("LoadCache: read %s: %w", cachePath, err)
@@ -316,9 +328,10 @@ func loadValidCache(
 	data, err := LoadCache(cachePath)
 	if err != nil {
 		// A missing entry or one of another version is an ordinary
-		// miss. Anything else (truncated JSON, a permission error) is
-		// treated as a miss too, so the trace scans and a complete scan
-		// replaces the entry, but the operator hears about it.
+		// miss. Anything else is an entry that exists and cannot be
+		// read (truncated JSON, a permission error): a miss too, so the
+		// trace scans and a complete scan replaces the entry, but the
+		// operator hears about it.
 		if !errors.Is(err, ErrCacheMiss) {
 			slog.Default().Warn("trace_cache_unreadable",
 				"path", cachePath,

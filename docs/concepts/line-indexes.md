@@ -116,7 +116,8 @@ The builder:
 3. Counts lines along the way
 4. Optionally (when `--analyze` is set) gathers line-length statistics
 5. Writes the JSON file atomically (temp file + rename) to
-   `~/.cache/rx/indexes/<safe-name>_<hash16>.json`
+   `~/.cache/rx/indexes/<safe-name>_<hash16>.json`, with the name cut
+   to fit in 255 bytes (see [caching](caching.md#indexes))
 
 ### Cost
 
@@ -181,7 +182,10 @@ An index is valid as long as its format version is the current one
 Any mismatch → the index is treated as absent and rebuilt by the next
 call that wants one. So is an index file that cannot be read or parsed
 (a truncated write, a permission error), which is also logged at Warn
-level as `index_unreadable`.
+level as `index_unreadable`; a `samples` lookup rebuilds such a file
+even for a file below the large-file size. When the cache cannot store
+an index at all, a lookup builds none and logs `index_not_stored` once
+(see [caching](caching.md#when-the-cache-cannot-be-written)).
 
 There is **no TTL**. A cache entry written last year is still valid if
 the source file hasn't been touched. See [caching](caching.md) for the
