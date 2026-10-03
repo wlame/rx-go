@@ -9,7 +9,9 @@ package clicommand
 // rx-python, because rx-python is not installed in this repo's test
 // environment. rx-python asserts the same set from its side, in
 // tests/test_index_json_key_parity.py — the two lists have to be edited
-// together, which is the point.
+// together, which is the point. `time_index` is the one key rx-python's
+// list does not have yet: rx-go records a time section in every index,
+// and rx-python, paused, has no such field.
 
 import (
 	"os"
@@ -38,6 +40,7 @@ var expectedIndexEntryKeys = []string{
 	"longest_line",
 	"path",
 	"size_bytes",
+	"time_index",
 }
 
 func TestIndex_JSONEntryCarriesTheAgreedKeySet(t *testing.T) {

@@ -124,23 +124,48 @@ index built for 1 files in 1.234s
 ### Inspect without rebuilding
 
 ```bash
-rx index /var/log/audit-2026-03.log --info
+rx index /var/log/app.log-2025121008 --info
 ```
 
 Output:
 
 ```text
-Index for: /var/log/audit-2026-03.log
+Index for: /var/log/app.log-2025121008
   file_type: text
-  size_bytes: 582137856
-  created_at: 2026-04-18T14:22:03.501729
+  size_bytes: 487561499
+  created_at: 2026-10-06T02:07:47.806161Z
   analysis_performed: false
-  line_count: 3528914
-  index_entries: 2187
+  line_count: 1436842
+  index_entries: 429
+  time_format: iso, at the start of each line, no zone, read as UTC
+  first_timestamp: 2025-12-10 07:00:04.574 (line 1)
+  last_timestamp: 2025-12-10 08:00:04.390 (line 1436842)
+  timestamped_lines: 1387928
+  backward_steps: 0
 ```
 
 `index_entries` is the number of checkpoints in the sparse line-index —
 a function of file size and line density, not of line count directly.
+
+The last five lines are the index's
+[time section](../concepts/line-indexes.md#the-time-section), which every
+build records:
+
+- `time_format` names the detected format, where the timestamp sits
+  (`at the start of each line` or `inside the line`), the day order of a
+  slash date, and how a timestamp's zone is read: `no zone, read as UTC`
+  for a file whose timestamps carry none, or `with zones (first +02:00)`.
+  A format without a year adds `year from the file's mtime`. A file with
+  no timestamp format shows `time_format: none recognized` and no other
+  time line.
+- `first_timestamp` and `last_timestamp` are the first and the last
+  timestamped line, with their line numbers. A file without zones shows
+  the wall-clock time as written (`2025-12-10 07:00:04.574`); a file
+  with zones shows the UTC instant (`2026-10-06T10:34:56.123Z`).
+- `timestamped_lines` counts the lines that carry a timestamp.
+- `backward_steps` counts the lines whose timestamp is more than one
+  second earlier than the latest one before them, with the largest step
+  when there is one: `backward_steps: 3 (largest 2500 ms)`.
 
 ### Force a rebuild
 
@@ -261,6 +286,14 @@ rx index /var/log/audit-*.log --json \
 The `indexed[].index_path` field is the absolute path to the on-disk
 cache — useful when piping to other tools that need to open it.
 
+`indexed[].time_index` is the whole time section, `max_before`
+included, or `null` for a file with no timestamp format:
+
+```bash
+rx index /var/log/app.log-2025121008 --json \
+    | jq '.indexed[0].time_index | {format, timestamped_lines, first, last, backward_steps}'
+```
+
 ## How it works
 
 ### Index structure
@@ -270,6 +303,9 @@ The on-disk format is a JSON file containing:
 - Source path, mtime, size (for cache validation)
 - File type (`text`, `compressed`, `seekable_zstd`)
 - A `line_index` slice of `{line: N, offset: byteOffset}` entries
+- The time section, `time_index`: the timestamp format of the lines,
+  the first and last timestamps, and the latest timestamp before each
+  checkpoint (`null` when no format is recognized)
 - Optional line-length and anomaly statistics (when `--analyze` ran)
 
 Checkpoints are sparse — not every line is in the index. The builder
