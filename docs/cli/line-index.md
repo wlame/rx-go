@@ -273,10 +273,14 @@ which keeps the JSON small while still enabling O(1) seeks.
 
 When loading a cached index, `rx` checks:
 
-1. Source path mtime matches the cached `source_modified_at`
-2. Source path size matches the cached `source_size_bytes`
+1. Source path size matches the cached `source_size_bytes`
+2. Source path mtime matches the cached `source_mtime_ns`, in
+   nanoseconds since the Unix epoch, whatever the time zone
+3. The inode, its device, the ctime and a fingerprint of the file
+   match `source_inode`, `source_device`, `source_ctime_ns` and
+   `source_fingerprint`
 
-Either mismatch triggers a rebuild. There is no TTL-based expiry — a
+Any mismatch triggers a rebuild. There is no TTL-based expiry — a
 cache entry is valid as long as the source file hasn't changed. See
 [concepts/caching](../concepts/caching.md).
 

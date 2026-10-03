@@ -9,13 +9,13 @@ checkpoint, whatever the file size.
 ## The file format
 
 An index is stored as a JSON document with the full `UnifiedFileIndex`
-schema, format version 6. The critical field is `line_index`. The
+schema, format version 7. The critical field is `line_index`. The
 start of the index `rx samples` built for a 465 MB log (most of the
 other members trimmed; `rx index --info --json` prints all of them):
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "source_path": "/var/log/app.log-2025121008",
   "source_modified_at": "2025-12-27T17:30:57.775888",
   "source_size_bytes": 487561499,
@@ -24,6 +24,9 @@ other members trimmed; `rx index --info --json` prints all of them):
   "source_inode": 121515888,
   "source_changed_at": "2026-04-18T20:43:30.904417",
   "source_fingerprint": "8bace9b40fccf36b77b65e88908e85458cf74ea44324c4aaff8b374adb8ddfe8",
+  "source_mtime_ns": 1766853057775888000,
+  "source_ctime_ns": 1776534210904417000,
+  "source_device": 16777232,
   "file_type": "text",
   "index_step_bytes": 1048576,
   "analysis_performed": false,
@@ -174,14 +177,15 @@ Don't bother when:
 ## Cache invalidation
 
 An index is valid as long as its format version is the current one
-(6) and the source file hasn't changed. `rx` checks:
+(7) and the source file hasn't changed. `rx` checks:
 
 1. `version` equals the current format version; an index of another
    version is treated as absent
 2. The size matches `source_size_bytes`
-3. The mtime matches `source_modified_at`
-4. The inode and the ctime match `source_inode` and
-   `source_changed_at`
+3. The mtime matches `source_mtime_ns` (nanoseconds since the Unix
+   epoch, so the time zone does not matter)
+4. The inode, its device and the ctime match `source_inode`,
+   `source_device` and `source_ctime_ns`
 5. A digest of the size plus the first and last 64 KiB matches
    `source_fingerprint`
 
