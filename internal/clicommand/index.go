@@ -134,11 +134,12 @@ type indexBuildResult struct {
 	Indexed []map[string]any `json:"indexed"`
 	Skipped []string         `json:"skipped"`
 	// SkipReasons says why each file of Skipped was passed over, in the
-	// same order. Skipped stays a plain list of paths, the shape rx-python
+	// same order and in the shape a trace answer gives its
+	// skip_reasons. Skipped stays a plain list of paths, the shape rx-python
 	// emits, so a consumer that reads only it is unaffected.
-	SkipReasons []indexSkipItem  `json:"skip_reasons"`
-	Errors      []indexErrorItem `json:"errors"`
-	TotalTime   float64          `json:"total_time"`
+	SkipReasons []rxtypes.SkippedFile `json:"skip_reasons"`
+	Errors      []indexErrorItem      `json:"errors"`
+	TotalTime   float64               `json:"total_time"`
 
 	// builtIndexes keeps the typed indexes for the human renderer, which
 	// needs fields the JSON view flattens. Never serialized.
@@ -155,17 +156,11 @@ type indexErrorItem struct {
 	exitCode int
 }
 
-// indexSkipItem is the shape of each entry in the `skip_reasons` array.
-type indexSkipItem struct {
-	Path   string `json:"path"`
-	Reason string `json:"reason"`
-}
-
 // skip records that path was not indexed and why. The reasons use the
 // words POST /v1/index answers its 400 with for the same file.
 func (r *indexBuildResult) skip(path, reason string) {
 	r.Skipped = append(r.Skipped, path)
-	r.SkipReasons = append(r.SkipReasons, indexSkipItem{Path: path, Reason: reason})
+	r.SkipReasons = append(r.SkipReasons, rxtypes.SkippedFile{Path: path, Reason: reason})
 }
 
 // belowThresholdReason words the skip of a file smaller than the index
@@ -294,7 +289,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	result := indexBuildResult{
 		Indexed:     []map[string]any{},
 		Skipped:     []string{},
-		SkipReasons: []indexSkipItem{},
+		SkipReasons: []rxtypes.SkippedFile{},
 		Errors:      []indexErrorItem{},
 	}
 
@@ -628,7 +623,7 @@ func writeIndexBuildHuman(out io.Writer, r indexBuildResult, analyze bool) {
 // writeSkippedHuman prints the count of skipped files and, under it, one
 // line per file with the reason it was skipped. Nothing when no file was
 // skipped.
-func writeSkippedHuman(out io.Writer, skipped []indexSkipItem) {
+func writeSkippedHuman(out io.Writer, skipped []rxtypes.SkippedFile) {
 	if len(skipped) == 0 {
 		return
 	}

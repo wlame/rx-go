@@ -250,6 +250,11 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 	if len(resp.SkippedFiles) > 0 {
 		fmt.Fprintf(&b, "%sFiles skipped:%s %s%d%s\n",
 			c.grey, c.reset, c.grey, len(resp.SkippedFiles), c.reset)
+		// Each skipped path on its own line with why, the way `rx index`
+		// lists its skipped files.
+		for _, item := range resp.SkipReasons {
+			fmt.Fprintf(&b, "  %s%s: %s%s\n", c.grey, item.Path, item.Reason, c.reset)
+		}
 	}
 
 	// The count is the pieces the files were divided into, which is

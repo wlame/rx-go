@@ -92,6 +92,7 @@ func TestFormatTraceCLI_CountersAreColored(t *testing.T) {
 	resp := colorFixture()
 	resp.ScannedFiles = []string{"/tmp/app.log"}
 	resp.SkippedFiles = []string{"/tmp/binary.dat"}
+	resp.SkipReasons = []rxtypes.SkippedFile{{Path: "/tmp/binary.dat", Reason: "not a text file: a NUL byte in its first 8 KiB"}}
 	resp.FileChunks = map[string]int{"f1": 4}
 
 	got := FormatTraceCLI(resp, TraceFormatOptions{Colorize: true})
@@ -99,6 +100,7 @@ func TestFormatTraceCLI_CountersAreColored(t *testing.T) {
 	for _, want := range []string{
 		"\033[90mFiles scanned:\033[0m \033[32m1\033[0m\n",
 		"\033[90mFiles skipped:\033[0m \033[90m1\033[0m\n",
+		"  \033[90m/tmp/binary.dat: not a text file: a NUL byte in its first 8 KiB\033[0m\n",
 		"\033[90mParallel chunks:\033[0m \033[36m4\033[0m \033[90m(1 file(s) chunked)\033[0m\n",
 	} {
 		if !strings.Contains(got, want) {

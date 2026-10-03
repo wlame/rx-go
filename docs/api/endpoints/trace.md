@@ -179,7 +179,8 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `files` | `{id: path}` | File ID → absolute path map |
 | `matches` | array | See below |
 | `scanned_files` | `string[]` | The files found by walking a directory named in `path`; empty when every path is a file. `files` lists every file searched either way |
-| `skipped_files` | `string[]` | Files skipped (binary, size limit, etc.) |
+| `skipped_files` | `string[]` | Paths passed over (not text, unreadable, a link the walk refuses, a subdirectory it cannot list) or not searched in full (a truncated stream, a damaged seekable frame: their matches are kept) |
+| `skip_reasons` | `{path, reason}[]` | Why each path of `skipped_files` is there, in the same order; the reasons are listed in [`rx trace`](../../cli/trace.md#skipped-files-and-their-reasons). Contract 1.4 |
 | `max_results` | `int \| null` | The cap that was applied, or null |
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it, whatever the chunk settings are now. It describes how the answer was produced and is not compared when an index or the cache answers |
 | `context_lines` | `{matchKey: [...]}` | Keyed `pattern:file:offset` (`"p1:f1:60"`); each entry is the match's window, the match's own line included, as `{relative_line_number, absolute_line_number, line_text, absolute_offset, line_text_truncated}`. Without a context window an entry holds only the match's own line; see [`rx trace`](../../cli/trace.md#match-with-prepost-context) for how a window is built |
