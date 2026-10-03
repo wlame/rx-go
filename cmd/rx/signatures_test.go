@@ -143,3 +143,36 @@ func TestTraceSignatures_RoutingAndExitCodes(t *testing.T) {
 		}
 	}
 }
+
+// --mask-secrets reaches the findings through bare `rx` and `rx trace`,
+// and RX_MASK_SECRETS=1 does the same without it; without either, the
+// text of a finding is the file's text. The key is an invented one;
+// every built-in is loaded, so high-entropy-token masks the whole
+// `key=` token with it.
+func TestTraceSignatures_MaskSecretsThroughTheBinary(t *testing.T) {
+	const key = "AKIAIOSFODNN7EXAMPLE"
+	dir := t.TempDir()
+	log := filepath.Join(dir, "app.log")
+	if err := os.WriteFile(log, []byte("LINE 1 ERROR login with key="+key+" refused\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signatureDir := writeSignatureDir(t, "signatures: []\n")
+	cases := []struct {
+		label  string
+		env    string
+		args   []string
+		masked bool
+	}{
+		{"bare rx without the flag", "", []string{"--signatures=aws-access-key", "--no-color", log}, false},
+		{"bare rx with the flag", "", []string{"--mask-secrets", "--signatures=aws-access-key", "--no-color", log}, true},
+		{"rx trace with the flag", "", []string{"trace", "--signatures=aws-access-key", "--mask-secrets", "--no-color", log}, true},
+		{"RX_MASK_SECRETS=1", "1", []string{"--signatures=aws-access-key", "--no-color", log}, true},
+	}
+	for _, tc := range cases {
+		env := append(signatureEnv(signatureDir), "RX_CACHE_DIR="+t.TempDir(), "RX_MASK_SECRETS="+tc.env)
+		code, stdout, stderr := runRxEnv(t, env, tc.args...)
+		if code != 0 || strings.Contains(stdout, key) == tc.masked || strings.Contains(stdout, "key=****") != tc.masked {
+			t.Errorf("%s: exit %d, want the key masked: %v\nstdout: %s\nstderr: %s", tc.label, code, tc.masked, stdout, stderr)
+		}
+	}
+}

@@ -34,6 +34,7 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 | `--search-root` | `string[]` | current directory | Restrict file access to this directory (repeatable) |
 | `--skip-frontend` | `bool` | `false` | Don't attempt to download or check the `rx-viewer` SPA; serve what is cached |
 | `--update-viewer` | `bool` | `false` | Check GitHub for a newer `rx-viewer` release inside the supported range now, instead of once a day. Exits 2 with `--skip-frontend`, and when `RX_FRONTEND_PATH` is set |
+| `--mask-secrets` | `bool` | `RX_MASK_SECRETS`, else `false` | Mask what the signatures with `redact: true` match in every findings answer the server gives and in the findings cache ([Masking](../concepts/signatures.md#masking)). The mode is the server's, for every request, until it stops; the banner names it |
 
 ### Default behavior
 
@@ -43,6 +44,11 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 - **`--search-root`** — if omitted, the current working directory becomes
   the only allowed root. Every file-accepting endpoint rejects paths
   outside configured roots with `403 path_outside_search_root`.
+- **Secrets shown** — the text of findings (`excerpt`, `lines`,
+  `before`, `after`) is the file's text unless the server starts with
+  `--mask-secrets` or `RX_MASK_SECRETS=1`. A server that masks and one
+  that does not can share a cache directory: each finds the other's
+  entries stale and scans again, so neither gives the other's answer.
 
 ## Examples
 
@@ -61,8 +67,17 @@ after that (see [Viewer updates](#viewer-updates)).
 Starting RX API server on http://127.0.0.1:7777
 Search root: /home/you/projects/example
 Viewer: v0.8.0 (cached)
+Secrets: shown; start with --mask-secrets or RX_MASK_SECRETS=1 to mask them
 API docs available at http://127.0.0.1:7777/docs
 Metrics available at http://127.0.0.1:7777/metrics
+```
+
+`Secrets:` says whether the findings answers mask secrets. Started with
+`--mask-secrets` (or `RX_MASK_SECRETS=1`), the line reads
+`Secrets: masked`:
+
+```bash
+rx serve --mask-secrets
 ```
 
 ### Production-style bind
@@ -173,7 +188,8 @@ set. See [api/webhooks](../api/webhooks.md).
    starts either way. The scan settings (`RX_WORKERS`,
    `RX_SIGNATURES_LINE_BYTES`, `RX_FINDINGS_MAX_PER_SIGNATURE`,
    `RX_TIMESTAMP_LOOKBACK_KB`, `RX_LOG_TZ`, `RX_MAX_LINE_TEXT_BYTES`,
-   `RX_FINDINGS_TEXT_MAX_BYTES`, `RX_MAX_SIGNATURE_SCANS`) are read here
+   `RX_FINDINGS_TEXT_MAX_BYTES`, `RX_MAX_SIGNATURE_SCANS`) and the
+   masking mode (`--mask-secrets`, else `RX_MASK_SECRETS`) are read here
    too; a change to them or to a signature file takes a restart
 8. Register HTTP middleware (request ID, structured logging, panic
    recovery, Prometheus metrics middleware)

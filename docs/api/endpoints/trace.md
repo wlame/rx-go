@@ -126,10 +126,14 @@ prints for the same paths
 search covers is scanned for the selection through the findings cache,
 and the answer gains `signatures` (the selection, by id), `findings`
 (every finding of every file, with its lines and the context lines the
-window asks for, [masked](../../concepts/signatures.md#masking), within
-`RX_FINDINGS_TEXT_MAX_BYTES`) and `finding_summary` (per file id). The
-matches of `regexp` stay unmasked, with `signatures` or without: they
-are the output of the caller's own pattern. With `signatures`, `regexp`
+window asks for, [masked](../../concepts/signatures.md#masking) when the
+server masks secrets, within `RX_FINDINGS_TEXT_MAX_BYTES`) and
+`finding_summary` (per file id). Masking is the server's mode
+(`rx serve --mask-secrets` or `RX_MASK_SECRETS=1`; off by default),
+not a request parameter, and `cli_command` carries `--mask-secrets`
+when the server masks. The matches of `regexp` stay unmasked, with
+`signatures` or without: they are the output of the caller's own
+pattern. With `signatures`, `regexp`
 may be left out: the answer then has no pattern and no match. `no_cache` also skips the findings
 cache, `no_index` the line index the findings' text reads may use, and
 `max_results` caps the matches only. A selection that names an unknown,

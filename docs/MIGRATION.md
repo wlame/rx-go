@@ -58,8 +58,14 @@ with `null`; `rx index --info --json`, which has no `line_length` or
 in the cache directory: one directory per file, one entry per
 signature ([caching](concepts/caching.md#findings)). Deleting an index
 keeps a file's findings, and a change to a signature rescans only that
-signature (a change to a redacting one rescans them all, since every
-excerpt is masked by it).
+signature (with masking on, a change to a redacting one rescans them
+all, since every excerpt is masked by it; turning masking on or off
+rescans them all too).
+
+**Secrets are shown unless masking is on.** The text of a finding is
+the file's text by default; `--mask-secrets` on `rx trace` and
+`rx serve`, or `RX_MASK_SECRETS=1`, masks what the signatures with
+`redact: true` find ([Masking](concepts/signatures.md#masking)).
 
 **Release rx-go and rx-viewer back to back.** rx-go 0.8.0 refuses the
 viewer 0.7.1 that is installed today, and viewer 0.7.1 knows only

@@ -708,11 +708,14 @@ happens at all.
   [`GET /v1/time-range`](../api/endpoints/time-range.md#what-a-request-reads)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
-- Showing a secret a log holds through its findings — what a
-  redacting signature matches, and the body lines of a private key, are
-  masked in the text of every finding and in the findings cache, by
-  every redacting signature rx has loaded, failing closed past its
-  bounds; see [Masking](signatures.md#masking)
+- Showing a secret a log holds through its findings, when asked to —
+  with `--mask-secrets` or `RX_MASK_SECRETS=1` (off by default, since
+  rx is meant for a trusted network), what a redacting signature
+  matches, and the body lines of a private key, are masked in the text
+  of every finding and in the findings cache, by every redacting
+  signature rx has loaded, failing closed past its bounds; the start
+  banner of `rx serve` names the mode; see
+  [Masking](signatures.md#masking)
 - SSRF to internal services via hook URLs — blocked by address-range
   check + DNS resolution
 
@@ -743,8 +746,8 @@ happens at all.
 - **DNS rebinding, on rx-python only** — rx-go re-checks the address at
   connect time; rx-python validates once. Use
   `RX_HOOK_STRICT_IP_ONLY=true` there.
-- **Secrets in the file itself** — masking covers the text of findings
-  only. `rx samples`, `GET /v1/samples`, the viewer's editor and the
+- **Secrets in the file itself** — masking is off unless asked for,
+  and covers the text of findings only. `rx samples`, `GET /v1/samples`, the viewer's editor and the
   matches of a pattern (`rx trace -e`) show the file as it is: whoever
   may read a file reads its secrets. A secret of a shape no loaded
   redacting signature describes is neither found nor masked.

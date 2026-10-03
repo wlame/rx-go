@@ -59,13 +59,13 @@ type findingsInput struct {
 	Signatures string   `query:"signatures" maxLength:"4096" example:"traceback,sql" doc:"The selection the summary describes (state, checked, missing), as rx trace --signatures= takes it: comma-separated ids, groups and tags, all, default, -word to remove. Empty or absent: the default set. A selection that names an unknown or refused signature is refused with 400 and the load error."`
 	Signature  []string `query:"signature,explode" maxItems:"256" doc:"Only the findings of these signatures (repeatable, at most 256: each costs a comparison per finding)."`
 	Group      []string `query:"group,explode" maxItems:"256" doc:"Only the findings of signatures of these groups (repeatable, at most 256)."`
-	Q          string   `query:"q" maxLength:"1024" doc:"Only the findings whose excerpt or signature name holds this text, compared without case. The excerpt is masked already, so a masked value is never matched."`
+	Q          string   `query:"q" maxLength:"1024" doc:"Only the findings whose excerpt or signature name holds this text, compared without case. On a server that masks secrets the excerpt is masked already, so a masked value is never matched."`
 	Lines      string   `query:"lines" example:"1000-1200" doc:"Only the findings that overlap lines A-B (1-based, inclusive); one number N means N-N."`
 	AfterLine  int64    `query:"after_line" minimum:"0" doc:"Only the findings whose first line is after line N (the next finding). 0 or absent: no bound."`
 	BeforeLine int64    `query:"before_line" minimum:"0" doc:"Only the findings whose first line is before line N, listed from the nearest down, in the reverse order (the previous finding). 0 or absent: no bound."`
 	Offset     int      `query:"offset" minimum:"0" doc:"How many filtered findings to pass over before the page."`
 	Limit      int      `query:"limit" minimum:"1" maximum:"10000" default:"1000" doc:"The most findings in the page."`
-	Text       bool     `query:"text" doc:"Fill lines (and before) of the page's findings, read from the file and masked as every output of findings is: a value a redacting signature matches is masked, a body line of a redacting block or run shows as [masked, N bytes], and no line past the text the scan read is shown."`
+	Text       bool     `query:"text" doc:"Fill lines (and before) of the page's findings, read from the file and, on a server that masks secrets, masked as every output of findings is: a value a redacting signature matches is masked and a body line of a redacting block or run shows as [masked, N bytes]. No line past the text the scan read is shown."`
 	Before     int      `query:"before" minimum:"0" maximum:"5" doc:"With text: how many lines before each finding to give in before."`
 	MaxBytes   int64    `query:"max_bytes" minimum:"0" doc:"With text: the most bytes of text the page holds, taken in line order; the finding at which it runs out and every later one lose their lines and are marked lines_truncated. 0 or absent: RX_FINDINGS_TEXT_MAX_BYTES, which also bounds a larger value."`
 	Ticks      int      `query:"ticks" minimum:"0" maximum:"4000" doc:"Place the filtered findings on a timeline of this many columns over the file's time range (ticks). 0 or absent: no ticks."`
@@ -170,7 +170,7 @@ func (s *Server) getFindings(ctx context.Context, in *findingsInput) (*findingsO
 	if err != nil {
 		return nil, findingsFailure(validated, err)
 	}
-	params := map[string]any{"path": []string{validated}, "signatures": selectionText(in.Signatures)}
+	params := s.findingsCLIParams(validated, in.Signatures)
 	if in.Text && in.Before > 0 {
 		before := in.Before
 		params["before_context"] = &before
@@ -236,7 +236,7 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 	taskID, status, started := task.TaskID, string(task.Status), formatTaskTime(task.StartedAt)
 	scan := findingsScan{
 		taskID: taskID, path: validated, file: file, sel: sel, force: req.Force,
-		cli: BuildCLICommand("trace", map[string]any{"path": []string{validated}, "signatures": selectionText(req.Signatures)}),
+		cli: BuildCLICommand("trace", s.findingsCLIParams(validated, req.Signatures)),
 	}
 	// Go note: the goroutine outlives this request. runDetached turns a
 	// panic in it into a failed task instead of a crashed server.
@@ -395,6 +395,17 @@ type findingsView struct {
 	maxBytes      int64
 	ticks         int
 	fileZone      config.Zone
+}
+
+// findingsCLIParams are the values the equivalent command of a findings
+// request is written from: the path, the selection spelled out, and the
+// server's masking mode, so the command gives the same findings.
+func (s *Server) findingsCLIParams(path, selection string) map[string]any {
+	return map[string]any{
+		"path":         []string{path},
+		"signatures":   selectionText(selection),
+		"mask_secrets": s.cfg.Findings.Scan.MaskSecrets,
+	}
 }
 
 // firstPageView is the view of a findings task's result: no filter, the

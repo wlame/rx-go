@@ -92,7 +92,9 @@ func (f findingsFilter) keeps(finding rxtypes.Finding, cat *signatures.Catalogue
 	if f.query == "" {
 		return true
 	}
-	// The excerpt is masked already, so a query never tests a secret.
+	// On a server that masks secrets the excerpt is masked already, so a
+	// query never tests a secret; on one that does not, the excerpt is
+	// the line as it is, and a query may match a secret on it.
 	return strings.Contains(strings.ToLower(finding.Excerpt), f.query) ||
 		(known && strings.Contains(strings.ToLower(sig.Name), f.query))
 }

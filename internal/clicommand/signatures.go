@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/signatures"
@@ -45,7 +46,9 @@ func NewSignaturesCommand(out io.Writer, checkExamples ExamplesChecker) *cobra.C
 		Long: "A signature is a named definition of something worth noticing in a long file: a traceback, " +
 			"a secret, a run of blank lines. rx has built-in signatures and reads user signature files " +
 			"(*.yml, *.yaml) from RX_SIGNATURES_PATH (entries separated by \":\"), else from " +
-			"$XDG_CONFIG_HOME/rx/signatures/, else from ~/.config/rx/signatures/.",
+			"$XDG_CONFIG_HOME/rx/signatures/, else from ~/.config/rx/signatures/. A signature marked masked " +
+			"(redact: true) masks what it finds in the text of every finding when masking is on: " +
+			"rx trace --mask-secrets, rx serve --mask-secrets, or RX_MASK_SECRETS=1. Masking is off by default.",
 		// NoArgs makes a word that names no subcommand a usage error
 		// ("unknown command") instead of a list.
 		Args: cobra.NoArgs,
@@ -92,7 +95,8 @@ type listColumns struct{ id, level, kind, source int }
 
 // writeSignatureList prints the human list: per group in order, a line
 // with its count (and "opt-in" when every active signature of it is),
-// then a row per signature; the errors; the search path.
+// then a row per signature; the errors; the search path; the masking
+// mode (maskingLine).
 //
 //	traceback  1 signature
 //	  python-traceback  high  block  built-in
@@ -126,6 +130,17 @@ func writeSignatureList(out io.Writer, cat *signatures.Catalogue, listed []*sign
 		}
 	}
 	_, _ = fmt.Fprintf(out, "\nSearch path: %s (%s)\n", searchPathText(cat.Paths()), countNoun(len(cat.Files()), "file"))
+	_, _ = fmt.Fprintln(out, maskingLine(config.MaskSecrets()))
+}
+
+// maskingLine says what the masked mark means now: whether
+// RX_MASK_SECRETS turns masking on for `rx trace` and `rx serve` run
+// without --mask-secrets, and how to turn it on when it does not.
+func maskingLine(maskSecrets bool) string {
+	if maskSecrets {
+		return "Secrets: masked by the signatures marked masked (" + config.MaskingEnv + ")"
+	}
+	return "Secrets: shown; --mask-secrets or " + config.MaskingEnv + "=1 masks what the signatures marked masked find"
 }
 
 // groupHeader is a group's line in the list: its name, how many active
@@ -156,8 +171,9 @@ func signatureRow(s *signatures.Signature, cols listColumns) string {
 	return strings.TrimRight(row, " ")
 }
 
-// signatureMarks are the marks of a row: overrides, masked, opt-in,
-// disabled by file:line.
+// signatureMarks are the marks of a row: overrides, masked (redact:
+// true, which masks only when masking is on), opt-in, disabled by
+// file:line.
 func signatureMarks(s *signatures.Signature) []string {
 	var marks []string
 	if s.Overrides {
@@ -185,7 +201,8 @@ func newSignaturesShowCommand(out io.Writer, checkExamples ExamplesChecker) *cob
 			"that give its source, its keyword clauses (derived from the regex or declared), whether it " +
 			"runs in the line pass, and the key its findings are cached under with the current settings " +
 			"(RX_SIGNATURES_LINE_BYTES, RX_FINDINGS_MAX_PER_SIGNATURE, RX_TIMESTAMP_LOOKBACK_KB, RX_LOG_TZ " +
-			"and the redacting signatures). Exit 2 for an id no signature has or one whose definition was refused.",
+			"and, with RX_MASK_SECRETS on, the redacting signatures). Exit 2 for an id no signature has or one " +
+			"whose definition was refused.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			cat := signatures.Load(signatures.LoadOptions{CheckExamples: checkExamples})

@@ -126,10 +126,11 @@ func (tr *tracer) trace(ctx context.Context, files []TraceFile, cat *signatures.
 		scanned = append(scanned, ff)
 	}
 
-	// Every finding's text is masked by every loaded redacting
-	// signature, as every excerpt is (Scan masks excerpts by the same
-	// set, cat.Redactors()).
-	masker, err := sigscan.NewLineMasker(cat.Redactors(), opts.Scan.Scan.LineBytes)
+	// Every finding's text is masked by the redacting set of the mode,
+	// as every excerpt is (Scan masks excerpts by the same set,
+	// redactorsOf); with masking off the set is empty and the masker
+	// gives every line as it is.
+	masker, err := sigscan.NewLineMasker(redactorsOf(cat, opts.Scan), opts.Scan.Scan.LineBytes)
 	if err != nil {
 		return nil, err
 	}

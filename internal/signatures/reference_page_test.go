@@ -97,6 +97,9 @@ func renderReferencePage(cat *Catalogue) string {
 	b.WriteString("Keywords are the literals a line must hold before the signature's regex is tried on it,\n")
 	b.WriteString("compared without case: a line needs one keyword of each set, and the sets are joined by\n")
 	b.WriteString("\"and\" below. A signature without keywords is tried on every line.\n\n")
+	b.WriteString("A signature marked \"values masked\" has `redact: true`: with masking on (`--mask-secrets`\n")
+	b.WriteString("or `RX_MASK_SECRETS`), what it finds is masked in the text of every finding and in the\n")
+	b.WriteString("findings cache ([Masking](../concepts/signatures.md#masking)). Masking is off by default.\n\n")
 	b.WriteString("| Group | Signatures | In the default set | What it finds |\n|---|---|---|---|\n")
 	for _, g := range groups {
 		members := byGroup[g.Name]

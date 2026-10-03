@@ -96,9 +96,10 @@ func (s *scheduler) setReadCache(files int, bytes int64) {
 // current cache entry from the cache, the others from one scan of the
 // file, whose entries it then writes. file is pinned and classified
 // (trace.ClassifyForSearch); every read of it goes through its pin. cat
-// is the loaded catalogue: its redacting signatures mask every excerpt
-// (opts.Scan.Redactors is replaced by cat.Redactors()) and enter every
-// key, and its default set decides the answer's State.
+// is the loaded catalogue: with opts.MaskSecrets its redacting
+// signatures mask every excerpt (opts.Scan.Redactors is replaced by
+// that set, redactorsOf, none with masking off) and enter every key,
+// and its default set decides the answer's State.
 //
 // opts.Force scans every selected signature; opts.NoCache and
 // opts.Spooled read and write nothing. Within the process one scan of a
@@ -306,11 +307,11 @@ func (s *scheduler) summary(file paths.Pinned, cat *signatures.Catalogue, opts S
 }
 
 // scanOptions are the sigscan options of a call: opts.Scan with the
-// catalogue's redacting signatures (the set every key hashes) and, when
-// set, opts.Progress.
+// redacting set of the mode (redactorsOf, the set every key hashes)
+// and, when set, opts.Progress.
 func (s *scheduler) scanOptions(cat *signatures.Catalogue, opts ScanOptions) sigscan.Options {
 	scanOpts := opts.Scan
-	scanOpts.Redactors = cat.Redactors()
+	scanOpts.Redactors = redactorsOf(cat, opts)
 	if opts.Progress != nil {
 		scanOpts.Progress = opts.Progress
 	}
@@ -474,7 +475,7 @@ func (s *scheduler) viewOfReusing(root *os.Root, meta *metaFile, scope keyScope,
 	if len(view.current) == 0 {
 		return view
 	}
-	text, ok := s.rangesOf(root, meta, scope, cat, reuse)
+	text, ok := s.rangesOf(root, meta, scope, reuse)
 	if !ok {
 		view.current = map[string]bool{}
 		return view
@@ -526,7 +527,7 @@ func (r *readReuse) entry(id string, summary metaEntry) (decodedEntry, bool) {
 // rangesOf is readRanges that takes the ranges reuse holds when they
 // are the ones meta.json and the scope name (the same key and count),
 // and records the ranges it decodes in reuse.
-func (s *scheduler) rangesOf(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue, reuse *readReuse) (scannedText, bool) {
+func (s *scheduler) rangesOf(root *os.Root, meta *metaFile, scope keyScope, reuse *readReuse) (scannedText, bool) {
 	if reuse != nil && reuse.held != nil && reuse.held.ranges != nil {
 		r := reuse.held.ranges
 		named := meta.MaskedRanges.Key == scope.rangesKey && meta.MaskedRanges.Count == r.count
@@ -534,7 +535,7 @@ func (s *scheduler) rangesOf(root *os.Root, meta *metaFile, scope keyScope, cat 
 			return r.text, true
 		}
 	}
-	text, ok := s.readRanges(root, meta, scope, cat)
+	text, ok := s.readRanges(root, meta, scope)
 	if ok && reuse != nil {
 		reuse.freshRanges = &decodedRanges{key: meta.MaskedRanges.Key, count: meta.MaskedRanges.Count, text: text}
 	}
@@ -550,9 +551,9 @@ func dirOf(file trace.SearchFile) string {
 // when it is missing, unreadable, of another key than meta.json and the
 // scope give, of another length than meta.json records, or not as a
 // scan writes it (rangesFile.text).
-func (s *scheduler) readRanges(root *os.Root, meta *metaFile, scope keyScope, cat *signatures.Catalogue) (scannedText, bool) {
+func (s *scheduler) readRanges(root *os.Root, meta *metaFile, scope keyScope) (scannedText, bool) {
 	var file rangesFile
-	err := readJSON(s.openCache, root, rangesName, maxRangesBytes(len(cat.Redactors())), &file)
+	err := readJSON(s.openCache, root, rangesName, maxRangesBytes(scope.redactors), &file)
 	if err != nil || file.Key != scope.rangesKey || file.Key != meta.MaskedRanges.Key || len(file.Ranges) != meta.MaskedRanges.Count {
 		return scannedText{}, false
 	}

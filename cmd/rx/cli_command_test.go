@@ -200,6 +200,21 @@ func TestCLICommand_TableMatchesTheCommandTree(t *testing.T) {
 	}
 }
 
+// A server that masks secrets renders --mask-secrets on the equivalent
+// command of a findings answer, and the command parses; one that does
+// not leaves the flag out.
+func TestCLICommand_MaskSecretsIsRenderedWhenTheServerMasks(t *testing.T) {
+	params := map[string]any{"path": []string{"/var/log/app.log"}, "signatures": "default", "mask_secrets": true}
+	if got, want := webapi.BuildCLICommand("trace", params), "rx trace /var/log/app.log --signatures=default --mask-secrets"; got != want {
+		t.Errorf("masking: %q, want %q", got, want)
+	}
+	requireRunnableCommand(t, webapi.BuildCLICommand("trace", params))
+	params["mask_secrets"] = false
+	if got, want := webapi.BuildCLICommand("trace", params), "rx trace /var/log/app.log --signatures=default"; got != want {
+		t.Errorf("not masking: %q, want %q", got, want)
+	}
+}
+
 // The commands a chain's answers carry name a subcommand of `rx logs`,
 // two words, and parse with the real command tree, with a handle that
 // needs quoting.

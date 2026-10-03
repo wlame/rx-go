@@ -141,7 +141,7 @@ func findingsCatalogue(t *testing.T) (*signatures.Catalogue, string) {
 func newFindingsFixture(t *testing.T, configure func(*Config)) *findingsFixture {
 	t.Helper()
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
-	for _, name := range []string{"RX_LOG_TZ", "RX_NO_INDEX", "RX_FINDINGS_TEXT_MAX_BYTES", "RX_MAX_LINE_TEXT_BYTES"} {
+	for _, name := range []string{"RX_LOG_TZ", "RX_NO_INDEX", "RX_FINDINGS_TEXT_MAX_BYTES", "RX_MAX_LINE_TEXT_BYTES", "RX_MASK_SECRETS"} {
 		t.Setenv(name, "")
 	}
 	f := &findingsFixture{root: t.TempDir(), summaries: map[string]int{}}
@@ -177,6 +177,32 @@ func newFindingsFixture(t *testing.T, configure func(*Config)) *findingsFixture 
 	t.Cleanup(f.ts.Close)
 	t.Cleanup(func() { awaitEveryTask(t, f.manager) })
 	return f
+}
+
+// sibling builds a second server over the fixture's root, catalogue and
+// findings cache directory, with a task manager of its own: two `rx
+// serve` processes started one after the other over one cache.
+// configure, when set, changes its configuration as for
+// newFindingsFixture.
+func (f *findingsFixture) sibling(t *testing.T, configure func(*Config)) *findingsFixture {
+	t.Helper()
+	g := &findingsFixture{root: f.root, log: f.log, dir: f.dir, binary: f.binary, builtin: f.builtin, cat: f.cat,
+		manager: tasks.New(tasks.Config{}), summaries: map[string]int{}}
+	opts := FindingsOptionsFromEnv()
+	cfg := Config{AppVersion: "findings-test", RipgrepPath: mustLookRg(t), TaskManager: g.manager, Signatures: g.cat, Findings: &opts}
+	if configure != nil {
+		configure(&cfg)
+	}
+	g.ts = httptest.NewServer(NewServer(cfg))
+	t.Cleanup(g.ts.Close)
+	t.Cleanup(func() { awaitEveryTask(t, g.manager) })
+	return g
+}
+
+// masking returns a configure function that sets the server's masking
+// mode, as `rx serve --mask-secrets` or RX_MASK_SECRETS sets it.
+func masking(mask bool) func(*Config) {
+	return func(cfg *Config) { cfg.Findings.Scan.MaskSecrets = mask }
 }
 
 // mustLookRg is the path of ripgrep, a hard requirement of the tests.
@@ -601,10 +627,11 @@ func TestFindingsRoute_TicksOverTheFileTimeRange(t *testing.T) {
 }
 
 // text=true fills each finding's lines and the lines asked for before
-// it, masked: the body of the private key shows its length, and the
-// budget (max_bytes) cuts the text and marks the rest.
+// it, masked on a server that masks: the body of the private key shows
+// its length, and the budget (max_bytes) cuts the text and marks the
+// rest.
 func TestFindingsRoute_TextIsMaskedAndHeldToTheBudget(t *testing.T) {
-	f := newFindingsFixture(t, nil)
+	f := newFindingsFixture(t, masking(true))
 	f.scanned(t, "default")
 	got := f.getFindings(t, "text", "true", "before", "1", "after_line", "4")
 	byLine := map[int64]rxtypes.Finding{}
@@ -1036,6 +1063,98 @@ func TestFindingsRoute_FileZoneTimesNeedNoIndex(t *testing.T) {
 		}
 		if indexed := get(); !jsonEqual(t, indexed, cold) {
 			t.Errorf("%s: with the index %+v\nwithout %+v", name, indexed, cold)
+		}
+	}
+}
+
+// requireServerMode fails unless a GET /v1/findings answer with text of
+// the log's default set is in the server's mode: masked, the private
+// key's body lines show their length; shown, they are the file's lines
+// and nothing is marked masked. cli_command carries --mask-secrets on a
+// server that masks, and only there.
+func requireServerMode(t *testing.T, got rxtypes.FindingsResponse, masked bool) {
+	t.Helper()
+	var pem *rxtypes.Finding
+	for i := range got.Findings {
+		if got.Findings[i].Signature == "pem-key" {
+			pem = &got.Findings[i]
+		}
+	}
+	if pem == nil {
+		t.Fatalf("no pem-key finding: checked %v missing %v", got.Checked, got.Missing)
+	}
+	raw, _ := json.Marshal(got)
+	if masked {
+		if !pem.Masked || !slices.Equal(pem.Lines, []string{"----************", "[masked, 32 bytes]", "[masked, 25 bytes]"}) ||
+			bytes.Contains(raw, []byte(fakeKeyBody)) || !slices.Contains(strings.Fields(got.CLICommand), "--mask-secrets") {
+			t.Errorf("masking server: pem-key masked %v lines %q, cli_command %q", pem.Masked, pem.Lines, got.CLICommand)
+		}
+		return
+	}
+	if pem.Masked || !slices.Equal(pem.Lines, []string{"-----BEGIN PRIVATE KEY-----", fakeKeyBody, "-----END PRIVATE KEY-----"}) ||
+		bytes.Contains(raw, []byte(`"masked":true`)) || slices.Contains(strings.Fields(got.CLICommand), "--mask-secrets") {
+		t.Errorf("showing server: pem-key masked %v lines %q, cli_command %q", pem.Masked, pem.Lines, got.CLICommand)
+	}
+}
+
+// A server that masks and one that shows, over one findings cache
+// directory and with the read cache of rx serve on, never give each
+// other's answer, in either order: after a scan by one, the other's
+// GET finds every signature missing; after the other's own scan each
+// answers in its own mode, and the first server's next GET, which its
+// read cache could answer from what it decoded before, finds every
+// signature missing again rather than the other mode's entries.
+func TestFindingsRoutes_MaskedAndShownServersNeverShareAnAnswer(t *testing.T) {
+	findings.SetReadCache(8, 64<<20)
+	t.Cleanup(func() { findings.SetReadCache(0, 0) })
+	for _, firstMasks := range []bool{false, true} {
+		t.Run(map[bool]string{false: "shown then masked", true: "masked then shown"}[firstMasks], func(t *testing.T) {
+			first := newFindingsFixture(t, masking(firstMasks))
+			second := first.sibling(t, masking(!firstMasks))
+			requireMissing := func(f *findingsFixture) {
+				t.Helper()
+				got := f.getFindings(t, "text", "true")
+				if got.State != "none" || len(got.Checked) != 0 || len(got.Findings) != 0 || len(got.Missing) == 0 {
+					t.Errorf("the other mode's cache: state %s checked %v missing %v findings %d, want every signature missing",
+						got.State, got.Checked, got.Missing, len(got.Findings))
+				}
+			}
+
+			first.scanned(t, "default")
+			requireServerMode(t, first.getFindings(t, "text", "true"), firstMasks)
+			requireMissing(second)
+			second.scanned(t, "default")
+			requireServerMode(t, second.getFindings(t, "text", "true"), !firstMasks)
+			requireMissing(first)
+			first.scanned(t, "default")
+			requireServerMode(t, first.getFindings(t, "text", "true"), firstMasks)
+		})
+	}
+}
+
+// GET /v1/trace with signatures answers in the server's mode too: the
+// private key's lines are masked on a server that masks and shown as
+// the file holds them on one that does not, and cli_command carries
+// --mask-secrets on the first only.
+func TestTraceRoute_FindingsFollowTheServerMode(t *testing.T) {
+	for _, mask := range []bool{false, true} {
+		f := newFindingsFixture(t, masking(mask))
+		status, raw := f.call(t, http.MethodGet, "/v1/trace", url.Values{"path": {f.log}, "signatures": {"pem-key"}}, nil)
+		if status != http.StatusOK {
+			t.Fatalf("masking %v: status %d %s", mask, status, raw)
+		}
+		var got rxtypes.TraceResponse
+		decode(t, raw, &got)
+		if len(got.Findings) != 1 || got.CLICommand == nil {
+			t.Fatalf("masking %v: findings %+v cli_command %v", mask, got.Findings, got.CLICommand)
+		}
+		pem, cli := got.Findings[0], *got.CLICommand
+		want := []string{"-----BEGIN PRIVATE KEY-----", fakeKeyBody, "-----END PRIVATE KEY-----"}
+		if mask {
+			want = []string{"----************", "[masked, 32 bytes]", "[masked, 25 bytes]"}
+		}
+		if !slices.Equal(pem.Lines, want) || pem.Masked != mask || slices.Contains(strings.Fields(cli), "--mask-secrets") != mask {
+			t.Errorf("masking %v: lines %q masked %v cli_command %q", mask, pem.Lines, pem.Masked, cli)
 		}
 	}
 }

@@ -62,6 +62,7 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `-F`, `--fixed-strings` | `bool` | `false` | Treat every pattern as literal text (ripgrep `-F`) |
 | `-P`, `--pcre2` | `bool` | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
 | `--signatures` | `string` | — | Scan the files for [signatures](../concepts/signatures.md) too: a selection such as `--signatures=traceback,sql`; a bare `--signatures` is the default set. Every positional is then a path. See [Signatures](#signatures) |
+| `--mask-secrets` | `bool` | `RX_MASK_SECRETS`, else `false` | With `--signatures`: mask what the signatures with `redact: true` match in the text of every finding and in the findings cache ([Masking](../concepts/signatures.md#masking)). Off by default; `--mask-secrets=false` turns it off when `RX_MASK_SECRETS` is on |
 
 `--debug` is still accepted so that old scripts keep working, but it
 does nothing, is not listed in `--help`, and prints a deprecation note on
@@ -164,6 +165,7 @@ the matches.
 rx --signatures app.log                              # the default set, no pattern
 rx trace --signatures=traceback,sql app.log /var/log/
 rx --signatures=all,-pii -e timeout app.log          # matches and findings
+rx --signatures --mask-secrets app.log               # secrets masked in the findings
 ```
 
 - The value is a [selection](../concepts/signatures.md#selection): ids,
@@ -185,6 +187,10 @@ rx --signatures=all,-pii -e timeout app.log          # matches and findings
 - `-B`, `-A` and `--context` (and the window of `--samples`) add the
   same lines before the first line and after the last line of each
   finding.
+- Secrets are shown as the file holds them unless masking is on:
+  `--mask-secrets`, or `RX_MASK_SECRETS=1` without the flag
+  ([Masking](../concepts/signatures.md#masking)). A masked run and a
+  shown run never share a cache entry: switching scans the file again.
 - Log chains are not scanned: `rx logs trace` has no `--signatures`.
 
 ### Human output
@@ -235,9 +241,9 @@ A finding:
 | `start_line`, `end_line` | int | 1-based, inclusive |
 | `start_offset`, `end_offset` | int | byte offsets in the text (decompressed for a compressed file), end exclusive |
 | `time_ms` | int or null | the time of the first line, or of the nearest earlier stamped line within `RX_TIMESTAMP_LOOKBACK_KB`, in milliseconds since the Unix epoch; a file whose timestamps carry no zone is read in `RX_LOG_TZ`, as `rx samples` reads it |
-| `excerpt` | string | the first line, masked, cut to 200 bytes |
+| `excerpt` | string | the first line, masked when masking is on, cut to 200 bytes |
 | `value_start`, `value_end` | int, optional | the value's bytes in the first line |
-| `masked` | bool, optional | true when anything in the excerpt, the lines, or the `before` and `after` lines was masked, or the signature redacts |
+| `masked` | bool, optional | true when anything in the excerpt, the lines, or the `before` and `after` lines was masked, or the signature redacts and masking is on; never set with masking off |
 | `lines` | [string] | the finding's lines, each without its line ending |
 | `before`, `after` | [string], optional | the lines `-B`, `-A` or `--context` asked for |
 | `lines_truncated` | bool, optional | the text budget ran out at or before this finding |
@@ -247,7 +253,8 @@ cap included, and `stored` how many the answer lists. `state` is `full`
 when every signature of the default set has an answer for the file
 (cached or just scanned), `partial` otherwise. `cli_command` holds the
 whole command, the selection spelled out (`--signatures=default` for a
-bare flag); without `--signatures` it stays `null` and the answer has
+bare flag) and `--mask-secrets` when the run masked, from the flag or
+from `RX_MASK_SECRETS`; without `--signatures` it stays `null` and the answer has
 exactly the members it had before.
 
 ### The text of a finding
@@ -266,7 +273,9 @@ a compressed stream is read from its start up to its last finding.
   out and every finding after it keep their place and lose their text,
   with `lines_truncated: true`; the human output says so and gives the
   `rx samples` command.
-- Every line is masked as [Masking](../concepts/signatures.md#masking)
+- With masking off (the default) every line is the file's line as it
+  is. With `--mask-secrets` (or `RX_MASK_SECRETS=1`) every line is
+  masked as [Masking](../concepts/signatures.md#masking)
   says: every value a loaded redacting signature matches, selected or
   not, is masked, and every body line of a redacting `block` or `run`
   (every line a block joined after its anchor, every line of a run

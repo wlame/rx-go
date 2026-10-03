@@ -185,21 +185,24 @@ It holds:
   sorted, the same for every chunking and storage; and the end of the
   text the scan read, `text_lines` and `text_bytes` (the decompressed
   text of a compressed file), past which no text of a finding is shown.
-  Every scan writes it, since every scan walks every loaded redacting
-  block and run;
+  Every scan writes it, since with masking on every scan walks every
+  loaded redacting block and run; with masking off it holds no range;
 - `<signature-id>.json` — one entry: its `key`, its `findings` (lines,
   text offsets, `time_ms` and `time_offset_minutes`, the zone offset
-  the stamped line of that time writes, the excerpt with every secret
-  masked, the value span, `masked`) and, for a `density` measure, its
+  the stamped line of that time writes, the excerpt (with every secret
+  masked when masking is on), the value span, `masked`) and, for a
+  `density` measure, its
   bucket `series`; a signature whose id is `meta` gets
   `meta.signature.json`;
 - `.lock` — the file a writing process locks.
 
-A signature checked with no findings is an entry with `count: 0`. No
-unmasked value of a redacting signature is ever written ([Masking](signatures.md#masking)): every excerpt
-is masked by every loaded redacting signature before it is stored, and
-an excerpt on a body line of a redacting block or run is stored as
-`[masked, N bytes]`. The text of a finding, read from the file when an
+A signature checked with no findings is an entry with `count: 0`.
+[Masking](signatures.md#masking) is off by default, and the cache then
+holds every excerpt as the file holds it, secrets included. With
+masking on (`--mask-secrets`, `RX_MASK_SECRETS=1`) no unmasked value of
+a redacting signature is ever written: every excerpt is masked by every
+loaded redacting signature before it is stored, and an excerpt on a
+body line of a redacting block or run is stored as `[masked, N bytes]`. The text of a finding, read from the file when an
 answer is made, shows every line of a masked range as
 `[masked, N bytes]`, so cached entries are used only together with a
 current `meta.ranges.json`.
@@ -214,7 +217,8 @@ it.
 |---|---|
 | the file (its size, mtime, inode, device, ctime or fingerprint) | every entry of the file is stale |
 | a signature's matching part: kind, anchor and every regex, keywords, `not`, `capture`, `entropy`, `validate`, the block, run or measure parameters, `redact` | its entry is stale in every file |
-| any redacting signature (one with `redact: true`, selected or not) added, removed or changed | every entry is stale (excerpts are masked by all of them) |
+| masking turned on or off (`--mask-secrets`, `RX_MASK_SECRETS`) | every entry is stale: the key holds the redacting signatures, and with masking off there are none, so a masked answer never comes from an unmasked entry, nor the reverse |
+| with masking on, any redacting signature (one with `redact: true`, selected or not) added, removed or changed | every entry is stale (excerpts are masked by all of them) |
 | the engine's version, or a measure's version | the affected entries are stale |
 | `RX_SIGNATURES_LINE_BYTES`, `RX_FINDINGS_MAX_PER_SIGNATURE`, `RX_TIMESTAMP_LOOKBACK_KB`, `RX_LOG_TZ` | every entry is stale |
 | a signature's name, description, group, tags, level, links, metadata, examples, `default` | nothing: read from the catalogue when the answer is made |
@@ -223,7 +227,8 @@ it.
 
 The masked ranges have a key of their own: the engine's version,
 `RX_SIGNATURES_LINE_BYTES` (the line view decides whether a line opens
-or continues a block) and the redacting signatures. A file whose
+or continues a block) and the redacting signatures (none with masking
+off). A file whose
 `meta.ranges.json` is missing, unreadable, of another key or count
 than `meta.json` records, not sorted as a scan writes it, or whose end
 of the text lies before a range or a cached finding, has no current

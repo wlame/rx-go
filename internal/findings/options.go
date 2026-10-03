@@ -3,6 +3,7 @@ package findings
 import (
 	"time"
 
+	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/sigscan"
 )
 
@@ -45,10 +46,18 @@ type ScanOptions struct {
 	// as stored on disk. It is not called when every selected signature
 	// is answered from the cache.
 	Progress func(read, total int64)
+	// MaskSecrets turns masking on (`--mask-secrets`, RX_MASK_SECRETS):
+	// every loaded redacting signature of the catalogue a call is given
+	// (Catalogue.Redactors) masks the excerpts the scan keeps and the
+	// text of every finding. Off, no signature masks anything, and the
+	// answers, the cache and the text show the file's text as it is.
+	// The mode enters every key through the redacting set it hashes, so
+	// masked and unmasked entries are never taken for each other.
+	MaskSecrets bool
 	// Scan holds the scan's settings. LineBytes, Cap and LookbackBytes
 	// enter every key; Workers does not change an answer and is not in
-	// the key. Redactors is replaced by Catalogue.Redactors() of the
-	// catalogue the call is given, the set every key hashes.
+	// the key. Redactors is replaced by the redacting set MaskSecrets
+	// gives (redactorsOf), the set every key hashes.
 	Scan sigscan.Options
 	// LogZone is the canonical value of RX_LOG_TZ (config.LogTZ().Name),
 	// the zone the answers read a zone-less file's times in. The scan
@@ -72,6 +81,19 @@ type ScanOptions struct {
 // cache.
 func (o ScanOptions) usesCache() bool { return !o.NoCache && !o.Spooled }
 
+// redactorsOf is the redacting set of a call with options o over the
+// catalogue cat: every loaded redacting signature of cat with masking
+// on, none with masking off. It is the one place the mode is read: the
+// scan masks by this set (sigscan.Options.Redactors), every key and the
+// key of the masked ranges hash it, and the text of a finding is masked
+// by it, so a scan given no redactors is what "masking off" means.
+func redactorsOf(cat *signatures.Catalogue, o ScanOptions) []*signatures.Signature {
+	if !o.MaskSecrets {
+		return nil
+	}
+	return cat.Redactors()
+}
+
 // Answer is the findings of a selection of signatures in one file.
 type Answer struct {
 	// State is measured against the default set over every signature
@@ -90,10 +112,11 @@ type Answer struct {
 	// in UTC to the second.
 	ScannedAt map[string]time.Time
 	// MaskedRanges are the file's masked ranges (sigscan.Result's): the
-	// bodies of every redacting block and run of the catalogue, as
-	// [first, last] lines, sorted and disjoint. Every carrier of the
-	// text of a finding (its lines, the lines before and after it) shows
-	// a line in one of them as sigscan.MaskedLineText of its length. A
+	// bodies of every redacting block and run of the redacting set (none
+	// with masking off), as [first, last] lines, sorted and disjoint.
+	// Every carrier of the text of a finding (its lines, the lines
+	// before and after it) shows a line in one of them as
+	// sigscan.MaskedLineText of its length. A
 	// fresh scan gives them; a cached answer reads them from the cache,
 	// and an answer holds cached findings only together with their
 	// ranges. Nil when the answer holds no findings.

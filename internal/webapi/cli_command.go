@@ -126,10 +126,13 @@ func noValueDefault() AbsentValue           { return AbsentValue{NoValue: true} 
 // internal/clicommand; a test in cmd/rx compares them with the real
 // command tree and parses every command the server renders.
 var cliCommandTable = map[string]CLICommandOperation{
-	// `rx trace` takes --signatures beside every flag of a search; `rx
-	// logs trace` does not (log chains are not scanned for signatures).
+	// `rx trace` takes --signatures and --mask-secrets beside every flag
+	// of a search; `rx logs trace` does not (log chains are not scanned
+	// for signatures). A server that masks secrets renders
+	// --mask-secrets, so the command gives the answer the server gave.
 	"trace": {Subcommand: "trace", Args: append(slices.Clone(traceCLIArgs),
-		CLIArg{Field: "signatures", Flag: "signatures", Kind: ArgFlag, Absent: defaultValue("")})},
+		CLIArg{Field: "signatures", Flag: "signatures", Kind: ArgFlag, Absent: defaultValue("")},
+		CLIArg{Field: "mask_secrets", Flag: "mask-secrets", Kind: ArgFlag, Absent: defaultValue("false")})},
 	"samples": {
 		Subcommand: "samples",
 		Args: []CLIArg{

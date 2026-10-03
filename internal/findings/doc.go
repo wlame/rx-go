@@ -25,11 +25,13 @@
 // fingerprint, the check the line index uses) and its key equals Key
 // for the signature as it is loaded now. The key hashes the
 // signature's matching part, the engine and measure versions, the
-// settings that change answers and the redacting signatures; name,
+// settings that change answers and the redacting set (the redacting
+// signatures with masking on, none with it off: ScanOptions.MaskSecrets),
+// so an entry of one mode is never current in the other; name,
 // description, group and the other descriptive fields are not in it.
 //
 // The masked ranges have a key of their own (the engine version, the
-// line view and the redacting signatures). Entries are used only
+// line view and the redacting set). Entries are used only
 // together with current ranges, since the text of a cached finding is
 // masked by them when it is read: without them every entry is missing.
 //

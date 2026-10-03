@@ -72,7 +72,8 @@ func disableOtherBuiltins(keep ...string) string {
 // withTraceSignatures points the signature search path at
 // traceSignatureFile, with every built-in but traceTestBuiltins
 // switched off, and the cache at a fresh directory, and returns the
-// cache directory.
+// cache directory. RX_MASK_SECRETS is cleared, so masking is off
+// unless a test turns it on.
 func withTraceSignatures(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -81,6 +82,7 @@ func withTraceSignatures(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("RX_SIGNATURES_PATH", path)
+	t.Setenv("RX_MASK_SECRETS", "")
 	cache := t.TempDir()
 	t.Setenv("RX_CACHE_DIR", cache)
 	return cache
@@ -371,13 +373,13 @@ const (
 		"-----END PRIVATE KEY-----\n"
 )
 
-// A secret is masked in the excerpt, the lines and the human output; a
-// private key's body lines become [masked, N bytes]; no secret byte is
-// in either output.
+// With --mask-secrets a secret is masked in the excerpt, the lines and
+// the human output; a private key's body lines become
+// [masked, N bytes]; no secret byte is in either output.
 func TestTraceSignatures_SecretsAreMaskedEverywhere(t *testing.T) {
 	withTraceSignatures(t)
 	path := writeText(t, t.TempDir(), "app.log", secretLog)
-	args := []string{"--signatures=error-line,pem-key,aws-access-key", path}
+	args := []string{"--signatures=error-line,pem-key,aws-access-key", "--mask-secrets", path}
 	jsonOut, err := runTraceCmd(t, append(args, "--json")...)
 	if err != nil {
 		t.Fatal(err)
@@ -414,17 +416,17 @@ func TestTraceSignatures_SecretsAreMaskedEverywhere(t *testing.T) {
 	}
 }
 
-// The lines around findings next to a private key (--before=4,
-// --after=3) show its body lines as [masked, N bytes], in the JSON and
-// in the human output, while the pem-key signature is only loaded, not
-// selected: no byte of the key is printed.
+// With --mask-secrets the lines around findings next to a private key
+// (--before=4, --after=3) show its body lines as [masked, N bytes], in
+// the JSON and in the human output, while the pem-key signature is only
+// loaded, not selected: no byte of the key is printed.
 func TestTraceSignatures_KeyBodyIsMaskedAroundOtherFindings(t *testing.T) {
 	withTraceSignatures(t)
 	keyA, keyB := strings.Repeat("RkFLRUtFWUFB", 6)[:64], strings.Repeat("RkFLRUtFWUJC", 6)[:64]
 	text := "LINE 1 ERROR before\n-----BEGIN PRIVATE KEY-----\n" + keyA + "\n" + keyB +
 		"\n-----END PRIVATE KEY-----\nLINE 6 ERROR after\n"
 	path := writeText(t, t.TempDir(), "app.log", text)
-	args := []string{"--signatures=error-line", "--before=4", "--after=3", path}
+	args := []string{"--signatures=error-line", "--before=4", "--after=3", "--mask-secrets", path}
 	jsonOut, err := runTraceCmd(t, append(args, "--json")...)
 	if err != nil {
 		t.Fatal(err)

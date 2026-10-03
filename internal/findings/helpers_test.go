@@ -190,10 +190,12 @@ func classify(t testing.TB, path string) trace.SearchFile {
 	return file
 }
 
-// testOptions are options with a fresh cache directory and two workers.
+// testOptions are options with a fresh cache directory, two workers
+// and masking on, which the tests of masked text in this package need;
+// a test of masking off sets MaskSecrets to false.
 func testOptions(t testing.TB) ScanOptions {
 	t.Helper()
-	return ScanOptions{Dir: t.TempDir(), LogZone: "UTC", Scan: sigscan.Options{Workers: 2, LookbackBytes: 64 << 10}}
+	return ScanOptions{Dir: t.TempDir(), LogZone: "UTC", MaskSecrets: true, Scan: sigscan.Options{Workers: 2, LookbackBytes: 64 << 10}}
 }
 
 // recorder wraps sigscan.Scan for a scheduler: it records the ids of

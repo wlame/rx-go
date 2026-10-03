@@ -105,7 +105,7 @@ Shortened to one signature and four of the groups:
 | `level` | string | `info`, `low`, `medium`, `high` or `critical` |
 | `metadata` | object | String to string; `{}` when none |
 | `default` | bool | In the default set; `false` for an opt-in signature |
-| `redact` | bool | What it matches is masked in the text of every finding and in the cache ([Masking](../../concepts/signatures.md#masking)) |
+| `redact` | bool | What it matches is masked in the text of every finding and in the cache when the server masks secrets (`rx serve --mask-secrets` or `RX_MASK_SECRETS=1`; off by default) ([Masking](../../concepts/signatures.md#masking)) |
 | `kind` | string | `regex`, `block`, `run` or `measure`; the member of that name holds the definition, the other three are `null` |
 | `keywords` | string[][] | The keyword clauses of the anchor, lowered; `[]` when the signature runs on every line |
 | `keywords_declared` | bool | The clauses come from the signature's own `keywords` |

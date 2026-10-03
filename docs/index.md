@@ -39,7 +39,8 @@ files in the tens of gigabytes.
   for tracebacks, crashes, secrets, SQL, bursts of lines and more with
   70 built-in [signatures](concepts/signatures.md) and your own from
   YAML, in one parallel pass, and caches the findings per file and
-  signature. Secrets are masked in every finding's text.
+  signature. With `--mask-secrets`, secrets are masked in every
+  finding's text.
 - **Seekable zstd output.** `rx compress` writes zstd streams as
   independent frames with an appended seek table, trading ~4-5% of
   compression ratio for random-access decompression. Later `rx samples`

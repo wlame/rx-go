@@ -11,11 +11,15 @@ import "cmp"
 // coordinates of every other rx answer; EndOffset is exclusive: where
 // the line after the finding's last line starts, or the end of the text.
 //
-// Excerpt, Lines, Before and After never show a value a redacting
-// signature matches on their line: such a value is masked (all but a
-// few leading characters become `*`), and every line after the first
-// line of a block or run finding of a redacting signature is replaced by
-// `[masked, N bytes]`. Each line is valid UTF-8 (a byte that is not part
+// With masking on (`rx trace --mask-secrets`, `rx serve --mask-secrets`
+// or RX_MASK_SECRETS; for an HTTP answer, the server's mode), Excerpt,
+// Lines, Before and After never show a value a redacting signature
+// matches on their line: such a value is masked (all but a few leading
+// characters become `*`), and every line after the first line of a
+// block or run finding of a redacting signature is replaced by
+// `[masked, N bytes]`. With masking off, the default, they show the
+// file's text as it is and Masked is never set. Each line is valid
+// UTF-8 (a byte that is not part
 // of a valid character becomes U+FFFD) and holds at most
 // RX_MAX_LINE_TEXT_BYTES bytes of its line, cut on a character boundary.
 type Finding struct {
@@ -37,8 +41,9 @@ type Finding struct {
 	// stamped line within RX_TIMESTAMP_LOOKBACK_KB. Null when there is
 	// none.
 	TimeMS *int64 `json:"time_ms" doc:"Time of the first line in milliseconds since the Unix epoch (its own timestamp, or that of the nearest earlier stamped line within RX_TIMESTAMP_LOOKBACK_KB); null when there is none."`
-	// Excerpt is the first line, masked, cut to 200 bytes.
-	Excerpt string `json:"excerpt" doc:"The first line, with redacted values masked, cut to 200 bytes on a character boundary."`
+	// Excerpt is the first line, masked when masking is on, cut to 200
+	// bytes.
+	Excerpt string `json:"excerpt" doc:"The first line, with redacted values masked when the server masks secrets, cut to 200 bytes on a character boundary."`
 	// ValueStart and ValueEnd are bytes in the first line, counted from
 	// its first byte: the value a regex signature captured, the token a
 	// value measure found, or the anchor's first match of a redacting
@@ -47,8 +52,9 @@ type Finding struct {
 	ValueEnd   *int `json:"value_end,omitempty" doc:"End of the finding's value (exclusive), in bytes from the first line's first byte."`
 	// Masked is true when anything in the excerpt, the lines of the
 	// finding or the lines before and after it was masked, or the
-	// signature itself redacts.
-	Masked bool `json:"masked,omitempty" doc:"True when a value in the excerpt, the lines, or the lines before and after was masked, or the signature redacts."`
+	// signature itself redacts and masking is on. Never true with masking
+	// off.
+	Masked bool `json:"masked,omitempty" doc:"True when a value in the excerpt, the lines, or the lines before and after was masked, or the signature redacts and the server masks secrets. Never true on a server that does not mask them, the default."`
 	// Lines are the finding's lines, StartLine to EndLine, each without
 	// its line ending. Trace answers always fill them, until the text
 	// budget (RX_FINDINGS_TEXT_MAX_BYTES) runs out.

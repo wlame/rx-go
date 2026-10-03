@@ -13,8 +13,9 @@ import (
 // the cap (RX_FINDINGS_MAX_PER_SIGNATURE), the timestamp look-back
 // (RX_TIMESTAMP_LOOKBACK_KB), the log zone (RX_LOG_TZ), the cache
 // directory, the line text limit (RX_MAX_LINE_TEXT_BYTES), the text
-// budget (RX_FINDINGS_TEXT_MAX_BYTES), and whether line indexes are
-// read (RX_NO_INDEX).
+// budget (RX_FINDINGS_TEXT_MAX_BYTES), whether line indexes are read
+// (RX_NO_INDEX), and whether secrets are masked (RX_MASK_SECRETS; the
+// --mask-secrets flag of `rx trace` and `rx serve` overrides it).
 //
 // internal/findings and internal/sigscan read no environment: `rx
 // serve` calls this once when it starts and hands the result to the
@@ -34,8 +35,9 @@ func FindingsOptionsFromEnv() findings.TraceOptions {
 				Cap:           config.FindingsMaxPerSignature(),
 				LookbackBytes: int(config.TimestampLookbackBytes()),
 			},
-			LogZone: zone.Name,
-			Dir:     config.GetFindingsCacheDir(),
+			LogZone:     zone.Name,
+			Dir:         config.GetFindingsCacheDir(),
+			MaskSecrets: config.MaskSecrets(),
 		},
 		LineTextBytes: config.MaxLineTextBytes(),
 		TextBudget:    config.FindingsTextMaxBytes(),

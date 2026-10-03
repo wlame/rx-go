@@ -561,17 +561,27 @@ Paste the output. Do not summarize it.
   file made with `O_EXCL`, then a rename (`--force`) or a hard link
   (without it) to the output name. Do not add a write that opens the
   output by its path.
-- **The text of a finding is masked on every carrier.** An excerpt is
-  masked by every loaded redacting signature before it is kept or
-  cached, and the lines of a finding (`lines`, `before`, `after`, the
-  human output) go through `findings.FillText` or the trace's text
-  read, which mask each line with `sigscan.NewLineMasker`, show a body
-  line of a redacting block or run as `sigscan.MaskedLineText`, and
-  stop at the end of the text the scan read. A new surface that shows
-  finding text reuses them and never shows a line read for a finding
-  without that masking (`GET /v1/samples` returns the file as it is,
-  and a client must not build finding text from it). The matches of
-  `-e` stay unmasked by design. The rules: `docs/concepts/signatures.md`,
+- **Masking is opt-in, and when on it covers every carrier.** Off by
+  default; `--mask-secrets` (on `rx trace` and `rx serve`) or
+  `RX_MASK_SECRETS` turns it on, and the flag wins. The mode reaches
+  `internal/findings` as `ScanOptions.MaskSecrets` and nowhere else:
+  `findings.redactorsOf` turns it into the redacting set (the
+  catalogue's `Redactors()`, or none), which is what the scan masks by
+  (`sigscan.Options.Redactors` is the whole set; a selected redacting
+  signature masks only when it is in it), what every findings key and
+  the masked-ranges key hash (so the two modes never share an entry),
+  and what the text of a finding is masked by. With masking on, an
+  excerpt is masked by every loaded redacting signature before it is
+  kept or cached, and the lines of a finding (`lines`, `before`,
+  `after`, the human output) go through `findings.FillText` or the
+  trace's text read, which mask each line with
+  `sigscan.NewLineMasker`, show a body line of a redacting block or run
+  as `sigscan.MaskedLineText`, and stop at the end of the text the scan
+  read. A new surface that shows finding text reuses them and takes the
+  redacting set from `redactorsOf`, never from `Catalogue.Redactors()`
+  directly (`GET /v1/samples` returns the file as it is, and a client
+  must not build finding text from it). The matches of `-e` stay
+  unmasked by design. The rules: `docs/concepts/signatures.md`,
   "Masking".
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.

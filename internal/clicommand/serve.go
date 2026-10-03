@@ -57,6 +57,7 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 				appVersion:   appVersion,
 				skipFrontend: skipFrontend,
 				updateViewer: updateViewer,
+				maskSecrets:  maskSecretsMode(cmd),
 			})
 		},
 	}
@@ -69,6 +70,7 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 	cmd.Flags().BoolVar(&updateViewer, "update-viewer", false,
 		"Check GitHub for a newer rx-viewer release inside the supported range now, "+
 			"instead of once a day")
+	bindMaskSecretsFlag(cmd)
 	return cmd
 }
 
@@ -90,6 +92,10 @@ type serveParams struct {
 	appVersion   string
 	skipFrontend bool
 	updateViewer bool
+	// maskSecrets is the server's masking mode, for every findings
+	// answer it gives: --mask-secrets, else RX_MASK_SECRETS
+	// (maskSecretsMode).
+	maskSecrets bool
 }
 
 // viewerMode is how `rx serve` manages the viewer at start-up.
@@ -231,6 +237,7 @@ func runServe(out io.Writer, p serveParams) error {
 	// Every setting of the scans and of the findings cache is read here,
 	// once; internal/findings and internal/sigscan read no environment.
 	findingsOptions := webapi.FindingsOptionsFromEnv()
+	findingsOptions.Scan.MaskSecrets = p.maskSecrets
 	findings.SetMaxScans(config.MaxSignatureScans())
 	// GET /v1/findings reads one file's findings on every page, filter
 	// and key press; the decoded answers of the last few files read are
@@ -268,6 +275,7 @@ func runServe(out io.Writer, p serveParams) error {
 		}
 	}
 	_, _ = fmt.Fprintf(out, "Viewer: %s\n", served.Describe())
+	_, _ = fmt.Fprintln(out, secretsBannerLine(p.maskSecrets))
 	if apiToken != "" {
 		_, _ = fmt.Fprintln(out, "API token: required on /v1 (RX_API_TOKEN is set)")
 	}
@@ -300,6 +308,16 @@ func runServe(out io.Writer, p serveParams) error {
 		}
 		return nil
 	}
+}
+
+// secretsBannerLine is the line of the start banner that says whether
+// the server masks secrets in the text of findings, and how to turn
+// masking on when it does not.
+func secretsBannerLine(maskSecrets bool) string {
+	if maskSecrets {
+		return "Secrets: masked"
+	}
+	return "Secrets: shown; start with --mask-secrets or " + config.MaskingEnv + "=1 to mask them"
 }
 
 // The bounds of the findings read cache of `rx serve`: the decoded

@@ -37,12 +37,13 @@ marks:
 | Mark | Meaning |
 |---|---|
 | `overrides` | a user signature that replaces the built-in of the same id |
-| `masked` | `redact: true`: what it matches is masked in the text of every finding and in the findings cache ([Masking](../concepts/signatures.md#masking)) |
+| `masked` | `redact: true`: with masking on (`--mask-secrets` on `rx trace` and `rx serve`, or `RX_MASK_SECRETS=1`), what it matches is masked in the text of every finding and in the findings cache ([Masking](../concepts/signatures.md#masking)); masking is off by default |
 | `opt-in` | `default: false`: it runs only when a selection names it |
 | `disabled by file:line` | a built-in a user file switched off with `disable` |
 
-Then come the errors, and the search path with the number of files
-found on it.
+Then come the errors, the search path with the number of files found
+on it, and a `Secrets:` line: whether `RX_MASK_SECRETS` turns masking
+on for `rx trace` and `rx serve` run without `--mask-secrets`.
 
 ```bash
 rx signatures
@@ -68,6 +69,7 @@ Errors (1)
   /home/me/.config/rx/signatures/draft.yml:6: refund-spike: regex: error parsing regexp: missing closing ): `(refund`
 
 Search path: /home/me/.config/rx/signatures (2 files)
+Secrets: shown; --mask-secrets or RX_MASK_SECRETS=1 masks what the signatures marked masked find
 ```
 
 A group without a signature to list is left out. The example is
@@ -183,7 +185,8 @@ signature's findings under in the
 [findings cache](../concepts/caching.md#findings). It changes when the
 signature's matching part changes, when `RX_SIGNATURES_LINE_BYTES`,
 `RX_FINDINGS_MAX_PER_SIGNATURE`, `RX_TIMESTAMP_LOOKBACK_KB` or
-`RX_LOG_TZ` changes, and when any redacting signature changes; its name,
+`RX_LOG_TZ` changes, when `RX_MASK_SECRETS` turns masking on or off,
+and, with masking on, when any redacting signature changes; its name,
 description, group and the other descriptive fields do not change it.
 
 | Flag | Default | Description |

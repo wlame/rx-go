@@ -46,8 +46,9 @@ var levelColors = map[string]string{
 // command. A trace without signatures renders nothing.
 //
 // The lines are the file's content, printed as they are, as the
-// context section prints them; the text arrives masked. Paths go
-// through Printable.
+// context section prints them; the text arrives masked when the run
+// masks secrets (--mask-secrets, RX_MASK_SECRETS), and as the file holds
+// it otherwise. Paths go through Printable.
 func FormatFindingsCLI(resp *rxtypes.TraceResponse, opts FindingsFormatOptions) string {
 	if resp == nil || resp.Signatures == nil {
 		return ""

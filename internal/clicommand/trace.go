@@ -49,11 +49,13 @@ func NewTraceCommand(out io.Writer) *cobra.Command {
 			if cmd.Flags().Changed(signaturesFlag) {
 				p.signatures = &signatureSelection
 			}
+			p.maskSecrets = maskSecretsMode(cmd)
 			return runTrace(commandContext(cmd), out, p)
 		},
 	}
 	bindTraceFlags(cmd, &flags)
 	bindSignaturesFlag(cmd, &signatureSelection)
+	bindMaskSecretsFlag(cmd)
 	return cmd
 }
 
@@ -235,6 +237,10 @@ type traceParams struct {
 	// resolveTracePositionals) and the files are scanned for those
 	// signatures too.
 	signatures *string
+	// maskSecrets is the masking mode of the findings: --mask-secrets,
+	// else RX_MASK_SECRETS (maskSecretsMode). It changes nothing
+	// without --signatures.
+	maskSecrets bool
 }
 
 // runTrace resolves positionals → [pattern, paths...], then dispatches

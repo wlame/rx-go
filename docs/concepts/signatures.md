@@ -80,7 +80,7 @@ A file holds three keys at its top, all optional: `signatures`,
 | `links` | no | `[]` | `http` or `https` URLs, shown, never fetched |
 | `metadata` | no | `{}` | a map of text to text, shown, never interpreted |
 | `default` | no | `true` | `false`: the signature runs only when a selection names it |
-| `redact` | no | `false` | mask what the signature matches wherever finding text is shown or cached ([Masking](#masking)); refused on a `blank` or `same` run and on any measure but `entropy` and `base64-run`, since they find no value to mask |
+| `redact` | no | `false` | with masking on (`--mask-secrets`, `RX_MASK_SECRETS`), mask what the signature matches wherever finding text is shown or cached ([Masking](#masking)); refused on a `blank` or `same` run and on any measure but `entropy` and `base64-run`, since they find no value to mask |
 | `keywords` | no | derived | literals for the [keyword gate](#keywords-and-the-gate) |
 | `examples` | no (yes for built-ins) | — | `match:` and `no_match:` lists of texts; each text is one or more lines |
 
@@ -268,7 +268,8 @@ How each measure decides, in detail:
   about half to two thirds of the time, since its entropy is about
   0.94 to 0.97 of a random token's; and about 1 in 100 identifiers that
   mix upper- and lower-case letters and digits is found. A finding of a
-  redacting `entropy` signature is masked like any secret, so such a value shows masked in the text of every finding
+  redacting `entropy` signature is masked like any secret, so with
+  masking on such a value shows masked in the text of every finding
   ([Masking](#masking)).
 - **`base64-run`** finds, by a scan of the bytes, a longest run of the
   base64 alphabet (`A-Z a-z 0-9 + /`) followed by up to two `=` of
@@ -338,9 +339,9 @@ Every chunking and every compressed copy give the same findings and
 the same series: each chunk reports its first and last stamped lines
 and its counts, and the merge pairs and adds them in text order.
 
-With `redact: true`, `entropy` and `base64-run` mask their value as a
-regex signature masks its own, wherever finding text shows the line
-([Masking](#masking)).
+With `redact: true` and masking on, `entropy` and `base64-run` mask
+their value as a regex signature masks its own, wherever finding text
+shows the line ([Masking](#masking)).
 
 ## Keywords and the gate
 
@@ -483,9 +484,9 @@ crosses into the next chunk by walking that chunk's lines again from its
 start until the walk agrees with the chunk's own; so a finding is never
 cut or doubled by an edge.
 
-**Excerpt.** A finding's excerpt is its first line's view, masked
-([Masking](#masking)), then cut to 200 bytes on a UTF-8 character
-boundary. It is always valid UTF-8: each byte that is not part of a
+**Excerpt.** A finding's excerpt is its first line's view, masked when
+masking is on ([Masking](#masking)), then cut to 200 bytes on a UTF-8
+character boundary. It is always valid UTF-8: each byte that is not part of a
 UTF-8 character becomes U+FFFD (`�`), after masking and before the
 cut, so a `binary` finding's excerpt shows replacement characters, and
 every output and the cache hold the same text. The file itself stays
@@ -514,11 +515,36 @@ stays exact past it.
 
 ## Masking
 
+**Masking is opt-in.** rx is meant for a trusted network, so by default
+it shows the text of a finding as the file holds it, secrets included.
+Turn masking on with `--mask-secrets` on `rx` and `rx trace` (with
+`--signatures`) and on `rx serve`, or with `RX_MASK_SECRETS=1` in the
+environment (the boolean forms of [Boolean
+parsing](../configuration.md#boolean-parsing)); the flag wins over the
+variable, so `--mask-secrets=false` turns it off for one run. For the
+HTTP API the mode is the server's, set when `rx serve` starts and named
+in its start banner (`Secrets: masked` or `Secrets: shown; …`).
+
+- **Off** (the default): no signature masks anything. `excerpt`,
+  `lines`, `before`, `after`, the human output, JSON and the
+  [findings cache](caching.md#findings) carry the file's text as it
+  is, the cache's `meta.ranges.json` holds no range, and `masked` is
+  never `true`.
+- **On**: everything below applies.
+
 A signature with `redact: true` finds secrets: every signature of the
-built-in `secret` group does, and so may yours. rx keeps what such
+built-in `secret` group does, and so may yours. `redact: true` means
+"mask what this signature matches when masking is on"; it changes
+nothing when masking is off. With masking on, rx keeps what such
 signatures match out of every text it shows or keeps about a finding.
 This section is the whole rule; the pages of the commands and routes
 that carry finding text link here.
+
+The two modes never share a cached answer: the redacting signatures
+are part of every key of the findings cache, and with masking off that
+set is empty, so an entry written in one mode is stale in the other and
+the file is scanned again (see [the findings
+cache](caching.md#findings)).
 
 **What is masked.**
 
@@ -578,7 +604,7 @@ that carry finding text link here.
 and after it had something masked, and every finding of a redacting
 signature.
 
-**Where.**
+**Where**, with masking on:
 
 | Carrier | What it holds |
 |---|---|

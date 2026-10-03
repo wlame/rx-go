@@ -1145,7 +1145,7 @@
             "type": "integer"
           },
           "excerpt": {
-            "description": "The first line, with redacted values masked, cut to 200 bytes on a character boundary.",
+            "description": "The first line, with redacted values masked when the server masks secrets, cut to 200 bytes on a character boundary.",
             "type": "string"
           },
           "file": {
@@ -1164,7 +1164,7 @@
             "type": "boolean"
           },
           "masked": {
-            "description": "True when a value in the excerpt, the lines, or the lines before and after was masked, or the signature redacts.",
+            "description": "True when a value in the excerpt, the lines, or the lines before and after was masked, or the signature redacts and the server masks secrets. Never true on a server that does not mask them, the default.",
             "type": "boolean"
           },
           "signature": {
@@ -2473,7 +2473,7 @@
             "type": "boolean"
           },
           "redact": {
-            "description": "The values it finds are masked in every output and in the cache.",
+            "description": "When the server masks secrets (rx serve --mask-secrets or RX_MASK_SECRETS; off by default), the values it finds are masked in every output and in the cache.",
             "type": "boolean"
           },
           "regex": {
@@ -3582,12 +3582,12 @@
             }
           },
           {
-            "description": "Only the findings whose excerpt or signature name holds this text, compared without case. The excerpt is masked already, so a masked value is never matched.",
+            "description": "Only the findings whose excerpt or signature name holds this text, compared without case. On a server that masks secrets the excerpt is masked already, so a masked value is never matched.",
             "explode": false,
             "in": "query",
             "name": "q",
             "schema": {
-              "description": "Only the findings whose excerpt or signature name holds this text, compared without case. The excerpt is masked already, so a masked value is never matched.",
+              "description": "Only the findings whose excerpt or signature name holds this text, compared without case. On a server that masks secrets the excerpt is masked already, so a masked value is never matched.",
               "maxLength": 1024,
               "type": "string"
             }
@@ -3656,12 +3656,12 @@
             }
           },
           {
-            "description": "Fill lines (and before) of the page's findings, read from the file and masked as every output of findings is: a value a redacting signature matches is masked, a body line of a redacting block or run shows as [masked, N bytes], and no line past the text the scan read is shown.",
+            "description": "Fill lines (and before) of the page's findings, read from the file and, on a server that masks secrets, masked as every output of findings is: a value a redacting signature matches is masked and a body line of a redacting block or run shows as [masked, N bytes]. No line past the text the scan read is shown.",
             "explode": false,
             "in": "query",
             "name": "text",
             "schema": {
-              "description": "Fill lines (and before) of the page's findings, read from the file and masked as every output of findings is: a value a redacting signature matches is masked, a body line of a redacting block or run shows as [masked, N bytes], and no line past the text the scan read is shown.",
+              "description": "Fill lines (and before) of the page's findings, read from the file and, on a server that masks secrets, masked as every output of findings is: a value a redacting signature matches is masked and a body line of a redacting block or run shows as [masked, N bytes]. No line past the text the scan read is shown.",
               "type": "boolean"
             }
           },

@@ -26,9 +26,12 @@ const keyFormat = "rx-findings-key/1"
 // validate, the block, run or measure parameters, redact), the engine
 // version, the measure's version, the settings that change answers
 // (opts.Scan.LineBytes, Cap and LookbackBytes, opts.LogZone) and a
-// hash of the matching parts of every redacting signature of cat
-// (cat.Redactors(), by id, each with its id), since every excerpt is
-// masked by all of them. Name, description, group, tags, level, links,
+// hash of the matching parts of the redacting set (redactorsOf: every
+// redacting signature of cat with opts.MaskSecrets, none without, by
+// id, each with its id), since every excerpt is masked by all of them.
+// So an entry written with masking off is never current with masking
+// on, nor the reverse, unless cat has no redacting signature, when the
+// two answers are the same. Name, description, group, tags, level, links,
 // metadata, examples and `default` are not in it, nor the workers or
 // any other setting that changes only how a scan runs.
 //
@@ -51,6 +54,9 @@ type keyScope struct {
 	rangesKey string
 	// measureVersion is sigscan.MeasureVersion (tests give another).
 	measureVersion func(name string) int
+	// redactors is how many signatures the redacting set holds, which
+	// bounds the size of a ranges file a reader accepts.
+	redactors int
 }
 
 // newKeyScope is the scope of cat and opts with this build's engine and
@@ -74,6 +80,7 @@ type keySettings struct {
 
 // scopeFor builds a scope with the engine and measure versions given.
 func scopeFor(cat *signatures.Catalogue, opts ScanOptions, engine int, measureVersion func(string) int) keyScope {
+	redactors := redactorsOf(cat, opts)
 	settings := keySettings{
 		Format:        keyFormat,
 		Engine:        engine,
@@ -81,7 +88,7 @@ func scopeFor(cat *signatures.Catalogue, opts ScanOptions, engine int, measureVe
 		Cap:           opts.Scan.Cap,
 		LookbackBytes: max(opts.Scan.LookbackBytes, 0),
 		LogZone:       opts.LogZone,
-		Redactors:     redactorsHash(cat.Redactors()),
+		Redactors:     redactorsHash(redactors),
 	}
 	// The scan reads zero (or less) as its defaults; the key does too.
 	if settings.LineBytes <= 0 {
@@ -92,7 +99,8 @@ func scopeFor(cat *signatures.Catalogue, opts ScanOptions, engine int, measureVe
 	}
 	ranges := rangesSettings{Format: rangesKeyFormat, Engine: engine, LineBytes: settings.LineBytes, Redactors: settings.Redactors}
 	sum := sha256.Sum256(canonicalJSON(ranges))
-	return keyScope{shared: canonicalJSON(settings), rangesKey: hex.EncodeToString(sum[:]), measureVersion: measureVersion}
+	return keyScope{shared: canonicalJSON(settings), rangesKey: hex.EncodeToString(sum[:]), measureVersion: measureVersion,
+		redactors: len(redactors)}
 }
 
 // rangesKeyFormat names the layout of the bytes a ranges key hashes,

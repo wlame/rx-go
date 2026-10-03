@@ -12,11 +12,15 @@ Keywords are the literals a line must hold before the signature's regex is tried
 compared without case: a line needs one keyword of each set, and the sets are joined by
 "and" below. A signature without keywords is tried on every line.
 
+A signature marked "values masked" has `redact: true`: with masking on (`--mask-secrets`
+or `RX_MASK_SECRETS`), what it finds is masked in the text of every finding and in the
+findings cache ([Masking](../concepts/signatures.md#masking)). Masking is off by default.
+
 | Group | Signatures | In the default set | What it finds |
 |---|---|---|---|
 | [traceback](#traceback) | 8 | 8 | Stack traces and uncaught exceptions of programs in many languages. |
 | [crash](#crash) | 9 | 9 | Crashes, aborts, sanitizer reports, kernel oopses and processes the system killed. |
-| [secret](#secret) | 16 | 16 | Credentials and keys written into a log. Their values are masked in every output. |
+| [secret](#secret) | 16 | 16 | Credentials and keys written into a log. With masking on, their values are masked in every output. |
 | [pii](#pii) | 5 | 0 | Personal data such as e-mail addresses, IP addresses, card numbers and IBANs. |
 | [sql](#sql) | 7 | 7 | SQL statements, dangerous statements, query plans, slow queries and lock problems. |
 | [http](#http) | 1 | 1 | HTTP requests answered with a server error. |
@@ -220,7 +224,7 @@ The banner the JVM prints when it crashes in native code or runs out of native m
 
 ## secret
 
-Credentials and keys written into a log. Their values are masked in every output.
+Credentials and keys written into a log. With masking on, their values are masked in every output.
 
 ### aws-access-key
 

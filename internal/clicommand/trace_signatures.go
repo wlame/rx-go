@@ -109,7 +109,8 @@ type signatureTrace struct {
 // RX_WORKERS, RX_SIGNATURES_LINE_BYTES, RX_FINDINGS_MAX_PER_SIGNATURE,
 // RX_TIMESTAMP_LOOKBACK_KB and RX_LOG_TZ (findingsScanOptions),
 // RX_MAX_LINE_TEXT_BYTES, RX_FINDINGS_TEXT_MAX_BYTES and
-// RX_MAX_SIGNATURE_SCANS here. --no-cache also skips the findings
+// RX_MAX_SIGNATURE_SCANS here, and the masking mode (--mask-secrets,
+// else RX_MASK_SECRETS). --no-cache also skips the findings
 // cache, --no-index the line index the text reads may use,
 // --max-results caps the matches only, and the context window
 // (-B, -A, --context) adds lines around each finding too.
@@ -118,7 +119,7 @@ func runSignatureTrace(ctx context.Context, engine *trace.Engine, run signatureT
 	sel := run.selection
 	resp, err := findings.Search(ctx, engine, findings.SearchRequest{
 		Paths: run.paths, Patterns: run.patterns, Search: run.opts, Spooled: run.spooled,
-		Catalogue: sel.catalog, Selection: sel.sigs, Findings: signatureTraceOptions(run.params, sel.catalog),
+		Catalogue: sel.catalog, Selection: sel.sigs, Findings: signatureTraceOptions(run.params),
 	})
 	if err != nil {
 		return nil, err
@@ -130,12 +131,13 @@ func runSignatureTrace(ctx context.Context, engine *trace.Engine, run signatureT
 
 // signatureTraceOptions reads the settings of the findings of a trace
 // from the environment (webapi.FindingsOptionsFromEnv) and the flags.
-func signatureTraceOptions(p traceParams, cat *signatures.Catalogue) findings.TraceOptions {
+// With masking on, every loaded redacting signature masks every excerpt
+// and line, the selected ones and the others alike; internal/findings
+// picks that set from the catalogue (the flag only says the mode).
+func signatureTraceOptions(p traceParams) findings.TraceOptions {
 	opts := webapi.FindingsOptionsFromEnv()
 	opts.Scan.NoCache = p.noCache
-	// Every loaded redacting signature masks every excerpt and line, the
-	// selected ones and the others alike.
-	opts.Scan.Scan.Redactors = cat.Redactors()
+	opts.Scan.MaskSecrets = p.maskSecrets
 	opts.IndexLoader = samples.StoredIndex
 	if p.noIndex {
 		opts.IndexLoader = samples.NoIndex
@@ -149,7 +151,9 @@ func signatureTraceOptions(p traceParams, cat *signatures.Catalogue) findings.Tr
 // with signatures is written from (cli_command): the paths (piped stdin
 // as "-"), the patterns with --regexp, the context window as the run
 // resolved it, the flags the user gave, and the selection spelled out
-// (a bare flag as --signatures=default). A generated request id and the
+// (a bare flag as --signatures=default), and --mask-secrets when the run
+// masks, whether the flag or RX_MASK_SECRETS turned it on, so the
+// command gives the same answer. A generated request id and the
 // RX_HOOK_* fallbacks are left out, as the HTTP API leaves them out.
 func signatureCLIParams(run signatureTrace) map[string]any {
 	p := run.params
@@ -176,5 +180,6 @@ func signatureCLIParams(run signatureTrace) map[string]any {
 		"hook_on_match":    p.hookOnMatch,
 		"hook_on_complete": p.hookOnComplete,
 		"signatures":       run.selection.expr,
+		"mask_secrets":     p.maskSecrets,
 	}
 }

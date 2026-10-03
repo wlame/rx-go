@@ -101,6 +101,25 @@ func TestSignaturesList_Human(t *testing.T) {
 	}
 }
 
+// The list ends with the masking mode: the signatures marked masked
+// mask what they find only when masking is on, and RX_MASK_SECRETS says
+// whether it is, for `rx trace` and `rx serve` run without the flag.
+func TestSignaturesList_SaysWhetherMaskedSignaturesMask(t *testing.T) {
+	for env, want := range map[string]string{
+		"":  "Secrets: shown; --mask-secrets or RX_MASK_SECRETS=1 masks what the signatures marked masked find",
+		"1": "Secrets: masked by the signatures marked masked (RX_MASK_SECRETS)",
+	} {
+		t.Setenv("RX_MASK_SECRETS", env)
+		out, err := runSignatures(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(out, "\n"+want+"\n") {
+			t.Errorf("RX_MASK_SECRETS=%q: the list does not end with %q:\n%s", env, want, out)
+		}
+	}
+}
+
 // --group and --tag narrow the list; an unknown one is a usage error
 // that lists close names.
 func TestSignaturesList_Filters(t *testing.T) {

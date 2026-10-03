@@ -7,7 +7,7 @@ groups:
   - name: crash
     description: Crashes, aborts, sanitizer reports, kernel oopses and processes the system killed.
   - name: secret
-    description: Credentials and keys written into a log. Their values are masked in every output.
+    description: Credentials and keys written into a log. With masking on, their values are masked in every output.
   - name: pii
     description: Personal data such as e-mail addresses, IP addresses, card numbers and IBANs.
   - name: sql

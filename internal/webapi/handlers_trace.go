@@ -431,6 +431,7 @@ func registerTraceHandlers(s *Server, api huma.API) {
 		params := prepared.cliParams(in.Regexp, &in.TraceSwitches)
 		if sel != nil {
 			params["signatures"] = in.Signatures
+			params["mask_secrets"] = s.cfg.Findings.Scan.MaskSecrets
 		}
 		cli := BuildCLICommand("trace", params)
 		resp.CLICommand = &cli

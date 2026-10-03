@@ -124,7 +124,7 @@ History maps every removed surface to what replaces it.
   its first `RX_FINDINGS_MAX_PER_SIGNATURE` findings by line with an
   exact count; an excerpt is the first line cut to 200 bytes, always
   valid UTF-8 (each byte that is not part of a UTF-8 character becomes
-  U+FFFD, after masking). For a
+  U+FFFD, after masking). With masking on (see the next entry), for a
   signature with `redact: true` every secret on that line is masked
   before the excerpt is kept: the value of every match of its anchor
   (the `capture` group, or the whole match when the group took no part)
@@ -147,6 +147,24 @@ History maps every removed surface to what replaces it.
   marked masked. A signature's first 100,000 bodies are kept line by
   line; past that, every line from its last kept body to the end of the
   file counts as a body.
+- Masking of secrets is opt-in. By default rx shows the text of every
+  finding as the file holds it, secrets included: no signature masks
+  anything, `meta.ranges.json` holds no range and `masked` is never
+  set. `--mask-secrets` on `rx` and `rx trace` (with `--signatures`)
+  and on `rx serve`, or `RX_MASK_SECRETS` in the environment (the
+  boolean forms of `RX_HIDDEN`; any other value leaves it off), turns
+  on the masking every entry here describes; the flag wins over the
+  variable, either way. `redact: true` means "mask this signature's
+  values when masking is on". The redacting signatures enter every key
+  of the findings cache and the key of the masked ranges, and with
+  masking off that set is empty, so a masked answer never comes from an
+  entry written without masking, nor the reverse: switching the mode
+  scans the file again. For the HTTP API the mode is the server's: the
+  start banner of `rx serve` says `Secrets: masked` or `Secrets: shown;
+  start with --mask-secrets or RX_MASK_SECRETS=1 to mask them`, and
+  `cli_command` carries `--mask-secrets` when the server masks. `rx
+  signatures` ends its list with a `Secrets:` line that says the mode
+  `RX_MASK_SECRETS` gives.
 - Every finding of a signature scan has a time: the timestamp of its
   first line, or else that of the nearest earlier line with one when
   that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` before it (the
@@ -225,8 +243,9 @@ History maps every removed surface to what replaces it.
   and scans only the others, in one pass. An entry is stale when the
   file changes (size, mtime, inode, device, ctime or fingerprint), when
   its signature's matching part changes (not its name, description,
-  group or other descriptive fields), when any redacting signature
-  changes, and when `RX_SIGNATURES_LINE_BYTES`,
+  group or other descriptive fields), when masking is turned on or off,
+  when any redacting signature changes with masking on, and when
+  `RX_SIGNATURES_LINE_BYTES`,
   `RX_FINDINGS_MAX_PER_SIGNATURE`, `RX_TIMESTAMP_LOOKBACK_KB` or
   `RX_LOG_TZ` changes. A file is full when every signature of the
   default set has a current entry, partial with at least one, none
@@ -286,8 +305,8 @@ History maps every removed surface to what replaces it.
   as before. `rx logs trace` has no `--signatures`.
 - The lines of a finding are read from the file when the answer is made,
   in one pass per file that seeks to each finding in a plain or seekable
-  file, each cut at `RX_MAX_LINE_TEXT_BYTES` and made valid UTF-8, and
-  masked as excerpts are: every value a loaded redacting signature
+  file, each cut at `RX_MAX_LINE_TEXT_BYTES` and made valid UTF-8, and,
+  with masking on, masked as excerpts are: every value a loaded redacting signature
   matches on the line, before the line is cut, so a secret the cut falls
   inside is masked whole; every body line of a loaded redacting `block`
   or `run`, selected or not, becomes `[masked, N bytes]` in the lines of
@@ -299,7 +318,7 @@ History maps every removed surface to what replaces it.
   after the next scan.
   `masked` is true when anything in the excerpt, the lines, or the
   lines before and after was masked, or the finding's signature
-  redacts.
+  redacts and masking is on.
   The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
   masked: they are the pattern's own output.
 - `RX_FINDINGS_TEXT_MAX_BYTES` (default 67108864, 1 MiB to 16 GiB): the
@@ -329,11 +348,11 @@ History maps every removed surface to what replaces it.
   `cli_command` (`rx trace PATH --signatures=…`). `findings` is a page
   (`offset`, `limit` up to 10,000, default 1,000) of the stored findings
   that pass the filters `signature=` and `group=` (repeatable), `q=` (in
-  the masked excerpt or the signature name, without case), `lines=A-B`
+  the excerpt or the signature name, without case), `lines=A-B`
   (overlap), `after_line=N` and `before_line=N` (listed from the nearest
   down); `total` counts them. `text=true` fills each finding's `lines`
-  and `before=N` (0 to 5) lines before it, masked as every carrier of
-  finding text is (every value a loaded redacting signature matches,
+  and `before=N` (0 to 5) lines before it, masked on a server that
+  masks secrets as every carrier of finding text is (every value a loaded redacting signature matches,
   every body line of a redacting block or run as `[masked, N bytes]`,
   nothing past the text the scan read), within `max_bytes` or
   `RX_FINDINGS_TEXT_MAX_BYTES`. `ticks=W` (1 to 4,000) places the

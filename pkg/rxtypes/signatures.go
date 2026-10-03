@@ -29,7 +29,7 @@ type SignatureInfo struct {
 	Links            []string           `json:"links" nullable:"false" doc:"URLs about the signature, shown, never fetched."`
 	Metadata         map[string]string  `json:"metadata" doc:"Free key-value pairs, shown, never interpreted."`
 	Default          bool               `json:"default" doc:"In the default set: false for an opt-in signature, which runs only when a selection names it."`
-	Redact           bool               `json:"redact" doc:"The values it finds are masked in every output and in the cache."`
+	Redact           bool               `json:"redact" doc:"When the server masks secrets (rx serve --mask-secrets or RX_MASK_SECRETS; off by default), the values it finds are masked in every output and in the cache."`
 	Kind             string             `json:"kind" enum:"regex,block,run,measure" doc:"Which of regex, block, run and measure defines it; the member of that name holds the definition."`
 	Keywords         [][]string         `json:"keywords" nullable:"false" doc:"The keyword clauses of its anchor, lowered: a line is tested only when every clause has a member on it. Empty when the signature runs on every line (line_pass)."`
 	KeywordsDeclared bool               `json:"keywords_declared" doc:"The clauses come from the signature's own keywords field rather than from its anchor."`

@@ -129,6 +129,7 @@ from YAML files by the commands that use them
 | `RX_SIGNATURES_LINE_BYTES` | `65536` | How many bytes of each line a signature scan matches against: the line without its ending, cut here. A longer line is still counted at its full length, and the scan never holds more of it. From 1024 to 1048576. |
 | `RX_FINDINGS_MAX_PER_SIGNATURE` | `10000` | The most findings of one signature a scan of one file keeps: the first ones by line. The count of findings stays exact past it. From 100 to 1000000. |
 | `RX_MAX_SIGNATURE_SCANS` | `1` | How many signature scans run at once in `rx serve`. A scan past it waits, in the order it was started, until a running scan ends; a scan whose findings are all in the [findings cache](concepts/caching.md#findings) reads no file and does not wait. From 1 to 64. |
+| `RX_MASK_SECRETS` | `false` | Mask secrets in the text of findings: the signatures with `redact: true` mask what they match in excerpts, `lines`, `before`, `after`, the human output and the [findings cache](concepts/caching.md#findings) ([Masking](concepts/signatures.md#masking)). Off by default: the text of a finding is the file's text. `--mask-secrets` on `rx trace` and `rx serve` overrides it, either way; for the HTTP API the mode is the one `rx serve` started with. |
 | `RX_FINDINGS_TEXT_MAX_BYTES` | `67108864` | The most bytes of text one answer gives for its findings: the lines of each finding, and the lines asked for around it (`rx trace --signatures -B`, `-A`, `--context`), summed over the findings in their order, each line counted with one byte more for its line break. The finding at which it runs out, and every finding after it, keep their line numbers and offsets and lose their text (`lines_truncated: true`). Each line is cut at `RX_MAX_LINE_TEXT_BYTES` as well. From 1048576 (1 MiB) to 17179869184 (16 GiB). |
 
 ## Search-root sandbox
@@ -239,7 +240,7 @@ curl -s http://127.0.0.1:7777/health | jq '.search_roots'
 
 ## Boolean parsing
 
-The boolean variables (`RX_HIDDEN`, `RX_NO_INDEX`,
+The boolean variables (`RX_HIDDEN`, `RX_NO_INDEX`, `RX_MASK_SECRETS`,
 `RX_ALLOW_INTERNAL_HOOKS`, `RX_HOOK_STRICT_IP_ONLY`,
 `RX_DISABLE_CUSTOM_HOOKS`) recognize these truthy values:
 
@@ -247,8 +248,9 @@ The boolean variables (`RX_HIDDEN`, `RX_NO_INDEX`,
 true, yes, 1, on
 ```
 
-`RX_HIDDEN` and `RX_NO_INDEX` also recognize these falsy values, and
-fall back to their default for anything else:
+`RX_HIDDEN`, `RX_NO_INDEX` and `RX_MASK_SECRETS` also recognize these
+falsy values, and fall back to their default (`false`) for anything
+else:
 
 ```text
 false, no, 0, off

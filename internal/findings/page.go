@@ -135,10 +135,12 @@ func seriesIn(stored map[string]*sigscan.Series, times *samples.StoredTimes) map
 // FillText reads the text of page, findings of answer's file (from
 // WireFindings, in any order), and sets it on them as a trace answer's
 // text is set: each finding's lines and the opts.Before lines before
-// it (opts.After after it), every line masked by every loaded redacting
-// signature of cat and every line in answer's masked ranges shown as
-// its length, valid UTF-8, cut to opts.LineTextBytes; nothing past the
-// end of the text the scan read (answer.TextLines and TextBytes).
+// it (opts.After after it), every line masked by the redacting set of
+// the mode (redactorsOf: every loaded redacting signature of cat with
+// opts.Scan.MaskSecrets, none without) and every line in answer's
+// masked ranges shown as its length, valid UTF-8, cut to
+// opts.LineTextBytes; nothing past the end of the text the scan read
+// (answer.TextLines and TextBytes).
 //
 // The text of all of them together is held to opts.TextBudget, taken
 // in line order: the finding at which it runs out and every finding
@@ -153,7 +155,7 @@ func FillText(ctx context.Context, file trace.SearchFile, page []rxtypes.Finding
 	if len(page) == 0 {
 		return nil
 	}
-	masker, err := sigscan.NewLineMasker(cat.Redactors(), opts.Scan.Scan.LineBytes)
+	masker, err := sigscan.NewLineMasker(redactorsOf(cat, opts.Scan), opts.Scan.Scan.LineBytes)
 	if err != nil {
 		return err
 	}

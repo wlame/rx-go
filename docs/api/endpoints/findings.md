@@ -11,6 +11,15 @@ and a scan there fill one cache and give the same findings
 ([Signatures](../../concepts/signatures.md),
 [the findings cache](../../concepts/caching.md#findings)).
 
+**Masking is the server's mode.** A server started with
+`--mask-secrets` (or `RX_MASK_SECRETS=1`) masks secrets in every
+excerpt and every line it gives; one started without it, the default,
+gives the file's text as it is and never sets `masked`. No request
+parameter changes the mode, and the start banner names it
+([Masking](../../concepts/signatures.md#masking)). A scan by a server
+in one mode is not current for a server in the other: its `GET` lists
+every signature under `missing` until it scans the file itself.
+
 ## `GET /v1/findings`
 
 ### Purpose
@@ -36,7 +45,7 @@ GET /v1/findings?path=/var/log/app.log&group=severity&text=true&before=1&limit=2
 | `signatures` | no | The selection the summary describes, as [`--signatures=`](../../concepts/signatures.md#selection) takes it: ids, groups, tags, `all`, `default`, `-word`. Empty or absent: the default set. A word that names an unknown, refused or disabled signature answers `400` with the reason and the load error |
 | `signature` | no | Only the findings of these signatures; repeatable, at most 256 |
 | `group` | no | Only the findings of signatures of these groups; repeatable, at most 256 |
-| `q` | no | Only the findings whose excerpt or signature name holds this text, compared without case; at most 1024 bytes. The excerpt is masked already, so a masked value never matches |
+| `q` | no | Only the findings whose excerpt or signature name holds this text, compared without case; at most 1024 bytes. On a server that masks secrets the excerpt is masked already, so a masked value never matches |
 | `lines` | no | `A-B` (or one line `N`): only the findings that overlap those lines |
 | `after_line` | no | Only the findings whose first line is after `N` |
 | `before_line` | no | Only the findings whose first line is before `N`, listed from the nearest down (the reverse order) |
@@ -67,8 +76,9 @@ The invented `app.log` of the [example below](#example), after a scan
 of five built-in signatures, with
 `signatures=python-traceback,aws-access-key,private-key,error-line,blank-run`,
 `group=severity&group=secret&text=true&before=1&ticks=10&limit=2` and
-`file_tz=Europe/Berlin`. The state is `partial`: the five are current,
-the rest of the default set is not.
+`file_tz=Europe/Berlin`, from a server started with `--mask-secrets`.
+The state is `partial`: the five are current, the rest of the default
+set is not.
 
 ```json
 {
@@ -117,7 +127,7 @@ the rest of the default set is not.
       {"column": 9, "signatures": {"error-line": {"count": 1, "first_line": 11}}}
     ]
   },
-  "cli_command": "rx trace /var/log/app/app.log --before=1 --signatures=python-traceback,aws-access-key,private-key,error-line,blank-run"
+  "cli_command": "rx trace /var/log/app/app.log --before=1 --signatures=python-traceback,aws-access-key,private-key,error-line,blank-run --mask-secrets"
 }
 ```
 
@@ -131,14 +141,16 @@ the rest of the default set is not.
 | `total` | int | The stored findings of the checked signatures that pass the filters |
 | `findings` | array | The page, in the one order (first line, last line, signature id), or the reverse with `before_line`. The finding shape of [`GET /v1/trace`](trace.md) without `file` |
 | `ticks` | object \| null | With `ticks=W`; `null` without |
-| `cli_command` | string | The rx command that gives the same findings: `rx trace PATH --signatures=SELECTION` |
+| `cli_command` | string | The rx command that gives the same findings: `rx trace PATH --signatures=SELECTION`, with `--mask-secrets` on a server that masks |
 
 ### Text
 
 With `text=true` every finding of the page gets `lines`, its first to
 its last line, and `before`, the `before` lines before it, read from the
 file and shown as every carrier of finding text shows them
-([the text of a finding](../../cli/trace.md#the-text-of-a-finding)):
+([the text of a finding](../../cli/trace.md#the-text-of-a-finding)). On
+a server that does not mask secrets each line is the file's line as it
+is; on one that does:
 
 - a value any loaded redacting signature matches is masked, whether or
   not it is selected (`key=************` above: `aws-access-key` and
