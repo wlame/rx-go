@@ -17,6 +17,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/concepts/caching.md`, `docs/cli/trace.md` and
   `docs/api/endpoints/trace.md`.
 
+- `rx compress` and `POST /v1/compress` without an output name drop the
+  input's compression suffix: `app.log.gz` is written to `app.log.zst`,
+  not `app.log.gz.zst`, since the output holds the text. The same holds
+  for `.gzip`, `.bz2`, `.bzip2`, `.xz`, `.zst` and `.zstd`, in any case,
+  and with `--output-dir`; any other name still gets `.zst` appended. An
+  output that exists is refused without `--force` (`"force": true`) as
+  before. A plain zstd input named `app.log.zst` would be its own
+  output and is refused, `--force` or not, now with a hint: `the output
+  path is the input file (use --output to name another file)`, over HTTP
+  `(set "output_path" to another file)`. The `output_path` description in
+  the OpenAPI document says so; the contract stays 1.3.
+
 ## [0.3.0] - 2026-10-03
 
 ### Added

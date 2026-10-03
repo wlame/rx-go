@@ -76,7 +76,7 @@ type TaskResult any
 // refuses a value outside that range with 422 before the handler runs.
 type CompressRequest struct {
 	InputPath        string  `json:"input_path" doc:"Path to the input file. Must be inside a configured --search-root."`
-	OutputPath       *string `json:"output_path,omitempty" required:"false" doc:"Path for the output .zst file (default: input_path + \".zst\"). Must be inside a configured --search-root."`
+	OutputPath       *string `json:"output_path,omitempty" required:"false" doc:"Path for the output .zst file (default: beside the input, named like it with a compression suffix .gz, .gzip, .bz2, .bzip2, .xz, .zst or .zstd replaced by .zst, or with .zst appended: app.log.gz gives app.log.zst). Must be inside a configured --search-root."`
 	FrameSize        string  `json:"frame_size,omitempty" required:"false" default:"4M" doc:"Target frame size: bytes, or a number with B, K, KB, M, MB, G or GB."`
 	CompressionLevel int     `json:"compression_level,omitempty" required:"false" default:"3" minimum:"1" maximum:"22" doc:"zstd compression level."`
 	BuildIndex       *bool   `json:"build_index,omitempty" required:"false" default:"true" doc:"Build the line index of the compressed file after compressing it."`

@@ -108,7 +108,7 @@ func DetectFromPath(path string) (Format, error) {
 		return FormatNone, nil
 	}
 
-	if f := detectByExtension(path); f != FormatNone {
+	if f := FormatFromExtension(path); f != FormatNone {
 		return f, nil
 	}
 
@@ -154,9 +154,12 @@ func IsCompressed(path string) bool {
 	return f != FormatNone
 }
 
-// detectByExtension applies extensionMap only. Returns FormatNone when
-// no mapping exists. Called from DetectFromPath as a fast-path.
-func detectByExtension(path string) Format {
+// FormatFromExtension names the format path's last extension stands
+// for (".gz", ".gzip", ".bz2", ".bzip2", ".xz", ".zst", ".zstd", in any
+// case), or FormatNone when it stands for none. It reads no bytes, so
+// it says nothing about what the file holds: DetectFromPath uses it as a
+// fast path, and rx compress uses it to name its output.
+func FormatFromExtension(path string) Format {
 	ext := strings.ToLower(filepath.Ext(path))
 	if f, ok := extensionMap[ext]; ok {
 		return f

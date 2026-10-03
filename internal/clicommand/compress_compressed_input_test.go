@@ -132,7 +132,7 @@ func TestCompress_RefusesWhatItCannotCompress(t *testing.T) {
 		{"seekable zstd input", seekableInput, filepath.Join(dir, "again.zst"),
 			"already a seekable zstd file (use --force to re-encode it)"},
 		{"compound archive", archive, "", "compound archives (tar.gz, etc.) are not supported"},
-		{"output is the input", plain, plain, "the output path is the input file"},
+		{"output is the input", plain, plain, "the output path is the input file (use --output to name another file)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
