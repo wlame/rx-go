@@ -39,8 +39,8 @@ See [concepts/caching](concepts/caching.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_WORKERS` | smaller of `NumCPU` and `RX_MAX_SUBPROCESSES` | Number of parallel worker goroutines for trace scans. Takes precedence when positive. |
-| `RX_MAX_SUBPROCESSES` | `20` | Most chunks one file is split into, and the worker count when `RX_WORKERS` is unset. |
+| `RX_WORKERS` | smaller of `NumCPU` and `RX_MAX_SUBPROCESSES` | Number of ripgrep processes a trace runs at once. Takes precedence when set, from 1 to 256; a larger value is used as 256. |
+| `RX_MAX_SUBPROCESSES` | `20` | Most chunks one file is split into, and the worker count when `RX_WORKERS` is unset. From 1 to 256. |
 | `RX_MIN_CHUNK_SIZE_MB` | `20` | Smallest chunk the parallel scanner carves: a file is split into `size / RX_MIN_CHUNK_SIZE_MB` chunks, so a file below twice this size is scanned as one. |
 | `RX_HIDDEN` | `false` | Include files and directories whose name starts with a dot. Off by default, as in `ripgrep`. The `--hidden` flag overrides it. |
 
@@ -56,8 +56,9 @@ See [concepts/chunking](concepts/chunking.md).
 Together they bound the memory one line costs while ripgrep's output is
 read, whatever the line holds: without them a 100 MB line on which the
 pattern matches every character costs about 5 GB, and one request could
-exhaust a server. A value that is not a whole number above 0 keeps the
-default. A trace answer that cuts a line is not written to the trace
+exhaust a server. Both are bounded too (see
+[integer settings](#integer-settings)): at most 256 MiB of text and
+1,000,000 submatches per line. A trace answer that cuts a line is not written to the trace
 cache. See [long lines](api/endpoints/trace.md#long-lines).
 
 ## Indexing thresholds
@@ -65,7 +66,7 @@ cache. See [long lines](api/endpoints/trace.md#long-lines).
 | Variable | Default | Description |
 |---|---|---|
 | `RX_LARGE_FILE_MB` | `50` | The large-file size in MB. `rx index` skips a smaller plain file unless `--analyze` is set or `--threshold=N` is supplied (`--threshold=0` indexes every file; omitting the flag uses this variable). `rx samples` and `GET /v1/samples` build an index before a lookup in a plain file of this size or more. A trace answer for a plain file of this size or more is cached. The index checkpoint step is a fiftieth of it (1 MB by default). |
-| `RX_ANALYZE_WINDOW_LINES` | `128` | Sliding-window size, in lines, of the anomaly detectors that `--analyze` runs. `--analyze-window-lines` and the `analyze_window_lines` request field win over it; a value that is not a positive integer is ignored, and the result is clamped to 1–2048. See [analyzers](concepts/analyzers.md). |
+| `RX_ANALYZE_WINDOW_LINES` | `128` | Sliding-window size, in lines, of the anomaly detectors that `--analyze` runs. `--analyze-window-lines` and the `analyze_window_lines` request field win over it, and their value is clamped to 1–2048. The variable follows the [integer settings](#integer-settings) rule: from 1 to 2048. See [analyzers](concepts/analyzers.md). |
 
 ## Cache control
 
@@ -126,8 +127,8 @@ See [concepts/security](concepts/security.md) and
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them. At most 256 tasks are kept; past that, the oldest finished ones go first. |
-| `RX_SAMPLES_WAIT_SECONDS` | `5` | How long a `GET /v1/samples` request that sends `Prefer: respond-async` waits for the line index it needs to be built (a background `index` task, one per file) before it answers `202` with the task instead of the lines; a request without the header waits for the build. `0` answers `202` at once whenever a build is needed; a negative or non-numeric value keeps the default. `rx samples` ignores it and waits for the build. See [`GET /v1/samples`](api/endpoints/samples.md#response-202-accepted). |
+| `RX_TASK_TTL_MINUTES` | `60` | How long finished (completed/failed) tasks stay in memory before the sweeper removes them, from 1 minute to one week (10080). At most 256 tasks are kept; past that, the oldest finished ones go first. |
+| `RX_SAMPLES_WAIT_SECONDS` | `5` | How long a `GET /v1/samples` request that sends `Prefer: respond-async` waits for the line index it needs to be built (a background `index` task, one per file) before it answers `202` with the task instead of the lines; a request without the header waits for the build. From 0 to 3600; `0` answers `202` at once whenever a build is needed. `rx samples` ignores it and waits for the build. See [`GET /v1/samples`](api/endpoints/samples.md#response-202-accepted). |
 
 ## Logging
 
@@ -216,17 +217,45 @@ is off. Matching is case-insensitive.
 `NO_COLOR` and `RX_NO_COLOR` are different: any non-empty value turns
 colour off.
 
-## Integer parsing
+## Integer settings
 
-All integer env vars (`RX_WORKERS`, `RX_MAX_SUBPROCESSES`,
-`RX_MIN_CHUNK_SIZE_MB`, `RX_LARGE_FILE_MB`, `RX_ANALYZE_WINDOW_LINES`,
-`RX_TASK_TTL_MINUTES`, `RX_SAMPLES_WAIT_SECONDS`,
-`RX_MAX_LINE_TEXT_BYTES`, `RX_MAX_SUBMATCHES_PER_LINE`) use Go's
-`strconv.Atoi`:
+Every integer variable accepts a whole decimal number in a fixed
+range:
 
-- Plain decimal digits only
-- Negative values accepted but usually produce unhelpful behavior
-- Non-numeric input falls back to the default
+| Variable | Default | Minimum | Maximum | Unit |
+|---|---|---|---|---|
+| `RX_WORKERS` | unset | 1 | 256 | ripgrep processes |
+| `RX_MAX_SUBPROCESSES` | 20 | 1 | 256 | chunks per file, processes |
+| `RX_MIN_CHUNK_SIZE_MB` | 20 | 1 | 1048576 | MB (up to 1 TiB) |
+| `RX_LARGE_FILE_MB` | 50 | 1 | 1048576 | MB (up to 1 TiB) |
+| `RX_MAX_LINE_TEXT_BYTES` | 1048576 | 1 | 268435456 | bytes (1 MiB to 256 MiB) |
+| `RX_MAX_SUBMATCHES_PER_LINE` | 10000 | 1 | 1000000 | submatches |
+| `RX_ANALYZE_WINDOW_LINES` | 128 | 1 | 2048 | lines |
+| `RX_TASK_TTL_MINUTES` | 60 | 1 | 10080 | minutes (up to one week) |
+| `RX_SAMPLES_WAIT_SECONDS` | 5 | 0 | 3600 | seconds |
+
+One rule applies to all of them:
+
+- Unset or empty: the default.
+- Not a whole decimal number (`abc`, `1.5`, ` 2`, `2MB`), or below the
+  minimum (`0` and negative numbers for every variable except
+  `RX_SAMPLES_WAIT_SECONDS`, which takes `0`): the default.
+- Above the maximum: the maximum.
+
+A value that is not used as it is logs one `invalid_setting` warning
+per process, naming the variable, its value, the accepted range and
+the value used instead:
+
+```text
+WARN invalid_setting name=RX_LARGE_FILE_MB value=0 problem="below the minimum" accepted="1 to 1048576" using=50
+```
+
+The minimum of `RX_LARGE_FILE_MB` matters most: the index checkpoint
+step is a fiftieth of it, and at `0` every line became a checkpoint and
+every plain file counted as large. The maxima bound the work and
+memory one setting can ask for: 256 ripgrep processes at once, and
+sizes that stay far from overflowing when turned into bytes or a
+duration.
 
 ## Example environment for production
 

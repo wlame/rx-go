@@ -34,6 +34,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every integer environment variable follows one rule and has a range:
+  unset keeps the default; a value that is not a whole number, or is
+  below the minimum, keeps the default; a value above the maximum is
+  used as the maximum; each value not used as it is logs one
+  `invalid_setting` warning per process. The ranges: `RX_WORKERS` and
+  `RX_MAX_SUBPROCESSES` 1–256, `RX_MIN_CHUNK_SIZE_MB` and
+  `RX_LARGE_FILE_MB` 1–1048576 (1 TiB), `RX_MAX_LINE_TEXT_BYTES`
+  1–268435456 (256 MiB), `RX_MAX_SUBMATCHES_PER_LINE` 1–1000000,
+  `RX_ANALYZE_WINDOW_LINES` 1–2048, `RX_TASK_TTL_MINUTES` 1–10080 (one
+  week), `RX_SAMPLES_WAIT_SECONDS` 0–3600. `RX_LARGE_FILE_MB=0` or a
+  negative value used to be accepted: the index checkpoint step became
+  0 or negative, every line got a checkpoint (a 15 MB index for a
+  120 MB log, `samples` about 60 times slower) and every plain file's
+  trace answer was cached; it now means the default, 50. `RX_WORKERS`
+  had no upper bound; a larger value now runs 256 ripgrep processes.
+  `RX_TASK_TTL_MINUTES=0` or below used to drop finished tasks at the
+  next sweep and now keeps the default, 60. See "Integer settings" in
+  the configuration docs.
+
 - `rx compress` and `POST /v1/compress` write the seek-table footer in
   the layout of the zstd seekable format specification: frame count,
   descriptor (0, no checksums), magic `0x8F92EAB1`, so the last four

@@ -410,6 +410,34 @@ func TestGetIndexStepBytes(t *testing.T) {
 	}
 }
 
+// A large-file size of 0 or below is not accepted, so the checkpoint
+// step is never 0 or negative: such a step made every line a
+// checkpoint.
+func TestGetIndexStepBytes_NeverZeroOrNegative(t *testing.T) {
+	for _, value := range []string{"0", "-1", "abc"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("RX_LARGE_FILE_MB", value)
+			if got, want := GetIndexStepBytes(), int64(1024*1024); got != want {
+				t.Errorf("RX_LARGE_FILE_MB=%s: step %d, want the default %d", value, got, want)
+			}
+		})
+	}
+}
+
+// With RX_LARGE_FILE_MB=0 an index has the default step's checkpoints,
+// not one per line.
+func TestBuild_LargeFileMBZeroKeepsTheDefaultStep(t *testing.T) {
+	t.Setenv("RX_LARGE_FILE_MB", "0")
+	p := writeTempFile(t, strings.Repeat("a short line\n", 1000))
+	idx, err := Build(p, BuildOptions{})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(idx.LineIndex) != 1 || *idx.IndexStepBytes != 1024*1024 {
+		t.Errorf("%d checkpoints at step %d, want 1 at 1 MiB", len(idx.LineIndex), *idx.IndexStepBytes)
+	}
+}
+
 // TestDetectLineEnding_EmptySample verifies the default for empty input.
 func TestDetectLineEnding_EmptySample(t *testing.T) {
 	if got := detectLineEnding([]byte{}); got != "LF" {

@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// envWindowLinesVar is the variable the window size falls back to.
+const envWindowLinesVar = "RX_ANALYZE_WINDOW_LINES"
+
 // TestResolveWindowLines_Precedence verifies the full precedence chain:
 // URL > CLI > env > default. Each row sets exactly the inputs that
 // matter for the branch it exercises and asserts the expected output.
@@ -133,52 +136,21 @@ func TestResolveWindowLines_Clamping(t *testing.T) {
 	})
 }
 
-// TestEnvWindowLines_InvalidValues exercises the "invalid env → ignored"
-// branch: non-integer, zero, negative, empty. All must return ok=false.
-func TestEnvWindowLines_InvalidValues(t *testing.T) {
-	cases := []struct {
-		name    string
-		value   string
-		present bool
-	}{
-		{name: "unset", present: false},
-		{name: "empty_string", value: "", present: true},
-		{name: "non_integer", value: "abc", present: true},
-		{name: "float", value: "3.14", present: true},
-		{name: "zero", value: "0", present: true},
-		{name: "negative", value: "-10", present: true},
-		{name: "leading_whitespace", value: " 10", present: true},
-		{name: "trailing_garbage", value: "10foo", present: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.present {
-				t.Setenv(envWindowLinesVar, tc.value)
-			} else {
-				t.Setenv(envWindowLinesVar, "")
-				if err := unsetEnvForTest(t, envWindowLinesVar); err != nil {
-					t.Fatalf("unsetEnvForTest: %v", err)
-				}
-			}
-			_, ok := envWindowLines()
-			if ok {
-				t.Errorf("envWindowLines() ok=true, want false for value=%q", tc.value)
+// TestResolveWindowLines_InvalidEnvKeepsTheDefault covers the values
+// of RX_ANALYZE_WINDOW_LINES the setting does not accept: each gives
+// the default window when no flag or request value is set.
+func TestResolveWindowLines_InvalidEnvKeepsTheDefault(t *testing.T) {
+	for _, value := range []string{"", "abc", "3.14", "0", "-10", " 10", "10foo"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv(envWindowLinesVar, value)
+			if got := ResolveWindowLines(0, 0); got != defaultWindowLines {
+				t.Errorf("RX_ANALYZE_WINDOW_LINES=%q gives %d, want %d", value, got, defaultWindowLines)
 			}
 		})
 	}
-}
-
-// TestEnvWindowLines_ValidValue confirms a well-formed positive integer
-// is parsed and returned verbatim (no clamping at this layer — clamping
-// is ResolveWindowLines' job).
-func TestEnvWindowLines_ValidValue(t *testing.T) {
 	t.Setenv(envWindowLinesVar, "321")
-	v, ok := envWindowLines()
-	if !ok {
-		t.Fatalf("envWindowLines() ok=false, want true")
-	}
-	if v != 321 {
-		t.Errorf("envWindowLines() = %d, want 321", v)
+	if got := ResolveWindowLines(0, 0); got != 321 {
+		t.Errorf("RX_ANALYZE_WINDOW_LINES=321 gives %d", got)
 	}
 }
 
