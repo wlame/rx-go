@@ -94,6 +94,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it cannot parse now fails like the other paths, rather than dropping
   that line's match.
 
+- `rx trace` and `GET /v1/trace` read a NUL byte after the first 8 KiB
+  of a file as part of its line. ripgrep, left to its own binary
+  detection, counted each such NUL as a line break: in the chunk holding
+  it, every later match was numbered one line too high per NUL, and a
+  match on the NUL line came back at an offset inside the line with only
+  the text after the NUL. Plain files, chunked files, gzip, bzip2, xz,
+  plain and seekable zstd copies of one log answered differently, and a
+  trace-cache hit kept the wrong offset while it fixed the number. Every
+  ripgrep search now runs with `--text`, so each line keeps its number,
+  offset and whole text. A NUL in the first 8 KiB still makes a plain
+  file binary and skipped. The trace cache format is now version 6: an
+  entry written by an earlier scan may hold a split line's offset, and
+  is discarded and rescanned.
+
 ### Security
 
 - A directory search no longer follows a symbolic link out of

@@ -48,9 +48,14 @@ import (
 // lines frame by frame, so a match could be stored at the offset of a
 // line fragment, and a match a frame boundary cut in two was missing.
 //
+// Version 6: a scan reads a NUL byte after the first 8 KiB as part of
+// its line. Version 5 scans let ripgrep split lines at NUL bytes, so a
+// file holding one has matches stored at an offset inside their line.
+// Such an entry cannot be told apart from a good one and is discarded.
+//
 // rx-python writes version 3, so each backend treats the other's trace
 // caches as absent.
-const TraceCacheVersion = 5
+const TraceCacheVersion = 6
 
 // matchingFlags are the subset of ripgrep flags that change WHICH
 // lines match. Any flag not in this set doesn't affect cache validity.
