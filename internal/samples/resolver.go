@@ -359,22 +359,20 @@ func readBufferFor(span int64) int {
 
 // checkpointBefore returns the index checkpoint to start a pass from so
 // that `context` lines are available before `offset`, and the line
-// number that checkpoint names.
+// number that checkpoint names: (0, 1) when the pass starts at the
+// first byte. The checkpoint can be several checkpoints back, since on
+// a log of long lines one checkpoint gap holds fewer lines than the
+// context asks for (index.CheckpointForContext).
 func checkpointBefore(
 	idx *rxtypes.UnifiedFileIndex,
 	offset int64,
 	context int,
 ) (byteOffset, line int64) {
-	pick := index.CheckpointIndexForOffset(idx, offset)
-	// Step back one checkpoint when the window reaches behind the
-	// offset, so the leading context is inside the pass.
-	if pick > 0 && context > 0 {
-		pick--
-	}
-	if pick < 0 {
+	entry := index.CheckpointForContext(idx, offset, context)
+	if entry.LineNumber == 0 {
 		return 0, 1
 	}
-	return idx.LineIndex[pick].ByteOffset, idx.LineIndex[pick].LineNumber
+	return entry.ByteOffset, entry.LineNumber
 }
 
 // lineRing remembers the last n lines read, which is what a window that

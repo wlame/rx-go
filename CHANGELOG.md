@@ -110,6 +110,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx samples --offsets=` and `GET /v1/samples?offsets=` with a line
+  index returned fewer lines before the offset than the context asked
+  for whenever the index checkpoints were closer together than the
+  context, which on a log of long lines they are: the pass started only
+  one checkpoint back. It now starts at a checkpoint at least `context`
+  lines before the offset, so the window is the one `--lines` and
+  `--no-index` give, on plain, gzip, bzip2, xz and zstd files alike
+  (seekable zstd was already right). A trace-cache hit with
+  `--before`/`--context` on such a file had the same short leading
+  context and now rebuilds all of it, as the scan reported it.
 - `rx compress` and `POST /v1/compress` write the output to a hidden
   temporary file (`.rx-compress-*.tmp`) in the output's directory, sync
   it, and only then put it under the output name. Two compressions to

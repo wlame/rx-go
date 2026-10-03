@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -196,6 +197,61 @@ func TestCacheHitRebuildsContextLines(t *testing.T) {
 		t.Fatal("the second trace scanned the file instead of reading the cache")
 	}
 	traceanswer.RequireSame(t, "cache hit", cached, fresh)
+}
+
+// TestCacheHitRebuildsContextAcrossCheckpointGaps covers a cache hit on
+// a log of long lines with an index: a checkpoint gap holds only a few
+// lines there, so the leading context of a match reaches back across
+// several gaps, and the hit still rebuilds all of it.
+func TestCacheHitRebuildsContextAcrossCheckpointGaps(t *testing.T) {
+	requireRipgrep(t)
+	t.Setenv("RX_LARGE_FILE_MB", "1")
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	const lineWidth, context = 1000, 10
+
+	// 1,200 lines of 1,000 bytes: over the 1 MB cache threshold, and a
+	// 4 KB index step puts about 4 lines in each checkpoint gap.
+	path := filepath.Join(t.TempDir(), "wide.log")
+	var content []byte
+	for n := 1; n <= 1200; n++ {
+		head := "LINE " + itoa(n) + " "
+		for len(head) < lineWidth-1 {
+			head += "x"
+		}
+		content = append(content, head+"\n"...)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	idx, err := index.Build(path, index.BuildOptions{StepBytes: 4096})
+	if err != nil {
+		t.Fatalf("build index: %v", err)
+	}
+	if _, err := index.Save(idx); err != nil {
+		t.Fatalf("save index: %v", err)
+	}
+
+	patterns := []string{"LINE [0-9]*00 "}
+	opts := Options{ContextBefore: context}
+	fresh := traceOnce(t, path, patterns, opts)
+	if len(fresh.Matches) != 12 {
+		t.Fatalf("the scan found %d matches, want 12", len(fresh.Matches))
+	}
+	cached := traceFromCacheWithPatterns(t, path, patterns, opts)
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
+}
+
+// traceFromCacheWithPatterns runs a trace that must be answered from the
+// cache, and fails the test when it scans the file instead.
+func traceFromCacheWithPatterns(t *testing.T, path string, patterns []string, opts Options) *rxtypes.TraceResponse {
+	t.Helper()
+	scanned := false
+	opts.afterScan = func(string) { scanned = true }
+	resp := traceOnce(t, path, patterns, opts)
+	if scanned {
+		t.Fatal("the trace scanned the file instead of reading the cache")
+	}
+	return resp
 }
 
 // TestReconstructFromCacheReadsOnlyWhatItNeeds keeps the bounded-read
