@@ -792,7 +792,7 @@ The timing of the log, such as bursts of lines, silences and timestamps that go 
 
 **Burst of log lines** · level `medium` · default · measure `density` (bucket auto, factor 5, z 3.5, min_count 100)
 
-A burst of lines: consecutive time buckets that each hold at least five times the median number of lines per bucket, a modified z-score over 3.5 and at least 100 lines. The bucket size is chosen for about 1,000 buckets over the file's time span. The counts per bucket are kept with the findings, for a density chart.
+A burst of lines: consecutive time buckets that each hold at least five times the median number of lines per bucket, a modified z-score over 3.5 and at least 100 lines. The median and the MAD of the z-score are taken over the buckets that hold a line, each the lower middle value of an even count. The bucket size is chosen for about 1,000 buckets over the file's time span. The counts per bucket are kept with the findings, for a density chart.
 
 - Keywords: none: tried on every line
 - Tags: `density`
@@ -803,7 +803,7 @@ A burst of lines: consecutive time buckets that each hold at least five times th
 
 **Silence in the log** · level `low` · default · measure `time-gap` (min_gap 1m, factor 50)
 
-A silence: at least a minute, and at least 50 times the median interval between stamped lines, with no stamped line. The finding is the line before the silence and the first stamped line after it. A log that only writes when something happens has many.
+A silence: at least a minute, and at least 50 times the median interval between stamped lines (the lower middle value of an even count), with no stamped line. The finding is the line before the silence and the first stamped line after it. A log that only writes when something happens has many.
 
 - Keywords: none: tried on every line
 - Tags: `gap`

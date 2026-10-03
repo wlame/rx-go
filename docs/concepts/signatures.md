@@ -302,7 +302,8 @@ format they find nothing.
   it, such as the last line of a traceback) to that stamped line, and
   takes the time of its first line. The median is taken over all the
   intervals of the file, kept to three significant digits (exact under
-  a second; 61,234 ms counts as 61,200). Until the median is known, a
+  a second; 61,234 ms counts as 61,200); of an even number of intervals
+  it is the lower of the two middle ones. Until the median is known, a
   scan keeps every interval of at least `min_gap`, at most 65,536 of
   them in each chunk (or `RX_FINDINGS_MAX_PER_SIGNATURE`, when larger):
   a file with more such silences keeps only the longest ones, the same
@@ -322,7 +323,10 @@ format they find nothing.
   `0.6745 × (count − median) / MAD` is over `z`. The median and the MAD
   (the median of the absolute deviations from it) are taken over the
   buckets that hold a line, so the empty buckets of a log that sleeps at
-  night do not make every busy bucket a burst; when the MAD is 0, a
+  night do not make every busy bucket a burst; of an even number of
+  buckets, each is the lower of the two middle values (counts 4, 6, 10,
+  20 give the median 6 and, from the deviations 2, 0, 4, 14, the MAD
+  2). When the MAD is 0, a
   count above the median is a burst by the z-score, and the median
   itself is not. Consecutive burst buckets are one finding, from the
   first line counted in any of them to the last, with the time of that

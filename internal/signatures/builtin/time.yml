@@ -11,7 +11,9 @@ signatures:
     description: |
       A burst of lines: consecutive time buckets that each hold at least
       five times the median number of lines per bucket, a modified
-      z-score over 3.5 and at least 100 lines. The bucket size is chosen
+      z-score over 3.5 and at least 100 lines. The median and the MAD of
+      the z-score are taken over the buckets that hold a line, each the
+      lower middle value of an even count. The bucket size is chosen
       for about 1,000 buckets over the file's time span. The counts per
       bucket are kept with the findings, for a density chart.
     links:
@@ -162,7 +164,8 @@ signatures:
     level: low
     description: |
       A silence: at least a minute, and at least 50 times the median
-      interval between stamped lines, with no stamped line. The finding
+      interval between stamped lines (the lower middle value of an even
+      count), with no stamped line. The finding
       is the line before the silence and the first stamped line after
       it. A log that only writes when something happens has many.
     links:
