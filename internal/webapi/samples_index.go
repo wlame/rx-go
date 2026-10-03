@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,39 @@ import (
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
+
+// respondAsync is the RFC 7240 preference a client sends to say it can
+// take a 202 and follow the task, and the value of Preference-Applied
+// when the server did so.
+const respondAsync = "respond-async"
+
+// prefersRespondAsync reports whether a Prefer header value holds the
+// respond-async preference. The value is a comma-separated list of
+// preferences, each a token with an optional "=value" and optional
+// ";"-separated parameters; tokens compare without regard to case.
+func prefersRespondAsync(header string) bool {
+	for _, preference := range strings.Split(header, ",") {
+		token, _, _ := strings.Cut(preference, ";")
+		token, _, _ = strings.Cut(token, "=")
+		if strings.EqualFold(strings.TrimSpace(token), respondAsync) {
+			return true
+		}
+	}
+	return false
+}
+
+// samplesDeadline returns the deadline a samples request waits for an
+// index build until: wait from now for a client that prefers
+// respond-async, and none (a nil channel) for any other, whose request
+// then waits as long as the build. stop releases the timer.
+func samplesDeadline(prefer string, wait time.Duration) (deadline <-chan time.Time, stop func()) {
+	if !prefersRespondAsync(prefer) {
+		return nil, func() {}
+	}
+	// time.NewTimer delivers on timer.C once wait has passed.
+	timer := time.NewTimer(wait)
+	return timer.C, func() { timer.Stop() }
+}
 
 // indexOperation is the task operation of a line-index build, whoever
 // started it: POST /v1/index or a samples lookup.
@@ -50,6 +84,11 @@ type samplesIndexBuilder func(path string, progress *index.Progress) (*rxtypes.U
 //     context ending (the client went away: give up). A closed channel
 //     wakes every goroutine receiving from it, so one close releases all
 //     the waiters at once, however many there are.
+//
+// Only a client that sends `Prefer: respond-async` (RFC 7240) has a
+// deadline: it can follow a task. Any other client, an older viewer or a
+// script, waits as long as the build and gets the lines, as it did when
+// the build ran inside its request; it still shares the one build.
 //
 // A waiter that leaves, by its deadline or because its client
 // disconnected, only stops waiting; the build goes on. The other waiters
@@ -93,19 +132,21 @@ func newSamplesIndexBuilds(manager *tasks.Manager, logger *slog.Logger, build sa
 	}
 }
 
-// await waits up to wait for the line index of path, as info saw the
-// file, to be built, starting the build when none is running.
+// await waits for the line index of path, as info saw the file, to be
+// built, starting the build when none is running, until deadline
+// delivers a value. A nil deadline never does: the wait lasts as long
+// as the build.
 //
 // It returns (nil, nil) when the lookup should go ahead and read the
 // file: the build ended in time (whether it succeeded or not: an index
 // only makes the answer faster), or no running build can give this file
-// an index. It returns the body of a 202 answer when the wait ran out
+// an index. It returns the body of a 202 answer when the deadline came
 // first, and ctx's error when the request ended before either.
 func (b *samplesIndexBuilds) await(
 	ctx context.Context,
 	path string,
 	info os.FileInfo,
-	wait time.Duration,
+	deadline <-chan time.Time,
 ) (*rxtypes.TaskResponse, error) {
 	identity := index.IdentityFromInfo(path, info)
 	taskID, found := b.join(path, identity, info.Size())
@@ -118,15 +159,11 @@ func (b *samplesIndexBuilds) await(
 		return nil, nil
 	}
 
-	// time.NewTimer delivers on timer.C once wait has passed. Stop
-	// releases it when the select ends for another reason.
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-
 	// select blocks until one of its channels is ready and runs that
 	// case. If several are ready at once it picks one at random, which
 	// is harmless here: a build that ended exactly at the deadline is
-	// checked again below.
+	// checked again below. A receive from a nil channel blocks forever,
+	// so with a nil deadline that case is never chosen.
 	select {
 	case <-done:
 		return nil, nil
@@ -134,7 +171,7 @@ func (b *samplesIndexBuilds) await(
 		// ctx is the request's context: it ends when the client
 		// disconnects or the server shuts down. Only this wait stops.
 		return nil, fmt.Errorf("waiting for the index of %s: %w", path, ctx.Err())
-	case <-timer.C:
+	case <-deadline:
 	}
 
 	task, known := b.tasks.Get(taskID)

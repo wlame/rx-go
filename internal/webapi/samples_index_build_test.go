@@ -119,12 +119,26 @@ func (f *samplesBuildFixture) writeLog(t *testing.T, word string) {
 	}
 }
 
-// getSamples asks for line 5 of the gzip log and returns the status and
-// the body.
+// getSamples asks for line 5 of the gzip log with `Prefer:
+// respond-async`, as a client that can follow a task does, and returns
+// the status and the body.
 func (f *samplesBuildFixture) getSamples(t *testing.T) (int, []byte) {
 	t.Helper()
+	resp, body := f.askSamples(t, http.Header{"Prefer": {"respond-async"}})
+	return resp.StatusCode, body
+}
+
+// askSamples asks for line 5 of the gzip log with the given headers and
+// returns the response, its body read.
+func (f *samplesBuildFixture) askSamples(t *testing.T, headers http.Header) (*http.Response, []byte) {
+	t.Helper()
 	query := url.Values{"path": {f.gzPath}, "lines": {"5"}, "context": {"1"}}
-	resp, err := http.Get(f.base + "/v1/samples?" + query.Encode())
+	req, err := http.NewRequest(http.MethodGet, f.base+"/v1/samples?"+query.Encode(), nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header = headers
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get samples: %v", err)
 	}
@@ -133,7 +147,7 @@ func (f *samplesBuildFixture) getSamples(t *testing.T) (int, []byte) {
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
-	return resp.StatusCode, body
+	return resp, body
 }
 
 // requirePending checks a 202 answer and returns the task it names.
@@ -287,7 +301,7 @@ func TestSamples_ACanceledWaitLeavesTheBuildRunning(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	waited := make(chan error, 1)
 	go func() {
-		_, err := f.server.samplesIndex.await(ctx, f.gzPath, info, time.Minute)
+		_, err := f.server.samplesIndex.await(ctx, f.gzPath, info, nil)
 		waited <- err
 	}()
 	f.gate.awaitStart(t)
@@ -352,5 +366,91 @@ func TestSamples_ARewrittenFileDoesNotWaitForTheOldBuild(t *testing.T) {
 	requireLines(t, status, body, "REWRITTEN LINE")
 	if calls := f.gate.calls.Load(); calls != 1 {
 		t.Fatalf("%d builds, want only the first", calls)
+	}
+}
+
+// A client that does not send `Prefer: respond-async` (viewer 0.4.0, a
+// script) cannot follow a task, so its request waits for the shared
+// build however long it takes and answers 200, as before the build was
+// a task. It still joins the one build rather than starting another.
+func TestSamples_WithoutPreferWaitsPastTheDeadlineForTheLines(t *testing.T) {
+	f := newSamplesBuildFixture(t, 20*time.Millisecond)
+
+	type answer struct {
+		status int
+		body   []byte
+	}
+	answered := make(chan answer, 1)
+	go func() {
+		resp, body := f.askSamples(t, http.Header{})
+		answered <- answer{resp.StatusCode, body}
+	}()
+	f.gate.awaitStart(t)
+
+	// A second, asynchronous client joins the same build and gets the 202.
+	status, body := f.getSamples(t)
+	f.requirePending(t, status, body)
+
+	select {
+	case got := <-answered:
+		t.Fatalf("answered %d before the build ended; body %s", got.status, got.body)
+	case <-time.After(100 * time.Millisecond):
+	}
+	f.gate.open()
+	got := <-answered
+	requireLines(t, got.status, got.body, "LINE")
+	if calls := f.gate.calls.Load(); calls != 1 {
+		t.Fatalf("%d builds, want the one both requests shared", calls)
+	}
+}
+
+// The 202 says it applied the preference, as RFC 7240 asks.
+func TestSamples_The202NamesThePreferenceItApplied(t *testing.T) {
+	f := newSamplesBuildFixture(t, 20*time.Millisecond)
+	resp, body := f.askSamples(t, http.Header{"Prefer": {"wait=10, respond-async"}})
+	f.requirePending(t, resp.StatusCode, body)
+	if got := resp.Header.Get("Preference-Applied"); got != "respond-async" {
+		t.Fatalf("Preference-Applied = %q, want respond-async", got)
+	}
+
+	f.gate.open()
+	resp, body = f.askSamples(t, http.Header{"Prefer": {"respond-async"}})
+	requireEventually200(t, f, resp, body)
+}
+
+// requireEventually200 polls until the build the fixture holds has ended
+// and checks that the answer then carries no Preference-Applied header.
+func requireEventually200(t *testing.T, f *samplesBuildFixture, resp *http.Response, body []byte) {
+	t.Helper()
+	for resp.StatusCode == http.StatusAccepted {
+		var task rxtypes.TaskResponse
+		_ = json.Unmarshal(body, &task)
+		f.awaitTask(t, task.TaskID)
+		resp, body = f.askSamples(t, http.Header{"Prefer": {"respond-async"}})
+	}
+	requireLines(t, resp.StatusCode, body, "LINE")
+	if got := resp.Header.Get("Preference-Applied"); got != "" {
+		t.Fatalf("a 200 carries Preference-Applied %q", got)
+	}
+}
+
+func TestPrefersRespondAsync(t *testing.T) {
+	cases := map[string]bool{
+		"":                          false,
+		"respond-async":             true,
+		"Respond-Async":             true,
+		" respond-async ":           true,
+		"wait=10, respond-async":    true,
+		"respond-async; foo=bar":    true,
+		"return=minimal":            false,
+		"respond-asynchronously":    false,
+		"handling=lenient,wait=100": false,
+	}
+	for header, want := range cases {
+		t.Run(header, func(t *testing.T) {
+			if got := prefersRespondAsync(header); got != want {
+				t.Fatalf("prefersRespondAsync(%q) = %v, want %v", header, got, want)
+			}
+		})
 	}
 }
