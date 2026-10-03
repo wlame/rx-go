@@ -2,8 +2,8 @@ package timestamps
 
 // matchISO reads the iso family: a 4-digit year, then month and day of
 // one or two digits separated by `-` or `/` (the same both times), then
-// `T` or one space, the clock, an optional fraction after `.`, `,` or
-// (exactly three digits) `:`, and an optional zone: `Z`, `±HH:MM`,
+// `T` or one space, the clock, an optional fraction after `.` or `,`, or
+// one to three digits of milliseconds after `:`, and an optional zone: `Z`, `±HH:MM`,
 // `±HHMM`, `±HH`, or a space then `UTC`, `GMT` or `±HHMM`/`±HH:MM`.
 //
 // Any other zone word after a space (`MST`, `CEST`) is ambiguous, is not
