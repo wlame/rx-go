@@ -20,7 +20,8 @@ and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
   `200` with the lines; a large one's does not, and the request answers
   [`202`](#response-202-accepted) with the task. Without the header the
   request waits for the build and answers `200`. `RX_NO_INDEX=true` on
-  the server turns the build off.
+  the server turns the build off, and the lookup reads no stored index
+  either.
 - **Plain file with an index:** seeks to the nearest checkpoint before
   the first wanted line and reads through the last one. Line 700000 of
   the 465 MB log took 13 ms from the CLI.

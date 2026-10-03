@@ -110,6 +110,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx samples --no-index`, `RX_NO_INDEX=1` and `GET /v1/samples` under
+  `RX_NO_INDEX` skipped only the index build and still read a stored
+  index, so the flag meant for a suspect index answered from it. They
+  now read no index at all, as the docs say. A line index file that is
+  cut short or cannot be read is now treated as absent everywhere, with
+  one `index_unreadable` warning naming the file: `rx samples --lines=`
+  on a plain file no longer exits 1 and `GET /v1/samples` no longer
+  answers `500` with "unmarshal …: unexpected end of JSON input" or
+  "permission denied"; the lookup reads the file without the index, and
+  rebuilds it when the file is worth one.
 - `rx samples --offsets=` and `GET /v1/samples?offsets=` with a line
   index returned fewer lines before the offset than the context asked
   for whenever the index checkpoints were closer together than the
