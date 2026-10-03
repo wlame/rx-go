@@ -63,6 +63,8 @@ func TestBuild_FramesThatSplitLinesAreNumberedAsTheText(t *testing.T) {
 		{"no final line break", unterminated, seekablefile.SplitEvery(unterminated, 37)},
 		{"an empty last frame after an unterminated line", unterminated,
 			seekablefile.SplitAt(unterminated, 500, len(unterminated)-3, len(unterminated))},
+		{"an empty last frame after a final line break", terminated,
+			seekablefile.SplitAt(terminated, 500, len(terminated))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,6 +96,13 @@ func TestBuild_FramesThatSplitLinesAreNumberedAsTheText(t *testing.T) {
 				}
 			}
 			for _, entry := range got.LineIndex {
+				// A checkpoint names a byte of the text; the end of the
+				// text, where an empty last frame starts, is none.
+				if entry.ByteOffset >= int64(len(tc.text)) {
+					t.Errorf("checkpoint %+v is at or past the end of the text (%d bytes)",
+						entry, len(tc.text))
+					continue
+				}
 				if want := lineHolding(tc.text, entry.ByteOffset); entry.LineNumber != want {
 					t.Errorf("checkpoint at byte %d names line %d, want %d",
 						entry.ByteOffset, entry.LineNumber, want)

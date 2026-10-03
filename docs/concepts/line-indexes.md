@@ -38,6 +38,12 @@ as a third element, `[line_number, byte_offset, frame_index]`. Between
 checkpoints, no data is recorded — to find line 6000 you seek to the
 checkpoint for line 4713 and scan forward.
 
+Every checkpoint names a line the file has: the first is `[1, 0]`, and
+each one is at the byte where its line starts (in a seekable zstd
+index, a frame's checkpoint is at the frame's first byte, which can be
+inside its line). An empty file has no lines, so its `line_index` is
+empty.
+
 ### Sparse checkpoints
 
 The index is **sparse**, not dense. Dense would mean one entry per

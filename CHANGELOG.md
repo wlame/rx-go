@@ -110,6 +110,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every checkpoint of a line index now names a line the file has, at
+  the byte where it starts (for a seekable `.zst`, a byte inside the
+  line). An index used to end with a checkpoint one line past the end
+  of the text whenever its last line crossed a checkpoint step (the
+  line count plus one, at the text's size), an empty file's index held
+  the checkpoint `[1, 0]` for a line it does not have, a seekable frame
+  of exactly 10,000, 20,000 … lines that ends with a line break got an
+  interior checkpoint at its end, and a frame of no text got one too.
+  An empty file's index now has an empty `line_index`. No answer
+  changes: a lookup starts from the checkpoint before its line, and
+  `GET /v1/index` and `rx index --json` no longer list a checkpoint a
+  client could seek to and find nothing. Indexes stored by earlier
+  versions keep working; their extra checkpoint is never chosen for a
+  line the file has.
+
 - When the line index could not be stored (a read-only cache directory,
   `RX_CACHE_DIR` naming a regular file, or a log whose base name made
   the cache file name longer than 255 bytes), every `rx samples` call on
