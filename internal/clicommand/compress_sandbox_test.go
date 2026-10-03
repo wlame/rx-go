@@ -2,6 +2,7 @@ package clicommand
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -41,7 +42,7 @@ func TestCompress_OutputOutsideSearchRootFails(t *testing.T) {
 	out := filepath.Join(outside, "x.zst")
 
 	var buf bytes.Buffer
-	err := runCompress(&buf, compressParams{
+	err := runCompress(context.Background(), &buf, compressParams{
 		paths:      []string{input},
 		output:     out,
 		frameSize:  "4K",
@@ -79,7 +80,7 @@ func TestCompress_OutputDirOutsideSearchRootFails(t *testing.T) {
 	_, outside, input := compressSandboxFixture(t)
 
 	var buf bytes.Buffer
-	err := runCompress(&buf, compressParams{
+	err := runCompress(context.Background(), &buf, compressParams{
 		paths:      []string{input},
 		outputDir:  outside,
 		frameSize:  "4K",
@@ -101,7 +102,7 @@ func TestCompress_OutputInsideSearchRootSucceeds(t *testing.T) {
 	out := filepath.Join(root, "x.zst")
 
 	var buf bytes.Buffer
-	if err := runCompress(&buf, compressParams{
+	if err := runCompress(context.Background(), &buf, compressParams{
 		paths:      []string{input},
 		output:     out,
 		frameSize:  "4K",
@@ -128,7 +129,7 @@ func TestCompress_OutputUnrestrictedWithoutSearchRoot(t *testing.T) {
 	out := filepath.Join(base, "elsewhere.zst")
 
 	var buf bytes.Buffer
-	if err := runCompress(&buf, compressParams{
+	if err := runCompress(context.Background(), &buf, compressParams{
 		paths:      []string{input},
 		output:     out,
 		frameSize:  "4K",

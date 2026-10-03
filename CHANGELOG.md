@@ -132,6 +132,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as its input until it ends: a second compression into the same
   output, and a `POST /v1/index` of that output, get `409` naming the
   output and the running task, where both used to be accepted.
+  `rx compress app.log app.log.gz` printed `wrote app.log.zst` twice
+  and kept only the second file; two inputs of one command that would
+  be compressed to one output (the same path given twice included) are
+  now refused before anything is written, with or without `--force`,
+  and the command exits 2. `Ctrl-C` or SIGTERM during `rx compress`
+  now stops the encoding and removes the temporary file (exit 5); it
+  used to go on to write the whole output and only then exit 5.
 
 - A seekable zstd file written by another tool to the zstd seekable
   format specification (facebook/zstd, `contrib/seekable_format`) is
