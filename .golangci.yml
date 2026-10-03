@@ -34,10 +34,12 @@ linters:
       locale: US
       # The signature catalogue keeps the British spelling of its type
       # name, Catalogue, which every package that uses it shares. The
-      # task status `cancelled` is a value of the HTTP contract.
+      # task statuses `cancelled` and `cancelling` are values of the HTTP
+      # contract.
       ignore-rules:
         - catalogue
         - cancelled
+        - cancelling
     govet:
       enable-all: true
       disable:

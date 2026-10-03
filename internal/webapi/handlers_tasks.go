@@ -61,9 +61,11 @@ func registerTaskHandlers(s *Server, api huma.API) {
 		Description: "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches " +
 			"nothing, and the task ends at once with status cancelled, which this answer shows. A client that " +
 			"joined the same scan sees it cancelled and may start it again. A task over a directory (POST " +
-			"/v1/index or POST /v1/findings given a directory) stops between two files, a findings one inside a " +
-			"file's scan too: the files ended before the cancel keep their index or findings, the file a cancel " +
-			"stops writes nothing, and no later file is read. 409 for a task of another operation (an index " +
+			"/v1/index or POST /v1/findings given a directory) stops the file it is on at the file's next read and " +
+			"takes no later file: the files ended before the cancel keep their index or findings, the file a " +
+			"cancel stops writes nothing. Until its worker has stopped it shows status cancelling and keeps the " +
+			"directory (a POST for it answers 409), then it ends cancelled; a second DELETE meanwhile answers " +
+			"200 with it cancelling. 409 for a task of another operation (an index " +
 			"task over one file, compress, chain_index), for a task that has already ended, and for a findings " +
 			"task over one file whose scan has finished reading and is writing its answer (such a task never " +
 			"ends cancelled with findings written).",

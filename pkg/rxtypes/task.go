@@ -21,15 +21,16 @@ type TaskResponse struct {
 //
 // Operation is "compress", "index", "chain_index" or "findings". Status
 // transitions: "queued" → "running" → ("completed" | "failed"), and a
-// findings task, or an index task over a directory, may end "cancelled"
-// from either of the first two. Result is nil until Status ==
+// findings task may end "cancelled" from either of the first two. A
+// task over a directory goes from either to "cancelling" on a cancel,
+// and to "cancelled" once its worker has stopped. Result is nil until Status ==
 // "completed"; Error is nil unless Status == "failed". Progress,
 // BytesRead, BytesTotal, FilesDone and FilesTotal are nil for a task
 // that does not report them; FilesDone and FilesTotal are set for a
 // task over a directory only.
 type TaskStatusResponse struct {
 	TaskID      string     `json:"task_id"`
-	Status      string     `json:"status" doc:"queued, running, completed, failed, or cancelled (a findings task, or an index task over a directory, stopped by DELETE /v1/tasks/{task_id})."`
+	Status      string     `json:"status" doc:"queued, running, completed, failed, cancelled (a findings task, or a task over a directory, stopped by DELETE /v1/tasks/{task_id}), or cancelling (a task over a directory that DELETE cancelled, whose worker has not stopped yet: it still holds the directory, a POST for it answers 409, and it becomes cancelled once the worker stops; not an end)."`
 	Path        string     `json:"path"`
 	Operation   string     `json:"operation" doc:"index, compress, chain_index or findings."`
 	StartedAt   *string    `json:"started_at"`

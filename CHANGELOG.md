@@ -415,11 +415,15 @@ History maps every removed surface to what replaces it.
   task goes on. The files of a findings task go through the scan queue
   one at a time (`RX_MAX_SIGNATURE_SCANS` holds), and the task takes one
   of the 256 places of the unfinished findings tasks. `DELETE
-  /v1/tasks/{task_id}` cancels such a task between two files, and a
-  findings task inside a file's scan too: the files ended before keep
-  their index or findings, the file a cancel stops writes nothing. A
-  second `POST` for the directory joins its findings task or answers
-  `409` for its index task. The result is the new `FolderTaskResult`:
+  /v1/tasks/{task_id}` cancels such a task: the file it is on stops at
+  its next read (an index build as a scan) and writes nothing, no later
+  file is taken, and the files ended before keep their index or
+  findings. The task then shows the new status `cancelling`, keeps the
+  directory until its worker has stopped (a `POST` for it answers
+  `409`, `POST /v1/findings` declares the `409` now), and ends
+  `cancelled`, so a `POST`+`DELETE` loop never runs two workers for one
+  directory. A second `POST` for the directory while its task runs
+  joins its findings task or answers `409` for its index task. The result is the new `FolderTaskResult`:
   `path`, `files_total`, `done`, `skipped`, `current` (the skipped ones
   that were current), `failed`, `findings` (`null` for an index task),
   `skipped_files` (`{path, reason}`, the first 1,000 skipped for another

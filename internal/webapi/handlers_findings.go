@@ -125,7 +125,8 @@ func registerFindingsHandlers(s *Server, api huma.API) {
 			"every selected signature (unless force), is skipped, a file whose scan fails is recorded and the " +
 			"task goes on. Its status has files_done and files_total (bytes_read and bytes_total follow the " +
 			"file it reads), its result is a FolderTaskResult, and DELETE cancels it between two files or " +
-			"inside one; the files scanned before the cancel keep their findings.",
+			"inside one; the files scanned before the cancel keep their findings. Until its worker has stopped " +
+			"it is cancelling and a POST for the directory answers 409 rather than joining it.",
 		Tags:      []string{"Signatures"},
 		Responses: findingsScanResponses(api),
 	}, func(_ context.Context, in *findingsScanInput) (*findingsScanOutput, error) {
@@ -211,7 +212,9 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 	if src.Info().IsDir() {
 		cliParams["recursive"] = true
 		cli := BuildCLICommand("scan", cliParams)
-		return s.startScanTask(validated, cli, func(taskID string) string {
+		// A task over a directory keeps it after a cancel until its
+		// worker has stopped (CreateStoppable).
+		return s.startScanTask(validated, cli, s.cfg.TaskManager.CreateStoppable, func(taskID string) string {
 			return fmt.Sprintf("Scanning every file under %s for %d signatures; follow GET /v1/tasks/%s", validated, len(sel), taskID)
 		}, func(ctx context.Context, taskID string) {
 			s.runFindingsFolder(ctx, folderScan{taskID: taskID, dir: src, sel: sel, force: req.Force, cli: cli})
@@ -225,7 +228,7 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 		path: validated, file: file, sel: sel, force: req.Force,
 		cli: BuildCLICommand("trace", s.findingsCLIParams(validated, req.Signatures)),
 	}
-	return s.startScanTask(validated, BuildCLICommand("scan", cliParams), func(taskID string) string {
+	return s.startScanTask(validated, BuildCLICommand("scan", cliParams), s.cfg.TaskManager.CreateCancellable, func(taskID string) string {
 		return fmt.Sprintf("Scanning %s for %d signatures; follow GET /v1/tasks/%s", validated, len(sel), taskID)
 	}, func(ctx context.Context, taskID string) {
 		scan.taskID = taskID
@@ -234,11 +237,14 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 }
 
 // startScanTask starts a findings task for validated (a file or a
-// directory) whose command is cli, or joins the one already running
-// for the path. message words the answer of a new task; work is its
-// worker, run detached under the task's context.
-func (s *Server) startScanTask(validated, cli string, message func(taskID string) string,
-	work func(ctx context.Context, taskID string)) (*findingsScanOutput, error) {
+// directory) whose command is cli, created by create
+// (tasks.Manager.CreateCancellable for a file, CreateStoppable for a
+// directory), or joins the one already running for the path; one that
+// is cancelling (a task over a directory whose worker has not stopped)
+// is not joined but answered 409. message words the answer of a new
+// task; work is its worker, run detached under the task's context.
+func (s *Server) startScanTask(validated, cli string, create func(path, operation string) (*tasks.Task, context.Context, bool),
+	message func(taskID string) string, work func(ctx context.Context, taskID string)) (*findingsScanOutput, error) {
 	mgr := s.cfg.TaskManager
 	// A place among the unfinished scans is taken before the task is
 	// created, and given back when the task joins one already there or
@@ -253,13 +259,16 @@ func (s *Server) startScanTask(validated, cli string, message func(taskID string
 		// No place for a new task; a scan of the path already there is
 		// still joined.
 		if running, ok := mgr.CancellableHolder(validated, findingsOperation); ok {
+			if running.Status == tasks.StatusCancelling {
+				return nil, busyFolder(mgr, validated, running)
+			}
 			return joinedScan(validated, running), nil
 		}
 		return nil, huma.ErrorWithHeaders(ErrServiceUnavailable(fmt.Sprintf(
 			"%d signature scans are queued or running, as many as the server holds; ask again once one has ended",
 			cap(s.scanPlaces))), http.Header{"Retry-After": {strconv.Itoa(scansFullRetryAfterSeconds)}})
 	}
-	task, taskCtx, isNew := mgr.CreateCancellable(validated, findingsOperation)
+	task, taskCtx, isNew := create(validated, findingsOperation)
 	if !isNew {
 		<-s.scanPlaces
 		// The running task is the manager's own: read it through Get,
@@ -268,6 +277,9 @@ func (s *Server) startScanTask(validated, cli string, message func(taskID string
 		running, ok := mgr.Get(task.TaskID)
 		if !ok {
 			return nil, ErrNotFound(fmt.Sprintf("Task not found: %s", task.TaskID))
+		}
+		if running.Status == tasks.StatusCancelling {
+			return nil, busyFolder(mgr, validated, running)
 		}
 		return joinedScan(validated, running), nil
 	}
@@ -281,7 +293,10 @@ func (s *Server) startScanTask(validated, cli string, message func(taskID string
 	go runDetached(mgr, taskID, findingsOperation, s.cfg.Logger, func() {
 		// Go note: a deferred call runs when the function returns, and
 		// also while a panic unwinds it, before runDetached recovers, so
-		// the place is given back on every path.
+		// the place is given back on every path. Deferred calls run last
+		// first: the place is given back, then Stopped ends a cancelling
+		// task, so a POST that sees it cancelled finds the place free.
+		defer mgr.Stopped(taskID)
 		defer func() { <-s.scanPlaces }()
 		// A panic in the scan fails the task in runDetached, which
 		// recovers it; it is counted here first, then passed on.
@@ -323,7 +338,7 @@ func joinedScan(validated string, running *tasks.Task) *findingsScanOutput {
 // which this route does not run.
 func findingsScanResponses(api huma.API) map[string]*huma.Response {
 	responses := errorResponses(api, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound,
-		http.StatusUnprocessableEntity)
+		http.StatusConflict, http.StatusUnprocessableEntity)
 	envelope := api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(apiError{}), true, "ApiError")
 	full := jsonResponse(fmt.Sprintf("No task started: %d signature scans are queued or running, as many as the "+
 		"server holds. Ask again once one has ended.", maxUnfinishedScans), envelope)

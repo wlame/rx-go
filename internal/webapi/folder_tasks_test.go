@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/internal/cachefill"
 	"github.com/wlame/rx-go/internal/findings"
@@ -229,7 +230,7 @@ func TestFindingsFolderTask_CancelInsideAFileKeepsTheFilesBefore(t *testing.T) {
 	status, raw := f.call(t, http.MethodDelete, "/v1/tasks/"+task.TaskID, nil, nil)
 	var cancelled rxtypes.TaskStatusResponse
 	decode(t, raw, &cancelled)
-	if status != http.StatusOK || cancelled.Status != "cancelled" || cancelled.FilesDone == nil {
+	if status != http.StatusOK || cancelled.Status != "cancelling" || cancelled.FilesDone == nil {
 		t.Fatalf("DELETE: %d %s", status, raw)
 	}
 	if err := <-released; err == nil {
@@ -374,5 +375,126 @@ func TestTasks_AFileTaskCarriesItsCommand(t *testing.T) {
 		if indexed, _ := f.finish(t, index.TaskID); index.CLICommand != wantIndex || indexed.CLICommand != wantIndex {
 			t.Errorf("index task: 202 %q, status %q, want %q", index.CLICommand, indexed.CLICommand, wantIndex)
 		}
+	}
+}
+
+// postStatus posts body to route and returns the status and the raw
+// answer.
+func (f *findingsFixture) postStatus(t *testing.T, route string, body map[string]any) (int, []byte) {
+	t.Helper()
+	return f.call(t, http.MethodPost, route, nil, body)
+}
+
+// awaitStatus polls task id until its status is want.
+func (f *findingsFixture) awaitStatus(t *testing.T, id, want string) rxtypes.TaskStatusResponse {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if task := f.taskStatus(t, id); task.Status == want {
+			return task
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("task %s never reached %s", id, want)
+	return rxtypes.TaskStatusResponse{}
+}
+
+// A cancelled index task over a directory keeps the directory until its
+// worker has stopped: DELETE answers cancelling, a POST for the
+// directory answers 409 naming the task while the build of the current
+// file still runs, and the task ends cancelled once it stops. Five
+// POST+DELETE rounds never run two builds at once.
+func TestIndexFolderTask_APostDeleteLoopNeverRunsTwoBuilds(t *testing.T) {
+	var inFlight, maxSeen atomic.Int32
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	f := newFindingsFixture(t, func(c *Config) {
+		c.indexFolderFile = func(ctx context.Context, e cachefill.Entry, s cachefill.IndexSettings, b *index.Progress) cachefill.FileResult {
+			now := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				seen := maxSeen.Load()
+				if now <= seen || maxSeen.CompareAndSwap(seen, now) {
+					break
+				}
+			}
+			started <- struct{}{}
+			// A build that goes on for a while after the cancel.
+			<-ctx.Done()
+			<-release
+			return cachefill.IndexFile(ctx, e, s, b)
+		}
+	})
+	seen := map[string]bool{}
+	for round := range 5 {
+		task := f.startTask(t, "/v1/index", map[string]any{"path": f.root, "threshold": 0})
+		if seen[task.TaskID] {
+			t.Fatalf("round %d: the task of an earlier round again", round)
+		}
+		seen[task.TaskID] = true
+		<-started
+		status, raw := f.call(t, http.MethodDelete, "/v1/tasks/"+task.TaskID, nil, nil)
+		var cancelling rxtypes.TaskStatusResponse
+		decode(t, raw, &cancelling)
+		if status != http.StatusOK || cancelling.Status != "cancelling" || cancelling.CompletedAt != nil {
+			t.Fatalf("round %d DELETE: %d %s", round, status, raw)
+		}
+		status, raw = f.postStatus(t, "/v1/index", map[string]any{"path": f.root, "threshold": 0})
+		var conflict rxtypes.TaskConflictError
+		decode(t, raw, &conflict)
+		if status != http.StatusConflict || conflict.TaskID != task.TaskID || !strings.Contains(conflict.Detail, "cancel") {
+			t.Fatalf("round %d POST while the build stops: %d %s", round, status, raw)
+		}
+		if again := f.taskStatus(t, task.TaskID); again.Status != "cancelling" {
+			t.Fatalf("round %d: status %s while the build runs", round, again.Status)
+		}
+		release <- struct{}{}
+		if end := f.awaitStatus(t, task.TaskID, "cancelled"); end.Result != nil || end.Error != nil || end.CompletedAt == nil {
+			t.Errorf("round %d end: %+v", round, end)
+		}
+	}
+	if maxSeen.Load() != 1 {
+		t.Errorf("%d builds ran at once for one directory", maxSeen.Load())
+	}
+}
+
+// A cancelled findings task over a directory keeps the directory until
+// its scan has stopped: a POST meanwhile answers 409 rather than joining
+// a task that is ending, and one after the end starts a new task.
+func TestFindingsFolderTask_APostWhileItIsCancellingAnswers409(t *testing.T) {
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	var once sync.Once
+	f := newFindingsFixture(t, func(c *Config) {
+		c.scanFindings = func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue,
+			sel []*signatures.Signature, o findings.ScanOptions) (*findings.Answer, error) {
+			hold := false
+			once.Do(func() { hold = true })
+			if hold {
+				started <- struct{}{}
+				<-ctx.Done()
+				<-release
+			}
+			return findings.Scan(ctx, file, cat, sel, o)
+		}
+	})
+	task := f.startTask(t, "/v1/findings", map[string]any{"path": f.root})
+	<-started
+	if status, raw := f.call(t, http.MethodDelete, "/v1/tasks/"+task.TaskID, nil, nil); status != http.StatusOK ||
+		!strings.Contains(string(raw), `"cancelling"`) {
+		t.Fatalf("DELETE: %d %s", status, raw)
+	}
+	status, raw := f.postStatus(t, "/v1/findings", map[string]any{"path": f.root})
+	var conflict rxtypes.TaskConflictError
+	decode(t, raw, &conflict)
+	if status != http.StatusConflict || conflict.TaskID != task.TaskID {
+		t.Fatalf("POST while the scan stops: %d %s", status, raw)
+	}
+	close(release)
+	f.awaitStatus(t, task.TaskID, "cancelled")
+	next := f.startTask(t, "/v1/findings", map[string]any{"path": f.root})
+	if next.TaskID == task.TaskID {
+		t.Fatal("the POST after the end joined the cancelled task")
+	}
+	if done, _ := f.finish(t, next.TaskID); done.Status != "completed" {
+		t.Errorf("the next scan %+v", done)
 	}
 }

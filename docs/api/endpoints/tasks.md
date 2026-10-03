@@ -129,7 +129,7 @@ GET /v1/tasks/{task_id}
 | Field | Type | Description |
 |---|---|---|
 | `task_id` | string | UUID v4 of the task |
-| `status` | string | `"queued"`, `"running"`, `"completed"`, `"failed"`, or `"cancelled"` (a findings task stopped by [`DELETE`](#delete-v1taskstask_id)) |
+| `status` | string | `"queued"`, `"running"`, `"completed"`, `"failed"`, `"cancelled"` (a findings task or a task over a directory stopped by [`DELETE`](#delete-v1taskstask_id)), or `"cancelling"` (a task over a directory that `DELETE` cancelled and whose worker has not stopped yet; not an end, keep polling) |
 | `path` | string | The validated absolute path the task operates on; for a `chain_index` task, the chain's handle |
 | `operation` | string | `"index"`, `"compress"`, `"chain_index"` (the index task of a log chain) or `"findings"` (a signature scan, [`POST /v1/findings`](findings.md#post-v1findings)) |
 | `started_at` | string | ISO 8601 UTC — when the task was created |
@@ -169,7 +169,8 @@ GET /v1/tasks/{task_id}
 
 ```text
 queued → running → (completed | failed)
-queued | running → cancelled        (a findings task or a task over a directory, by DELETE)
+queued | running → cancelled                  (a findings task over one file, by DELETE)
+queued | running → cancelling → cancelled     (a task over a directory, by DELETE, then its worker's stop)
 ```
 
 - `queued` is the initial state right after the POST returns; a
@@ -180,8 +181,10 @@ queued | running → cancelled        (a findings task or a task over a director
   answers whole goes from `queued` to `completed`)
 - `completed` on success with a populated `result`
 - `failed` on error with a populated `error` string
-- `cancelled` when `DELETE` stopped a findings task or a task over a
-  directory: no `error`, no `result`
+- `cancelling` when `DELETE` cancelled a task over a directory whose
+  worker has not stopped yet: it still holds the directory
+- `cancelled` when `DELETE` stopped a findings task, or once the worker
+  of a cancelling task has stopped: no `error`, no `result`
 
 Transitions are monotonic — a task never moves back to an earlier
 state.
@@ -259,12 +262,15 @@ scanned or current, `null` for an index task.
 
 A second `POST` for the same directory while its task runs returns that
 task (findings) or answers `409` naming it (index), as for a file.
-`DELETE` cancels the task between two files, and a findings task inside
-the scan of a file too: the files ended before the cancel keep their
-index or findings, the file a cancel stops writes nothing, and no later
-file is read. An index build that has started runs to its end and its
-index is not stored. A task over a directory can be cancelled until it
-ends.
+`DELETE` cancels the task: the file it is on stops at its next read (an
+index build as a scan) and writes nothing, and no later file is read;
+the files ended before the cancel keep their index or findings. The
+task shows `cancelling` until its worker has stopped, and keeps the
+directory meanwhile: a `POST` for it answers `409` (it is not joined),
+so a `POST`+`DELETE` loop never runs two workers for one directory.
+Then it ends `cancelled`. A task over a directory can be cancelled
+until it ends; a second `DELETE` while it is cancelling answers `200`
+with the same status.
 
 ## `DELETE /v1/tasks/{task_id}`
 
@@ -274,7 +280,9 @@ once with status `cancelled`, which the answer shows. A client that
 joined the same scan sees it `cancelled` and may start it again; a new
 `POST` for the file starts a new task at once. It cancels a task over a
 directory, an index or a findings one, as
-[Tasks over a directory](#tasks-over-a-directory) says.
+[Tasks over a directory](#tasks-over-a-directory) says: that answer
+shows `cancelling`, and the task ends `cancelled` once its worker has
+stopped.
 
 ```bash
 curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4'
@@ -301,7 +309,7 @@ curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f51
 
 | Code | When |
 |---:|---|
-| `200 OK` | The task is cancelled; its status is returned |
+| `200 OK` | The task is cancelled (`cancelled`), or, for a task over a directory, is stopping (`cancelling`); its status is returned |
 | `404 Not Found` | Task ID unknown or already swept |
 | `409 Conflict` | The task is neither a findings task nor a task over a directory (an index task over one file, a compress or a chain_index task cannot be cancelled), it has already ended (completed, failed or cancelled), or it is a findings task over one file whose scan has finished reading and whose answer is being written: from that point a cancel is refused, so such a task never ends `cancelled` with findings written. The body is `{"detail", "task_id"}` |
 
@@ -391,10 +399,11 @@ default retention is 60 minutes after completion.
     completion. If you need a durable record of what ran, log the
     `result` body to your own store as soon as polling returns.
 
-!!! note "Only a findings task can be cancelled"
+!!! note "Only a findings task and a task over a directory can be cancelled"
     [`DELETE /v1/tasks/{task_id}`](#delete-v1taskstask_id) stops a
-    signature scan. An index, compress or `chain_index` task runs to
-    completion or failure; to stop one, restart the server.
+    signature scan and a task over a directory. An index task over one
+    file, a compress or a `chain_index` task runs to completion or
+    failure; to stop one, restart the server.
 
 ## See also
 

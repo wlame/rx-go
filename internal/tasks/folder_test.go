@@ -53,3 +53,78 @@ func TestManager_ACancellableIndexTaskCancels(t *testing.T) {
 		t.Errorf("status %s", got.Status)
 	}
 }
+
+// A stoppable task keeps its key after a cancel until its worker says it
+// has stopped: Cancel cancels its context and marks it cancelling (not
+// ended), a second create for the path gets it back, and a second Cancel
+// changes nothing. Stopped, or the worker's own end, then ends it
+// cancelled, with no result, and frees the key.
+func TestManager_AStoppableTaskHoldsItsKeyUntilItsWorkerStops(t *testing.T) {
+	for _, end := range []string{"stopped", "completed", "failed"} {
+		m := New(Config{})
+		task, ctx, isNew := m.CreateStoppable("/var/log/app", "index")
+		if !isNew {
+			t.Fatal("no task")
+		}
+		m.MarkRunning(task.TaskID)
+		if err := m.Cancel(task.TaskID); err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+		if ctx.Err() == nil {
+			t.Error("the task's context was not canceled")
+		}
+		got, _ := m.Get(task.TaskID)
+		if got.Status != StatusCancelling || got.IsTerminal() || got.CompletedAt != nil {
+			t.Fatalf("after Cancel: %+v", got)
+		}
+		done, _ := m.Done(task.TaskID)
+		select {
+		case <-done:
+			t.Fatal("a cancelling task is done")
+		default:
+		}
+		if again, _, isNew := m.CreateStoppable("/var/log/app", "index"); isNew || again.TaskID != task.TaskID {
+			t.Fatal("a second task started while the first one's worker runs")
+		}
+		if err := m.Cancel(task.TaskID); err != nil {
+			t.Errorf("a second cancel: %v", err)
+		}
+		m.MarkRunning(task.TaskID)
+		if m.Settle(task.TaskID) {
+			t.Error("a cancelling task settled")
+		}
+		switch end {
+		case "stopped":
+			m.Stopped(task.TaskID)
+		case "completed":
+			m.Complete(task.TaskID, "a result")
+		case "failed":
+			m.Fail(task.TaskID, "an error")
+		}
+		got, _ = m.Get(task.TaskID)
+		if got.Status != StatusCancelled || got.Result != nil || got.Error != "" || got.CompletedAt == nil {
+			t.Errorf("%s: after the worker's end %+v", end, got)
+		}
+		if _, _, isNew := m.CreateStoppable("/var/log/app", "index"); !isNew {
+			t.Errorf("%s: the key was not freed", end)
+		}
+	}
+}
+
+// Stopped changes nothing for a task that was not cancelled: the worker
+// of a running task that returns leaves it as its own Complete or Fail
+// left it.
+func TestManager_StoppedLeavesATaskThatWasNotCancelled(t *testing.T) {
+	m := New(Config{})
+	task, _, _ := m.CreateStoppable("/var/log/app", "findings")
+	m.MarkRunning(task.TaskID)
+	m.Stopped(task.TaskID)
+	if got, _ := m.Get(task.TaskID); got.Status != StatusRunning {
+		t.Errorf("status %s", got.Status)
+	}
+	m.Complete(task.TaskID, "a result")
+	m.Stopped(task.TaskID)
+	if got, _ := m.Get(task.TaskID); got.Status != StatusCompleted || got.Result != "a result" {
+		t.Errorf("after Complete and Stopped: %+v", got)
+	}
+}

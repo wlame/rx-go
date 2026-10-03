@@ -90,7 +90,9 @@ func registerIndexHandlers(s *Server, api huma.API) {
 			"as rx index DIR --recursive does: a file below the threshold, a file that is not text and a file " +
 			"whose index is current (unless force) is skipped, a file whose build fails is recorded and the " +
 			"task goes on. Its status has files_done and files_total, its result is a FolderTaskResult, and " +
-			"DELETE /v1/tasks/{task_id} cancels it between two files.",
+			"DELETE /v1/tasks/{task_id} cancels it: the build of the current file stops at its next read and " +
+			"stores nothing. Until its worker has stopped the task is cancelling and a POST for the directory " +
+			"answers 409.",
 		Tags: []string{"Operations"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity),

@@ -24,12 +24,18 @@ import (
 // --recursive DIR` take (internal/cachefill): the same walk lists the
 // same files in the same order, and each file is decided by the same
 // step, so the task's cli_command does what the task did. The task is
-// cancellable (tasks.Manager.CreateCancellable, under a key of its
-// operation and the directory): DELETE /v1/tasks/{task_id} stops it
-// between two files, and a findings task inside a file's scan too. The
-// files ended before the cancel keep what was written for them; the file
-// a cancel stops writes nothing. A folder task never settles
-// (tasks.Manager.Settle): it stays cancellable until it ends.
+// stoppable (tasks.Manager.CreateStoppable, under a key of its operation
+// and the directory): DELETE /v1/tasks/{task_id} cancels its context,
+// which stops the file it is on at the file's next read (an index build
+// through index.BuildContext, a scan inside findings.Scan), and no later
+// file is taken. The files ended before the cancel keep what was
+// written for them; the file a cancel stops writes nothing. Until its
+// worker has returned the task is cancelling and keeps the directory: a
+// POST for it answers 409 (busyFolder), so a POST+DELETE loop never
+// runs two workers for one directory. The worker defers
+// tasks.Manager.Stopped, which ends the task cancelled. A folder task
+// never settles (tasks.Manager.Settle): it stays cancellable until it
+// ends.
 
 // folderTally folds the results of a task over a directory into the
 // result it completes with: the counts of every entry, and the entries
@@ -113,13 +119,13 @@ type folderIndex struct {
 
 // startIndexFolder starts the index task of POST /v1/index for the
 // directory dir, pinned by the caller, or answers 409 with the task of
-// the directory already running. The task runs detached from the
-// request (runDetached), under the context its task keeps.
+// the directory already running or cancelling. The task runs detached
+// from the request (runDetached), under the context its task keeps.
 func (s *Server) startIndexFolder(req rxtypes.IndexRequest, dir paths.Pinned) (*postIndexOutput, error) {
 	mgr := s.cfg.TaskManager
-	task, ctx, isNew := mgr.CreateCancellable(dir.Path(), indexOperation)
+	task, ctx, isNew := mgr.CreateStoppable(dir.Path(), indexOperation)
 	if !isNew {
-		return nil, runningTaskConflict(req.Path, task)
+		return nil, busyFolder(mgr, req.Path, task)
 	}
 	cli := BuildCLICommand("index_post", map[string]any{
 		"path": dir.Path(), "recursive": true, "force": req.Force, "threshold": req.Threshold,
@@ -138,12 +144,30 @@ func (s *Server) startIndexFolder(req rxtypes.IndexRequest, dir paths.Pinned) (*
 	// Go note: the goroutine outlives this request; runDetached turns a
 	// panic in it into a failed task instead of a crashed server.
 	go runDetached(mgr, taskID, indexOperation, s.cfg.Logger, func() {
+		// Go note: a deferred call runs when the function returns, on
+		// every path, a panic included; Stopped ends a cancelling task
+		// only once its worker has really stopped.
+		defer mgr.Stopped(taskID)
 		s.runIndexFolder(ctx, work)
 	})
 	return &postIndexOutput{Body: rxtypes.TaskResponse{
 		TaskID: taskID, Status: status, Path: dir.Path(), StartedAt: &started, CLICommand: cli,
 		Message: fmt.Sprintf("Indexing every file under %s; follow GET /v1/tasks/%s", dir.Path(), taskID),
 	}}, nil
+}
+
+// busyFolder is the 409 of a POST for a path whose task is still there:
+// running, or, for a task over a directory that DELETE cancelled,
+// cancelling until its worker has stopped. held is the task the manager
+// handed back; it is read again through Get, a copy taken under the
+// manager's lock, since its worker may change its status meanwhile.
+func busyFolder(mgr *tasks.Manager, requestedPath string, held *tasks.Task) error {
+	running, ok := mgr.Get(held.TaskID)
+	if !ok || running.Status != tasks.StatusCancelling {
+		return runningTaskConflict(requestedPath, held)
+	}
+	return ErrTaskConflict(fmt.Sprintf("The task of %s is being cancelled and has not stopped yet (task: %s); "+
+		"ask again once it has ended", requestedPath, running.TaskID), running.TaskID)
 }
 
 // thresholdBytesOf is the index threshold of a request in bytes: the
@@ -160,8 +184,9 @@ func thresholdBytesOf(thresholdMB *int) int64 {
 // `rx index --recursive` does (Config.indexFolderFile, which is
 // cachefill.IndexFile), and completes with the counts. Each file's build
 // reports how far it has read, so progress moves inside a file too. A
-// cancel stops the task between two files: a build that has started
-// runs to its end, and its index is not stored.
+// cancel stops the build of the current file at its next read
+// (index.BuildContext) and stores nothing for it; no later file is
+// built.
 func (s *Server) runIndexFolder(ctx context.Context, work folderIndex) {
 	mgr := s.cfg.TaskManager
 	mgr.MarkRunning(work.taskID)

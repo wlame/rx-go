@@ -50,15 +50,15 @@ func errNotRegular(path string) error {
 //   - without Force, a stored index that still describes the file
 //     (index.LoadForPinned) makes it Current;
 //   - a cache that cannot store an index fails the file with the cause;
-//   - otherwise the index is built (index.Build, counting its reads into
-//     build when that is not nil) and stored: Filled. A file rx refuses
-//     to decompress is skipped with the reason; a build or store that
-//     fails fails the file.
+//   - otherwise the index is built (index.BuildContext, counting its
+//     reads into build when that is not nil) and stored: Filled. A file
+//     rx refuses to decompress is skipped with the reason; a build or
+//     store that fails fails the file.
 //
-// index.Build takes no context, so a cancel does not stop a build that
-// has started: ctx is checked before the build and again before the
-// index is stored, and a canceled run stores nothing for the file. The
-// result is then Failed with ctx's error.
+// Canceling ctx stops the build at its next read of the file's text
+// (index.BuildContext); ctx is checked again before the index is
+// stored, so a canceled run stores nothing for the file. The result is
+// then Failed with ctx's error.
 func IndexFile(ctx context.Context, e Entry, s IndexSettings, build *index.Progress) FileResult {
 	src, err := paths.Pin(e.Path)
 	if err != nil {
@@ -93,7 +93,7 @@ func IndexFile(ctx context.Context, e Entry, s IndexSettings, build *index.Progr
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return failed(e.Path, ctxErr)
 	}
-	idx, err := index.Build(e.Path, index.BuildOptions{Progress: build})
+	idx, err := index.BuildContext(ctx, e.Path, index.BuildOptions{Progress: build})
 	if errors.Is(err, compression.ErrTooLargeToDecode) {
 		return skipped(e.Path, compression.TooLargeToDecodeReason)
 	}

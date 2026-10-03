@@ -314,7 +314,9 @@ one place among the 256 unfinished findings tasks. The status has
 the file it reads; the result is a `FolderTaskResult` with the counts
 and the findings of every file scanned or current. `DELETE` cancels it
 between two files or inside a file's scan: the files scanned before the
-cancel keep their findings. See
+cancel keep their findings. Until its worker has stopped the task is
+`cancelling` and a `POST` for the directory answers `409` naming it,
+rather than joining a task that is ending. See
 [Tasks over a directory](tasks.md#tasks-over-a-directory).
 
 ### Status codes
@@ -325,6 +327,7 @@ cancel keep their findings. See
 | 400 | A file that is not text, a selection that cannot be resolved, or a body that is not valid JSON |
 | 403 | The path is outside every search root, hidden, or cannot be read |
 | 404 | The file does not exist |
+| 409 | A task over the same directory is `cancelling`: its worker has not stopped yet. The body is `{"detail", "task_id"}`; ask again once it has ended |
 | 422 | `path` missing, a field of the wrong type, or a `signatures` value over 4096 bytes |
 | 503 | 256 findings tasks are queued or running, as many as the server holds; no task starts (a `POST` for a file whose scan is one of them still joins it). `Retry-After: 5` |
 

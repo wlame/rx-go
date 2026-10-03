@@ -1,6 +1,7 @@
 package index
 
 import (
+	"context"
 	"io"
 	"sync/atomic"
 )
@@ -87,4 +88,64 @@ func (w *progressWriter) Write(p []byte) (int, error) {
 	n, err := w.Writer.Write(p)
 	w.progress.done.Add(int64(n))
 	return n, err
+}
+
+// readText returns r as a build reads its text through it: counted into
+// the build's Progress and stopped by its context (BuildContext).
+func (o BuildOptions) readText(r io.Reader) io.Reader {
+	return stopReads(o.ctx, o.Progress.countReads(r))
+}
+
+// writeText returns w as the frames of a seekable file are decoded into
+// it: counted into the build's Progress and stopped by its context.
+func (o BuildOptions) writeText(w io.Writer) io.Writer {
+	return stopWrites(o.ctx, o.Progress.countWrites(w))
+}
+
+// stopReads returns r stopped by ctx: once ctx is canceled, every Read
+// fails with ctx's error before reading anything. A nil ctx, or one that
+// can never be canceled (Done is nil), returns r unchanged, so a build
+// without a cancel pays nothing.
+func stopReads(ctx context.Context, r io.Reader) io.Reader {
+	if ctx == nil || ctx.Done() == nil {
+		return r
+	}
+	return &stoppedReader{Reader: r, ctx: ctx}
+}
+
+// stopWrites is stopReads for a writer.
+func stopWrites(ctx context.Context, w io.Writer) io.Writer {
+	if ctx == nil || ctx.Done() == nil {
+		return w
+	}
+	return &stoppedWriter{Writer: w, ctx: ctx}
+}
+
+// stoppedReader is an io.Reader that fails once its context is
+// canceled. The check runs once per Read, which reads a whole buffer, so
+// it costs little beside the work on that buffer.
+type stoppedReader struct {
+	io.Reader
+	ctx context.Context
+}
+
+func (r *stoppedReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
+}
+
+// stoppedWriter is an io.Writer that fails once its context is
+// canceled; the frame decoder stops at the failed write.
+type stoppedWriter struct {
+	io.Writer
+	ctx context.Context
+}
+
+func (w *stoppedWriter) Write(p []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.Writer.Write(p)
 }

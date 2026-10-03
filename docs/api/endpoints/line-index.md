@@ -186,9 +186,11 @@ threshold, one whose text is not text and one whose index is current
 (unless `force`) is skipped; one whose build fails is recorded and the
 task goes on. The status has `files_done` and `files_total`, the
 result is a `FolderTaskResult`, and `DELETE /v1/tasks/{task_id}`
-cancels the task between two files: see
+cancels the task: the build of the current file stops at its next read
+and stores nothing, and no later file is built; see
 [Tasks over a directory](tasks.md#tasks-over-a-directory). A second
-`POST` for the directory while its task runs answers `409`.
+`POST` for the directory answers `409` while its task runs, and also
+while a cancelled one is `cancelling` (its worker has not stopped).
 
 ### Status codes
 
@@ -198,7 +200,7 @@ cancels the task between two files: see
 | `400 Bad Request` | A file below the size threshold; a file that is not text (`not a text file: …: <path>`) |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`) |
 | `404 Not Found` | File doesn't exist |
-| `409 Conflict` | A task for the same path is already running — an index or a compress task, or the index task of the same directory |
+| `409 Conflict` | A task for the same path is already running — an index or a compress task, or the index task of the same directory, running or `cancelling` |
 | `422 Unprocessable Entity` | The body is not the schema's: a missing `path`, a member it does not declare (`analyze`, `analyze_window_lines`) |
 
 ### Error examples

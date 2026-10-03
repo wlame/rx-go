@@ -24,12 +24,14 @@
 //     task that makes thousands of them never drops another one.
 //   - A watch (Watch) that keeps how a task ended, for a caller that
 //     reads it after the cap or the sweeper may have dropped the task.
-//   - Cancellable tasks (CreateCancellable): a signature scan, and an
-//     index or findings task over a directory, runs under a context its
-//     task keeps, and Cancel stops it and ends the task as cancelled
-//     (DELETE /v1/tasks/{task_id}). Such a task holds a key of its
-//     operation and path, so it runs beside an index build or a
-//     compression of the same file.
+//   - Cancellable tasks (CreateCancellable): a signature scan runs under
+//     a context its task keeps, and Cancel stops it and ends the task as
+//     cancelled (DELETE /v1/tasks/{task_id}). Such a task holds a key of
+//     its operation and path, so it runs beside an index build or a
+//     compression of the same file. A stoppable task (CreateStoppable),
+//     the index or findings task over a directory, is cancellable too,
+//     but a cancel leaves it cancelling, holding its key, until its
+//     worker has returned (Stopped).
 //   - What a task does as an rx command (SetCLICommand), and, for a task
 //     over a directory, how many of its files it has ended
 //     (ReportFiles).
@@ -100,6 +102,8 @@ type Status string
 //
 //	Queued -> Running -> (Completed | Failed)
 //	Queued or Running -> Cancelled (Cancel, cancellable tasks only)
+//	Queued or Running -> Cancelling -> Cancelled (Cancel of a stoppable
+//	task, then its worker's end: Stopped, Complete or Fail)
 const (
 	StatusQueued    Status = "queued"
 	StatusRunning   Status = "running"
@@ -108,6 +112,11 @@ const (
 	// StatusCancelled is the end of a cancellable task stopped by
 	// Cancel. It is final: a later Update of the task changes nothing.
 	StatusCancelled Status = "cancelled"
+	// StatusCancelling is a stoppable task (CreateStoppable) that Cancel
+	// has asked to stop and whose worker has not returned yet. It is not
+	// an end: the task keeps its key, so no other task starts for its
+	// path, until its worker's end makes it StatusCancelled.
+	StatusCancelling Status = "cancelling"
 )
 
 // Task holds the metadata and result of one background job. All
@@ -179,6 +188,11 @@ type Task struct {
 	// (CreateSubtask): it counts toward the cap of the subtasks, not of
 	// the tasks a client asked for. Set at creation and never changed.
 	subtask bool
+
+	// stoppable says Cancel leaves the task cancelling, holding its key,
+	// until its worker ends (CreateStoppable). Set at creation and never
+	// changed.
+	stoppable bool
 
 	// end is how the task first ended, written under the manager's lock
 	// just before done is closed and never after. Shared by the clones
@@ -282,10 +296,17 @@ func (t *Task) Files() *FileProgress {
 	return &FileProgress{Done: done, Total: total}
 }
 
+// isEnd reports whether s is a terminal status: completed, failed or
+// cancelled.
+func (s Status) isEnd() bool {
+	return s == StatusCompleted || s == StatusFailed || s == StatusCancelled
+}
+
 // IsTerminal reports whether the task is done (completed, failed or
-// cancelled). Used by the sweeper and by HTTP 409 logic.
+// cancelled). Used by the sweeper and by HTTP 409 logic. A cancelling
+// task is not done.
 func (t *Task) IsTerminal() bool {
-	return t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled
+	return t.Status.isEnd()
 }
 
 // ============================================================================
@@ -483,6 +504,37 @@ func (m *Manager) CreateCancellable(path, operation string) (*Task, context.Cont
 	return task, task.ctx, isNew
 }
 
+// CreateStoppable is CreateCancellable for a task whose worker cannot
+// be abandoned at once: the index or findings task over a directory,
+// whose current file may take a while to stop. Cancel cancels the
+// task's context and marks it StatusCancelling, and the task keeps its
+// key: a create for the same path gets it back, as for a running task,
+// so a cancel followed by a new request never runs two workers for one
+// path. The worker's end (Stopped, which the worker defers, or its own
+// Complete or Fail) then ends the task StatusCancelled and frees the
+// key.
+func (m *Manager) CreateStoppable(path, operation string) (*Task, context.Context, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, _, isNew := m.createLocked(newTask{
+		operation: operation, path: path, held: []string{cancellableKey(operation, path)},
+		cancellable: true, stoppable: true,
+	})
+	return task, task.ctx, isNew
+}
+
+// Stopped says the worker of task taskID has returned. A task that
+// Cancel left cancelling ends cancelled, and its key is freed; any other
+// task is left as it is (its worker completed or failed it already, or
+// runDetached fails it after a panic). Unknown ids are ignored.
+func (m *Manager) Stopped(taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if task, ok := m.tasks[taskID]; ok && task.Status == StatusCancelling {
+		m.endLocked(task, StatusCancelled)
+	}
+}
+
 // CancellableHolder returns the unfinished cancellable task of
 // operation for path, and false when none runs. It creates nothing: a
 // caller that cannot start a task (no place for one) uses it to join
@@ -518,7 +570,7 @@ func (m *Manager) Settle(taskID string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	task, ok := m.tasks[taskID]
-	if !ok || task.Status == StatusCancelled {
+	if !ok || task.Status == StatusCancelled || task.Status == StatusCancelling {
 		return false
 	}
 	task.settled = true
@@ -531,10 +583,14 @@ func (m *Manager) Settle(taskID string) bool {
 // released, so a new task for the same path may start at once (it waits
 // for the stopping worker wherever the work itself serializes).
 //
+// A stoppable task (CreateStoppable) does not end here: it is marked
+// StatusCancelling and keeps its key until its worker's end, and a
+// second Cancel of it changes nothing and returns nil.
+//
 // It returns ErrTaskNotFound for an unknown task, ErrNotCancellable
-// for a task not created by CreateCancellable, and ErrTaskEnded for a
-// task that has already ended or settled (Settle); the task is not
-// changed then.
+// for a task not created by CreateCancellable or CreateStoppable, and
+// ErrTaskEnded for a task that has already ended or settled (Settle);
+// the task is not changed then.
 func (m *Manager) Cancel(taskID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -544,23 +600,31 @@ func (m *Manager) Cancel(taskID string) error {
 		return ErrTaskNotFound
 	case task.cancel == nil:
 		return ErrNotCancellable
+	case task.Status == StatusCancelling:
+		return nil
 	case task.IsTerminal() || task.settled:
 		return ErrTaskEnded
 	}
 	task.cancel()
+	if task.stoppable {
+		task.Status = StatusCancelling
+		return nil
+	}
 	m.endLocked(task, StatusCancelled)
 	return nil
 }
 
 // newTask is what creating a task takes: its operation, the path it
 // shows, the keys it holds in the path locks (unique, at least one), its
-// class, and whether Cancel can stop it.
+// class, whether Cancel can stop it, and whether a cancel waits for its
+// worker (stoppable).
 type newTask struct {
 	operation   string
 	path        string
 	held        []string
 	subtask     bool
 	cancellable bool
+	stoppable   bool
 }
 
 // createLocked creates the task spec describes, or returns the running
@@ -582,6 +646,7 @@ func (m *Manager) createLocked(spec newTask) (*Task, string, bool) {
 		done:      make(chan struct{}),
 		held:      spec.held,
 		subtask:   spec.subtask,
+		stoppable: spec.stoppable,
 		end:       &End{},
 	}
 	if spec.cancellable {
@@ -680,7 +745,9 @@ func (m *Manager) dropOldestFinishedLocked(subtask bool) {
 //
 // A cancelled task is not changed: Cancel ended it, and its worker's
 // own Fail or Complete, which comes once the work has stopped, is
-// ignored, so the task stays cancelled with no error and no result.
+// ignored, so the task stays cancelled with no error and no result. A
+// cancelling task (CreateStoppable) ignores every update but an end,
+// which ends it cancelled, with no error and no result.
 func (m *Manager) Update(taskID string, status Status, errMsg string, result any) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -689,6 +756,15 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 		return false
 	}
 	if task.Status == StatusCancelled {
+		return true
+	}
+	// A cancelling task stays cancelling until its worker's end, which
+	// ends it cancelled whatever the worker reports: the cancel was
+	// asked first.
+	if task.Status == StatusCancelling {
+		if status.isEnd() {
+			m.endLocked(task, StatusCancelled)
+		}
 		return true
 	}
 	// Whether the task had already ended before this update: only the

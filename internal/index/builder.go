@@ -24,6 +24,7 @@ package index
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -57,6 +58,11 @@ type BuildOptions struct {
 	// before it is opened. Tests use it to retarget a link at that
 	// moment.
 	afterPin func()
+
+	// ctx stops the build: once it is canceled, the next read of the
+	// text fails with its error (readText, writeText). Set by
+	// BuildContext; nil for Build, which nothing stops.
+	ctx context.Context
 
 	// beforeWalk, when set, runs after the file is opened and stated and
 	// before its text is read. Tests use it to change the file, or what
@@ -97,6 +103,18 @@ func GetIndexStepBytes() int64 {
 // On success the caller can hand the result straight to Save() or
 // inspect LineIndex in-memory; Build does not write to disk itself.
 func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, error) {
+	return BuildContext(context.Background(), sourcePath, opts)
+}
+
+// BuildContext is Build stopped by ctx: once ctx is canceled, the build
+// fails at its next read of the file's text with ctx's error (wrapped;
+// errors.Is finds it), so a cancel stops a build of any size within one
+// read buffer. Every read of the text goes through that check: the
+// stream of a plain or stream-compressed file, and the text a seekable
+// file's frames are decoded into. A context that is never canceled
+// (context.Background) costs nothing, and the index is Build's.
+func BuildContext(ctx context.Context, sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, error) {
+	opts.ctx = ctx
 	started := time.Now()
 
 	src, err := paths.Pin(sourcePath)
@@ -205,7 +223,7 @@ func buildText(
 	if opts.Progress != nil {
 		opts.Progress.start(info.Size())
 	}
-	statedBytes := opts.Progress.countReads(io.LimitReader(src.file, info.Size()))
+	statedBytes := opts.readText(io.LimitReader(src.file, info.Size()))
 
 	// A compressed file is indexed through its decompressor, so the
 	// line numbers and byte offsets describe the text inside it. Read
@@ -689,12 +707,12 @@ func buildSeekable(
 	// its lines. Otherwise the frame scan alone builds the index, as it
 	// always has.
 	if times == nil {
-		frames, err = seekableindex.BuildAndCopyText(src.file, size, opts.Progress.countWrites(io.Discard))
+		frames, err = seekableindex.BuildAndCopyText(src.file, size, opts.writeText(io.Discard))
 	} else {
 		if err = useSeekTable(times, src.file, size); err != nil {
 			return nil, fmt.Errorf("%s: %w", sourcePath, err)
 		}
-		frames, err = buildFramesAndWalkText(src.file, size, step, times, opts.Progress)
+		frames, err = buildFramesAndWalkText(src.file, size, step, times, opts)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", sourcePath, err)
@@ -796,7 +814,7 @@ func buildFramesAndWalkText(
 	size int64,
 	step int64,
 	times *timeIndexer,
-	progress *Progress,
+	opts BuildOptions,
 ) (*seekableindex.Result, error) {
 	textReader, textWriter := io.Pipe()
 
@@ -809,7 +827,7 @@ func buildFramesAndWalkText(
 	}
 	decoded := make(chan framesResult, 1)
 	go func() {
-		frames, err := seekableindex.BuildAndCopyText(r, size, progress.countWrites(textWriter))
+		frames, err := seekableindex.BuildAndCopyText(r, size, opts.writeText(textWriter))
 		// CloseWithError(nil) is a plain Close: the walk reads io.EOF
 		// after the last frame. A non-nil error is what the walk's next
 		// read returns instead.
