@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples --lines` and `GET /v1/samples?lines=` on a gzip, bzip2, xz
+  or plain zstd file stop decompressing after the last wanted line,
+  instead of reading the stream to its end for every request. With an
+  index, a line counted from the end (`-1`) takes the line count from
+  it and costs one pass, not two, and the pass starts counting lines at
+  the checkpoint before the first wanted line. Answers are unchanged.
+
 - `GET /v1/samples` no longer builds a file's line index inside the
   request. The build runs as a background `index` task, visible at
   `GET /v1/tasks/{task_id}`, and every request for the same file, in
