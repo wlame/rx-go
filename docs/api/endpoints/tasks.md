@@ -1,7 +1,8 @@
 # `GET /v1/tasks/{task_id}`
 
 Poll the status of a background task created by `POST /v1/index` or
-`POST /v1/compress`.
+`POST /v1/compress`, or of the index build a `GET /v1/samples` request
+answered `202` for.
 
 ## Purpose
 
@@ -34,6 +35,7 @@ GET /v1/tasks/{task_id}
   "started_at":  "2026-04-18T14:23:45.123456Z",
   "completed_at": null,
   "error":       null,
+  "progress":    null,
   "result":      null
 }
 ```
@@ -49,6 +51,7 @@ GET /v1/tasks/{task_id}
   "started_at":  "2026-04-18T14:23:45.123456Z",
   "completed_at": null,
   "error":       null,
+  "progress":    0.42,
   "result":      null
 }
 ```
@@ -64,6 +67,7 @@ GET /v1/tasks/{task_id}
   "started_at":  "2026-04-18T14:23:45.123456Z",
   "completed_at": "2026-04-18T14:23:48.456789Z",
   "error":       null,
+  "progress":    1,
   "result": {
     "success":    true,
     "path":       "/var/log/audit-2026-03.log",
@@ -95,6 +99,7 @@ GET /v1/tasks/{task_id}
   "started_at":  "2026-04-18T14:23:45.123456Z",
   "completed_at": "2026-04-18T14:23:46.789012Z",
   "error":       "build index: permission denied reading /var/log/audit-2026-03.log",
+  "progress":    null,
   "result":      null
 }
 ```
@@ -110,6 +115,7 @@ GET /v1/tasks/{task_id}
 | `started_at` | string | ISO 8601 UTC — when the task was created |
 | `completed_at` | string \| null | Set once the task reaches `completed` or `failed` |
 | `error` | string \| null | Populated only when `status == "failed"` |
+| `progress` | number \| null | Share of an index task's input read so far, from 0 to 1 (a stream-compressed or plain file counts its bytes on disk, a seekable zstd file its decompressed text). `null` for a compress task, for an index task that reused a stored index, and before the build has started |
 | `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult` or `CompressTaskResult` by operation |
 
 ### Result shape by operation
