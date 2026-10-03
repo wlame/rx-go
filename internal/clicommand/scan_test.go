@@ -171,21 +171,36 @@ func TestScan_RecursiveScansEveryListedFileAndSkipsNonText(t *testing.T) {
 	}
 }
 
-// A directory without --recursive is a usage error (exit 2) and nothing
-// is scanned, even for the file named beside it.
-func TestScan_ADirectoryNeedsRecursive(t *testing.T) {
+// A directory without --recursive scans the files directly inside it,
+// as rx index DIR indexes them, and leaves its subdirectories alone; the
+// listing is the one rx index DIR makes, in the same order.
+func TestScan_ADirectoryWithoutRecursiveScansItsTopLevel(t *testing.T) {
 	withTraceSignatures(t)
 	dir := t.TempDir()
 	app := writeText(t, dir, "app.log", tracebackLog)
-	out, err := runScanCmd(t, app, dir)
-	if code := exitCodeOf(t, err); code != ExitUsageError || !strings.Contains(err.Error(), "--recursive") {
-		t.Fatalf("exit %d, %v", code, err)
+	top := writeText(t, dir, "b.log", "LINE 1 ERROR top\n")
+	deep := writeText(t, dir, "sub/c.log", "LINE 1 ERROR deep\n")
+
+	result := scanJSON(t, dir)
+	var scanned []string
+	for _, f := range result.Files {
+		scanned = append(scanned, f.Path)
 	}
-	if out != "" {
-		t.Errorf("output %q", out)
+	if want := []string{app, top}; !slices.Equal(scanned, want) {
+		t.Errorf("scanned %v, want the top level %v", scanned, want)
 	}
-	if got := cachedAnswer(t, app, "default", false); got.State != findings.StateNone {
-		t.Errorf("the file beside the directory was scanned: %s", got.State)
+	if got := cachedAnswer(t, deep, "default", false); got.State != findings.StateNone {
+		t.Errorf("a file of a subdirectory was scanned: %s", got.State)
+	}
+
+	zero := 0
+	indexed := runIndexJSON(t, indexParams{paths: []string{dir}, threshold: &zero})
+	var indexOrder []string
+	for _, entry := range indexed["indexed"].([]any) {
+		indexOrder = append(indexOrder, entry.(map[string]any)["path"].(string))
+	}
+	if !slices.Equal(indexOrder, scanned) {
+		t.Errorf("rx index DIR lists %v, rx scan DIR %v", indexOrder, scanned)
 	}
 }
 

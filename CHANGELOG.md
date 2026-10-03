@@ -277,11 +277,11 @@ History maps every removed surface to what replaces it.
   [--json] [--mask-secrets]`: scan files for signatures and keep their
   findings in the findings cache, the command `POST /v1/findings` is
   the equivalent of. A file whose every selected signature is current
-  is not read again (`current`) unless `--force`. A directory needs
-  `--recursive` (exit 2 without it, before anything is scanned); with
-  it every file the file tree lists under it is scanned, one at a time,
-  in the walk's order (hidden entries only with `--hidden`), and a file
-  that is not text is skipped with the reason. The human output is one
+  is not read again (`current`) unless `--force`. A directory is
+  scanned as `rx index` indexes one: the files the file tree lists
+  directly inside it and, with `--recursive`, every file below it, one
+  at a time, in the walk's order (hidden entries only with `--hidden`);
+  a file that is not text is skipped with the reason. The human output is one
   line per file (`logs/app.log: full, 3 findings (error-line 2,
   python-traceback 1)`, `, current` when nothing was read), the skipped
   files and a total line (`Total: 3 files, 2 scanned, 1 skipped (0

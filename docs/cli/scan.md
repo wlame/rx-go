@@ -9,7 +9,7 @@ files again.
 
 ```text
 rx scan PATH [PATH ...] [--signatures=SEL] [--force] [--json]
-rx scan --recursive DIR [--signatures=SEL] [--force] [--json]
+rx scan DIR [--recursive] [--signatures=SEL] [--force] [--json]
 ```
 
 ## Description
@@ -22,18 +22,18 @@ is not scanned again: a file whose every selected signature is current
 is reported `current` and is not read. `--force` scans every selected
 signature again.
 
-A directory needs `--recursive`: without it the command is refused with
-exit 2 and nothing is scanned. With it, every file the
-[file tree](../api/endpoints/tree.md) lists under the directory is
-scanned: entries whose name starts with a dot only with `--hidden`, and
+A directory is scanned as [`rx index`](line-index.md) indexes one: the
+files the [file tree](../api/endpoints/tree.md) lists directly inside it
+and, with `--recursive`, every file below it, in its subdirectories
+too: entries whose name starts with a dot only with `--hidden`, and
 a symbolic link only where naming its target would be allowed (see
 [Symlinks inside a directory search](../concepts/security.md#symlinks-inside-a-directory-search)).
 A file whose text is not text (a binary file, a `.tar.gz`) is skipped
 with the reason. The files are scanned one at a time, in the order the
 paths are given and, under a directory, in the order of the walk: real
 directories depth first and by name, then the directories reached
-through links. `rx index --recursive` and `POST /v1/findings` on a
-directory list the same files in the same order.
+through links. `rx index` lists the same files in the same order, and
+`POST /v1/findings` on a directory those of `rx scan --recursive`.
 
 The scan takes the settings `rx trace --signatures` takes:
 `RX_WORKERS`, `RX_SIGNATURES_LINE_BYTES`,
@@ -52,7 +52,7 @@ masking mode answers from what `rx scan` cached.
 |------|------|---------|-------------|
 | `--signatures` | `string` | the default set | The signatures to scan for: ids, groups, tags, `all`, `default`, `-word` to remove (`--signatures=traceback,sql`); a bare `--signatures` is the default set |
 | `-f`, `--force` | `bool` | `false` | Scan every selected signature again, those with current findings too |
-| `-r`, `--recursive` | `bool` | `false` | Scan every file under a directory; a directory is refused without it |
+| `-r`, `--recursive` | `bool` | `false` | Scan every file below a directory, in its subdirectories too; without it, the files directly inside it |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `--mask-secrets` | `bool` | `RX_MASK_SECRETS` or `false` | Mask what the signatures with `redact: true` find, in the findings cache |
 
@@ -66,9 +66,8 @@ processed and each failure is reported; the command then exits 3 when
 every failure was a file that does not exist, 4 when every failure was
 a path outside the roots or a file the process may not read, and 1 when
 the failures were of different kinds or a scan failed. A path outside
-every `--search-root` exits 4 before anything is read. A directory
-without `--recursive`, and a selection that names an unknown signature,
-exit 2 before anything is scanned. An interrupt exits 5; the file being
+every `--search-root` exits 4 before anything is read. A selection that
+names an unknown signature exits 2 before anything is scanned. An interrupt exits 5; the file being
 scanned then caches nothing.
 
 A file that a walk of a directory meets and may not read is not a

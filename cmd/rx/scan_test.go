@@ -11,8 +11,8 @@ import (
 // rx scan through the real binary: a bare `rx scan FILE` reaches the
 // scan command (not a trace for the pattern "scan"), fills the cache,
 // prints only its document with --json, and exits as rx index does: 0
-// for a scanned file, 2 for a directory without --recursive, 3 for a
-// missing file.
+// for a scanned file and for a directory, with --recursive or without
+// (then its top level only), 3 for a missing file.
 func TestScanCommand_ExitCodesAndJSONThroughTheBinary(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	dir, path := writeLog(t)
@@ -34,9 +34,9 @@ func TestScanCommand_ExitCodesAndJSONThroughTheBinary(t *testing.T) {
 		t.Errorf("rx scan FILE: %s", stdout)
 	}
 
-	code, _, stderr = runRx(t, "scan", dir)
-	if code != 2 || !strings.Contains(stderr, "--recursive") {
-		t.Errorf("rx scan DIR: exit %d, stderr: %s", code, stderr)
+	code, stdout, stderr = runRx(t, "scan", dir)
+	if code != 0 || !strings.Contains(stdout, path+": ") {
+		t.Errorf("rx scan DIR: exit %d, stdout: %s, stderr: %s", code, stdout, stderr)
 	}
 	if code, stdout, stderr = runRx(t, "scan", "-r", dir); code != 0 || !strings.Contains(stdout, path+": ") {
 		t.Errorf("rx scan -r DIR: exit %d, stdout: %s, stderr: %s", code, stdout, stderr)

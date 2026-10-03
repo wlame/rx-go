@@ -770,8 +770,8 @@ The output, the JSON fields and the flags are on the
 [`rx trace`](../cli/trace.md#signatures) page.
 
 [`rx scan`](../cli/scan.md) fills the findings cache without printing
-the findings: it scans each file it is given, or with `--recursive`
-every file under a directory, for a selection (`--signatures=`, the
+the findings: it scans each file it is given, and the files of a
+directory (with `--recursive` every file below it), for a selection (`--signatures=`, the
 default set without it), skips a file whose findings are current
 unless `--force`, and prints each file's state and counts.
 

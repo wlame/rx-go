@@ -27,14 +27,17 @@ import (
 //
 //	rx scan PATH [PATH ...]            # the default set
 //	rx scan --signatures=traceback,sql PATH
+//	rx scan DIR                        # the files directly inside DIR
 //	rx scan --recursive DIR            # every file the tree lists under DIR
 //	rx scan --force PATH               # scan current signatures again
 //	rx scan --json PATH                # per-file state and counts, and totals
 //
-// A directory needs --recursive. Files are scanned one at a time, in the
-// order they are named and, under a directory, in the walk's order (the
-// order POST /v1/findings on the directory and `rx index --recursive`
-// take them in). The exit codes are those of `rx index`.
+// A directory is scanned as `rx index` indexes one: the files directly
+// inside it, and with --recursive every file below it. Files are scanned
+// one at a time, in the order they are named and, under a directory, in
+// the walk's order (the order `rx index` and, with --recursive,
+// POST /v1/findings on the directory take them in). The exit codes are
+// those of `rx index`.
 func NewScanCommand(out io.Writer) *cobra.Command {
 	var (
 		selection  string
@@ -48,8 +51,9 @@ func NewScanCommand(out io.Writer) *cobra.Command {
 		Long: "Scan files for signatures and keep their findings in the findings cache, so that " +
 			"rx trace --signatures, GET /v1/findings and the viewer answer from it. A file whose findings " +
 			"are current for every selected signature is not read again unless --force is given. " +
-			"A directory needs --recursive: every file the file tree lists under it is scanned, " +
-			"one at a time (hidden entries only with --hidden), and a file that is not text is skipped.",
+			"For a directory, the files the file tree lists directly inside it are scanned, and with " +
+			"--recursive every file below it, one at a time (hidden entries only with --hidden); a file " +
+			"that is not text is skipped.",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runScan(cmd.Context(), out, scanParams{
@@ -70,7 +74,7 @@ func NewScanCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().Lookup(signaturesFlag).NoOptDefVal = defaultSelection
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Scan every selected signature again, those with current findings too")
 	cmd.Flags().BoolVarP(&recursive, "recursive", "r", false,
-		"Scan every file under a directory; a directory is refused without it")
+		"Scan every file below a directory, in its subdirectories too; without it, the files directly inside it")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	bindMaskSecretsFlag(cmd)
 	return cmd
@@ -186,9 +190,9 @@ func (r *scanResult) failureCodes() []int {
 
 // runScan runs one `rx scan`: every path checked against the search
 // roots (exit 4), the selection loaded (exit 2 for one that names an
-// unknown or refused signature), the paths stated, a directory refused
-// without --recursive (exit 2, before anything is scanned), then every
-// file scanned in turn (cachefill.ScanFile) and the answer printed. A
+// unknown or refused signature), the paths stated and each directory
+// listed (recursively with --recursive), then every file scanned in turn
+// (cachefill.ScanFile) and the answer printed. A
 // file that fails is reported and the rest are scanned; the exit code is
 // then the one its failures share, as for `rx index`. An interrupt
 // (ctx canceled) stops the run between files or inside one, and nothing
@@ -212,10 +216,7 @@ func runScan(ctx context.Context, out io.Writer, p scanParams) error {
 	result := &scanResult{
 		Signatures: sel.expr, Files: []scannedFile{}, Skipped: []rxtypes.SkippedFile{}, Errors: []indexErrorItem{},
 	}
-	entries, err := scanEntries(p, result)
-	if err != nil {
-		return err
-	}
+	entries := scanEntries(p, result)
 
 	findings.SetMaxScans(config.MaxSignatureScans())
 	opts := findingsScanOptions()
@@ -242,45 +243,32 @@ func runScan(ctx context.Context, out io.Writer, p scanParams) error {
 	return multiPathFailure(result.failureCodes(), "one or more files failed to scan")
 }
 
-// scanEntries turns the paths of a run into the files to scan: a file
-// as named, a directory listed by the tree's rules (listDirectory,
-// recursively), in the order the paths were given. A path that cannot
-// be stated, or a directory that cannot be listed, is recorded in result
-// as a failure. A directory without --recursive is a usage error,
-// returned after every path is stated and before any directory is
-// listed, so nothing is scanned.
-func scanEntries(p scanParams, result *scanResult) ([]cachefill.Entry, error) {
-	type namedPath struct {
-		path  string
-		isDir bool
-	}
-	var named []namedPath
+// scanEntries turns the paths of a run into the files to scan, in the
+// order the paths were given: a file as named, a directory listed by the
+// tree's rules (listDirectory): the files directly inside it, or with
+// --recursive every file below it, as `rx index` lists a directory. A
+// path that cannot be stated, or a directory that cannot be listed, is
+// recorded in result as a failure.
+func scanEntries(p scanParams, result *scanResult) []cachefill.Entry {
+	var entries []cachefill.Entry
 	for _, path := range p.paths {
 		info, err := os.Stat(path)
-		switch {
-		case err != nil:
+		if err != nil {
 			result.fail(path, err)
-		case info.IsDir() && !p.recursive:
-			return nil, exitWithError(os.Stderr, ExitUsageError,
-				"a directory needs --recursive (-r) to scan every file under it: %s", output.Printable(path))
-		default:
-			named = append(named, namedPath{path: path, isDir: info.IsDir()})
-		}
-	}
-	var entries []cachefill.Entry
-	for _, n := range named {
-		if !n.isDir {
-			entries = append(entries, cachefill.Entry{Path: n.path, Named: true})
 			continue
 		}
-		listed, err := listDirectory(n.path, true)
+		if !info.IsDir() {
+			entries = append(entries, cachefill.Entry{Path: path, Named: true})
+			continue
+		}
+		listed, err := listDirectory(path, p.recursive)
 		if err != nil {
-			result.fail(n.path, err)
+			result.fail(path, err)
 			continue
 		}
 		entries = append(entries, listed...)
 	}
-	return entries, nil
+	return entries
 }
 
 // writeScanHuman prints one line per file whose findings are known (its
