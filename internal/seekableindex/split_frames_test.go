@@ -69,7 +69,7 @@ func TestBuild_FramesThatSplitLinesAreNumberedAsTheText(t *testing.T) {
 			zstPath := filepath.Join(t.TempDir(), "split.log.zst")
 			seekablefile.Write(t, zstPath, tc.frames)
 
-			got, err := Build(zstPath)
+			got, err := buildPath(zstPath)
 			if err != nil {
 				t.Fatalf("Build: %v", err)
 			}

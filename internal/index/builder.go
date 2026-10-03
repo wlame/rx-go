@@ -75,8 +75,14 @@ type BuildOptions struct {
 	// task). Nil costs nothing.
 	Progress *Progress
 
-	// beforeWalk, when set, runs after the file is stated and before it
-	// is read. Tests use it to change the file at that moment.
+	// afterPin, when set, runs right after the source is pinned and
+	// before it is opened. Tests use it to retarget a link at that
+	// moment.
+	afterPin func()
+
+	// beforeWalk, when set, runs after the file is opened and stated and
+	// before its text is read. Tests use it to change the file, or what
+	// its path leads to, at that moment.
 	beforeWalk func()
 }
 
@@ -133,6 +139,12 @@ func SatisfiesBuild(idx *rxtypes.UnifiedFileIndex, opts BuildOptions) bool {
 // between; the pin is what keeps that from indexing a file outside the
 // roots.
 //
+// SECURITY: the pinned file is opened once, and every later read —
+// format detection, fingerprint, text walk, seek table and frames —
+// goes through that one handle. Nothing is looked up by sourcePath
+// after the open, so a link retargeted during the build cannot make the
+// build read another file.
+//
 // On success the caller can hand the result straight to Save() or
 // inspect LineIndex in-memory; Build does not write to disk itself.
 func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, error) {
@@ -146,6 +158,34 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	if info.IsDir() {
 		return nil, fmt.Errorf("build: %s is a directory", sourcePath)
 	}
+	if opts.afterPin != nil {
+		opts.afterPin()
+	}
+
+	f, err := src.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", sourcePath, err)
+	}
+	defer func() {
+		// Close error ignored — file was opened read-only.
+		_ = f.Close()
+	}()
+
+	// The index describes the file as the pin's stat saw it. The
+	// identity is taken now, before the walk, and the walk reads no
+	// further than the stated size, so a log that grows during the
+	// build gets an index of exactly the bytes its identity records.
+	// The next load sees the larger size and rebuilds. Inode, ctime and
+	// the fingerprint are what let a later run tell this exact file
+	// from one rewritten with the same size and mtime; a fingerprint
+	// that cannot be read is left out, and validation falls back to the
+	// other fields.
+	source := openedSource{
+		path:     sourcePath,
+		file:     f,
+		info:     info,
+		identity: IdentityFromOpenFile(f, info),
+	}
 
 	step := opts.StepBytes
 	if step <= 0 {
@@ -157,34 +197,37 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// checkpoint that names a frame lets a lookup decompress that one
 	// frame instead of the stream up to it. rx-python indexes the same
 	// file the same way, and the cache is shared.
-	if seekable.IsSeekable(sourcePath) {
-		return buildSeekable(sourcePath, info, started, step, opts)
+	if seekable.IsSeekableFile(sourcePath, f, info.Size()) {
+		return buildSeekable(source, started, step, opts)
 	}
+	return buildText(source, started, step, opts)
+}
 
-	// The index describes the file as this stat saw it. The identity is
-	// taken now, before the walk, and the walk reads no further than the
-	// stated size, so a log that grows during the build gets an index
-	// of exactly the bytes its identity records. The next load sees the
-	// larger size and rebuilds. Inode, ctime and the fingerprint are
-	// what let a later run tell this exact file from one rewritten with
-	// the same size and mtime; a fingerprint that cannot be read is left
-	// out, and validation falls back to the other fields.
-	identity := IdentityFromInfo(sourcePath, info)
+// openedSource is the file an index build reads: the caller's path, the
+// handle the pin opened, the pin's stat and the identity taken from
+// them. Every read of the build goes through file.
+type openedSource struct {
+	path     string
+	file     *os.File
+	info     os.FileInfo
+	identity SourceIdentity
+}
 
-	f, err := src.Open()
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", sourcePath, err)
-	}
-	defer func() {
-		// Close error ignored — file was opened read-only.
-		_ = f.Close()
-	}()
+// buildText indexes a plain or stream-compressed file by walking its
+// text line by line.
+func buildText(
+	src openedSource,
+	started time.Time,
+	step int64,
+	opts BuildOptions,
+) (*rxtypes.UnifiedFileIndex, error) {
+	sourcePath, info, identity := src.path, src.info, src.identity
 	// The progress counts the file's own bytes, before any
 	// decompression, so its total is the size the stat saw.
 	if opts.Progress != nil {
 		opts.Progress.start(info.Size())
 	}
-	statedBytes := opts.Progress.countReads(io.LimitReader(f, info.Size()))
+	statedBytes := opts.Progress.countReads(io.LimitReader(src.file, info.Size()))
 
 	// A compressed file is indexed through its decompressor, so the
 	// line numbers and byte offsets describe the text inside it. Read
@@ -193,9 +236,9 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// container: a 600 MB log came back as 209,365 lines with a "mixed"
 	// line ending. rx-python indexes the same content the same way.
 	source := statedBytes
-	format, _ := compression.DetectFromPath(sourcePath)
+	format, _ := compression.DetectFromOpenFile(sourcePath, src.file)
 	if format != compression.FormatNone {
-		// The file itself is closed by the defer above.
+		// The file itself is closed by Build.
 		dec, dErr := compression.NewReader(io.NopCloser(statedBytes), format)
 		if dErr != nil {
 			return nil, fmt.Errorf("decompress %s: %w", sourcePath, dErr)
@@ -655,32 +698,40 @@ func ptrString(s string) *string    { return &s }
 // of a seekable file equals the analysis of its decompressed copy, line
 // numbers and offsets included (both are positions in the text).
 func buildSeekable(
-	sourcePath string,
-	info os.FileInfo,
+	src openedSource,
 	started time.Time,
 	step int64,
 	opts BuildOptions,
 ) (*rxtypes.UnifiedFileIndex, error) {
-	identity := IdentityFromInfo(sourcePath, info)
+	sourcePath, info, identity := src.path, src.info, src.identity
+	// The seek table sits at the end of the file, so it is read at the
+	// file's current size, as the open handle reports it.
+	current, err := src.file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat %s: %w", sourcePath, err)
+	}
+	size := current.Size()
 
 	coord := newCoordinator(opts)
 	var (
 		frames *seekableindex.Result
 		stats  *walkStats
-		err    error
 	)
 	if opts.Progress != nil {
-		if progressErr := startSeekableProgress(opts.Progress, sourcePath); progressErr != nil {
-			return nil, progressErr
+		if progressErr := startSeekableProgress(opts.Progress, src.file, size); progressErr != nil {
+			return nil, fmt.Errorf("%s: %w", sourcePath, progressErr)
 		}
 	}
+	if opts.beforeWalk != nil {
+		opts.beforeWalk()
+	}
 	if coord == nil {
-		frames, err = seekableindex.BuildAndCopyText(sourcePath, opts.Progress.countWrites(io.Discard))
+		frames, err = seekableindex.BuildAndCopyText(src.file, size, opts.Progress.countWrites(io.Discard))
 	} else {
-		frames, stats, err = buildFramesAndWalkText(sourcePath, step, coord, opts.Progress)
+		frames, stats, err = buildFramesAndWalkText(src.file, size, step, coord, opts.Progress)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", sourcePath, err)
 	}
 
 	format := "zstd"
@@ -728,20 +779,12 @@ func buildSeekable(
 // startSeekableProgress sets the total of a seekable file's build: the
 // length of its text, which its seek table records. The build decodes
 // frame after frame by position rather than reading the file as one
-// stream, so the text it writes is what the progress counts.
-func startSeekableProgress(progress *Progress, sourcePath string) error {
-	f, err := os.Open(sourcePath)
+// stream, so the text it writes is what the progress counts. The table
+// is read from r, the open file, size bytes long.
+func startSeekableProgress(progress *Progress, r io.ReaderAt, size int64) error {
+	table, err := seekable.ReadSeekTable(r, size)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", sourcePath, err)
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", sourcePath, err)
-	}
-	table, err := seekable.ReadSeekTable(f, info.Size())
-	if err != nil {
-		return fmt.Errorf("read seek table of %s: %w", sourcePath, err)
+		return fmt.Errorf("read seek table: %w", err)
 	}
 	if len(table.Frames) > 0 {
 		progress.start(table.Frames[len(table.Frames)-1].DecompressedEnd())
@@ -767,9 +810,12 @@ func startSeekableProgress(progress *Progress, sourcePath string) error {
 // which makes the next write fail and ends the decoding. The decode
 // error is the one reported when both happen, because it is the cause.
 //
-// progress, when not nil, counts the text as the decoder writes it.
+// The file is read through r, size bytes long, which the decoding
+// goroutine alone reads. progress, when not nil, counts the text as the
+// decoder writes it.
 func buildFramesAndWalkText(
-	sourcePath string,
+	r io.ReaderAt,
+	size int64,
 	step int64,
 	coord *analyzer.Coordinator,
 	progress *Progress,
@@ -785,7 +831,7 @@ func buildFramesAndWalkText(
 	}
 	decoded := make(chan framesResult, 1)
 	go func() {
-		frames, err := seekableindex.BuildAndCopyText(sourcePath, progress.countWrites(textWriter))
+		frames, err := seekableindex.BuildAndCopyText(r, size, progress.countWrites(textWriter))
 		// CloseWithError(nil) is a plain Close: the walk reads io.EOF
 		// after the last frame. A non-nil error is what the walk's next
 		// read returns instead.
@@ -804,7 +850,7 @@ func buildFramesAndWalkText(
 		return nil, nil, result.err
 	}
 	if walkErr != nil {
-		return nil, nil, fmt.Errorf("walk text of %s: %w", sourcePath, walkErr)
+		return nil, nil, fmt.Errorf("walk text: %w", walkErr)
 	}
 	return result.frames, stats, nil
 }

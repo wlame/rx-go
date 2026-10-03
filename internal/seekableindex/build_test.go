@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,13 +52,48 @@ func makeSeekable(t *testing.T, lines int, frameSize int) (textPath, zstPath str
 	return textPath, zstPath
 }
 
+// openForBuild opens path and returns the file and its size, the
+// arguments Build reads a seekable file through.
+func openForBuild(path string) (*os.File, int64, error) {
+	f, err := os.Open(path) //nolint:gosec // path is under t.TempDir()
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, 0, err
+	}
+	return f, info.Size(), nil
+}
+
+// buildPath runs Build over the file at path.
+func buildPath(path string) (*Result, error) {
+	f, size, err := openForBuild(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return Build(f, size)
+}
+
+// copyPath runs BuildAndCopyText over the file at path.
+func copyPath(path string, text io.Writer) (*Result, error) {
+	f, size, err := openForBuild(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return BuildAndCopyText(f, size, text)
+}
+
 // The frame table is what the index exists for: every line in the file
 // belongs to exactly one frame, and the frames tile the line range with
 // no gap and no overlap.
 func TestBuild_FramesTileEveryLine(t *testing.T) {
 	_, zstPath := makeSeekable(t, 50000, 64*1024)
 
-	got, err := Build(zstPath)
+	got, err := buildPath(zstPath)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -94,7 +130,7 @@ func TestBuild_FramesTileEveryLine(t *testing.T) {
 func TestBuild_CheckpointsNameTheirFrame(t *testing.T) {
 	_, zstPath := makeSeekable(t, 50000, 64*1024)
 
-	got, err := Build(zstPath)
+	got, err := buildPath(zstPath)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -130,7 +166,7 @@ func TestBuild_LargeFrameGetsInteriorCheckpoints(t *testing.T) {
 	// One 4 MB frame holds far more than CheckpointLineInterval lines.
 	_, zstPath := makeSeekable(t, 30000, 4*1024*1024)
 
-	got, err := Build(zstPath)
+	got, err := buildPath(zstPath)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -167,7 +203,7 @@ func TestBuild_UnterminatedLastLineCounts(t *testing.T) {
 	}
 	_ = dst.Sync()
 
-	got, err := Build(zstPath)
+	got, err := buildPath(zstPath)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -202,7 +238,7 @@ func TestBuild_RefusesAFileWithoutAUsableSeekTable(t *testing.T) {
 		"truncated zstd": truncated,
 		"missing":        filepath.Join(dir, "nope.zst"),
 	} {
-		if _, err := Build(path); err == nil {
+		if _, err := buildPath(path); err == nil {
 			t.Errorf("%s: got nil error, want a refusal", name)
 		}
 	}
@@ -212,7 +248,7 @@ func TestBuild_RefusesAFileWithoutAUsableSeekTable(t *testing.T) {
 func TestBuild_CheckpointsSerializeAsThreeElementArrays(t *testing.T) {
 	_, zstPath := makeSeekable(t, 5000, 64*1024)
 
-	got, err := Build(zstPath)
+	got, err := buildPath(zstPath)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -235,14 +271,14 @@ func TestBuildAndCopyText_WritesTheDecompressedText(t *testing.T) {
 	}
 
 	var text bytes.Buffer
-	got, err := BuildAndCopyText(zstPath, &text)
+	got, err := copyPath(zstPath, &text)
 	if err != nil {
 		t.Fatalf("BuildAndCopyText: %v", err)
 	}
 	if !bytes.Equal(text.Bytes(), want) {
 		t.Errorf("copied %d bytes that differ from the %d-byte text", text.Len(), len(want))
 	}
-	plain, err := Build(zstPath)
+	plain, err := buildPath(zstPath)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -263,7 +299,7 @@ func TestBuildAndCopyText_StopsWhenTheCopyFails(t *testing.T) {
 	_, zstPath := makeSeekable(t, 3000, 4*1024)
 	refused := errors.New("reader went away")
 
-	if _, err := BuildAndCopyText(zstPath, failingWriter{err: refused}); !errors.Is(err, refused) {
+	if _, err := copyPath(zstPath, failingWriter{err: refused}); !errors.Is(err, refused) {
 		t.Errorf("BuildAndCopyText error = %v, want one wrapping %v", err, refused)
 	}
 }
