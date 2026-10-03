@@ -300,10 +300,12 @@ A refused file is reported, never read: a trace lists it in
 checked`. The path you named is what every answer reports, also when
 it is a link.
 
-The identity itself is taken through a handle on the search root that
-resolves the path one component at a time and refuses to leave the
-root, so even a swap during the check cannot make it record a file
-outside the roots.
+The identity itself is taken by walking down from the search root one
+directory at a time, through handles, refusing any link on the way:
+the checked location has every link already resolved, so a link found
+there now means the tree changed during the check. A directory swapped
+for a link while the check runs, to outside the roots or into a hidden
+directory, fails the check instead of having its file recorded.
 
 ### Failure modes
 

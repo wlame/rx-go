@@ -169,3 +169,80 @@ func TestWalkDir_DirectorySwappedForALinkAfterTheWalkIsNotRead(t *testing.T) {
 		t.Errorf("read %q, %v; want ErrFileChanged", text, err)
 	}
 }
+
+// swapDirDuringPin arranges for the directory holding tree.Deep to be
+// replaced, while Pin runs, by a link to target: after Pin has resolved
+// and checked the path, before it records the identity of the file.
+// target is a directory that gets its own deep.log.
+func swapDirDuringPin(t *testing.T, tree linktree.Tree, target string) {
+	t.Helper()
+	if err := os.MkdirAll(target, 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", target, err)
+	}
+	decoy := filepath.Join(target, filepath.Base(tree.Deep))
+	if err := os.WriteFile(decoy, []byte("LINE 1 DECOY\n"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", decoy, err)
+	}
+	sub := filepath.Dir(tree.Deep)
+	// A relative target, as a user writes one: os.Root follows it while
+	// it stays inside the root, where an absolute one is refused anyway.
+	relTarget, err := filepath.Rel(filepath.Dir(sub), target)
+	if err != nil {
+		t.Fatalf("rel: %v", err)
+	}
+	pinBeforeStat = func() {
+		if err := os.Rename(sub, sub+"-moved"); err != nil {
+			t.Errorf("rename: %v", err)
+		}
+		if err := os.Symlink(relTarget, sub); err != nil {
+			t.Errorf("symlink: %v", err)
+		}
+	}
+	t.Cleanup(func() { pinBeforeStat = nil })
+}
+
+// Pin records the identity of the file at the path it checked, and only
+// that file. A directory on the way swapped for a link while Pin runs —
+// into a hidden directory, to another directory of the root, or out of
+// the root — fails the pin instead of recording the file the link leads
+// to, which a later open by the same spelling would then accept.
+func TestPin_ADirectorySwappedForALinkDuringThePinIsNotRecorded(t *testing.T) {
+	cases := []struct {
+		name   string
+		target func(tree linktree.Tree) string
+	}{
+		{"into a hidden directory", func(tree linktree.Tree) string { return filepath.Join(tree.Root, ".cache") }},
+		{"to another directory of the root", func(tree linktree.Tree) string { return filepath.Join(tree.Root, "other") }},
+		{"out of the root", func(tree linktree.Tree) string { return filepath.Join(tree.Outside, "swap") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := sandboxed(t)
+			swapDirDuringPin(t, tree, tc.target(tree))
+
+			pinned, err := Pin(tree.Deep)
+
+			if !errors.Is(err, ErrFileChanged) {
+				text, readErr := readPinned(pinned)
+				t.Errorf("Pin = %v; read %q, %v; want ErrFileChanged", err, text, readErr)
+			}
+		})
+	}
+}
+
+// A path through a link that stays inside the root and out of hidden
+// directories pins the file the link leads to.
+func TestPin_AcceptsALinkedDirectoryInsideTheRoot(t *testing.T) {
+	tree := sandboxed(t)
+
+	pinned, err := Pin(tree.DeepByLink)
+	if err != nil {
+		t.Fatalf("Pin(%s): %v", tree.DeepByLink, err)
+	}
+	if text, err := readPinned(pinned); err != nil || text != "LINE 1 deep NEEDLE\n" {
+		t.Errorf("read %q, %v; want the text of sub/deep.log", text, err)
+	}
+	if root, err := Pin(tree.Root); err != nil || !root.Info().IsDir() {
+		t.Errorf("Pin(root) = %+v, %v; want the root directory", root, err)
+	}
+}
