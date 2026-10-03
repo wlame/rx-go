@@ -26,7 +26,8 @@ type taskStatusOutput struct {
 }
 
 // registerTaskHandlers mounts GET /v1/tasks/{task_id} and
-// DELETE /v1/tasks/{task_id}, which cancels a findings scan.
+// DELETE /v1/tasks/{task_id}, which cancels a findings scan or a task
+// over a directory.
 //
 // Matches rx-python/src/rx/web.py:1879-1913. The task manager lives in
 // internal/tasks; we just look up and project the state.
@@ -49,19 +50,23 @@ func registerTaskHandlers(s *Server, api huma.API) {
 
 	cancelResponses := errorResponses(api, http.StatusNotFound, http.StatusConflict)
 	cancelResponses[strconv.Itoa(http.StatusConflict)] = jsonResponse("The task cannot be cancelled: it is not a "+
-		"findings scan, it has already ended, or its scan has finished reading and is writing its answer; task_id "+
-		"names it.",
+		"findings scan or a task over a directory, it has already ended, or the scan of its one file has finished "+
+		"reading and is writing its answer; task_id names it.",
 		api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(rxtypes.TaskConflictError{}), true, "TaskConflictError"))
 	huma.Register(api, huma.Operation{
 		OperationID: "task-cancel",
 		Method:      http.MethodDelete,
 		Path:        "/v1/tasks/{task_id}",
-		Summary:     "Cancel a findings scan",
+		Summary:     "Cancel a findings scan or a task over a directory",
 		Description: "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches " +
 			"nothing, and the task ends at once with status cancelled, which this answer shows. A client that " +
-			"joined the same scan sees it cancelled and may start it again. 409 for a task of another operation, " +
-			"for a task that has already ended, and for one whose scan has finished reading and is writing its " +
-			"answer (a task never ends cancelled with findings written).",
+			"joined the same scan sees it cancelled and may start it again. A task over a directory (POST " +
+			"/v1/index or POST /v1/findings given a directory) stops between two files, a findings one inside a " +
+			"file's scan too: the files ended before the cancel keep their index or findings, the file a cancel " +
+			"stops writes nothing, and no later file is read. 409 for a task of another operation (an index " +
+			"task over one file, compress, chain_index), for a task that has already ended, and for a findings " +
+			"task over one file whose scan has finished reading and is writing its answer (such a task never " +
+			"ends cancelled with findings written).",
 		Tags:      []string{"Operations"},
 		Responses: cancelResponses,
 	}, func(_ context.Context, in *taskStatusInput) (*taskStatusOutput, error) {
@@ -72,7 +77,8 @@ func registerTaskHandlers(s *Server, api huma.API) {
 		case errors.Is(err, tasks.ErrTaskNotFound):
 			return nil, ErrNotFound(fmt.Sprintf("Task not found: %s", in.TaskID))
 		case errors.Is(err, tasks.ErrNotCancellable):
-			return nil, ErrTaskConflict(fmt.Sprintf("Task %s cannot be cancelled: only a findings scan can", in.TaskID), in.TaskID)
+			return nil, ErrTaskConflict(fmt.Sprintf("Task %s cannot be cancelled: only a findings scan or a task over a directory can",
+				in.TaskID), in.TaskID)
 		case err != nil:
 			return nil, ErrTaskConflict(fmt.Sprintf("Task %s cannot be cancelled: %v", in.TaskID, err), in.TaskID)
 		}
@@ -90,15 +96,20 @@ func registerTaskHandlers(s *Server, api huma.API) {
 // without duplicating field mapping.
 func projectTaskState(t *tasks.Task) rxtypes.TaskStatusResponse {
 	out := rxtypes.TaskStatusResponse{
-		TaskID:    t.TaskID,
-		Status:    string(t.Status),
-		Path:      t.Path,
-		Operation: t.Operation,
-		Progress:  t.Progress(),
-		Result:    t.Result,
+		TaskID:     t.TaskID,
+		Status:     string(t.Status),
+		Path:       t.Path,
+		Operation:  t.Operation,
+		Progress:   t.Progress(),
+		CLICommand: t.CLICommand,
+		Result:     t.Result,
 	}
 	if b := t.Bytes(); b != nil {
 		out.BytesRead, out.BytesTotal = &b.Read, &b.Total
+	}
+	// Only a task over a directory reports its files.
+	if f := t.Files(); f != nil {
+		out.FilesDone, out.FilesTotal = &f.Done, &f.Total
 	}
 	if !t.StartedAt.IsZero() {
 		s := formatTaskTime(t.StartedAt)

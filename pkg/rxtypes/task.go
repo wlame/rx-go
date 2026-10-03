@@ -3,12 +3,17 @@ package rxtypes
 // TaskResponse is returned by POST /v1/index, POST /v1/compress and
 // POST /v1/findings when a background task is accepted. The client polls GET /v1/tasks/{id}
 // with the returned TaskID until completion.
+//
+// CLICommand is the rx command that does what the task does, for an
+// index or findings task (TaskStatusResponse.CLICommand); "" for a
+// compress task.
 type TaskResponse struct {
-	TaskID    string  `json:"task_id"`
-	Status    string  `json:"status"`
-	Message   string  `json:"message"`
-	Path      string  `json:"path"`
-	StartedAt *string `json:"started_at"`
+	TaskID     string  `json:"task_id"`
+	Status     string  `json:"status"`
+	Message    string  `json:"message"`
+	Path       string  `json:"path"`
+	StartedAt  *string `json:"started_at"`
+	CLICommand string  `json:"cli_command" doc:"The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --force when the request forced, and --mask-secrets when the server masks secrets. Empty for a compress task. A request that joined a running task gets that task's command."`
 }
 
 // TaskStatusResponse is returned by GET /v1/tasks/{task_id} and by
@@ -16,28 +21,34 @@ type TaskResponse struct {
 //
 // Operation is "compress", "index", "chain_index" or "findings". Status
 // transitions: "queued" → "running" → ("completed" | "failed"), and a
-// findings task may end "cancelled" from either of the first two.
-// Result is nil until Status == "completed"; Error is nil unless
-// Status == "failed". Progress, BytesRead and BytesTotal are nil for a
-// task that does not report them.
+// findings task, or an index task over a directory, may end "cancelled"
+// from either of the first two. Result is nil until Status ==
+// "completed"; Error is nil unless Status == "failed". Progress,
+// BytesRead, BytesTotal, FilesDone and FilesTotal are nil for a task
+// that does not report them; FilesDone and FilesTotal are set for a
+// task over a directory only.
 type TaskStatusResponse struct {
 	TaskID      string     `json:"task_id"`
-	Status      string     `json:"status" doc:"queued, running, completed, failed, or cancelled (a findings task stopped by DELETE /v1/tasks/{task_id})."`
+	Status      string     `json:"status" doc:"queued, running, completed, failed, or cancelled (a findings task, or an index task over a directory, stopped by DELETE /v1/tasks/{task_id})."`
 	Path        string     `json:"path"`
 	Operation   string     `json:"operation" doc:"index, compress, chain_index or findings."`
 	StartedAt   *string    `json:"started_at"`
 	CompletedAt *string    `json:"completed_at"`
 	Error       *string    `json:"error"`
-	Progress    *float64   `json:"progress" doc:"Share of the task's input read so far, from 0 to 1. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading."`
-	BytesRead   *int64     `json:"bytes_read" doc:"Bytes of the file a findings task has read so far, as stored on disk. Null for a task of another operation, and for a findings task that has not started reading."`
-	BytesTotal  *int64     `json:"bytes_total" doc:"The size of the file a findings task reads, as stored on disk. Null when bytes_read is."`
+	Progress    *float64   `json:"progress" doc:"Share of the task's input read so far, from 0 to 1. For a task over a directory: the files ended plus the share of the current file read, over files_total. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading."`
+	BytesRead   *int64     `json:"bytes_read" doc:"Bytes of the file a findings task has read so far, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null for a task of another operation (an index task over a directory too), and for a findings task over one file that has not started reading."`
+	BytesTotal  *int64     `json:"bytes_total" doc:"The size of the file a findings task reads, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null when bytes_read is."`
+	FilesDone   *int64     `json:"files_done" doc:"For a task over a directory: the entries of files_total the task has ended (indexed or scanned, skipped, or failed). Null for a task over one file, and while the task lists the directory."`
+	FilesTotal  *int64     `json:"files_total" doc:"For a task over a directory: the entries its walk listed (every file under the directory by the file tree's rules, and the entries the walk passed over). Null when files_done is."`
+	CLICommand  string     `json:"cli_command" doc:"The rx command that does what the task does: rx index for an index task started by POST /v1/index, rx scan for a findings task, with --recursive for a directory, --force when the request forced, and --mask-secrets when the server masks secrets. Empty for other tasks: compress, chain_index, and the index builds GET /v1/samples and the log chains start."`
 	Result      TaskResult `json:"result"`
 }
 
 // TaskResult is the result of a background task: an IndexTaskResult
 // for an "index" task, a CompressTaskResult for a "compress" task, a
 // ChainIndexTaskResult for a "chain_index" task, a FindingsResponse for
-// a "findings" task, and nil (JSON null) until the task completes.
+// a "findings" task, a FolderTaskResult for an "index" or "findings"
+// task over a directory, and nil (JSON null) until the task completes.
 //
 // It is a defined type over `any` rather than `any` itself so that the
 // OpenAPI generator can tell this field apart from every other `any` in
@@ -111,4 +122,38 @@ type CompressTaskResult struct {
 	IndexError       *string `json:"index_error"`
 	TimeSeconds      float64 `json:"time_seconds"`
 	CLICommand       string  `json:"cli_command" doc:"The rx command that does what this task did."`
+}
+
+// FolderTaskResult is the result of an index or findings task over a
+// directory: POST /v1/index or POST /v1/findings given a directory's
+// path. The task takes every entry its walk lists under the directory,
+// one at a time, and each entry ends in exactly one of Done, Skipped and
+// Failed: FilesTotal = Done + Skipped + Failed.
+//
+// SkippedFiles and FailedFiles list at most MaxFolderListedFiles entries
+// each, in the walk's order; the counts are exact.
+type FolderTaskResult struct {
+	Path         string        `json:"path" doc:"The directory, as validated."`
+	FilesTotal   int           `json:"files_total" doc:"The entries the walk listed under the directory: every file the file tree lists below it, recursively, and the entries the walk passed over (a refused link, a subdirectory it could not list)."`
+	Done         int           `json:"done" doc:"The files indexed (an index task) or scanned (a findings task) by the task."`
+	Skipped      int           `json:"skipped" doc:"The entries passed over: those whose index or findings were current (current counts them; force passes none over that way), and those skipped_files lists."`
+	Current      int           `json:"current" doc:"How many of skipped were passed over because their index, or the findings of every selected signature, were current."`
+	Failed       int           `json:"failed" doc:"The files whose index build or scan failed; the task went on with the next file."`
+	Findings     *int64        `json:"findings" doc:"A findings task: the findings of every file scanned or current, summed over the selected signatures. Null for an index task."`
+	SkippedFiles []SkippedFile `json:"skipped_files" nullable:"false" doc:"The entries skipped for another reason than being current, each with the reason (not a text file, below the index threshold, a refused link, cannot be read), in the walk's order; the first 1000 of skipped - current."`
+	FailedFiles  []FailedFile  `json:"failed_files" nullable:"false" doc:"The files that failed, each with its error, in the walk's order; the first 1000 of failed."`
+	CLICommand   string        `json:"cli_command" doc:"The rx command that does what the task did: rx index DIR --recursive, or rx scan DIR --recursive --signatures=SEL."`
+}
+
+// MaxFolderListedFiles is how many entries FolderTaskResult.SkippedFiles
+// and FolderTaskResult.FailedFiles list at most each. A finished task's
+// result stays in memory until it is swept, so its size is bounded
+// whatever the number of files under the directory.
+const MaxFolderListedFiles = 1000
+
+// FailedFile is one file a task over a directory could not index or
+// scan, and the error.
+type FailedFile struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }

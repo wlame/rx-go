@@ -238,8 +238,8 @@ see [Times](#times) for the other cases), what it lacks is `null` and
 
 ## `POST /v1/findings`
 
-Scans the file for the selected signatures in a background task and
-caches what it finds.
+Scans the file, or every file under a directory, for the selected
+signatures in a background task and caches what it finds.
 
 ### Request
 
@@ -252,7 +252,7 @@ Content-Type: application/json
 
 | Field | Required | Description |
 |---|---|---|
-| `path` | yes | The file, checked as for `GET` |
+| `path` | yes | The file, checked as for `GET`, or a directory: every file under it is scanned ([A directory](#a-directory)) |
 | `signatures` | no | The selection, as for `GET`; default `default` |
 | `force` | no | Scan every selected signature again, those with a current cache entry too; default `false` |
 
@@ -274,9 +274,18 @@ it.
   "status": "queued",
   "message": "Scanning /var/log/app/app.log for 64 signatures; follow GET /v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4",
   "path": "/var/log/app/app.log",
-  "started_at": "2026-10-11T08:49:44.199639Z"
+  "started_at": "2026-10-11T08:49:44.199639Z",
+  "cli_command": "rx scan /var/log/app/app.log --signatures=default"
 }
 ```
+
+`cli_command` is the [`rx scan`](../../cli/scan.md) command that does
+what the task does, the same in every status of the task: the
+selection spelled out, `--force` when the request forced, and
+`--mask-secrets` when the server masks secrets. A request that joined
+a running task gets that task's command. (The task's result, a
+`FindingsResponse`, keeps the `cli_command` of `GET /v1/findings`, an
+`rx trace --signatures=…` command that prints the findings.)
 
 Follow it at [`GET /v1/tasks/{task_id}`](tasks.md): operation
 `findings`, `queued` while it waits, `running` from its first read,
@@ -290,12 +299,30 @@ A scan that fails ends the task `failed` with the reason. A file that
 changes while it is scanned is answered and not cached, or fails when it
 got shorter.
 
+### A directory
+
+Given a directory, one task scans every file the file tree lists under
+it, recursively, one at a time, in the walk's order, as
+`rx scan DIR --recursive` does, which is its `cli_command`
+(`rx scan /var/log/app --recursive --signatures=default`). A file that
+is not text, and one whose findings are current for every selected
+signature (unless `force`), is skipped; one whose scan fails is
+recorded and the task goes on. Each file waits for its place in the
+scan queue, so `RX_MAX_SIGNATURE_SCANS` still holds, and the task takes
+one place among the 256 unfinished findings tasks. The status has
+`files_done` and `files_total`, and `bytes_read` and `bytes_total` of
+the file it reads; the result is a `FolderTaskResult` with the counts
+and the findings of every file scanned or current. `DELETE` cancels it
+between two files or inside a file's scan: the files scanned before the
+cancel keep their findings. See
+[Tasks over a directory](tasks.md#tasks-over-a-directory).
+
 ### Status codes
 
 | Code | When |
 |---:|---|
 | 202 | The task, started or joined |
-| 400 | A directory, a file that is not text, a selection that cannot be resolved, or a body that is not valid JSON |
+| 400 | A file that is not text, a selection that cannot be resolved, or a body that is not valid JSON |
 | 403 | The path is outside every search root, hidden, or cannot be read |
 | 404 | The file does not exist |
 | 422 | `path` missing, a field of the wrong type, or a `signatures` value over 4096 bytes |

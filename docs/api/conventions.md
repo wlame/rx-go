@@ -173,10 +173,14 @@ in Python 3.11+.
 
 ## The equivalent CLI command
 
-The answers of `/v1/trace`, `/v1/samples` and `GET /v1/index`, and the
-result of a finished index or compress task, carry `cli_command`: the
-`rx` command that does what the request did, ready to paste into a
-shell.
+The answers of `/v1/trace`, `/v1/samples` and `GET /v1/index`, the
+result of a finished index or compress task, and every answer about an
+index or findings task (the `202` or `200` that starts it and
+`GET /v1/tasks/{task_id}`) carry `cli_command`: the `rx` command that
+does what the request did, ready to paste into a shell. A task of
+`POST /v1/index` is `rx index PATH`, one of `POST /v1/findings` is
+`rx scan PATH --signatures=SEL`, and a task over a directory adds
+`--recursive` (`rx scan /var/log/app --recursive --signatures=default`).
 
 - The shape is `rx <subcommand> <positionals...> <--long=value...>`.
   A value that needs shell quoting is quoted after the `=`; a switch
@@ -193,7 +197,9 @@ shell.
 
 A test parses every rendered command with the real `rx` command tree,
 and runs the commands of real trace and samples requests to check that
-their `--json` answer equals the HTTP answer.
+their `--json` answer equals the HTTP answer, and those of index and
+findings tasks, on a fresh cache, to check that they index or scan the
+same files and find the same findings.
 
 ## Explicit null vs omitted keys
 

@@ -229,6 +229,30 @@
       "expected": "rx index /var/log/app.log"
     },
     {
+      "name": "index build of a directory renders --recursive",
+      "endpoint": "index_post",
+      "params": { "path": "/var/log/app", "recursive": true, "force": true, "threshold": 0 },
+      "expected": "rx index /var/log/app --recursive --force --threshold=0"
+    },
+    {
+      "name": "scan of a file spells out the default selection",
+      "endpoint": "scan",
+      "params": { "path": "/var/log/app.log", "signatures": "default" },
+      "expected": "rx scan /var/log/app.log --signatures=default"
+    },
+    {
+      "name": "scan of a directory, forced, on a server that masks secrets",
+      "endpoint": "scan",
+      "params": {
+        "path": "/var/log/app",
+        "recursive": true,
+        "signatures": "traceback,sql",
+        "force": true,
+        "mask_secrets": true
+      },
+      "expected": "rx scan /var/log/app --recursive --signatures=traceback,sql --force --mask-secrets"
+    },
+    {
       "name": "compress with every option",
       "endpoint": "compress",
       "params": {

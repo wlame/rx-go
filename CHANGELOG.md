@@ -404,6 +404,39 @@ History maps every removed surface to what replaces it.
   that has ended, or one whose scan has finished reading and is writing
   its answer answers `409`, so a task never ends `cancelled` with
   findings written; an unknown id `404`.
+- `POST /v1/index` and `POST /v1/findings` accept a directory (inside a
+  search root): one task (operation `index` or `findings`) takes every
+  file the file tree lists under it, recursively, one at a time, in the
+  order `rx index --recursive` and `rx scan --recursive` take them (the
+  same walk). A file whose index or findings are current is skipped
+  unless `force`, and so are a file that is not text, a file below the
+  index threshold (`threshold`, else `RX_LARGE_FILE_MB`) and the entries
+  the walk refuses; a file whose build or scan fails is recorded and the
+  task goes on. The files of a findings task go through the scan queue
+  one at a time (`RX_MAX_SIGNATURE_SCANS` holds), and the task takes one
+  of the 256 places of the unfinished findings tasks. `DELETE
+  /v1/tasks/{task_id}` cancels such a task between two files, and a
+  findings task inside a file's scan too: the files ended before keep
+  their index or findings, the file a cancel stops writes nothing. A
+  second `POST` for the directory joins its findings task or answers
+  `409` for its index task. The result is the new `FolderTaskResult`:
+  `path`, `files_total`, `done`, `skipped`, `current` (the skipped ones
+  that were current), `failed`, `findings` (`null` for an index task),
+  `skipped_files` (`{path, reason}`, the first 1,000 skipped for another
+  reason than being current), `failed_files` (`{path, error}`, the first
+  1,000) and `cli_command`. A directory was refused with `400` before.
+- Task answers carry `cli_command`, the `rx` command that does what the
+  task does: the `202`/`200` of `POST /v1/index` and `POST /v1/findings`
+  (`TaskResponse`) and every `GET` or `DELETE /v1/tasks/{task_id}`
+  (`TaskStatusResponse`) of an index or findings task: `rx index PATH`
+  (`--force`, `--threshold=N` as requested), `rx scan PATH
+  --signatures=SEL` (`--force`, and `--mask-secrets` when the server
+  masks), with `--recursive` for a directory. Other tasks give `""`. A
+  task over a directory also reports `files_done` and `files_total`
+  (`null` for a task over one file); its `bytes_read` and `bytes_total`
+  follow the file it reads (findings) or stay `null` (index), and its
+  `progress` is the files ended plus the share of the current file,
+  over `files_total`. These members are part of contract 2.0.
 - `GET /v1/trace?signatures=…`: the answer of `rx trace --signatures=…
   --json` over HTTP: every file the search covers is scanned for the
   selection through the findings cache, `regexp` may be left out, and

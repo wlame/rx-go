@@ -1096,6 +1096,22 @@
           "null"
         ]
       },
+      "FailedFile": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "error"
+        ],
+        "type": "object"
+      },
       "FileFindingSummary": {
         "additionalProperties": false,
         "properties": {
@@ -1339,11 +1355,11 @@
         "properties": {
           "force": {
             "default": false,
-            "description": "Scan every selected signature again, those with a current cache entry too.",
+            "description": "Scan every selected signature again, those with a current cache entry too; over a directory, scan the files whose findings are current too.",
             "type": "boolean"
           },
           "path": {
-            "description": "The file to scan. Must be inside a configured --search-root.",
+            "description": "The file to scan, or a directory: every file the file tree lists under it is scanned, recursively, one at a time. Must be inside a configured --search-root.",
             "type": "string"
           },
           "signatures": {
@@ -1400,6 +1416,79 @@
           "object",
           "null"
         ]
+      },
+      "FolderTaskResult": {
+        "additionalProperties": false,
+        "properties": {
+          "cli_command": {
+            "description": "The rx command that does what the task did: rx index DIR --recursive, or rx scan DIR --recursive --signatures=SEL.",
+            "type": "string"
+          },
+          "current": {
+            "description": "How many of skipped were passed over because their index, or the findings of every selected signature, were current.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "done": {
+            "description": "The files indexed (an index task) or scanned (a findings task) by the task.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "failed": {
+            "description": "The files whose index build or scan failed; the task went on with the next file.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "failed_files": {
+            "description": "The files that failed, each with its error, in the walk's order; the first 1000 of failed.",
+            "items": {
+              "$ref": "#/components/schemas/FailedFile"
+            },
+            "type": "array"
+          },
+          "files_total": {
+            "description": "The entries the walk listed under the directory: every file the file tree lists below it, recursively, and the entries the walk passed over (a refused link, a subdirectory it could not list).",
+            "format": "int64",
+            "type": "integer"
+          },
+          "findings": {
+            "description": "A findings task: the findings of every file scanned or current, summed over the selected signatures. Null for an index task.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "description": "The directory, as validated.",
+            "type": "string"
+          },
+          "skipped": {
+            "description": "The entries passed over: those whose index or findings were current (current counts them; force passes none over that way), and those skipped_files lists.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "skipped_files": {
+            "description": "The entries skipped for another reason than being current, each with the reason (not a text file, below the index threshold, a refused link, cannot be read), in the walk's order; the first 1000 of skipped - current.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedFile"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "files_total",
+          "done",
+          "skipped",
+          "current",
+          "failed",
+          "findings",
+          "skipped_files",
+          "failed_files",
+          "cli_command"
+        ],
+        "type": "object"
       },
       "GroupInfo": {
         "additionalProperties": false,
@@ -1527,12 +1616,15 @@
         "additionalProperties": false,
         "properties": {
           "force": {
+            "description": "Build the index again even when a valid one is stored; over a directory, for every file.",
             "type": "boolean"
           },
           "path": {
+            "description": "The file to index, or a directory: every file the file tree lists under it is indexed, recursively, one at a time. Must be inside a configured --search-root.",
             "type": "string"
           },
           "threshold": {
+            "description": "The smallest file indexed, in MB; RX_LARGE_FILE_MB when absent. A single file below it is refused with 400; under a directory it is skipped with the reason.",
             "format": "int64",
             "type": "integer"
           }
@@ -2715,6 +2807,10 @@
       "TaskResponse": {
         "additionalProperties": false,
         "properties": {
+          "cli_command": {
+            "description": "The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --force when the request forced, and --mask-secrets when the server masks secrets. Empty for a compress task. A request that joined a running task gets that task's command.",
+            "type": "string"
+          },
           "message": {
             "type": "string"
           },
@@ -2739,7 +2835,8 @@
           "status",
           "message",
           "path",
-          "started_at"
+          "started_at",
+          "cli_command"
         ],
         "type": "object"
       },
@@ -2747,7 +2844,7 @@
         "additionalProperties": false,
         "properties": {
           "bytes_read": {
-            "description": "Bytes of the file a findings task has read so far, as stored on disk. Null for a task of another operation, and for a findings task that has not started reading.",
+            "description": "Bytes of the file a findings task has read so far, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null for a task of another operation (an index task over a directory too), and for a findings task over one file that has not started reading.",
             "format": "int64",
             "type": [
               "integer",
@@ -2755,12 +2852,16 @@
             ]
           },
           "bytes_total": {
-            "description": "The size of the file a findings task reads, as stored on disk. Null when bytes_read is.",
+            "description": "The size of the file a findings task reads, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null when bytes_read is.",
             "format": "int64",
             "type": [
               "integer",
               "null"
             ]
+          },
+          "cli_command": {
+            "description": "The rx command that does what the task does: rx index for an index task started by POST /v1/index, rx scan for a findings task, with --recursive for a directory, --force when the request forced, and --mask-secrets when the server masks secrets. Empty for other tasks: compress, chain_index, and the index builds GET /v1/samples and the log chains start.",
+            "type": "string"
           },
           "completed_at": {
             "type": [
@@ -2774,6 +2875,22 @@
               "null"
             ]
           },
+          "files_done": {
+            "description": "For a task over a directory: the entries of files_total the task has ended (indexed or scanned, skipped, or failed). Null for a task over one file, and while the task lists the directory.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "files_total": {
+            "description": "For a task over a directory: the entries its walk listed (every file under the directory by the file tree's rules, and the entries the walk passed over). Null when files_done is.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "operation": {
             "description": "index, compress, chain_index or findings.",
             "type": "string"
@@ -2782,7 +2899,7 @@
             "type": "string"
           },
           "progress": {
-            "description": "Share of the task's input read so far, from 0 to 1. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading.",
+            "description": "Share of the task's input read so far, from 0 to 1. For a task over a directory: the files ended plus the share of the current file read, over files_total. Null for a task that does not report it: a compress task, an index task that reused a stored index, or one that has not started reading.",
             "format": "double",
             "type": [
               "number",
@@ -2804,10 +2921,13 @@
                 "$ref": "#/components/schemas/FindingsResponse"
               },
               {
+                "$ref": "#/components/schemas/FolderTaskResult"
+              },
+              {
                 "type": "null"
               }
             ],
-            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task, FindingsResponse for a findings task. Null until then."
+            "description": "The task's result once it completes: IndexTaskResult for an index task, CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task, FindingsResponse for a findings task, FolderTaskResult for an index or findings task over a directory (files_total is set in its status). Null until then."
           },
           "started_at": {
             "type": [
@@ -2816,7 +2936,7 @@
             ]
           },
           "status": {
-            "description": "queued, running, completed, failed, or cancelled (a findings task stopped by DELETE /v1/tasks/{task_id}).",
+            "description": "queued, running, completed, failed, or cancelled (a findings task, or an index task over a directory, stopped by DELETE /v1/tasks/{task_id}).",
             "type": "string"
           },
           "task_id": {
@@ -2834,6 +2954,9 @@
           "progress",
           "bytes_read",
           "bytes_total",
+          "files_done",
+          "files_total",
+          "cli_command",
           "result"
         ],
         "type": "object"
@@ -3818,7 +3941,7 @@
         ]
       },
       "post": {
-        "description": "Starts a task (operation findings) that scans the file for the selected signatures the findings cache does not hold (with force, for all of them) and caches what it finds; a scan of the same file already running is returned instead, and it scans what it was started for. Poll GET /v1/tasks/{task_id}: bytes_read and bytes_total say how far it read; its result is the answer GET /v1/findings gives without filters, with the first page. DELETE /v1/tasks/{task_id} cancels it. At most RX_MAX_SIGNATURE_SCANS scans read files at once; later ones wait, queued.",
+        "description": "Starts a task (operation findings) that scans the file for the selected signatures the findings cache does not hold (with force, for all of them) and caches what it finds; a scan of the same file already running is returned instead, and it scans what it was started for. Poll GET /v1/tasks/{task_id}: bytes_read and bytes_total say how far it read; its result is the answer GET /v1/findings gives without filters, with the first page. DELETE /v1/tasks/{task_id} cancels it. At most RX_MAX_SIGNATURE_SCANS scans read files at once; later ones wait, queued. For a directory, one task scans every file the file tree lists under it, recursively, one at a time, as rx scan DIR --recursive does: a file that is not text, and a file whose findings are current for every selected signature (unless force), is skipped, a file whose scan fails is recorded and the task goes on. Its status has files_done and files_total (bytes_read and bytes_total follow the file it reads), its result is a FolderTaskResult, and DELETE cancels it between two files or inside one; the files scanned before the cancel keep their findings.",
         "operationId": "findings-scan",
         "requestBody": {
           "content": {
@@ -3933,7 +4056,7 @@
           },
           {}
         ],
-        "summary": "Scan one file for signatures (background task)",
+        "summary": "Scan a file, or every file of a directory, for signatures (background task)",
         "tags": [
           "Signatures"
         ]
@@ -4040,7 +4163,7 @@
         ]
       },
       "post": {
-        "description": "Creates a background task that indexes the file. Poll /v1/tasks/{id} for progress.",
+        "description": "Creates a background task that indexes the file. Poll /v1/tasks/{id} for progress. For a directory, one task indexes every file the file tree lists under it, recursively, one at a time, as rx index DIR --recursive does: a file below the threshold, a file that is not text and a file whose index is current (unless force) is skipped, a file whose build fails is recorded and the task goes on. Its status has files_done and files_total, its result is a FolderTaskResult, and DELETE /v1/tasks/{task_id} cancels it between two files.",
         "operationId": "index-post",
         "requestBody": {
           "content": {
@@ -4147,7 +4270,7 @@
           },
           {}
         ],
-        "summary": "Build line index for file (background task)",
+        "summary": "Build the line index of a file, or of every file of a directory (background task)",
         "tags": [
           "Operations"
         ]
@@ -5547,7 +5670,7 @@
     },
     "/v1/tasks/{task_id}": {
       "delete": {
-        "description": "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches nothing, and the task ends at once with status cancelled, which this answer shows. A client that joined the same scan sees it cancelled and may start it again. 409 for a task of another operation, for a task that has already ended, and for one whose scan has finished reading and is writing its answer (a task never ends cancelled with findings written).",
+        "description": "Cancels a queued or running findings task (POST /v1/findings): the scan stops and caches nothing, and the task ends at once with status cancelled, which this answer shows. A client that joined the same scan sees it cancelled and may start it again. A task over a directory (POST /v1/index or POST /v1/findings given a directory) stops between two files, a findings one inside a file's scan too: the files ended before the cancel keep their index or findings, the file a cancel stops writes nothing, and no later file is read. 409 for a task of another operation (an index task over one file, compress, chain_index), for a task that has already ended, and for a findings task over one file whose scan has finished reading and is writing its answer (such a task never ends cancelled with findings written).",
         "operationId": "task-cancel",
         "parameters": [
           {
@@ -5603,7 +5726,7 @@
                 }
               }
             },
-            "description": "The task cannot be cancelled: it is not a findings scan, it has already ended, or its scan has finished reading and is writing its answer; task_id names it."
+            "description": "The task cannot be cancelled: it is not a findings scan or a task over a directory, it has already ended, or the scan of its one file has finished reading and is writing its answer; task_id names it."
           },
           "default": {
             "content": {
@@ -5622,7 +5745,7 @@
           },
           {}
         ],
-        "summary": "Cancel a findings scan",
+        "summary": "Cancel a findings scan or a task over a directory",
         "tags": [
           "Operations"
         ]

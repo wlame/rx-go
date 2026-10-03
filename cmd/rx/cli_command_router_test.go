@@ -24,6 +24,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/signatures"
+	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/tasks"
 	"github.com/wlame/rx-go/internal/webapi"
 )
@@ -70,6 +72,11 @@ func startRouterFixture(t *testing.T) routerFixture {
 	cacheDir := t.TempDir()
 	t.Setenv("RX_CACHE_DIR", cacheDir)
 	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "true")
+	// The server and every rx the test runs load the same signatures:
+	// the built-ins, with no user file (an empty search path), and
+	// masking off.
+	t.Setenv("RX_SIGNATURES_PATH", t.TempDir())
+	t.Setenv("RX_MASK_SECRETS", "")
 	if err := paths.SetSearchRoots([]string{root}); err != nil {
 		t.Fatalf("set search roots: %v", err)
 	}
@@ -85,6 +92,7 @@ func startRouterFixture(t *testing.T) routerFixture {
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		RipgrepPath: rgPath,
 		TaskManager: tasks.New(tasks.Config{}),
+		Signatures:  signatures.Load(signatures.LoadOptions{CheckExamples: sigscan.CheckExamples}),
 	}))
 	t.Cleanup(server.Close)
 
@@ -106,6 +114,14 @@ func (f routerFixture) get(t *testing.T, path string, query url.Values) map[stri
 // and returns the task's result.
 func (f routerFixture) runTask(t *testing.T, path string, body map[string]any) map[string]any {
 	t.Helper()
+	return f.runTaskStatus(t, path, body)["result"].(map[string]any)
+}
+
+// runTaskStatus posts body to path, polls the task it starts until it
+// completes, and returns its last status; a task that fails fails the
+// test.
+func (f routerFixture) runTaskStatus(t *testing.T, path string, body map[string]any) map[string]any {
+	t.Helper()
 	raw, _ := json.Marshal(body)
 	resp, err := http.Post(f.baseURL+path, "application/json", bytes.NewReader(raw))
 	if err != nil {
@@ -117,9 +133,9 @@ func (f routerFixture) runTask(t *testing.T, path string, body map[string]any) m
 		task := f.get(t, "/v1/tasks/"+taskID, url.Values{})
 		switch task["status"] {
 		case "completed":
-			return task["result"].(map[string]any)
-		case "failed":
-			t.Fatalf("task %s failed: %v", taskID, task["error"])
+			return task
+		case "failed", "cancelled":
+			t.Fatalf("task %s ended %s: %v", taskID, task["status"], task["error"])
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -332,4 +348,127 @@ func TestCLICommand_RealRequestsRenderCommandsThatDoTheSame(t *testing.T) {
 			t.Errorf("rx compress: success=%v index=%v, want true and none", file["success"], file["index"])
 		}
 	})
+}
+
+// folderFixture writes a directory of invented logs under the fixture's
+// root: two text files whose lines name their own numbers, one of them
+// in a subdirectory, and a binary file.
+func (f routerFixture) folderFixture(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(f.root, "folder")
+	files := map[string]string{
+		"a.log":        "LINE 1 start\nLINE 2 ERROR disk full\nTraceback (most recent call last):\n  File \"a.py\", line 1\nValueError: bad\n",
+		"sub/b.log":    "LINE 1 ERROR elsewhere\nLINE 2 quiet\n",
+		"sub/blob.bin": "ERROR\x00binary\n",
+	}
+	for name, text := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	return dir
+}
+
+// countsOf picks the counts a task over a directory and the rendered
+// command both give: the entries, and how many were done, skipped,
+// current and failed.
+func countsOf(answer map[string]any) [5]float64 {
+	var out [5]float64
+	for i, key := range []string{"files_total", "done", "skipped", "current", "failed"} {
+		out[i], _ = answer[key].(float64)
+	}
+	return out
+}
+
+// The cli_command of an index or findings task, over a directory or one
+// file, is a command that does what the task did: run on a fresh cache,
+// it indexes or scans the same files, skips the same ones and finds the
+// same findings.
+func TestCLICommand_IndexAndScanTasksRenderCommandsThatDoTheSame(t *testing.T) {
+	f := startRouterFixture(t)
+	dir := f.folderFixture(t)
+
+	t.Run("index of a directory", func(t *testing.T) {
+		status := f.runTaskStatus(t, "/v1/index", map[string]any{"path": dir, "threshold": 0})
+		result := status["result"].(map[string]any)
+		rendered, _ := status["cli_command"].(string)
+		want := "rx index " + dir + " --recursive --threshold=0"
+		if rendered != want || result["cli_command"] != want {
+			t.Fatalf("cli_command\n got  %q (result %q)\n want %q", rendered, result["cli_command"], want)
+		}
+		words := requireRunnableCommand(t, rendered)
+		code, stdout, stderr := runRxIn(t, f.root, nil, append(words, "--json")...)
+		if code != 0 {
+			t.Fatalf("rx %v exited %d: %s", words, code, stderr)
+		}
+		var cli map[string]any
+		if err := json.Unmarshal([]byte(stdout), &cli); err != nil {
+			t.Fatalf("decode: %v\n%s", err, stdout)
+		}
+		indexed, _ := cli["indexed"].([]any)
+		skipped, _ := cli["skipped"].([]any)
+		if float64(len(indexed)) != result["done"] || float64(len(skipped)) != result["skipped"] {
+			t.Errorf("rx index indexed %d and skipped %d, the task %v and %v", len(indexed), len(skipped),
+				result["done"], result["skipped"])
+		}
+	})
+
+	t.Run("scan of a directory", func(t *testing.T) {
+		status := f.runTaskStatus(t, "/v1/findings", map[string]any{"path": dir})
+		result := status["result"].(map[string]any)
+		rendered, _ := status["cli_command"].(string)
+		want := "rx scan " + dir + " --recursive --signatures=default"
+		if rendered != want || result["cli_command"] != want {
+			t.Fatalf("cli_command\n got  %q (result %q)\n want %q", rendered, result["cli_command"], want)
+		}
+		cli := f.runRenderedFresh(t, rendered)
+		totals := cli["totals"].(map[string]any)
+		if countsOf(totals) != countsOf(result) || totals["findings"] != result["findings"] {
+			t.Errorf("rx scan totals %v, the task %v", totals, result)
+		}
+	})
+
+	t.Run("scan of a file", func(t *testing.T) {
+		path := filepath.Join(dir, "a.log")
+		status := f.runTaskStatus(t, "/v1/findings", map[string]any{"path": path, "signatures": "traceback,severity", "force": true})
+		rendered, _ := status["cli_command"].(string)
+		want := "rx scan " + path + " --signatures=traceback,severity --force"
+		if rendered != want {
+			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
+		}
+		taskCounts := map[string]float64{}
+		for id, count := range status["result"].(map[string]any)["counts"].(map[string]any) {
+			if n := count.(map[string]any)["count"].(float64); n > 0 {
+				taskCounts[id] = n
+			}
+		}
+		files := f.runRenderedFresh(t, rendered)["files"].([]any)
+		cliCounts := map[string]float64{}
+		for id, n := range files[0].(map[string]any)["counts"].(map[string]any) {
+			cliCounts[id] = n.(float64)
+		}
+		if len(taskCounts) == 0 || !reflect.DeepEqual(cliCounts, taskCounts) {
+			t.Errorf("rx scan counts %v, the task %v", cliCounts, taskCounts)
+		}
+	})
+}
+
+// runRenderedFresh runs a rendered command with --json on a fresh cache
+// and decodes what it prints.
+func (f routerFixture) runRenderedFresh(t *testing.T, rendered string) map[string]any {
+	t.Helper()
+	words := requireRunnableCommand(t, rendered)
+	code, stdout, stderr := runRxIn(t, f.root, nil, append(words, "--json")...)
+	if code != 0 {
+		t.Fatalf("rx %v exited %d: %s", words, code, stderr)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatalf("decode: %v\n%s", err, stdout)
+	}
+	return decoded
 }

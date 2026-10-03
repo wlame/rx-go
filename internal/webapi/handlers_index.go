@@ -10,7 +10,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -85,9 +84,14 @@ func registerIndexHandlers(s *Server, api huma.API) {
 		OperationID: "index-post",
 		Method:      http.MethodPost,
 		Path:        "/v1/index",
-		Summary:     "Build line index for file (background task)",
-		Description: "Creates a background task that indexes the file. Poll /v1/tasks/{id} for progress.",
-		Tags:        []string{"Operations"},
+		Summary:     "Build the line index of a file, or of every file of a directory (background task)",
+		Description: "Creates a background task that indexes the file. Poll /v1/tasks/{id} for progress. For a " +
+			"directory, one task indexes every file the file tree lists under it, recursively, one at a time, " +
+			"as rx index DIR --recursive does: a file below the threshold, a file that is not text and a file " +
+			"whose index is current (unless force) is skipped, a file whose build fails is recorded and the " +
+			"task goes on. Its status has files_done and files_total, its result is a FolderTaskResult, and " +
+			"DELETE /v1/tasks/{task_id} cancels it between two files.",
+		Tags: []string{"Operations"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity),
 	}, func(_ context.Context, in *postIndexInput) (*postIndexOutput, error) {
@@ -114,14 +118,21 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (*postIndexOutput, err
 		}
 		return nil, ErrForbidden(err.Error())
 	}
+	// A directory is indexed file by file in one task, as
+	// `rx index --recursive DIR` indexes it; the threshold applies to
+	// each file.
+	if info.IsDir() {
+		dir, pinErr := paths.Pin(validated)
+		if pinErr != nil {
+			return nil, ErrFileAccess(req.Path, pinErr)
+		}
+		return s.startIndexFolder(req, dir)
+	}
 
 	// File-size threshold check. Request-provided threshold (MB) wins
 	// over env default; converting MB→bytes here keeps the task payload
 	// in native units.
-	thresholdBytes := int64(config.LargeFileMB()) * 1024 * 1024
-	if req.Threshold != nil {
-		thresholdBytes = int64(*req.Threshold) * 1024 * 1024
-	}
+	thresholdBytes := thresholdBytesOf(req.Threshold)
 	if info.Size() < thresholdBytes {
 		return nil, ErrBadRequest(fmt.Sprintf(
 			"File size %d bytes is below threshold %d bytes",
@@ -148,10 +159,12 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (*postIndexOutput, err
 		return nil, ErrBadRequest(fmt.Sprintf("%s: %s", kind.NotText, req.Path))
 	}
 
-	task, isNew := s.cfg.TaskManager.Create(validated, "index")
+	task, isNew := s.cfg.TaskManager.Create(validated, indexOperation)
 	if !isNew {
 		return nil, runningTaskConflict(req.Path, task)
 	}
+	cli := indexCLICommand(validated, req)
+	s.cfg.TaskManager.SetCLICommand(task.TaskID, cli)
 
 	// Snapshot task state BEFORE launching the goroutine. Once the
 	// goroutine calls MarkRunning the Task's Status field is mutated
@@ -176,12 +189,24 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (*postIndexOutput, err
 
 	started := formatTaskTime(taskStarted)
 	return &postIndexOutput{Body: rxtypes.TaskResponse{
-		TaskID:    taskID,
-		Status:    taskStatus,
-		Message:   fmt.Sprintf("Indexing task started for %s", req.Path),
-		Path:      validated,
-		StartedAt: &started,
+		TaskID:     taskID,
+		Status:     taskStatus,
+		Message:    fmt.Sprintf("Indexing task started for %s", req.Path),
+		Path:       validated,
+		StartedAt:  &started,
+		CLICommand: cli,
 	}}, nil
+}
+
+// indexCLICommand is the rx command that does what the index task of
+// one file does: `rx index FILE`, with --force and --threshold=N as the
+// request gave them.
+func indexCLICommand(absPath string, req rxtypes.IndexRequest) string {
+	return BuildCLICommand("index_post", map[string]any{
+		"path":      absPath,
+		"force":     req.Force,
+		"threshold": req.Threshold,
+	})
 }
 
 // runIndexTask is the background worker for POST /v1/index.
@@ -246,11 +271,7 @@ func runIndexTask(mgr *tasks.Manager, taskID, absPath string, req rxtypes.IndexR
 // validated path the request named.
 func indexTaskResultFrom(idx *rxtypes.UnifiedFileIndex, indexPath, absPath string, req rxtypes.IndexRequest) rxtypes.IndexTaskResult {
 	projection := indexResponseFrom(idx)
-	projection.CLICommand = BuildCLICommand("index_post", map[string]any{
-		"path":      absPath,
-		"force":     req.Force,
-		"threshold": req.Threshold,
-	})
+	projection.CLICommand = indexCLICommand(absPath, req)
 	return rxtypes.IndexTaskResult{
 		IndexResponse: projection,
 		Success:       true,

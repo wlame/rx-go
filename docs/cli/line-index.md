@@ -190,8 +190,8 @@ directory being walked or into a directory already walked is listed in
 `skipped` and `skip_reasons` with the reason, and nothing is indexed
 for it. See
 [Symlinks inside a directory search](../concepts/security.md#symlinks-inside-a-directory-search).
-`rx scan --recursive` walks a directory the same way and lists the same
-files in the same order.
+`rx scan --recursive` and `POST /v1/index` on a directory walk it the
+same way and list the same files in the same order.
 
 ```bash
 rx index /var/log/ --recursive --json | jq '.indexed | length, .skipped | length, .errors | length'

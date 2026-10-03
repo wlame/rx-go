@@ -23,10 +23,10 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `GET` | `/v1/samples` | Content retrieval by offset/line | [samples](endpoints/samples.md) |
 | `GET` | `/v1/time-range` | A file's timestamp format and first and last timestamp | [time-range](endpoints/time-range.md) |
 | `GET` | `/v1/index` | Read cached line index | [line-index](endpoints/line-index.md) |
-| `POST` | `/v1/index` | Build a new index (background task) | [line-index](endpoints/line-index.md) |
+| `POST` | `/v1/index` | Build the index of a file, or of every file of a directory (background task) | [line-index](endpoints/line-index.md) |
 | `POST` | `/v1/compress` | Compress to seekable zstd (background task) | [compress](endpoints/compress.md) |
 | `GET` | `/v1/tasks/{task_id}` | Poll a background task | [tasks](endpoints/tasks.md) |
-| `DELETE` | `/v1/tasks/{task_id}` | Cancel a findings scan | [tasks](endpoints/tasks.md#delete-v1taskstask_id) |
+| `DELETE` | `/v1/tasks/{task_id}` | Cancel a findings scan or a task over a directory | [tasks](endpoints/tasks.md#delete-v1taskstask_id) |
 | `GET` | `/v1/tree` | Browse directories within search roots | [tree](endpoints/tree.md) |
 | `GET` | `/v1/logs/chains` | The log chains (rotated logs) of a directory | [logs-chains](endpoints/logs-chains.md) |
 | `GET` | `/v1/logs/chain` | One log chain described: parts in time order, checks, state, fingerprint | [logs-chain](endpoints/logs-chain.md) |
@@ -35,7 +35,7 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `GET` | `/v1/logs/trace` | Search log chains, directories and files: each chain's parts in its order, each match with its line in the chain | [logs-trace](endpoints/logs-trace.md) |
 | `GET` | `/v1/signatures` | The signature catalogue the server loaded | [signatures](endpoints/signatures.md) |
 | `GET` | `/v1/findings` | A file's findings from the findings cache: filtered, paged, with text and timeline ticks | [findings](endpoints/findings.md) |
-| `POST` | `/v1/findings` | Scan a file for signatures (background task) | [findings](endpoints/findings.md#post-v1findings) |
+| `POST` | `/v1/findings` | Scan a file, or every file of a directory, for signatures (background task) | [findings](endpoints/findings.md#post-v1findings) |
 | `GET` | `/metrics` | Prometheus exposition | [metrics](endpoints/metrics.md) |
 
 In addition, these routes serve the auto-generated docs and the SPA:
@@ -92,16 +92,22 @@ See [openapi](openapi.md) for details.
 
 ## Background tasks
 
-Three endpoints are async — they return a task ID instantly and run the
+Four endpoints are async — they return a task ID instantly and run the
 actual work on a background goroutine:
 
-- `POST /v1/index` — build a line index
+- `POST /v1/index` — build a line index, of a file or of every file
+  under a directory
+- `POST /v1/findings` — scan a file, or every file under a directory,
+  for signatures
 - `POST /v1/compress` — encode a file as seekable zstd
 - `POST /v1/logs/index` — build the line index of every part of a log
   chain (`GET /v1/logs/chain` starts the same task for a pending chain)
 
-Poll `GET /v1/tasks/{task_id}` until `status` is `"completed"` or
-`"failed"`. See [tasks](endpoints/tasks.md).
+Poll `GET /v1/tasks/{task_id}` until `status` is `"completed"`,
+`"failed"` or `"cancelled"`. An index or findings task carries the
+`rx` command that does the same in `cli_command`, and a task over a
+directory reports `files_done` of `files_total`. See
+[tasks](endpoints/tasks.md).
 
 ## Webhooks
 

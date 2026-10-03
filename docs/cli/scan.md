@@ -32,8 +32,8 @@ A file whose text is not text (a binary file, a `.tar.gz`) is skipped
 with the reason. The files are scanned one at a time, in the order the
 paths are given and, under a directory, in the order of the walk: real
 directories depth first and by name, then the directories reached
-through links. `rx index --recursive` lists the same files in the same
-order.
+through links. `rx index --recursive` and `POST /v1/findings` on a
+directory list the same files in the same order.
 
 The scan takes the settings `rx trace --signatures` takes:
 `RX_WORKERS`, `RX_SIGNATURES_LINE_BYTES`,
@@ -175,6 +175,7 @@ rx scan -r /var/log/app --mask-secrets
   their lines
 - [`rx signatures`](signatures.md) — the signatures and the selections
 - [`POST /v1/findings`](../api/endpoints/findings.md) — the same scan
-  over HTTP
+  over HTTP, for a file or a directory; its task's `cli_command` is the
+  `rx scan` command that does the same
 - [Signatures](../concepts/signatures.md) — the model, the cache and
   masking

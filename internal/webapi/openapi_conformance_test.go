@@ -519,6 +519,8 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("index of a timestamped file", "/v1/index", q("path", at("timed.log")), http.StatusOK)
 	get("time range of an indexed timestamped file", "/v1/time-range", q("path", at("timed.log")), http.StatusOK)
 	post("index a file below the threshold", "/v1/index", map[string]any{"path": at("sub/other.log")}, http.StatusBadRequest)
+	folderIndex := post("index every file of a directory", "/v1/index", map[string]any{"path": root, "threshold": 0}, http.StatusOK)
+	run.finishTask("finished index task over a directory", folderIndex)
 	post("index a missing file", "/v1/index", map[string]any{"path": at("nope.log")}, http.StatusNotFound)
 	post("index a file outside the root", "/v1/index", map[string]any{"path": "/etc/hosts", "threshold": 0}, http.StatusForbidden)
 	post("index with an unknown field", "/v1/index", map[string]any{"path": at("app.log"), "no_such_field": true},
@@ -561,7 +563,8 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	run.finishTask("finished findings task", scan)
 	get("findings after a scan, filtered, with text and ticks", "/v1/findings",
 		q("path", at("app.log"), "group", "traceback", "text", "true", "before", "1", "ticks", "10"), http.StatusOK)
-	post("scan a directory", "/v1/findings", map[string]any{"path": at("emptydir")}, http.StatusBadRequest)
+	folderScan := post("scan every file of a directory", "/v1/findings", map[string]any{"path": at("sub")}, http.StatusAccepted)
+	run.finishTask("finished findings task over a directory", folderScan)
 	post("scan outside the root", "/v1/findings", map[string]any{"path": "/etc/hosts"}, http.StatusForbidden)
 	post("scan a missing file", "/v1/findings", map[string]any{"path": at("nope.log")}, http.StatusNotFound)
 	post("scan without a path", "/v1/findings", map[string]any{}, http.StatusUnprocessableEntity)

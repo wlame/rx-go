@@ -14,8 +14,8 @@ import (
 // quoted with output.Quote (Python-shlex-compatible).
 //
 // operation names a row of cliCommandTable: "trace", "samples",
-// "time_range", "index_get", "index_post" or "compress"; an unknown
-// name renders "".
+// "time_range", "index_get", "index_post", "scan", "compress" or one of
+// the log chain rows; an unknown name renders "".
 // params holds the request's values keyed by request field name; CLIArg
 // lists the Go types a value may have.
 //
@@ -158,12 +158,30 @@ var cliCommandTable = map[string]CLICommandOperation{
 		Args:       []CLIArg{{Field: "path", Kind: ArgPositional}},
 		FixedFlags: []string{"--info", "--json"},
 	},
+	// An index task: `rx index FILE`, or `rx index DIR --recursive` for
+	// a task over a directory, which indexes every file under it.
 	"index_post": {
 		Subcommand: "index",
 		Args: []CLIArg{
 			{Field: "path", Kind: ArgPositional},
+			{Field: "recursive", Flag: "recursive", Kind: ArgFlag, Absent: defaultValue("false")},
 			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
 			{Field: "threshold", Flag: "threshold", Kind: ArgFlag, Absent: noValueDefault()},
+		},
+	},
+	// A findings task (POST /v1/findings): `rx scan FILE`, or `rx scan
+	// DIR --recursive` for a task over a directory. The selection is
+	// always spelled out (`--signatures=default` for the default set),
+	// and a server that masks secrets renders --mask-secrets, so the
+	// command caches the entries the server's reads find.
+	"scan": {
+		Subcommand: "scan",
+		Args: []CLIArg{
+			{Field: "path", Kind: ArgPositional},
+			{Field: "recursive", Flag: "recursive", Kind: ArgFlag, Absent: defaultValue("false")},
+			{Field: "signatures", Flag: "signatures", Kind: ArgFlag, Absent: defaultValue("")},
+			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
+			{Field: "mask_secrets", Flag: "mask-secrets", Kind: ArgFlag, Absent: defaultValue("false")},
 		},
 	},
 	// The commands that read one log chain: GET /v1/logs/chain is

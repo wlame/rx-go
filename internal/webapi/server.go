@@ -12,10 +12,12 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/wlame/rx-go/internal/cachefill"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/frontend"
 	"github.com/wlame/rx-go/internal/hooks"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
@@ -104,6 +106,12 @@ type Config struct {
 	// unless a test replaces it (to hold a scan while it cancels it).
 	scanFindings func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue,
 		sel []*signatures.Signature, opts findings.ScanOptions) (*findings.Answer, error)
+
+	// indexFolderFile builds the index of one file of an index task over
+	// a directory; cachefill.IndexFile unless a test replaces it (to
+	// cancel the task between two files).
+	indexFolderFile func(ctx context.Context, e cachefill.Entry, s cachefill.IndexSettings,
+		build *index.Progress) cachefill.FileResult
 }
 
 // Server owns the http.Server, chi router, and huma API instance.
@@ -250,6 +258,9 @@ func applyConfigDefaults(cfg *Config) {
 	}
 	if cfg.scanFindings == nil {
 		cfg.scanFindings = findings.Scan
+	}
+	if cfg.indexFolderFile == nil {
+		cfg.indexFolderFile = cachefill.IndexFile
 	}
 	if cfg.maxUnfinishedScans <= 0 {
 		cfg.maxUnfinishedScans = maxUnfinishedScans

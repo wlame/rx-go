@@ -209,6 +209,16 @@ type Progress struct {
 	build atomic.Pointer[index.Progress]
 }
 
+// NewProgress returns the progress of a run over entries entries, which
+// reports 0 of entries from the start: a caller that hands it to a
+// status reader before Each starts never shows a total of 0.
+func NewProgress(entries int) *Progress {
+	p := &Progress{}
+	p.filesTotal.Store(int64(entries))
+	p.started.Store(true)
+	return p
+}
+
 // Files returns the entries ended and the entries listed.
 func (p *Progress) Files() (done, total int64) {
 	return p.filesDone.Load(), p.filesTotal.Load()

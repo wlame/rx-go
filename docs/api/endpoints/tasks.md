@@ -3,7 +3,7 @@
 Poll the status of a background task created by `POST /v1/index`,
 `POST /v1/compress`, `POST /v1/logs/index` or `POST /v1/findings`, or of
 the index build a `GET /v1/samples` request answered `202` for; cancel a
-findings scan.
+findings scan or a task over a directory.
 
 ## Purpose
 
@@ -39,6 +39,9 @@ GET /v1/tasks/{task_id}
   "progress":    null,
   "bytes_read":  null,
   "bytes_total": null,
+  "files_done":  null,
+  "files_total": null,
+  "cli_command": "rx index /var/log/audit-2026-03.log",
   "result":      null
 }
 ```
@@ -57,6 +60,9 @@ GET /v1/tasks/{task_id}
   "progress":    0.42,
   "bytes_read":  null,
   "bytes_total": null,
+  "files_done":  null,
+  "files_total": null,
+  "cli_command": "rx index /var/log/audit-2026-03.log",
   "result":      null
 }
 ```
@@ -75,6 +81,9 @@ GET /v1/tasks/{task_id}
   "progress":    1,
   "bytes_read":  null,
   "bytes_total": null,
+  "files_done":  null,
+  "files_total": null,
+  "cli_command": "rx index /var/log/audit-2026-03.log",
   "result": {
     "success":    true,
     "path":       "/var/log/audit-2026-03.log",
@@ -108,6 +117,9 @@ GET /v1/tasks/{task_id}
   "progress":    null,
   "bytes_read":  null,
   "bytes_total": null,
+  "files_done":  null,
+  "files_total": null,
+  "cli_command": "rx index /var/log/audit-2026-03.log",
   "result":      null
 }
 ```
@@ -126,7 +138,10 @@ GET /v1/tasks/{task_id}
 | `progress` | number \| null | Share of an index task's input read so far, from 0 to 1 (a stream-compressed or plain file counts its bytes on disk, a seekable zstd file its decompressed text); for a `chain_index` task, the share of its parts done, a part whose build runs counted by that build's progress. `null` for a compress task, for an index task that reused a stored index, and before the build has started |
 | `bytes_read` | int64 \| null | Bytes of the file a findings task has read so far, as stored on disk. `null` for the other operations, and for a findings task that has not started reading (one waiting in the scan queue, or one the findings cache answers whole) |
 | `bytes_total` | int64 \| null | The size of the file a findings task reads, as stored on disk; `null` when `bytes_read` is. A findings task's `progress` is `bytes_read / bytes_total` |
-| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult`, `CompressTaskResult`, `ChainIndexTaskResult` or `FindingsResponse` by operation |
+| `files_done` | int64 \| null | A task over a directory: the entries of `files_total` it has ended (indexed or scanned, skipped, or failed). `null` for a task over one file, and while the task lists the directory |
+| `files_total` | int64 \| null | A task over a directory: the entries its walk listed. `null` when `files_done` is |
+| `cli_command` | string | The `rx` command that does what the task does: `rx index PATH` for an index task of `POST /v1/index`, `rx scan PATH --signatures=SEL` for a findings task, with `--recursive` for a directory, `--force` when the request forced, `--mask-secrets` when the server masks secrets, and `--threshold=N` as the index request gave it. `""` for the other tasks: compress, chain_index, and the index builds `GET /v1/samples` and the log chains start |
+| `result` | object \| null | Populated only when `status == "completed"`, `null` before; `IndexTaskResult`, `CompressTaskResult`, `ChainIndexTaskResult` or `FindingsResponse` by operation, `FolderTaskResult` for a task over a directory |
 
 ### Result shape by operation
 
@@ -140,6 +155,8 @@ GET /v1/tasks/{task_id}
 - `operation == "findings"`: `FindingsResponse`, the answer
   [`GET /v1/findings`](findings.md) gives for the scanned selection
   without filters: the summary and the first page of 1,000 findings
+- an `index` or `findings` task over a directory (`files_total` is set):
+  `FolderTaskResult`, see [Tasks over a directory](#tasks-over-a-directory)
 
 ## Status codes
 
@@ -152,7 +169,7 @@ GET /v1/tasks/{task_id}
 
 ```text
 queued → running → (completed | failed)
-queued | running → cancelled        (a findings task, by DELETE)
+queued | running → cancelled        (a findings task or a task over a directory, by DELETE)
 ```
 
 - `queued` is the initial state right after the POST returns; a
@@ -163,11 +180,91 @@ queued | running → cancelled        (a findings task, by DELETE)
   answers whole goes from `queued` to `completed`)
 - `completed` on success with a populated `result`
 - `failed` on error with a populated `error` string
-- `cancelled` when `DELETE` stopped a findings task: no `error`, no
-  `result`
+- `cancelled` when `DELETE` stopped a findings task or a task over a
+  directory: no `error`, no `result`
 
 Transitions are monotonic — a task never moves back to an earlier
 state.
+
+## Tasks over a directory
+
+`POST /v1/index` and `POST /v1/findings` given a directory start one
+task that takes every file the [file tree](tree.md) lists under it,
+recursively, one at a time, in the walk's order: the files
+`rx index DIR --recursive` and `rx scan DIR --recursive` take, in the
+same order (the task's `cli_command`). Each entry ends in one of three
+ways:
+
+- **done**: indexed, or scanned for the selection;
+- **skipped**: its index, or the findings of every selected signature,
+  are current (counted in `current` too; `force` passes none over this
+  way), or its text is not text, it is below the index threshold, rx
+  refuses to decompress it, the walk refused it (a link out of the
+  roots or into a hidden entry) or it cannot be read;
+- **failed**: its build or scan failed. The error is recorded and the
+  task goes on with the next file.
+
+While it runs the status has `files_done` of `files_total`, and
+`progress` is the files ended plus the share of the current file read,
+over `files_total`. A findings task's `bytes_read` and `bytes_total`
+follow the file it reads (`0` between files); an index task's are
+`null`. The files of a findings task go through the scan queue one at a
+time, so `RX_MAX_SIGNATURE_SCANS` still bounds the files read at once.
+
+```json
+{
+  "task_id":     "9f2c4f7e-0b1d-4d8e-a6a1-2b9c1e4d5f60",
+  "status":      "running",
+  "path":        "/var/log/app",
+  "operation":   "findings",
+  "started_at":  "2026-10-12T09:14:02.120044Z",
+  "completed_at": null,
+  "error":       null,
+  "progress":    0.0572,
+  "bytes_read":  1048576,
+  "bytes_total": 4194304,
+  "files_done":  12,
+  "files_total": 214,
+  "cli_command": "rx scan /var/log/app --recursive --signatures=default",
+  "result":      null
+}
+```
+
+The result, `FolderTaskResult`:
+
+```json
+{
+  "path":          "/var/log/app",
+  "files_total":   214,
+  "done":          201,
+  "skipped":       12,
+  "current":       9,
+  "failed":        1,
+  "findings":      3812,
+  "skipped_files": [
+    {"path": "/var/log/app/core.bin", "reason": "not a text file: a NUL byte in its first 8 KiB"}
+  ],
+  "failed_files":  [
+    {"path": "/var/log/app/worker.log.3.gz", "error": "…"}
+  ],
+  "cli_command":   "rx scan /var/log/app --recursive --signatures=default"
+}
+```
+
+`files_total` = `done` + `skipped` + `failed`. `skipped_files` lists the
+entries skipped for another reason than being current, and
+`failed_files` the failed ones, each the first 1,000 in the walk's
+order; the counts are exact. `findings` is the findings of every file
+scanned or current, `null` for an index task.
+
+A second `POST` for the same directory while its task runs returns that
+task (findings) or answers `409` naming it (index), as for a file.
+`DELETE` cancels the task between two files, and a findings task inside
+the scan of a file too: the files ended before the cancel keep their
+index or findings, the file a cancel stops writes nothing, and no later
+file is read. An index build that has started runs to its end and its
+index is not stored. A task over a directory can be cancelled until it
+ends.
 
 ## `DELETE /v1/tasks/{task_id}`
 
@@ -175,7 +272,9 @@ Cancels a queued or running findings task ([`POST /v1/findings`](findings.md#pos
 the scan stops at its next read and caches nothing, and the task ends at
 once with status `cancelled`, which the answer shows. A client that
 joined the same scan sees it `cancelled` and may start it again; a new
-`POST` for the file starts a new task at once.
+`POST` for the file starts a new task at once. It cancels a task over a
+directory, an index or a findings one, as
+[Tasks over a directory](#tasks-over-a-directory) says.
 
 ```bash
 curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f514c8bd4'
@@ -193,6 +292,9 @@ curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f51
   "progress":    0.41,
   "bytes_read":  52428800,
   "bytes_total": 127926272,
+  "files_done":  null,
+  "files_total": null,
+  "cli_command": "rx scan /var/log/app.log --signatures=default",
   "result":      null
 }
 ```
@@ -201,7 +303,7 @@ curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f51
 |---:|---|
 | `200 OK` | The task is cancelled; its status is returned |
 | `404 Not Found` | Task ID unknown or already swept |
-| `409 Conflict` | The task is not a findings task (an index, compress or chain_index task cannot be cancelled), it has already ended (completed, failed or cancelled), or its scan has finished reading and its answer is being written: from that point a cancel is refused, so a task never ends `cancelled` with findings written. The body is `{"detail", "task_id"}` |
+| `409 Conflict` | The task is neither a findings task nor a task over a directory (an index task over one file, a compress or a chain_index task cannot be cancelled), it has already ended (completed, failed or cancelled), or it is a findings task over one file whose scan has finished reading and whose answer is being written: from that point a cancel is refused, so such a task never ends `cancelled` with findings written. The body is `{"detail", "task_id"}` |
 
 ## Sweeper behavior
 

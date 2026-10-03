@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -99,8 +100,10 @@ func TestTrace_DirectoryWalkStaysInsideTheSearchRoot(t *testing.T) {
 	}
 }
 
-// POST /v1/index takes one file. A directory is refused, and no index is
-// stored for anything a link inside it leads to.
+// POST /v1/index on a directory indexes the files its walk follows,
+// and stores no index for anything a refused link inside it leads to:
+// the links out of the root and into a hidden entry are skipped with the
+// walk's reason.
 func TestIndexPost_DirectoryStoresNoIndexBehindItsLinks(t *testing.T) {
 	tree := sandboxedLinkTree(t)
 	ts := newTestServer(t)
@@ -111,15 +114,56 @@ func TestIndexPost_DirectoryStoresNoIndexBehindItsLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	_ = resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("status %d, want 400 for a directory", resp.StatusCode)
+	var started rxtypes.TaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&started); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200 for a directory", resp.StatusCode)
+	}
+	var result rxtypes.FolderTaskResult
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		status, err := http.Get(ts.URL + "/v1/tasks/" + started.TaskID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		var task struct {
+			Status string                    `json:"status"`
+			Result *rxtypes.FolderTaskResult `json:"result"`
+		}
+		decodeErr := json.NewDecoder(status.Body).Decode(&task)
+		_ = status.Body.Close()
+		if decodeErr != nil {
+			t.Fatalf("decode: %v", decodeErr)
+		}
+		if task.Status == "completed" {
+			result = *task.Result
+			break
+		}
+		if task.Status != "queued" && task.Status != "running" || time.Now().After(deadline) {
+			t.Fatalf("task %+v", task)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	for _, source := range []string{tree.Out, tree.Secret, tree.Secret2, tree.Visible, tree.Private} {
 		if _, err := os.Stat(index.GetCachePath(source)); err == nil {
 			t.Errorf("an index was stored for %s", source)
 		}
+	}
+	for _, source := range []string{tree.In, tree.Deep} {
+		if _, err := os.Stat(index.GetCachePath(source)); err != nil {
+			t.Errorf("no index was stored for %s: %v", source, err)
+		}
+	}
+	reasons := map[string]string{}
+	for _, skip := range result.SkippedFiles {
+		reasons[filepath.Base(skip.Path)] = skip.Reason
+	}
+	if reasons["out.log"] != paths.ReasonLinkOutsideRoots || reasons["visible.log"] != paths.ReasonLinkHidden {
+		t.Errorf("skipped %+v", result.SkippedFiles)
 	}
 }
 

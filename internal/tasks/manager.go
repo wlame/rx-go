@@ -24,11 +24,15 @@
 //     task that makes thousands of them never drops another one.
 //   - A watch (Watch) that keeps how a task ended, for a caller that
 //     reads it after the cap or the sweeper may have dropped the task.
-//   - Cancellable tasks (CreateCancellable): a signature scan runs under
-//     a context its task keeps, and Cancel stops it and ends the task
-//     as cancelled (DELETE /v1/tasks/{task_id}). Such a task holds a key
-//     of its operation and path, so it runs beside an index build or a
+//   - Cancellable tasks (CreateCancellable): a signature scan, and an
+//     index or findings task over a directory, runs under a context its
+//     task keeps, and Cancel stops it and ends the task as cancelled
+//     (DELETE /v1/tasks/{task_id}). Such a task holds a key of its
+//     operation and path, so it runs beside an index build or a
 //     compression of the same file.
+//   - What a task does as an rx command (SetCLICommand), and, for a task
+//     over a directory, how many of its files it has ended
+//     (ReportFiles).
 //
 // Task store backing: Python uses an asyncio.Lock with dict mutation.
 // This package uses one sync.Mutex guarding a map[string]*Task for the
@@ -110,9 +114,13 @@ const (
 // fields except TaskID are mutable after creation; concurrent access
 // is serialized through Manager's lock.
 type Task struct {
-	TaskID      string
-	Path        string
-	Operation   string // "index" | "compress" | "chain_index" | "findings"
+	TaskID    string
+	Path      string
+	Operation string // "index" | "compress" | "chain_index" | "findings"
+	// CLICommand is the rx command that does what the task does, set by
+	// its creator (SetCLICommand) before the task id is handed out; ""
+	// for a task without one.
+	CLICommand  string
 	Status      Status
 	StartedAt   time.Time
 	CompletedAt *time.Time
@@ -139,6 +147,10 @@ type Task struct {
 	// bytes, when set, says how many bytes the task's work has read and
 	// of how many; see ReportBytes. Shared by the clones too.
 	bytes ByteProgressFunc
+
+	// files, when set, says how many files of a task over a directory
+	// have ended, of how many; see ReportFiles. Shared by the clones too.
+	files FileProgressFunc
 
 	// ctx and cancel are set for a cancellable task (CreateCancellable)
 	// and nil for any other: the worker runs under ctx, and Cancel (or
@@ -246,6 +258,28 @@ func (t *Task) Bytes() *ByteProgress {
 	}
 	read, total := t.bytes()
 	return &ByteProgress{Read: read, Total: total}
+}
+
+// FileProgressFunc reports how many files of a task over a directory
+// have ended and how many there are. Like ProgressFunc it is called
+// from the goroutine that serves a status request while the worker
+// keeps working, so it must be safe to call concurrently with the work.
+type FileProgressFunc func() (done, total int64)
+
+// FileProgress is how many files of a task over a directory have
+// ended, of how many.
+type FileProgress struct {
+	Done, Total int64
+}
+
+// Files returns the files the task has ended and their total, or nil
+// when the task reports none (a task over one file).
+func (t *Task) Files() *FileProgress {
+	if t.files == nil {
+		return nil
+	}
+	done, total := t.files()
+	return &FileProgress{Done: done, Total: total}
 }
 
 // IsTerminal reports whether the task is done (completed, failed or
@@ -438,7 +472,8 @@ func (m *Manager) CreateKeyed(operation, path, key string) (*Task, bool) {
 //
 // The context is canceled by Cancel, and also when the task ends by
 // Complete or Fail, so a worker never holds a live context after its
-// task is over. Only findings tasks are created this way.
+// task is over. Findings tasks are created this way, and the index and
+// findings tasks over a directory, whose key holds the directory's path.
 func (m *Manager) CreateCancellable(path, operation string) (*Task, context.Context, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -465,7 +500,8 @@ func cancellableKey(operation, path string) string {
 }
 
 // ErrNotCancellable is returned by Cancel for a task that was not
-// created cancellable: an index, compress or chain_index task.
+// created cancellable: an index task over one file, a compress or a
+// chain_index task.
 var ErrNotCancellable = errors.New("the task cannot be cancelled")
 
 // ErrTaskEnded is returned by Cancel for a task that has already ended,
@@ -786,6 +822,36 @@ func (m *Manager) ReportProgress(taskID string, fn ProgressFunc) bool {
 		return false
 	}
 	task.progress = fn
+	return true
+}
+
+// SetCLICommand records the rx command that does what the task does.
+// The task's creator calls it once, right after creating the task and
+// before handing out its id, so every status of the task shows it.
+// Returns false when no such task exists.
+func (m *Manager) SetCLICommand(taskID, command string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return false
+	}
+	task.CLICommand = command
+	return true
+}
+
+// ReportFiles gives a task over a directory the function its status
+// reads the files ended and their total from, as ReportBytes gives the
+// bytes. The worker calls it once, when the directory is listed.
+// Returns false when no such task exists.
+func (m *Manager) ReportFiles(taskID string, fn FileProgressFunc) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return false
+	}
+	task.files = fn
 	return true
 }
 

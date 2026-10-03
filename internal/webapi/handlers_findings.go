@@ -113,13 +113,19 @@ func registerFindingsHandlers(s *Server, api huma.API) {
 		Method:        http.MethodPost,
 		Path:          "/v1/findings",
 		DefaultStatus: http.StatusAccepted,
-		Summary:       "Scan one file for signatures (background task)",
+		Summary:       "Scan a file, or every file of a directory, for signatures (background task)",
 		Description: "Starts a task (operation findings) that scans the file for the selected signatures the " +
 			"findings cache does not hold (with force, for all of them) and caches what it finds; a scan of the " +
 			"same file already running is returned instead, and it scans what it was started for. Poll " +
 			"GET /v1/tasks/{task_id}: bytes_read and bytes_total say how far it read; its result is the answer " +
 			"GET /v1/findings gives without filters, with the first page. DELETE /v1/tasks/{task_id} cancels it. " +
-			"At most RX_MAX_SIGNATURE_SCANS scans read files at once; later ones wait, queued.",
+			"At most RX_MAX_SIGNATURE_SCANS scans read files at once; later ones wait, queued. For a directory, " +
+			"one task scans every file the file tree lists under it, recursively, one at a time, as " +
+			"rx scan DIR --recursive does: a file that is not text, and a file whose findings are current for " +
+			"every selected signature (unless force), is skipped, a file whose scan fails is recorded and the " +
+			"task goes on. Its status has files_done and files_total (bytes_read and bytes_total follow the " +
+			"file it reads), its result is a FolderTaskResult, and DELETE cancels it between two files or " +
+			"inside one; the files scanned before the cancel keep their findings.",
 		Tags:      []string{"Signatures"},
 		Responses: findingsScanResponses(api),
 	}, func(_ context.Context, in *findingsScanInput) (*findingsScanOutput, error) {
@@ -179,11 +185,12 @@ func (s *Server) getFindings(ctx context.Context, in *findingsInput) (*findingsO
 	return &findingsOutput{Body: *resp}, nil
 }
 
-// startFindingsScan answers POST /v1/findings: it checks the file and
-// the selection as GET /v1/findings does, then starts the file's scan
-// task, or joins the one running for the file. The task runs detached
-// from the request (runDetached), under the context its task keeps, so
-// only DELETE /v1/tasks/{task_id} stops it.
+// startFindingsScan answers POST /v1/findings: it checks the path and
+// the selection as GET /v1/findings does, then starts the scan task of
+// the file, or of every file under a directory (runFindingsFolder), or
+// joins the one running for the same path. The task runs detached from
+// the request (runDetached), under the context its task keeps, so only
+// DELETE /v1/tasks/{task_id} stops it.
 func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsScanOutput, error) {
 	validated, err := findingsPath(req.Path)
 	if err != nil {
@@ -193,11 +200,45 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 	if err != nil {
 		return nil, err
 	}
-	file, err := findingsFile(validated)
+	src, err := paths.Pin(validated)
+	if err != nil {
+		return nil, ErrFileAccess(validated, err)
+	}
+	cliParams := map[string]any{
+		"path": validated, "signatures": selectionText(req.Signatures), "force": req.Force,
+		"mask_secrets": s.cfg.Findings.Scan.MaskSecrets,
+	}
+	if src.Info().IsDir() {
+		cliParams["recursive"] = true
+		cli := BuildCLICommand("scan", cliParams)
+		return s.startScanTask(validated, cli, func(taskID string) string {
+			return fmt.Sprintf("Scanning every file under %s for %d signatures; follow GET /v1/tasks/%s", validated, len(sel), taskID)
+		}, func(ctx context.Context, taskID string) {
+			s.runFindingsFolder(ctx, folderScan{taskID: taskID, dir: src, sel: sel, force: req.Force, cli: cli})
+		})
+	}
+	file, err := findingsFileOf(validated, src)
 	if err != nil {
 		return nil, err
 	}
+	scan := findingsScan{
+		path: validated, file: file, sel: sel, force: req.Force,
+		cli: BuildCLICommand("trace", s.findingsCLIParams(validated, req.Signatures)),
+	}
+	return s.startScanTask(validated, BuildCLICommand("scan", cliParams), func(taskID string) string {
+		return fmt.Sprintf("Scanning %s for %d signatures; follow GET /v1/tasks/%s", validated, len(sel), taskID)
+	}, func(ctx context.Context, taskID string) {
+		scan.taskID = taskID
+		s.runFindingsScan(ctx, scan)
+	})
+}
 
+// startScanTask starts a findings task for validated (a file or a
+// directory) whose command is cli, or joins the one already running
+// for the path. message words the answer of a new task; work is its
+// worker, run detached under the task's context.
+func (s *Server) startScanTask(validated, cli string, message func(taskID string) string,
+	work func(ctx context.Context, taskID string)) (*findingsScanOutput, error) {
 	mgr := s.cfg.TaskManager
 	// A place among the unfinished scans is taken before the task is
 	// created, and given back when the task joins one already there or
@@ -209,7 +250,7 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 	select {
 	case s.scanPlaces <- struct{}{}:
 	default:
-		// No place for a new task; a scan of the file already there is
+		// No place for a new task; a scan of the path already there is
 		// still joined.
 		if running, ok := mgr.CancellableHolder(validated, findingsOperation); ok {
 			return joinedScan(validated, running), nil
@@ -230,14 +271,11 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 		}
 		return joinedScan(validated, running), nil
 	}
+	mgr.SetCLICommand(task.TaskID, cli)
 
 	// Snapshot the new task before its worker starts: from then on the
 	// worker updates it, and reading it here would be a data race.
 	taskID, status, started := task.TaskID, string(task.Status), formatTaskTime(task.StartedAt)
-	scan := findingsScan{
-		taskID: taskID, path: validated, file: file, sel: sel, force: req.Force,
-		cli: BuildCLICommand("trace", s.findingsCLIParams(validated, req.Signatures)),
-	}
 	// Go note: the goroutine outlives this request. runDetached turns a
 	// panic in it into a failed task instead of a crashed server.
 	go runDetached(mgr, taskID, findingsOperation, s.cfg.Logger, func() {
@@ -257,21 +295,23 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 				panic(r)
 			}
 		}()
-		s.runFindingsScan(taskCtx, scan)
+		work(taskCtx, taskID)
 	})
 	return &findingsScanOutput{Body: rxtypes.TaskResponse{
-		TaskID: taskID, Status: status, Path: validated, StartedAt: &started,
-		Message: fmt.Sprintf("Scanning %s for %d signatures; follow GET /v1/tasks/%s", validated, len(sel), taskID),
+		TaskID: taskID, Status: status, Path: validated, StartedAt: &started, CLICommand: cli,
+		Message: message(taskID),
 	}}, nil
 }
 
 // joinedScan is the answer of a POST /v1/findings that joins running,
-// the scan of the file already queued or running: a copy of the task,
-// which the caller took from the manager.
+// the scan of the file or directory already queued or running: a copy
+// of the task, which the caller took from the manager, with its
+// command.
 func joinedScan(validated string, running *tasks.Task) *findingsScanOutput {
 	started := formatTaskTime(running.StartedAt)
 	return &findingsScanOutput{Body: rxtypes.TaskResponse{
 		TaskID: running.TaskID, Status: string(running.Status), Path: running.Path, StartedAt: &started,
+		CLICommand: running.CLICommand,
 		Message: fmt.Sprintf("Joined the signature scan already running for %s, which scans what it was "+
 			"started for; follow GET /v1/tasks/%s", validated, running.TaskID),
 	}}
@@ -505,6 +545,12 @@ func findingsFile(validated string) (trace.SearchFile, error) {
 	if err != nil {
 		return trace.SearchFile{}, ErrFileAccess(validated, err)
 	}
+	return findingsFileOf(validated, src)
+}
+
+// findingsFileOf classifies the file src, which the caller pinned from
+// validated, as findingsFile does.
+func findingsFileOf(validated string, src paths.Pinned) (trace.SearchFile, error) {
 	if src.Info().IsDir() {
 		return trace.SearchFile{}, ErrBadRequest(fmt.Sprintf("Path is a directory, not a file: %s", validated))
 	}

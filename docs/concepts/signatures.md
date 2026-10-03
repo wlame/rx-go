@@ -791,8 +791,10 @@ what the CLI gives, through the same scan, cache and masking:
   from the findings cache alone, filtered and paged, with their text and
   their place on a timeline when asked; it never scans.
 - [`POST /v1/findings`](../api/endpoints/findings.md#post-v1findings): a
-  scan of a file as a background task, at most `RX_MAX_SIGNATURE_SCANS`
-  at once, cancelled by `DELETE /v1/tasks/{task_id}`.
+  scan of a file, or of every file under a directory one at a time, as a
+  background task, at most `RX_MAX_SIGNATURE_SCANS` files read at once,
+  cancelled by `DELETE /v1/tasks/{task_id}`; its `cli_command` is the
+  [`rx scan`](../cli/scan.md) command that does the same.
 - `signatures` on [`GET /v1/trace`](../api/endpoints/trace.md#signatures):
   the answer of `rx trace --signatures=… --json`.
 - `findings` on each file of [`GET /v1/tree`](../api/endpoints/tree.md):

@@ -163,10 +163,10 @@ type TickCount struct {
 	FirstLine int64 `json:"first_line" doc:"The first line of the first of them, in line order."`
 }
 
-// FindingsScanRequest is the body of POST /v1/findings: the file to
-// scan and the signatures to scan it for.
+// FindingsScanRequest is the body of POST /v1/findings: the file, or
+// the directory, to scan and the signatures to scan it for.
 type FindingsScanRequest struct {
-	Path       string `json:"path" doc:"The file to scan. Must be inside a configured --search-root."`
+	Path       string `json:"path" doc:"The file to scan, or a directory: every file the file tree lists under it is scanned, recursively, one at a time. Must be inside a configured --search-root."`
 	Signatures string `json:"signatures,omitempty" required:"false" default:"default" maxLength:"4096" doc:"The selection, as rx trace --signatures= takes it: comma-separated ids, groups and tags, all, default, -word to remove (traceback,sql; all,-pii). Default: the default set."`
-	Force      bool   `json:"force,omitempty" required:"false" default:"false" doc:"Scan every selected signature again, those with a current cache entry too."`
+	Force      bool   `json:"force,omitempty" required:"false" default:"false" doc:"Scan every selected signature again, those with a current cache entry too; over a directory, scan the files whose findings are current too."`
 }

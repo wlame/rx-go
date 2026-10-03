@@ -227,9 +227,9 @@ type TimePoint struct {
 // the `analyze` and `analyze_window_lines` that contract 1 had, answers
 // 422.
 type IndexRequest struct {
-	Path      string `json:"path"`
-	Force     bool   `json:"force,omitempty"`
-	Threshold *int   `json:"threshold,omitempty"` // MB; nil = use env default
+	Path      string `json:"path" doc:"The file to index, or a directory: every file the file tree lists under it is indexed, recursively, one at a time. Must be inside a configured --search-root."`
+	Force     bool   `json:"force,omitempty" doc:"Build the index again even when a valid one is stored; over a directory, for every file."`
+	Threshold *int   `json:"threshold,omitempty" doc:"The smallest file indexed, in MB; RX_LARGE_FILE_MB when absent. A single file below it is refused with 400; under a directory it is skipped with the reason."` // MB; nil = use env default
 }
 
 // IndexResponse is the body of GET /v1/index: the cached index of one

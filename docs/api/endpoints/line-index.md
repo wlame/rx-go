@@ -131,7 +131,8 @@ If the response is `404`:
 
 ## `POST /v1/index`
 
-Build a line index as a background task.
+Build a line index as a background task: of one file, or of every file
+under a directory.
 
 ### Request
 
@@ -144,9 +145,9 @@ Content-Type: application/json
 
 | Field | Type | Required | Default | Description |
 |---|---|:-:|---|---|
-| `path` | string | yes | — | File path |
-| `force` | bool | no | `false` | Rebuild even if a valid cache exists |
-| `threshold` | int \| null | no | `RX_LARGE_FILE_MB` (default 50) | Min file size in MB |
+| `path` | string | yes | — | A file, or a directory: every file under it is indexed ([Tasks over a directory](tasks.md#tasks-over-a-directory)) |
+| `force` | bool | no | `false` | Rebuild even if a valid cache exists; under a directory, for every file |
+| `threshold` | int \| null | no | `RX_LARGE_FILE_MB` (default 50) | Min file size in MB; under a directory, a smaller file is skipped with the reason |
 
 The body allows no other member. `analyze` and `analyze_window_lines`
 were removed in contract 2.0 with the index analysis, and a body that
@@ -163,23 +164,41 @@ A file's findings come from [`POST /v1/findings`](findings.md) now.
 
 ```json
 {
-  "task_id":    "6e9b0cb4-7d86-4a56-9c56-3b5a19e67d53",
-  "status":     "queued",
-  "message":    "Indexing task started for /var/log/audit-2026-03.log",
-  "path":       "/var/log/audit-2026-03.log",
-  "started_at": "2026-04-18T14:23:45.123456Z"
+  "task_id":     "6e9b0cb4-7d86-4a56-9c56-3b5a19e67d53",
+  "status":      "queued",
+  "message":     "Indexing task started for /var/log/audit-2026-03.log",
+  "path":        "/var/log/audit-2026-03.log",
+  "started_at":  "2026-04-18T14:23:45.123456Z",
+  "cli_command": "rx index /var/log/audit-2026-03.log"
 }
 ```
+
+`cli_command` is the `rx index` command that does what the task does,
+the same in every status of the task and in its result.
+
+### A directory
+
+Given a directory, the task indexes every file the file tree lists
+under it, recursively, one at a time, as `rx index DIR --recursive`
+does, which is its `cli_command`
+(`rx index /var/log/app --recursive --threshold=0`). A file below the
+threshold, one whose text is not text and one whose index is current
+(unless `force`) is skipped; one whose build fails is recorded and the
+task goes on. The status has `files_done` and `files_total`, the
+result is a `FolderTaskResult`, and `DELETE /v1/tasks/{task_id}`
+cancels the task between two files: see
+[Tasks over a directory](tasks.md#tasks-over-a-directory). A second
+`POST` for the directory while its task runs answers `409`.
 
 ### Status codes
 
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued. Poll `GET /v1/tasks/{task_id}` |
-| `400 Bad Request` | Below size threshold; a directory; a file that is not text (`not a text file: …: <path>`) |
+| `400 Bad Request` | A file below the size threshold; a file that is not text (`not a text file: …: <path>`) |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`) |
 | `404 Not Found` | File doesn't exist |
-| `409 Conflict` | A task for the same path is already running — an index or a compress task |
+| `409 Conflict` | A task for the same path is already running — an index or a compress task, or the index task of the same directory |
 | `422 Unprocessable Entity` | The body is not the schema's: a missing `path`, a member it does not declare (`analyze`, `analyze_window_lines`) |
 
 ### Error examples

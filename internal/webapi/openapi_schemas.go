@@ -18,7 +18,7 @@ import (
 //   - rxtypes.LineIndexEntry is a struct that marshals itself as a JSON
 //     array ([line, offset] or [line, offset, frame]), so reflection
 //     would describe an object with Go field names.
-//   - rxtypes.TaskResult is an `any` that holds one of three result
+//   - rxtypes.TaskResult is an `any` that holds one of five result
 //     structs, or nil, so reflection would describe "anything".
 //
 // pkg/rxtypes depends on the standard library only, so the schemas are
@@ -116,7 +116,8 @@ type taskResultSchema struct{}
 
 // Schema implements huma.SchemaProvider: the result of a task is an
 // IndexTaskResult, a CompressTaskResult, a ChainIndexTaskResult, a
-// FindingsResponse, or null until the task completes.
+// FindingsResponse, a FolderTaskResult, or null until the task
+// completes.
 //
 // It is anyOf rather than oneOf because huma's validator accepts any
 // value for a {"type": "null"} branch, so with oneOf a real result would
@@ -126,12 +127,14 @@ func (taskResultSchema) Schema(r huma.Registry) *huma.Schema {
 	schema := &huma.Schema{
 		Description: "The task's result once it completes: IndexTaskResult for an index task, " +
 			"CompressTaskResult for a compress task, ChainIndexTaskResult for a chain_index task, " +
-			"FindingsResponse for a findings task. Null until then.",
+			"FindingsResponse for a findings task, FolderTaskResult for an index or findings task over a " +
+			"directory (files_total is set in its status). Null until then.",
 		AnyOf: []*huma.Schema{
 			r.Schema(reflect.TypeOf(rxtypes.IndexTaskResult{}), true, ""),
 			r.Schema(reflect.TypeOf(rxtypes.CompressTaskResult{}), true, ""),
 			r.Schema(reflect.TypeOf(rxtypes.ChainIndexTaskResult{}), true, ""),
 			r.Schema(reflect.TypeOf(rxtypes.FindingsResponse{}), true, ""),
+			r.Schema(reflect.TypeOf(rxtypes.FolderTaskResult{}), true, ""),
 			{Type: "null"},
 		},
 	}
