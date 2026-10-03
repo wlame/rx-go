@@ -86,6 +86,7 @@ func FuzzOwnRoundTrip(f *testing.F) {
 	f.Add(int64(1765353000123), int16(0))
 	f.Add(int64(1709208000000), int16(120))  // 2024-02-29
 	f.Add(int64(1767225599999), int16(-330)) // last ms of 2025
+	f.Add(int64(950000000000), int16(0))     // 2000-02-08: 9 digits of epoch seconds
 	f.Fuzz(func(t *testing.T, ms int64, offsetMinutes int16) {
 		// Years 1000–9998 keep every layout at four year digits.
 		const lo, hi = int64(-30610224000000), int64(253370764800000)
@@ -114,10 +115,7 @@ func FuzzOwnRoundTrip(f *testing.F) {
 				t.Fatalf("%s %q: got %+v,%t; want %+v", rt.format.Family, line, got, ok, want)
 			}
 		}
-		epochMs := ms
-		if epochMs < epochMinMs || epochMs >= epochMaxMs {
-			epochMs = epochMinMs + floorMod(ms, epochMaxMs-epochMinMs)
-		}
+		epochMs := fuzzEpochMs(ms)
 		p := mustParser(t, epochAnchored, mtime2025)
 		for _, line := range []string{
 			fmt.Sprintf("%d.%03d x", epochMs/1000, epochMs%1000),
@@ -137,3 +135,16 @@ func wallMs(t time.Time) int64 {
 }
 
 func floorMod(a, b int64) int64 { return a - floorDiv(a, b)*b }
+
+// firstTenDigitSecondMs is the first instant whose epoch seconds have ten
+// digits (2001-09-09T01:46:40Z); earlier ones print with nine.
+const firstTenDigitSecondMs = int64(1000000000000)
+
+// fuzzEpochMs maps any int64 to an instant the epoch family reads in both
+// of its forms.
+func fuzzEpochMs(ms int64) int64 {
+	if ms >= firstTenDigitSecondMs && ms < epochMaxMs {
+		return ms
+	}
+	return firstTenDigitSecondMs + floorMod(ms, epochMaxMs-firstTenDigitSecondMs)
+}
