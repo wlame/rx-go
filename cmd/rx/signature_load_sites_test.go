@@ -26,6 +26,7 @@ import (
 // that use signatures. A command that starts using them adds its file
 // here.
 var allowedLoadFiles = []string{
+	"internal/clicommand/scan.go",
 	"internal/clicommand/serve.go",
 	"internal/clicommand/signatures.go",
 	"internal/clicommand/trace.go",

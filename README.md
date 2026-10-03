@@ -104,6 +104,7 @@ rx "error"  /var/log/app.log --json --samples    # JSON + context lines
 rx samples  /var/log/app.log --lines=450000 --context=3 # context by line
 rx index    /var/log/app.log                     # build line-offset index
 rx trace    --signatures /var/log/app.log        # tracebacks, secrets and more, found by signatures
+rx scan     --recursive /var/log/app             # cache the findings of every file under a directory
 rx compress /var/log/app.log                     # produce seekable .zst
 rx logs show /var/log/syslog                     # syslog, syslog.1, syslog.2.gz, … as one log
 rx serve    --port=7777 --search-root=/var/log   # HTTP API + SPA
@@ -122,6 +123,7 @@ catalogue in [`docs/reference/signatures.md`](docs/reference/signatures.md).
 | `trace`    | Parallel regex search with optional caching and sample context   |
 | `samples`  | Extract context windows by byte offset or line number            |
 | `index`    | Build (or inspect) a cached line-offset index                    |
+| `scan`     | Scan files or a directory for signatures and cache the findings  |
 | `time-range` | Show the format and the first and last timestamp of each file |
 | `logs`     | Read a rotated log (`syslog`, `syslog.1`, `syslog.2.gz`, …) as one log chain: list, describe, index, sample by line or time, search |
 | `compress` | Produce a seekable zstd file for frame-parallel decompression    |

@@ -1,6 +1,6 @@
 # CLI reference
 
-`rx` exposes eight subcommands. `trace` is the default — any invocation whose
+`rx` exposes nine subcommands. `trace` is the default — any invocation whose
 first argument isn't a subcommand name gets `trace` prepended automatically.
 
 ```text
@@ -9,6 +9,7 @@ rx <subcommand> [flags] [args]
 Subcommands:
   trace      Search files/directories for regex patterns (default)
   index      Build, inspect, or delete line-offset indexes
+  scan       Scan files for signatures and keep their findings in the cache
   samples    Retrieve context lines by byte offset or line number
   time-range Show the format and first and last timestamp of files
   logs       Read rotated logs (syslog, syslog.1, syslog.2.gz, …) as one log chain
@@ -27,7 +28,7 @@ rx trace "error" /var/log/app.log
 ```
 
 If the first positional argument matches a known subcommand name
-(`trace`, `index`, `samples`, `time-range`, `logs`, `compress`, `signatures`,
+(`trace`, `index`, `scan`, `samples`, `time-range`, `logs`, `compress`, `signatures`,
 `serve`, `help`, `completion`, `version`), it's routed to that subcommand. Otherwise, `trace` is
 assumed.
 
@@ -63,7 +64,7 @@ All subcommands share the same exit-code scheme:
 | 1 | Generic error (subprocess failure, IO error, rebuild failed) |
 | 2 | Usage error (bad flag combination, missing required argument, regex that does not compile, a path that is a named pipe, a socket or a device) |
 | 3 | File not found |
-| 4 | Access denied: a path outside `--search-root`, or a file the user named that the process may not read (`permission denied: <path>`, the same in `trace`, `samples` and `index`) |
+| 4 | Access denied: a path outside `--search-root`, or a file the user named that the process may not read (`permission denied: <path>`, the same in `trace`, `samples`, `index` and `scan`) |
 | 5 | Interrupted by signal (SIGINT or SIGTERM) |
 | 6 | The log chain an [`rx logs`](logs.md) command reads is invalid: its parts cannot be read as one text |
 | 7 | The log chain's files changed since the fingerprint an `rx logs` command was given (`--fingerprint=`) |
@@ -90,6 +91,10 @@ no 6 or 7.
 
 - **[`rx index`](line-index.md)** (file: `line-index.md`)  
   Build and inspect line-offset indexes for fast line-number lookups.
+
+- **[`rx scan`](scan.md)**  
+  Scan files and directories for signatures and keep the findings in
+  the cache.
 
 - **[`rx samples`](samples.md)**  
   Read content around byte offsets or line numbers, with context.

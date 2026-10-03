@@ -769,6 +769,16 @@ rx --signatures=all,-pii -e timeout app.log          # with a pattern
 The output, the JSON fields and the flags are on the
 [`rx trace`](../cli/trace.md#signatures) page.
 
+[`rx scan`](../cli/scan.md) fills the findings cache without printing
+the findings: it scans each file it is given, or with `--recursive`
+every file under a directory, for a selection (`--signatures=`, the
+default set without it), skips a file whose findings are current
+unless `--force`, and prints each file's state and counts.
+
+```bash
+rx scan --recursive /var/log/app --signatures=traceback,sql
+```
+
 ## Signatures over HTTP
 
 `rx serve` loads the signatures once when it starts and logs each load

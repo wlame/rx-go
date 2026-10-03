@@ -52,6 +52,7 @@ var knownSubcommands = []string{
 	"time-range",
 	"logs",
 	"index",
+	"scan",
 	"compress",
 	"signatures",
 	"serve",
@@ -150,6 +151,7 @@ func newRootCmd() *cobra.Command {
 			"  rx samples file.log --lines=100    # context around line 100\n" +
 			"  rx logs list /var/log              # rotated logs, one chain each\n" +
 			"  rx index file.log                  # build a line index\n" +
+			"  rx scan --recursive /var/log       # cache the signature findings of every file\n" +
 			"  rx compress file.log               # make a seekable .zst\n" +
 			"  rx signatures                      # list the signatures rx can find\n" +
 			"  rx serve --port=7777               # HTTP API + rx-viewer SPA",
@@ -186,6 +188,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(clicommand.NewTimeRangeCommand(os.Stdout))
 	root.AddCommand(clicommand.NewLogsCommand(os.Stdout))
 	root.AddCommand(clicommand.NewIndexCommand(os.Stdout))
+	root.AddCommand(clicommand.NewScanCommand(os.Stdout))
 	root.AddCommand(clicommand.NewCompressCommand(os.Stdout))
 	// The scan engine runs every signature's examples while the
 	// signatures load: a signature whose examples fail is refused. The

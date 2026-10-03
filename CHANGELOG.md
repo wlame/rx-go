@@ -273,6 +273,24 @@ History maps every removed surface to what replaces it.
   and a scan answered from the cache does not wait.
 - `rx signatures show ID` prints the signature's cache key with the
   current settings (`# cache key: …`, after `# line pass:`).
+- `rx scan PATH... [--signatures=SEL] [-f|--force] [-r|--recursive]
+  [--json] [--mask-secrets]`: scan files for signatures and keep their
+  findings in the findings cache, the command `POST /v1/findings` is
+  the equivalent of. A file whose every selected signature is current
+  is not read again (`current`) unless `--force`. A directory needs
+  `--recursive` (exit 2 without it, before anything is scanned); with
+  it every file the file tree lists under it is scanned, one at a time,
+  in the walk's order (hidden entries only with `--hidden`), and a file
+  that is not text is skipped with the reason. The human output is one
+  line per file (`logs/app.log: full, 3 findings (error-line 2,
+  python-traceback 1)`, `, current` when nothing was read), the skipped
+  files and a total line (`Total: 3 files, 2 scanned, 1 skipped (0
+  current), 0 failed, 3 findings in 0.0s`); `--json` gives
+  `signatures`, `files` (`path`, `outcome` scanned or current, `state`,
+  `counts` of the signatures that found something, `findings`),
+  `skipped`, `errors`, `totals` (`files_total`, `done`, `skipped`,
+  `current`, `failed`, `findings`) and `total_time`. The settings are
+  those of `rx trace --signatures`; the exit codes those of `rx index`.
 - New dependency: `go.yaml.in/yaml/v3` v3.0.5, the YAML parser, under
   the MIT licence (the files ported from libyaml) and the Apache
   License 2.0 (the rest).

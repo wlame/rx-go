@@ -176,6 +176,7 @@ nav:
       - cli/index.md
       - trace: cli/trace.md
       - index: cli/line-index.md
+      - scan: cli/scan.md
       - samples: cli/samples.md
       - time-range: cli/time-range.md
       - logs: cli/logs.md

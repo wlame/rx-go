@@ -1,6 +1,7 @@
 package clicommand
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,9 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/cachefill"
 	"github.com/wlame/rx-go/internal/config"
-	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
@@ -215,12 +215,6 @@ func (r *indexBuildResult) skip(path, reason string) {
 	r.SkipReasons = append(r.SkipReasons, rxtypes.SkippedFile{Path: path, Reason: reason})
 }
 
-// belowThresholdReason words the skip of a file smaller than the index
-// threshold.
-func belowThresholdReason(size, thresholdBytes int64) string {
-	return fmt.Sprintf("file size %d bytes is below threshold %d bytes", size, thresholdBytes)
-}
-
 // runIndex dispatches based on the mutually-exclusive mode flags.
 // Precedence (Python parity): --delete > --info > build.
 func runIndex(out io.Writer, p indexParams) error {
@@ -371,17 +365,13 @@ func buildIndexes(p indexParams) indexBuildResult {
 		Errors:      []indexErrorItem{},
 	}
 
-	// Expand paths: stat each. Directories are walked per --recursive.
-	// Matches Python's _handle_info_or_delete traversal pattern reused
-	// for the build flow.
-	// named says whether the user named the file, rather than a walk
-	// finding it: a named file that cannot be read fails the command,
-	// a walked one is skipped with the reason, as `rx trace` does.
-	type indexTarget struct {
-		path  string
-		named bool
-	}
-	filesToIndex := []indexTarget{}
+	// Expand paths: stat each. Directories are listed per --recursive
+	// by cachefill.List, the walk POST /v1/index lists a directory
+	// with, so `rx index --recursive DIR` and the route's folder task
+	// cover the same files in the same order. What the walk passes over
+	// (a refused link, a subdirectory it cannot list) is a skip with its
+	// reason, recorded here, before any file's own skip.
+	filesToIndex := []cachefill.Entry{}
 	for _, path := range p.paths {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -392,51 +382,26 @@ func buildIndexes(p indexParams) indexBuildResult {
 			})
 			continue
 		}
-		if info.IsDir() {
-			// paths.WalkDir follows a symlink only when naming its
-			// target would be allowed; a refused one is a skip with
-			// the walk's reason, so no index is ever stored for it.
-			entries, derr := paths.WalkDir(path, p.recursive)
-			if derr != nil {
-				result.Errors = append(result.Errors, indexErrorItem{
-					Path:     path,
-					Error:    derr.Error(),
-					exitCode: exitCodeForPathError(derr),
-				})
-				continue
-			}
-			for _, entry := range entries {
-				switch {
-				case entry.ReadErr != nil:
-					// A subdirectory the walk cannot list is skipped
-					// with the reason and the rest of the tree is
-					// indexed, as a trace of the tree searches it.
-					result.skip(entry.Path, paths.FailureReason(entry.ReadErr))
-				case entry.Refused != "":
-					result.skip(entry.Path, entry.Refused)
-				default:
-					filesToIndex = append(filesToIndex, indexTarget{path: entry.Path})
-				}
-			}
+		if !info.IsDir() {
+			filesToIndex = append(filesToIndex, cachefill.Entry{Path: path, Named: true})
 			continue
 		}
-		filesToIndex = append(filesToIndex, indexTarget{path: path, named: true})
-	}
-
-	// unreadable records a file that cannot be pinned or opened: an
-	// error for a file the user named, a skip for one a walk found.
-	unreadable := func(target indexTarget, err error) {
-		if !target.named {
-			// Fixed wording: the error's own text names what the path
-			// leads to, which a walked link's caller did not name.
-			result.skip(target.path, paths.FailureReason(err))
-			return
+		entries, derr := listDirectory(path, p.recursive)
+		if derr != nil {
+			result.Errors = append(result.Errors, indexErrorItem{
+				Path:     path,
+				Error:    derr.Error(),
+				exitCode: exitCodeForPathError(derr),
+			})
+			continue
 		}
-		result.Errors = append(result.Errors, indexErrorItem{
-			Path:     target.path,
-			Error:    accessFailureText(err),
-			exitCode: exitCodeForPathError(err),
-		})
+		for _, entry := range entries {
+			if entry.Skip != "" {
+				result.skip(entry.Path, entry.Skip)
+				continue
+			}
+			filesToIndex = append(filesToIndex, entry)
+		}
 	}
 
 	// Threshold resolution (MB → bytes).
@@ -449,104 +414,62 @@ func buildIndexes(p indexParams) indexBuildResult {
 	if p.threshold != nil {
 		threshold = int64(*p.threshold)
 	}
-	thresholdBytes := threshold * 1024 * 1024
+	settings := cachefill.IndexSettings{
+		ThresholdBytes: threshold * 1024 * 1024,
+		Force:          p.force,
+		// Whether the index cache can store an index is checked once, at
+		// the first file that is about to be built, and the answer holds
+		// for the whole run. sync.OnceValue wraps index.CheckStorable so
+		// that the first call runs it and every later call returns the
+		// same error (or nil) without probing again.
+		CheckStorable: sync.OnceValue(index.CheckStorable),
+	}
 
-	// Whether the index cache can store an index is checked once, at
-	// the first file that is about to be built, and the answer holds for
-	// the whole run. sync.OnceValue wraps index.CheckStorable so that
-	// the first call runs it and every later call returns the same
-	// error (or nil) without probing again.
-	checkStorable := sync.OnceValue(index.CheckStorable)
-
+	// Each file is decided by cachefill.IndexFile, the step the folder
+	// task of POST /v1/index takes too: a file below the threshold or
+	// whose text is not text is skipped with the reason (rx-python skips
+	// both, exit 0), a valid stored index is reused without --force, as
+	// rx-python reuses one, and otherwise the index is built and stored.
 	for _, target := range filesToIndex {
-		path := target.path
-		// The file is pinned (checked and tied to the file it leads to
-		// now) and every look at it below goes through the pin.
-		src, err := paths.Pin(path)
-		if err != nil {
-			unreadable(target, err)
-			continue
+		res := cachefill.IndexFile(context.Background(), target, settings, nil)
+		switch res.Outcome {
+		case cachefill.Skipped:
+			result.skip(res.Path, res.Reason)
+		case cachefill.Current:
+			result.Indexed = append(result.Indexed, indexEntryJSON(res.Index, res.IndexPath))
+		case cachefill.Filled:
+			result.Indexed = append(result.Indexed, indexEntryJSON(res.Index, res.IndexPath))
+			result.builtIndexes = append(result.builtIndexes, res.Index)
+		default:
+			result.Errors = append(result.Errors, fillFailure(res))
 		}
-		info := src.Info()
-		// A named pipe, a socket or a device is refused before anything
-		// else looks at it; a walk has refused it already.
-		if !info.Mode().IsRegular() {
-			unreadable(target, fmt.Errorf("%w: %s", paths.ErrNotRegularFile, path))
-			continue
-		}
-		// Below-threshold files are skipped rather than indexed, and the
-		// command still exits 0; rx-python does the same.
-		if info.Size() < thresholdBytes {
-			result.skip(path, belowThresholdReason(info.Size(), thresholdBytes))
-			continue
-		}
-		// What the file is, by the rule every command applies
-		// (filekind). A file whose text is not text, such as a .tar.gz
-		// or a binary file, has no lines to index; rx-python skips a
-		// binary file too.
-		kind, err := filekind.OfPinnedForReading(src)
-		if err != nil {
-			unreadable(target, err)
-			continue
-		}
-		if !kind.IsText() {
-			result.skip(path, kind.NotText)
-			continue
-		}
-
-		// Without --force a valid cached index is reused, as rx-python
-		// reuses one; rebuilding on every call cost a full pass each
-		// time. A cache that is missing, stale or unreadable means a
-		// rebuild, not a failure.
-		if !p.force {
-			if idx, loadErr := index.LoadForSource(path); loadErr == nil && idx != nil {
-				result.Indexed = append(result.Indexed, indexEntryJSON(idx, index.GetCachePath(path)))
-				continue
-			}
-		}
-
-		// An index the cache cannot store is not built: the build would
-		// read the whole file and the save would then fail. The file's
-		// error names the cause.
-		if storeErr := checkStorable(); storeErr != nil {
-			result.Errors = append(result.Errors, indexErrorItem{
-				Path:     path,
-				Error:    "cannot store the line index: " + storeErr.Error(),
-				exitCode: ExitGenericError,
-			})
-			continue
-		}
-
-		idx, err := index.Build(path, index.BuildOptions{})
-		if errors.Is(err, compression.ErrTooLargeToDecode) {
-			// A file rx refuses to decompress is skipped with the reason,
-			// as trace skips it, not counted as a failure to index.
-			result.skip(path, compression.TooLargeToDecodeReason)
-			continue
-		}
-		if err != nil {
-			result.Errors = append(result.Errors, indexErrorItem{
-				Path:     path,
-				Error:    err.Error(),
-				exitCode: ExitGenericError,
-			})
-			continue
-		}
-		cachePath, err := index.Save(idx)
-		if err != nil {
-			result.Errors = append(result.Errors, indexErrorItem{
-				Path:     path,
-				Error:    err.Error(),
-				exitCode: ExitGenericError,
-			})
-			continue
-		}
-		result.Indexed = append(result.Indexed, indexEntryJSON(idx, cachePath))
-		result.builtIndexes = append(result.builtIndexes, idx)
 	}
 
 	result.TotalTime = time.Since(t0).Seconds()
 	return result
+}
+
+// listDirectory pins the directory path and lists it by the tree's
+// rules (cachefill.List): every file below it with recursive, the files
+// directly inside it without. A link to a file or directory is followed
+// only where naming its target would be allowed.
+func listDirectory(path string, recursive bool) ([]cachefill.Entry, error) {
+	dir, err := paths.Pin(path)
+	if err != nil {
+		return nil, err
+	}
+	return cachefill.List(dir, recursive)
+}
+
+// fillFailure is the errors entry of a file whose fill failed: for a
+// named file that cannot be reached, the words and the exit code every
+// command gives the failure (not found, permission denied, not a regular
+// file); for a failed build, store or scan, its message and exit 1.
+func fillFailure(res cachefill.FileResult) indexErrorItem {
+	if res.Unreadable {
+		return indexErrorItem{Path: res.Path, Error: accessFailureText(res.Err), exitCode: exitCodeForPathError(res.Err)}
+	}
+	return indexErrorItem{Path: res.Path, Error: res.Reason, exitCode: ExitGenericError}
 }
 
 // indexEntryJSON builds one `indexed` array entry matching Python's
