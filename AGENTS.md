@@ -378,7 +378,9 @@ Paste the output. Do not summarize it.
   (`index.Build` hands its `*os.File` to `seekableindex`, the
   fingerprint and format detection). `Pin` records an identity only
   for a file it reaches from the root without passing through a link;
-  keep it that way.
+  keep it that way. A line index loaded for a pinned file goes through
+  `index.LoadForPinned` (or `DescribesPinned`), which drops an index of
+  another inode.
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading

@@ -321,7 +321,7 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 	}
 	// Start one checkpoint earlier than the one holding the first
 	// match, so the lines before it are available as leading context.
-	idx, idxErr := index.LoadForSource(req.Source.Path())
+	idx, idxErr := index.LoadForPinned(req.Source)
 	if idxErr != nil || idx == nil || len(idx.LineIndex) == 0 {
 		return src, nil
 	}
