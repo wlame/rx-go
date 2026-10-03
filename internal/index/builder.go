@@ -24,6 +24,7 @@ package index
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -559,8 +560,9 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 	br := bufio.NewReaderSize(r, 256*1024)
 
 	// The Python code uses iteration `for line in f` which yields bytes
-	// including the newline. We faithfully replicate by reading up to
-	// '\n' with ReadSlice and appending when the buffer overflows.
+	// including the newline. We replicate it by reading up to '\n' with
+	// ReadSlice (nextLine), joining the pieces of a line longer than the
+	// buffer.
 	var (
 		currentOffset    int64
 		currentLine      int64 // 0-based until first iteration
@@ -573,33 +575,18 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 		checkpointDue = true
 	)
 
+	// joined holds a line longer than br's buffer, put together from its
+	// pieces; it is reused for every such line (see nextLine).
+	var joined []byte
 	for {
-		// ReadSlice may return ErrBufferFull for very long lines; join
-		// pieces into a single logical line.
-		var line []byte
-		for {
-			chunk, err := br.ReadSlice('\n')
-			if len(chunk) > 0 {
-				// We must copy — ReadSlice's buffer is reused on the
-				// next call. Appending into `line` implicitly copies.
-				line = append(line, chunk...)
-			}
-			if err == bufio.ErrBufferFull {
-				// Long line; keep reading into `line` until we hit
-				// '\n' or EOF.
-				continue
-			}
-			if err != nil {
-				// Either io.EOF or a real I/O error. If EOF and the
-				// last fragment has content, it's the trailing
-				// unterminated line. Otherwise we're done.
-				if err == io.EOF {
-					break
-				}
-				return nil, fmt.Errorf("read: %w", err)
-			}
-			// Normal \n-terminated line.
-			break
+		// INVARIANT: line is valid only until the next nextLine call (it
+		// points into br's buffer or into joined). Everything below that
+		// keeps bytes of it copies them: the line-ending sample appends
+		// them, and the analyzer's window copies each line into its own
+		// slots. The statistics and the time section keep numbers only.
+		line, err := nextLine(br, &joined)
+		if err != nil {
+			return nil, fmt.Errorf("read: %w", err)
 		}
 		if len(line) == 0 {
 			// Clean EOF.
@@ -700,6 +687,36 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 
 	stats.LineEnding = detectLineEnding(lineEndingSample)
 	return stats, nil
+}
+
+// nextLine returns the next line of br, its newline included; the last
+// line of a text that does not end with a newline comes back without
+// one, and an empty slice means the text has ended.
+//
+// The line is read where br's buffer holds it, with no copy, so a walk
+// costs no allocation per line. A line longer than the buffer arrives
+// in pieces (bufio.ErrBufferFull) and is put together in *joined, whose
+// storage the next long line reuses: the walk then holds one buffer as
+// large as its longest line, as it always needed to.
+//
+// The slice is valid only until the next call, which may overwrite
+// either place.
+func nextLine(br *bufio.Reader, joined *[]byte) ([]byte, error) {
+	chunk, err := br.ReadSlice('\n')
+	if errors.Is(err, bufio.ErrBufferFull) {
+		*joined = append((*joined)[:0], chunk...)
+		for errors.Is(err, bufio.ErrBufferFull) {
+			chunk, err = br.ReadSlice('\n')
+			*joined = append(*joined, chunk...)
+		}
+		chunk = *joined
+	}
+	// io.EOF only says nothing follows: what was read before it is the
+	// last line, and the call after it returns an empty slice.
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return chunk, nil
 }
 
 // ==========================================================================

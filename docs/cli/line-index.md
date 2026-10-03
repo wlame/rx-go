@@ -332,12 +332,13 @@ cache entry is valid as long as the source file hasn't changed. See
 Measured with the files in the page cache:
 
 - **Warm read** (valid cache): 11 ms for the 465 MB log.
-- **Cold build**: one sequential pass; 142 ms for the 465 MB log,
-  2.2 s for a 6.3 GB log. Slower when the file comes from disk.
+- **Cold build**: one sequential pass; 120 ms for the 465 MB log,
+  2.7 s for a 6.3 GB log, the time section included. Slower when the
+  file comes from disk.
 - **`--analyze`**: far slower than a plain build, because every line
   goes through every detector: 18.2 s for the 465 MB log.
 - **Memory**: the builder keeps only the sparse checkpoints; peak RSS
-  was 22 MB for the 465 MB log, 23 MB for the 6.3 GB log and 31 MB for
+  was 16 MB for the 465 MB log, 17 MB for the 6.3 GB log and 26 MB for
   the analyzed build.
 
 ## Tips and gotchas

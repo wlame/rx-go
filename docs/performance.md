@@ -17,8 +17,8 @@ bounded by read bandwidth instead.
 | Three patterns (`-e ERROR -e WARN -e Exception`) | 6.3 GB log | **0.52 s** |
 | `--max-results=10` on the dense pattern | 6.3 GB log | **31 ms** |
 | Trace cache hit, rare literal | 6.3 GB log | **12 ms** |
-| Cold index build | 6.3 GB log | **2.2 s** |
-| Cold index build | 465 MB log | **142 ms** |
+| Cold index build | 6.3 GB log | **2.7 s** |
+| Cold index build | 465 MB log | **120 ms** |
 | `rx index` with a valid index | 465 MB log | **11 ms** |
 | `samples --lines=40000000`, with index | 6.3 GB log | **20 ms** |
 | `samples --lines=40000000`, no index | 6.3 GB log | **2.46 s** |
@@ -98,8 +98,8 @@ Peak RSS (`/usr/bin/time -l`) on the same machine:
 |---|---:|
 | `rx trace NullPointerException` on the 6.3 GB log (58 matches) | 22 MB |
 | `rx trace " E " --json` on the 6.3 GB log (894,264 matches) | 5.9 GB |
-| `rx index` on the 465 MB log | 22 MB |
-| `rx index` on the 6.3 GB log | 23 MB |
+| `rx index` on the 465 MB log | 16 MB |
+| `rx index` on the 6.3 GB log | 17 MB |
 
 A scan itself streams; what costs memory is the result. Every match is
 held, with its line text, until the answer is printed, so memory grows
@@ -127,7 +127,7 @@ If you're hitting OOM on scans with many matches:
 
 | Operation | Without cache or index | With |
 |---|---|---|
-| `rx index` on the 465 MB log | 142 ms (build) | 11 ms (valid index found) |
+| `rx index` on the 465 MB log | 120 ms (build) | 11 ms (valid index found) |
 | `rx trace` rare literal, 6.3 GB log | 0.48 s | 12 ms (trace cache hit) |
 | `rx trace WARN`, 465 MB log, 51,817 matches (`time` field) | 96 ms | 183 ms (trace cache hit) |
 | `rx trace WARN --max-results=100`, 465 MB log (`time` field) | 15 ms | 39 ms (trace cache hit) |
