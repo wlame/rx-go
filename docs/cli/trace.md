@@ -154,7 +154,13 @@ rx -e "error" -e "panic" -e "timeout.*ms" /var/log/app-2026-03.log
 
 Scans the file once, reporting matches for any of the three patterns.
 Each match's `pattern` field identifies which pattern ID it matched
-(e.g. `p1`, `p2`, `p3`). More efficient than three separate invocations
+(e.g. `p1`, `p2`, `p3`). A line that several patterns match is reported
+once per pattern, each with that pattern's own `submatches`: the lines
+and submatches a pattern gets are exactly the ones a search for it alone
+gives, whatever the other patterns are and in whichever order they
+come. ripgrep decides this too: it reports only that some pattern
+matched, so each pattern is run again alone over the matched lines
+(never the whole file). More efficient than three separate invocations
 because the file is scanned once.
 
 ### ripgrep's matching flags

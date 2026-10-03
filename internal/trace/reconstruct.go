@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"regexp/syntax"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -402,9 +404,9 @@ func (r *lineRing) lines() []ringLine {
 // the byte positions of its first max hits, sorted by start, and
 // whether there were more.
 //
-// The pattern is compiled by compileLikeRipgrep, the same way
-// identification compiles it, so a rebuilt submatch covers the text rg
-// matched under the request's -i, -w, -x and -F. A pattern Go cannot
+// The pattern is compiled by compileLikeRipgrep, so a rebuilt submatch
+// covers the text rg matched under the request's -i, -w, -x and -F
+// wherever Go's regexp agrees with ripgrep's. A pattern Go cannot
 // compile (PCRE2 under -P) yields no submatches; the match itself is
 // still reported, because the cache recorded which pattern it was.
 func submatchesFromPattern(pattern, line string, flags matchFlags, maxHits int) ([]rxtypes.Submatch, bool) {
@@ -437,4 +439,54 @@ func ptrInt(v int) *int { return &v }
 // override via RX_LARGE_FILE_MB.
 func largeFileThresholdBytes() int64 {
 	return int64(config.LargeFileMB()) * 1024 * 1024
+}
+
+// compileLikeRipgrep compiles pattern into a Go regexp that matches what
+// ripgrep matches under flags.
+//
+//   - -F quotes the pattern, so `foo(` and `a.b` are literal text.
+//   - -x anchors it to the whole line. ripgrep lets -x override -w, and
+//     so does this.
+//   - -w wraps it in `\b`, which agrees with ripgrep for any match that
+//     starts and ends on a word character. ripgrep's own rule also
+//     accepts a match whose edge is not a word character; such a match
+//     fails here and is caught by the caller's never-drop fallback.
+//   - -i adds `(?i)` unless the pattern already sets case folding
+//     itself. Under -F an inline flag is literal text, so -i always
+//     applies.
+//
+// Go's regexp is RE2 syntax and ripgrep's default engine is Rust's
+// `regex` crate, which agree on almost everything; a PCRE2 pattern under
+// -P often fails to compile here, and the caller treats that as "cannot
+// tell", never as "did not match".
+func compileLikeRipgrep(pattern string, flags matchFlags) (*regexp.Regexp, error) {
+	// Decided on the pattern as the caller wrote it, before quoting or
+	// wrapping hides its inline flags.
+	foldCase := flags.has(matchIgnoreCase) &&
+		(flags.has(matchFixedString) || !hasInlineFlag(pattern, syntax.FoldCase))
+
+	if flags.has(matchFixedString) {
+		pattern = regexp.QuoteMeta(pattern)
+	}
+	switch {
+	case flags.has(matchWholeLine):
+		pattern = `^(?:` + pattern + `)$`
+	case flags.has(matchWholeWord):
+		pattern = `\b(?:` + pattern + `)\b`
+	}
+	if foldCase {
+		pattern = "(?i)" + pattern
+	}
+	return regexp.Compile(pattern)
+}
+
+// hasInlineFlag parses the pattern just far enough to see whether it
+// already opts into the given syntax flag. Returns false on parse
+// errors (the regex is broken either way; the caller surfaces that).
+func hasInlineFlag(pattern string, flag syntax.Flags) bool {
+	parsed, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return false
+	}
+	return parsed.Flags&flag != 0
 }

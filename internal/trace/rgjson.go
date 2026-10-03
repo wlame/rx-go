@@ -11,7 +11,7 @@
 //   - engine.go    — top-level orchestrator (parity: trace.parse_paths)
 //   - compressed.go — non-seekable compressed path (gzip/xz/bz2)
 //   - seekable.go  — seekable-zstd parallel frame path
-//   - identify.go  — 2-phase "which pattern matched which line" logic
+//   - credit.go    — which patterns match each matched line, by ripgrep
 //   - reconstruct.go — cache-hit material (line text, submatches)
 //   - cache.go     — on-disk cache (Python-compatible JSON)
 package trace

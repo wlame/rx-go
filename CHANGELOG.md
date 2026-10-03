@@ -139,6 +139,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start of a character as Go reads one, which no longer splits a valid
   character that follows stray continuation bytes.
 
+- `rx trace` and `GET /v1/trace` with several patterns credit each line
+  to exactly the patterns that match it. ripgrep runs the patterns as
+  one alternation and reports only the alternation's spans, and rx used
+  to credit a pattern when Go's regexp found the same text: with
+  `-e NEEDLE -e NEED`, a line holding `NEEDLE` was credited to `NEEDLE`
+  alone, so `NEED` lost every such line, and swapping the `-e` order
+  swapped the loser (also `ERR.R` beside `ERROR`, `abc` beside `bcd`).
+  When Go could not reproduce ripgrep's span, every pattern got the line,
+  including ones it does not contain: Unicode `\w`, `\b` and `\d` (ASCII
+  in Go), `-w` with punctuation at a word's edge, `\r$` on a CRLF line,
+  bytes that are not valid UTF-8. Now ripgrep decides: each pattern runs
+  alone, with the search's flags, over the lines the scan matched, and a
+  line is credited to the patterns whose run reports it, `-P` patterns
+  included. The lines and submatches an answer credits to a pattern are
+  the ones a trace of that pattern alone gives, in any `-e` order, and
+  each match's `submatches` are now that pattern's own spans rather than
+  the alternation's, as a trace-cache hit already gave them. A line
+  longer than `RX_MAX_LINE_TEXT_BYTES` is decided on the whole line,
+  read again from the file, rather than credited to every pattern. A
+  search with one pattern runs no extra ripgrep and answers as before;
+  with several, each file with matches costs one more ripgrep run per
+  pattern over its matched lines.
+
 ### Security
 
 - A directory search no longer follows a symbolic link out of
@@ -219,9 +242,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `submatches_truncated` on a match (always `true` on a cut line). The
   offset, both line numbers and every other match are exact, on plain,
   compressed and seekable files, from the CLI and over HTTP alike; a
-  line within the bounds is answered as before. A cut line is credited
-  to every pattern of the search, since the part left out may match any
-  of them. A trace whose answer cuts a line is not written to the trace
+  line within the bounds is answered as before. Which patterns a cut
+  line is credited to is decided on the whole line, read again from the
+  file. A trace whose answer cuts a line is not written to the trace
   cache. The seekable-zstd path no longer buffers ripgrep's whole output
   for a batch of frames, and a trace-cache hit and the line numbering of
   a capped trace read a long line without holding it. The human output

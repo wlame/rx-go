@@ -153,9 +153,10 @@ func TestTraceMemoryStaysBoundedForALineThatMatchesEveryCharacter(t *testing.T) 
 	}
 }
 
-// A long line the bound cuts is still credited to every pattern that may
-// match it: a pattern that matches only past the cut is not dropped.
-func TestTraceCreditsEveryPatternOfACutLine(t *testing.T) {
+// A long line the bound cuts is credited to the patterns that match the
+// whole line, as an unbounded trace credits it: a pattern that matches
+// only past the cut is not dropped.
+func TestTraceCreditsAPatternThatMatchesOnlyPastTheCut(t *testing.T) {
 	requireRipgrep(t)
 	text := []byte("LINE 1 " + strings.Repeat("x", 10_000) + " NEEDLE\nLINE 2 x\nLINE 3 NEEDLE\n")
 	path := writeTextFile(t, "cut.log", text)
@@ -249,32 +250,6 @@ func TestCountLinesToOffsets_HoldsNoLongLine(t *testing.T) {
 	}
 	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 2<<20 {
 		t.Errorf("counting allocated %d MiB, want under 2 MiB", allocated>>20)
-	}
-}
-
-// Identification of a line the answer holds only part of: a cut line is
-// credited to every pattern, since the part left out may match any of
-// them; a whole line whose submatches were capped is credited to every
-// pattern that matches it anywhere.
-func TestIdentifyRawMatch_CreditsWhatThePartLeftOutMayHold(t *testing.T) {
-	patternIDs := map[string]string{"p1": "x", "p2": "NEEDLE", "p3": "FOO"}
-	order := []string{"p1", "p2", "p3"}
-	line := "LINE 1 xxxx NEEDLE"
-	cases := []struct {
-		name string
-		raw  MatchRaw
-		want []string
-	}{
-		{"whole", MatchRaw{LineText: line, Submatches: []rxtypes.Submatch{{Text: "x", Start: 7, End: 8}, {Text: "NEEDLE", Start: 12, End: 18}}}, []string{"p1", "p2"}},
-		{"submatches capped", MatchRaw{LineText: line, Submatches: []rxtypes.Submatch{{Text: "x", Start: 7, End: 8}}, SubmatchesTruncated: true}, []string{"p1", "p2"}},
-		{"line cut", MatchRaw{LineText: "LINE 1 xx", Submatches: []rxtypes.Submatch{{Text: "x", Start: 7, End: 8}}, LineTextTruncated: true, SubmatchesTruncated: true}, []string{"p1", "p2", "p3"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := identifyRawMatch(tc.raw, patternIDs, order, nil); !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("credited %v, want %v", got, tc.want)
-			}
-		})
 	}
 }
 

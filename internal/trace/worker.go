@@ -115,11 +115,15 @@ type MatchRaw struct {
 	// SubmatchesTruncated is true when Submatches may leave some of the
 	// line's submatches out (see RgMatchData.SubmatchesTruncated).
 	SubmatchesTruncated bool
-	PatternIDs          []string // all pattern IDs (assigned by engine post-hoc)
 	IsCompressed        bool
 	// FrameIndex is the seekable-zstd frame that holds the match. Only
 	// the seekable path sets it; elsewhere it is 0 and means nothing.
 	FrameIndex int
+	// lineBreak is the line break LineText was reported without: "\n",
+	// "\r\n", or "" for a last line without one or a cut line. Deciding
+	// which patterns match the line feeds the line again with it (see
+	// creditPatterns), so a pattern such as `\r$` sees what the scan saw.
+	lineBreak string
 }
 
 // ContextRaw mirrors MatchRaw for context lines.
@@ -143,26 +147,33 @@ func (m MatchRaw) truncated() bool {
 // caller counts them. Submatches are added by withSubmatches when the
 // match is reported as one.
 func rawMatchLine(d *RgMatchData, offset int64, lineNumber int) MatchRaw {
+	text := reportedLineText(d.Lines)
 	return MatchRaw{
 		Offset:            offset,
 		End:               offset + int64(d.Lines.Size),
 		LineNumber:        lineNumber,
-		LineText:          reportedLineText(d.Lines),
+		LineText:          text,
 		LineTextTruncated: d.Lines.Truncated,
+		lineBreak:         d.Lines.Text[len(text):],
 	}
 }
 
-// withSubmatches adds a match event's submatches to its line, and every
-// pattern of the search as a candidate; the engine narrows the patterns
-// down afterwards (IdentifyMatchingPatterns).
-func (m MatchRaw) withSubmatches(d *RgMatchData, patternOrder []string) MatchRaw {
-	m.Submatches = make([]rxtypes.Submatch, len(d.Submatches))
-	for i, sm := range d.Submatches {
-		m.Submatches[i] = rxtypes.Submatch{Text: sm.Text(), Start: sm.Start, End: sm.End}
-	}
+// withSubmatches adds a match event's submatches to its line. They are
+// the spans of every pattern of the search run as one alternation; the
+// engine replaces them with each credited pattern's own (creditPatterns).
+func (m MatchRaw) withSubmatches(d *RgMatchData) MatchRaw {
+	m.Submatches = submatchesOf(d)
 	m.SubmatchesTruncated = d.SubmatchesTruncated
-	m.PatternIDs = append([]string(nil), patternOrder...)
 	return m
+}
+
+// submatchesOf converts a match event's submatches to the answer's form.
+func submatchesOf(d *RgMatchData) []rxtypes.Submatch {
+	subs := make([]rxtypes.Submatch, len(d.Submatches))
+	for i, sm := range d.Submatches {
+		subs[i] = rxtypes.Submatch{Text: sm.Text(), Start: sm.Start, End: sm.End}
+	}
+	return subs
 }
 
 // rawContextLine builds the ContextRaw for the line of a context event,
@@ -467,9 +478,9 @@ func ProcessChunk(ctx context.Context, req ChunkRequest) (res ChunkResult, err e
 					gate.reached(ev.Match.LineNumber)
 					return nil
 				}
-				// pattern IDs are the FULL set — engine.identify
-				// narrows this down post-hoc per Python parity.
-				mu.matches = append(mu.matches, line.withSubmatches(ev.Match, patternOrder))
+				// Which patterns matched the line is decided after the
+				// scan (creditPatterns).
+				mu.matches = append(mu.matches, line.withSubmatches(ev.Match))
 				// Charge the shared cap as soon as the match's window
 				// is read (at once without -A), so the worker that
 				// spends the last of it stops every sibling within a

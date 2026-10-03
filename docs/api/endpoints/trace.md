@@ -187,13 +187,13 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 
 | Field | Type | Description |
 |---|---|---|
-| `pattern` | string | Pattern ID (key into `patterns`) |
+| `pattern` | string | Pattern ID (key into `patterns`). A line that several patterns match appears once per pattern |
 | `file` | string | File ID (key into `files`) |
 | `offset` | int64 | Byte offset of the line start |
 | `relative_line_number` | int | The same number as `absolute_line_number` when that is known; otherwise the line's number within the chunk or frame that found it, counted from its first line |
 | `absolute_line_number` | int | The line's 1-based number in the file, or `-1` when a scan cut short by `max_results` did not read the bytes before the match |
 | `line_text` | string | The matched line without its line break: the whole line, or its first `RX_MAX_LINE_TEXT_BYTES` bytes (see [Long lines](#long-lines)). A byte that is not part of a valid UTF-8 character reads as U+FFFD (see [Lines that are not valid UTF-8](#lines-that-are-not-valid-utf-8)) |
-| `submatches` | array | `{text, start, end}` per regex submatch, at most `RX_MAX_SUBMATCHES_PER_LINE` of them. `start` and `end` are byte positions in the line |
+| `submatches` | array | `{text, start, end}` per match of this `pattern` on the line, as a search for that pattern alone reports them, at most `RX_MAX_SUBMATCHES_PER_LINE` of them. `start` and `end` are byte positions in the line |
 | `line_text_truncated` | bool | `true` when `line_text` holds only the first bytes of a longer line |
 | `submatches_truncated` | bool | `true` when `submatches` may leave some out: the line had more than the cap, or `line_text` is cut |
 
