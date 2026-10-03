@@ -47,7 +47,7 @@ type tuning struct {
 	framesPerChunk int
 	batchLines     int
 	// gapLimit sets how many candidates a time-gap keeper holds after
-	// it compacts; 0 means max(Cap, maxGapCandidates).
+	// it compacts; 0 keeps the engine's max(Cap, maxGapCandidates).
 	gapLimit int
 	// bodyCap sets how many bodies a body recorder keeps; 0 means
 	// MaxBodiesPerSignature.
@@ -57,14 +57,6 @@ type tuning struct {
 	// rewalkLine, when set, is called for each line the merge walks
 	// again (tests).
 	rewalkLine func()
-}
-
-// gapLimitFor is the time-gap keeper limit of a scan whose cap is cap.
-func (t tuning) gapLimitFor(cap int) int {
-	if t.gapLimit > 0 {
-		return t.gapLimit
-	}
-	return max(cap, maxGapCandidates)
 }
 
 // defaultTuning is what Scan uses.
@@ -148,7 +140,9 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	e.gapLimit = tune.gapLimitFor(e.cap)
+	if tune.gapLimit > 0 {
+		e.gapLimit = tune.gapLimit
+	}
 	if tune.bodyCap > 0 {
 		e.bodyCap = tune.bodyCap
 	}
@@ -194,7 +188,6 @@ func scanBytes(ctx context.Context, text []byte, sigs []*signatures.Signature, o
 	if err != nil {
 		return nil, err
 	}
-	e.gapLimit = defaultTuning().gapLimitFor(e.cap)
 	s := newScanRun(e, opts, defaultTuning(), int64(len(text)))
 	m, err := s.runPlain(ctx, bytes.NewReader(text), int64(len(text)))
 	if err != nil {

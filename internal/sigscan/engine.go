@@ -49,7 +49,8 @@ type engine struct {
 	// is masked by all of them.
 	redact redactorSet
 	// gapLimit is how many candidates a time-gap keeper holds after it
-	// compacts: max(Cap, maxGapCandidates), or a test's tuning.
+	// compacts: max(Cap, maxGapCandidates), which compile sets, or a
+	// test's tuning.
 	gapLimit int
 	// times reads the lines' timestamps; nil when the file has no
 	// timestamp format. Scan sets it once it has read the head of the
@@ -116,6 +117,10 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	if e.cap <= 0 {
 		e.cap = DefaultCap
 	}
+	// A keeper with a limit of 0 would drop every candidate it is
+	// given, so the limit always starts at its default; a scan's tuning
+	// may set another one afterwards.
+	e.gapLimit = max(e.cap, maxGapCandidates)
 	unique := uniqueByID(sigs)
 	e.selected = len(unique)
 	all := unique

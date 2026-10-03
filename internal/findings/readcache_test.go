@@ -157,6 +157,29 @@ func TestReadCache_EvictsTheLeastRecentlyReadFile(t *testing.T) {
 	}
 }
 
+// An answer whose size alone is over the byte cap is not kept, and the
+// files the cache holds stay: they are not evicted to make room for it.
+func TestReadCache_AnswerOverTheByteCapLeavesTheOthers(t *testing.T) {
+	f := newReadCacheFixture(t, 8, 4<<10)
+	small := []trace.SearchFile{f.scanned(t, "a.log", "ERROR a\n"), f.scanned(t, "b.log", "ERROR b\n")}
+	for _, file := range small {
+		f.read(t, file)
+		if _, opened := f.read(t, file); opened != 0 {
+			t.Fatalf("%s: %d files opened, want a hit (the cap is too small for the fixture)", file.Path(), opened)
+		}
+	}
+	big := f.scanned(t, "big.log", strings.Repeat("ERROR x\n", 200))
+	f.read(t, big)
+	if _, opened := f.read(t, big); opened == 0 {
+		t.Fatal("an answer over the byte cap was kept")
+	}
+	for _, file := range small {
+		if _, opened := f.read(t, file); opened != 0 {
+			t.Errorf("%s: %d files opened, want a hit: the answer over the cap evicted it", file.Path(), opened)
+		}
+	}
+}
+
 // Without the read cache (the CLI, and every scheduler until it is
 // turned on) every read decodes the files.
 func TestReadCache_OffByDefault(t *testing.T) {

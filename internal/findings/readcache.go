@@ -101,8 +101,10 @@ func (c *readCache) lookup(dir string, identity index.SourceIdentity) *decodedFi
 
 // store adds what a Read decoded from dir's files in the state identity,
 // which the Read checked: the ranges (nil when they came from the cache)
-// and the entries. A record of another state is replaced. Files are
-// then evicted, the least recently read first, until the bounds hold.
+// and the entries. A record of another state is replaced. A record
+// over maxBytes on its own is dropped, and nothing else; otherwise
+// files are evicted, the least recently read first, until the bounds
+// hold.
 func (c *readCache) store(dir string, identity index.SourceIdentity, ranges *decodedRanges, entries map[string]decodedEntry) {
 	if c == nil || (ranges == nil && len(entries) == 0) {
 		return
@@ -134,6 +136,13 @@ func (c *readCache) store(dir string, identity index.SourceIdentity, ranges *dec
 		f.entries[id] = e
 		f.bytes += entryBytes(e)
 		c.bytes += entryBytes(e)
+	}
+	if f.bytes > c.maxBytes {
+		// This answer alone is over the cap, so it is not kept; the
+		// other files stay, since evicting them would not make room.
+		c.bytes -= f.bytes
+		delete(c.files, dir)
+		return
 	}
 	c.clock++
 	f.used = c.clock

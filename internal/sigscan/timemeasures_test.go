@@ -372,3 +372,29 @@ func TestScan_TimeGapKeeperCutoffCrossesChunks(t *testing.T) {
 		})
 	}
 }
+
+// compile gives the time-gap keeper its limit, max(Cap,
+// maxGapCandidates), so an engine built without a scan's tuning keeps
+// its candidates: a limit of 0 would drop every one as it is added.
+func TestCompile_GapLimitDefault(t *testing.T) {
+	sigs := loadSigs(t, sigFile(measureSig("gap", "time-gap", "min_gap: 10s, factor: 2")), "gap")
+	for _, tc := range []struct {
+		name string
+		cap  int
+		want int
+	}{
+		{"default cap", 0, max(DefaultCap, maxGapCandidates)},
+		{"cap under the floor", 10, maxGapCandidates},
+		{"cap over the floor", 2 * maxGapCandidates, 2 * maxGapCandidates},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, err := compile(sigs, Options{Cap: tc.cap})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.gapLimit != tc.want {
+				t.Errorf("gapLimit %d, want %d", e.gapLimit, tc.want)
+			}
+		})
+	}
+}

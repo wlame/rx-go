@@ -347,7 +347,8 @@ History maps every removed surface to what replaces it.
   the decoded findings of the last 8 files read, at most 64 MiB, so
   paging and filters of one file decode its cache files once; a kept
   answer is used only for the file's identity and the entries' keys it
-  was read with.
+  was read with. An answer over 64 MiB on its own is not kept, and the
+  files already kept stay: it does not evict them first.
 - `POST /v1/findings {path, signatures, force}`: a scan of the file as a
   background task (operation `findings`, `202`): it scans the selected
   signatures the cache lacks (all of them with `force`) and caches what

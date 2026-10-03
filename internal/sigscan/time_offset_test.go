@@ -3,6 +3,7 @@ package sigscan
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
@@ -131,6 +132,50 @@ func TestScan_DensityBurstCarriesTheOffset(t *testing.T) {
 	for _, v := range append(chunkVariants(), storageVariants()...) {
 		t.Run(v.name, func(t *testing.T) {
 			requireSameFindings(t, want, scanVariant(t, v, []byte(text), sigs, opts))
+		})
+	}
+}
+
+// coarseBucketText is a zoned log whose first line writes +02:00 and the
+// later instant (10:00:05Z), and whose second line writes Z and an
+// instant 5 s earlier; 48 more lines at 10:00:10Z make 50 lines in that
+// 15 s bucket, and 69 lines 105 s apart reach 12:00:00Z, so auto picks
+// 15 s buckets over the 2 h span. The first two lines start in
+// different slots and meet only when the slots coarsen, where the slot
+// of the earlier instant takes the first line from the other one.
+var coarseBucketText = func() string {
+	stamp := func(after time.Duration) string {
+		return time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC).Add(after).Format(time.RFC3339) + " INFO busy"
+	}
+	ls := []string{"2026-01-02T12:00:05+02:00 INFO busy", stamp(0)}
+	for range 48 {
+		ls = append(ls, stamp(10*time.Second))
+	}
+	for i := range 69 {
+		ls = append(ls, stamp(time.Minute+time.Duration(i)*105*time.Second))
+	}
+	return lines(ls...)
+}()
+
+// A burst whose first line is in a slot merged into the slot of an
+// earlier instant takes that line's offset with its time: the burst
+// starts at line 1, at 10:00:05Z written as +02:00, over every chunking
+// and storage.
+func TestScan_DensityBurstOffsetSurvivesCoarseningSlots(t *testing.T) {
+	sigs := loadSigs(t, sigFile(measureSig("burst", "density", "bucket: auto, min_count: 10")), "burst")
+	opts := Options{LookbackBytes: 1 << 10}
+	want := scanOne(t, coarseBucketText, sigs, opts)
+	bursts := want.BySignature["burst"].Findings
+	if len(bursts) != 1 || bursts[0].StartLine != 1 || bursts[0].EndLine != 50 {
+		t.Fatalf("bursts %+v, want one over lines 1-50", bursts)
+	}
+	requireTimes(t, want, "burst", msOf(t, "2026-01-02T10:00:05Z"))
+	if off := bursts[0].TimeOffsetMinutes; off != 120 {
+		t.Fatalf("burst offset %d, want 120 (its first line writes +02:00)", off)
+	}
+	for _, v := range append(chunkVariants(), storageVariants()...) {
+		t.Run(v.name, func(t *testing.T) {
+			requireSameFindings(t, want, scanVariant(t, v, []byte(coarseBucketText), sigs, opts))
 		})
 	}
 }
