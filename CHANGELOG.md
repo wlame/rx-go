@@ -125,6 +125,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which rx searches, is now searched as its bytes rather than
   transcoded, so a pattern written as text no longer matches it.
 
+- `rx trace` and `GET /v1/trace` give a line that is not valid UTF-8
+  its own text. ripgrep sends such a line as base64, and rx returned
+  that base64 as `line_text` (newline included), in `matches` and in
+  `context_lines`, while `rx samples` and a trace-cache hit of the same
+  request showed the line's text, so a cold and a warm answer differed.
+  Pattern identification also ran on the base64, so a line could be
+  credited to the wrong pattern. Each byte that is not part of a valid
+  character now reads as U+FFFD in JSON, on a scan, a cache hit and in
+  `samples` alike, and human output prints the line's bytes as
+  `rx samples` does. Submatch `start` and `end` stay byte positions in
+  the line. A long line cut by `RX_MAX_LINE_TEXT_BYTES` is cut at the
+  start of a character as Go reads one, which no longer splits a valid
+  character that follows stray continuation bytes.
+
 ### Security
 
 - A directory search no longer follows a symbolic link out of

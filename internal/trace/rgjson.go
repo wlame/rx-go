@@ -53,8 +53,12 @@ const (
 // RgText models ripgrep's `{"text": "..."}` object that wraps strings.
 //
 // When a line contains bytes that are not valid UTF-8, ripgrep emits
-// `{"bytes": "<base64>"}` instead of `{"text": ...}`. Text then holds
-// base64 too: of the bytes kept, which are all of them unless Truncated.
+// `{"bytes": "<base64>"}` instead of `{"text": ...}`. The parser decodes
+// the base64, so Text holds the line's own bytes in both cases: of the
+// bytes kept, which are all of them unless Truncated. A Go string may
+// hold bytes that are not valid UTF-8; encoding/json writes each such
+// byte as U+FFFD, which is how samples and a trace-cache hit, reading
+// the same bytes from the file, show the line too.
 type RgText struct {
 	Text string
 	// Size is the payload's length in bytes as ripgrep read it: the

@@ -192,8 +192,8 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `offset` | int64 | Byte offset of the line start |
 | `relative_line_number` | int | The same number as `absolute_line_number` when that is known; otherwise the line's number within the chunk or frame that found it, counted from its first line |
 | `absolute_line_number` | int | The line's 1-based number in the file, or `-1` when a scan cut short by `max_results` did not read the bytes before the match |
-| `line_text` | string | The matched line without its line break: the whole line, or its first `RX_MAX_LINE_TEXT_BYTES` bytes (see [Long lines](#long-lines)) |
-| `submatches` | array | `{text, start, end}` per regex submatch, at most `RX_MAX_SUBMATCHES_PER_LINE` of them |
+| `line_text` | string | The matched line without its line break: the whole line, or its first `RX_MAX_LINE_TEXT_BYTES` bytes (see [Long lines](#long-lines)). A byte that is not part of a valid UTF-8 character reads as U+FFFD (see [Lines that are not valid UTF-8](#lines-that-are-not-valid-utf-8)) |
+| `submatches` | array | `{text, start, end}` per regex submatch, at most `RX_MAX_SUBMATCHES_PER_LINE` of them. `start` and `end` are byte positions in the line |
 | `line_text_truncated` | bool | `true` when `line_text` holds only the first bytes of a longer line |
 | `submatches_truncated` | bool | `true` when `submatches` may leave some out: the line had more than the cap, or `line_text` is cut |
 
@@ -206,8 +206,8 @@ character would otherwise cost about 5 GB to read. rx reads ripgrep's
 output without holding it and keeps, per line:
 
 - at most `RX_MAX_LINE_TEXT_BYTES` bytes of its text (1 MiB by
-  default). A longer line is cut at the start of the UTF-8 character
-  that holds that byte and marked `line_text_truncated: true`, in
+  default). A longer line is cut at the start of the character that
+  holds that byte and marked `line_text_truncated: true`, in
   `matches` and in `context_lines` alike;
 - at most `RX_MAX_SUBMATCHES_PER_LINE` submatches (10,000 by default),
   and only those that start inside the text kept. A submatch that runs
@@ -220,6 +220,27 @@ the line's length. A cut line is reported under every pattern of the
 request, since the part left out may match any of them. A scan whose
 answer cuts a line is not written to the trace cache. To read the whole
 line, ask [`GET /v1/samples`](samples.md) for its offset.
+
+### Lines that are not valid UTF-8
+
+A log line may hold bytes that are not valid UTF-8: a stray Latin-1
+byte, a character cut short. rx searches the line's bytes and reports
+its text as JSON can carry it: each byte that is not part of a valid
+UTF-8 character becomes U+FFFD (`\ufffd`), one per byte, and every
+valid character is kept. `matches`, `context_lines`, a trace-cache hit
+and [`GET /v1/samples`](samples.md) give the line the same text.
+
+`offset` and the submatch `start` and `end` count the line's bytes in
+the file, as ripgrep counts them, not the bytes of `line_text` as JSON
+carries it: each U+FFFD stands for one byte of the file and takes three
+in UTF-8. On a line that holds no such byte the two are the same. On
+the line `\xff\xfe ERR bad`, searched for `ERR`, the submatch is
+`{"text": "ERR", "start": 3, "end": 6}`, and `line_text` is
+`"\ufffd\ufffd ERR bad"`. Read a submatch's text from its `text`
+field rather than by slicing `line_text`.
+
+A cut line ends at the start of a character: a valid character is
+never split, and each U+FFFD stands for one byte.
 
 Every chunk counts the newlines it reads, so a scan that runs to the
 end numbers every match. A scan cut short by `max_results` can stop a

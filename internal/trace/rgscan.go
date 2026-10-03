@@ -198,35 +198,55 @@ func (b *base64Sink) finish() error {
 	return nil
 }
 
-// payloadForm says how ripgrep sent a string: as UTF-8 text, or as
-// base64 of bytes that are not valid UTF-8.
-type payloadForm int
-
-const (
-	formText payloadForm = iota
-	formBytes
-)
-
-// encode turns decoded bytes back into the form ripgrep sent them in:
-// the text itself, or its base64.
-func (f payloadForm) encode(b []byte) string {
-	if f == formBytes {
-		return base64.StdEncoding.EncodeToString(b)
-	}
-	return string(b)
-}
-
-// cutAt is where b may be cut so that it keeps at most n bytes. For text
-// that is the start of the character holding byte n, so the cut never
-// splits a UTF-8 sequence; a base64 payload is bytes and is cut at n.
-// b must hold more than n bytes.
-func (f payloadForm) cutAt(b []byte, n int) int {
-	if f == formBytes {
+// characterCut is where b may be cut so that it keeps at most n bytes
+// without splitting a character. b must hold more than n bytes.
+//
+// A character is what Go reads from UTF-8 bytes: a valid sequence of one
+// to four bytes, or a single byte that is not part of one, which an
+// answer's JSON shows as U+FFFD. Byte n starts a character unless it is a
+// continuation byte of a valid sequence that starts before it, and such
+// a sequence starts at most utf8.UTFMax-1 bytes before n. So the cut
+// looks at no more than those bytes, whatever the length of b: it is n,
+// or the start of the sequence that holds byte n. The text the cut keeps
+// therefore reads as the start of the whole text.
+//
+// When b ends inside a sequence that is valid so far (the rest of the
+// line was not kept), the cut treats that sequence as a character and
+// stops before it. A scan and a trace-cache hit keep the same bytes of a
+// line, so both cut it at the same place.
+func characterCut(b []byte, n int) int {
+	// utf8.RuneStart is true for every byte except a continuation byte
+	// (10xxxxxx), which can only be the second to fourth byte of a
+	// sequence. A byte that can start one is always a character's first
+	// byte, so the cut may go before it.
+	if utf8.RuneStart(b[n]) {
 		return n
 	}
-	for back := 0; back < utf8.UTFMax-1 && n > 0 && !utf8.RuneStart(b[n]); back++ {
-		n--
+	for start := n - 1; start >= 0 && start >= n-(utf8.UTFMax-1); start-- {
+		if !utf8.RuneStart(b[start]) {
+			continue
+		}
+		// b[start] is the nearest byte before n that can begin a
+		// sequence. Byte n belongs to that sequence only if it is valid
+		// and long enough to reach n.
+		seq := b[start:]
+		// utf8.FullRune is false only when seq ends part-way through a
+		// sequence that is valid so far: the bytes kept stop inside it.
+		if !utf8.FullRune(seq) {
+			return start
+		}
+		// utf8.DecodeRune returns (RuneError, 1) for a byte that does not
+		// begin a valid sequence; a valid sequence comes back with its
+		// length (3 for U+FFFD written in the file itself).
+		r, size := utf8.DecodeRune(seq)
+		isValidSequence := r != utf8.RuneError || size > 1
+		if isValidSequence && start+size > n {
+			return start
+		}
+		return n
 	}
+	// No byte in reach can begin a sequence that holds byte n, so byte n
+	// is a stray continuation byte: a character of its own.
 	return n
 }
 
@@ -238,7 +258,6 @@ func (f payloadForm) cutAt(b []byte, n int) int {
 // for certain: where its kept text lies in the scanner's arena, the
 // length of its whole text, and its position in the line.
 type rawSubmatch struct {
-	form       payloadForm
 	from, to   int
 	size       int
 	start, end int
@@ -250,7 +269,6 @@ type rawSubmatch struct {
 type eventFields struct {
 	typ            RgEventType
 	path           RgText
-	lineForm       payloadForm
 	hasLines       bool
 	lineNumber     int
 	absoluteOffset int64
@@ -567,18 +585,18 @@ func (s *eventScanner) readShortString(maxBytes int) (string, error) {
 }
 
 // readPayload reads ripgrep's {"text": …} or {"bytes": …} object, or
-// null, into dst, keeping keep decoded bytes. It returns the form the
-// payload came in.
-func (s *eventScanner) readPayload(dst *boundedText, keep int) (payloadForm, error) {
+// null, into dst, keeping keep bytes of the string it stands for. A
+// "bytes" payload is base64 of bytes that are not valid UTF-8; dst gets
+// the decoded bytes, so both forms hold the line's own bytes.
+func (s *eventScanner) readPayload(dst *boundedText, keep int) error {
 	dst.reset(keep)
 	c, err := s.peekNonSpace()
 	if err != nil {
-		return formText, unexpectedEnd(err)
+		return unexpectedEnd(err)
 	}
 	if c == 'n' {
-		return formText, s.readLiteral("null")
+		return s.readLiteral("null")
 	}
-	form := formText
 	empty, err := s.startObject()
 	for more := !empty; err == nil && more; more, err = s.afterValue() {
 		var key []byte
@@ -587,11 +605,9 @@ func (s *eventScanner) readPayload(dst *boundedText, keep int) (payloadForm, err
 		}
 		switch string(key) {
 		case "text":
-			form = formText
 			dst.reset(keep)
 			err = s.readString(dst)
 		case "bytes":
-			form = formBytes
 			dst.reset(keep)
 			s.b64.reset(dst)
 			if err = s.readString(&s.b64); err == nil {
@@ -604,14 +620,14 @@ func (s *eventScanner) readPayload(dst *boundedText, keep int) (payloadForm, err
 			break
 		}
 	}
-	return form, err
+	return err
 }
 
 // payloadText turns a read payload into the RgText rx reports: the kept
-// bytes in their original form, the whole payload's size, and whether
-// the bytes kept are all of it.
-func payloadText(b *boundedText, form payloadForm) RgText {
-	return RgText{Text: form.encode(b.kept), Size: b.size, Truncated: len(b.kept) < b.size}
+// bytes, the whole payload's size, and whether the bytes kept are all
+// of it.
+func payloadText(b *boundedText) RgText {
+	return RgText{Text: string(b.kept), Size: b.size, Truncated: len(b.kept) < b.size}
 }
 
 // ---- numbers and literals ------------------------------------------------------
@@ -883,12 +899,12 @@ func (s *eventScanner) readDataField(key string) error {
 	f := &s.fields
 	switch key {
 	case "path":
-		form, err := s.readPayload(&s.pathText, maxPathBytes)
-		f.path = payloadText(&s.pathText, form)
+		err := s.readPayload(&s.pathText, maxPathBytes)
+		f.path = payloadText(&s.pathText)
 		return err
 	case "lines":
-		form, err := s.readPayload(&s.line, s.limits.lineTextBytes+lineBreakRoom)
-		f.lineForm, f.hasLines = form, true
+		err := s.readPayload(&s.line, s.limits.lineTextBytes+lineBreakRoom)
+		f.hasLines = true
 		f.lineCut, f.lineTruncated = s.lineCut()
 		f.lineCutKnown = true
 		return err
@@ -939,7 +955,7 @@ func (s *eventScanner) lineCut() (cut int, truncated bool) {
 	if b.size-b.lineBreakLen() <= s.limits.lineTextBytes {
 		return len(b.kept), false
 	}
-	return s.fields.lineForm.cutAt(b.kept, s.limits.lineTextBytes), true
+	return characterCut(b.kept, s.limits.lineTextBytes), true
 }
 
 // readSubmatches reads the submatches array, keeping at most
@@ -998,7 +1014,7 @@ func (s *eventScanner) readSubmatch() (rawSubmatch, error) {
 		switch string(key) {
 		case "match":
 			room := s.limits.lineTextBytes + lineBreakRoom - len(s.arena)
-			sm.form, err = s.readPayload(&s.subText, room)
+			err = s.readPayload(&s.subText, room)
 			sm.size = s.subText.size
 			sm.from = len(s.arena)
 			s.arena = append(s.arena, s.subText.kept...)
@@ -1066,7 +1082,7 @@ func (s *eventScanner) lineText() RgText {
 		return RgText{}
 	}
 	return RgText{
-		Text:      f.lineForm.encode(s.line.kept[:f.lineCut]),
+		Text:      string(s.line.kept[:f.lineCut]),
 		Size:      s.line.size,
 		Truncated: f.lineTruncated,
 	}
@@ -1097,15 +1113,10 @@ func (s *eventScanner) boundedSubmatches() ([]RgSubmatch, bool) {
 				dropped = true
 				continue
 			}
-			if room := f.lineCut - sm.start; need > room {
-				// The line was cut at the start of a character, so for a
-				// submatch of the same text the cut lands on one too; the
-				// check only matters for a text submatch of a base64 line.
-				need = room
-				if len(text) > need {
-					need = sm.form.cutAt(text, need)
-				}
-			}
+			// The submatch keeps the part of its bytes that the kept
+			// line holds. The line was cut at the start of a character,
+			// so that part ends on one too.
+			need = min(need, f.lineCut-sm.start)
 		}
 		if len(text) < need {
 			// The parser kept less of this text than the answer needs. It
@@ -1115,7 +1126,7 @@ func (s *eventScanner) boundedSubmatches() ([]RgSubmatch, bool) {
 			continue
 		}
 		out = append(out, RgSubmatch{
-			Match: RgText{Text: sm.form.encode(text[:need]), Size: sm.size, Truncated: need < sm.size},
+			Match: RgText{Text: string(text[:need]), Size: sm.size, Truncated: need < sm.size},
 			Start: sm.start,
 			End:   sm.end,
 		})
