@@ -47,9 +47,12 @@ as any route the server does not have.
 **Every line index is built once more.** An index of format 10 is
 treated as absent; the next command that needs one builds a format 11
 index in its place, smaller by the analysis it no longer holds. The
-index of a seekable zstd file holds no line-length statistics any more
-(`line_length`, `longest_line`, `line_ending` and `empty_line_count`
-are `null`): only `--analyze` computed them for such a file.
+index of a seekable zstd file holds no line-length statistics any more:
+only `--analyze` computed them for such a file. `GET /v1/index` answers
+`line_length`, `longest_line`, `line_ending` and `empty_line_count`
+with `null`; `rx index --info --json`, which has no `line_length` or
+`longest_line` member, gives `null` for its `line_length_*` members,
+`line_ending` and `empty_line_count`.
 
 **Findings have a cache of their own**, `findings/` beside `indexes/`
 in the cache directory: one directory per file, one entry per

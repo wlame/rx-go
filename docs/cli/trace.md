@@ -237,7 +237,7 @@ A finding:
 | `time_ms` | int or null | the time of the first line, or of the nearest earlier stamped line within `RX_TIMESTAMP_LOOKBACK_KB`, in milliseconds since the Unix epoch; a file whose timestamps carry no zone is read in `RX_LOG_TZ`, as `rx samples` reads it |
 | `excerpt` | string | the first line, masked, cut to 200 bytes |
 | `value_start`, `value_end` | int, optional | the value's bytes in the first line |
-| `masked` | bool, optional | true when anything in the excerpt or the lines was masked, or the signature redacts |
+| `masked` | bool, optional | true when anything in the excerpt, the lines, or the `before` and `after` lines was masked, or the signature redacts |
 | `lines` | [string] | the finding's lines, each without its line ending |
 | `before`, `after` | [string], optional | the lines `-B`, `-A` or `--context` asked for |
 | `lines_truncated` | bool, optional | the text budget ran out at or before this finding |

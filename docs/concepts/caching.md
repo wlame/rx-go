@@ -170,8 +170,8 @@ Each scanned file has a directory, named as its line index is
 (`<basename>_<hash16>`, the base name sanitized and cut the same way).
 It holds:
 
-- `meta.json` — the file's identity (the fields the line index
-  records: `source_size_bytes`, `source_mtime_ns`, `source_inode`,
+- `meta.json` — the file's absolute path, `source_path`, and its
+  identity (the fields the line index records: `source_size_bytes`, `source_mtime_ns`, `source_inode`,
   `source_device`, `source_ctime_ns`, `source_fingerprint`), the cache
   format `version` (1) and, per signature, its `key`, its `count` (the
   findings in the file, past the cap too), how many are `stored`, and

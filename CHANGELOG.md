@@ -62,8 +62,8 @@ History maps every removed surface to what replaces it.
   `authorization-header`, `high-entropy-token` (the `entropy` measure
   at its defaults: nine random base64 keys in ten or more of 24 to 64
   characters, no hex hashes or ids; base64 of a short English text,
-  14 to 48 bytes, is found 53 to 70 times in 100, and about 1 in 100
-  identifiers that mix cases and digits). The examples of the secret
+  14 to 48 bytes, is found about half to two thirds of the time, and
+  about 1 in 100 identifiers that mix cases and digits). The examples of the secret
   signatures write one character of each token as a YAML escape, so
   the files hold no string shaped like a provider's key, and a test
   scans them, the reference page and the test data for one.
@@ -297,8 +297,9 @@ History maps every removed surface to what replaces it.
   written on since shows the bytes the scan saw: a log that grew after
   its scan (the rest of a key block appended, say) shows its new lines
   after the next scan.
-  `masked` is true when anything in the excerpt or the lines was
-  masked, or the finding's signature redacts.
+  `masked` is true when anything in the excerpt, the lines, or the
+  lines before and after was masked, or the finding's signature
+  redacts.
   The matches of `-e PATTERN` (`line_text`, `context_lines`) are not
   masked: they are the pattern's own output.
 - `RX_FINDINGS_TEXT_MAX_BYTES` (default 67108864, 1 MiB to 16 GiB): the

@@ -391,7 +391,7 @@ An HTTP Authorization header or field with its credentials: Bearer, Basic, Token
 
 **High-entropy token** · level `medium` · default · measure `entropy` (min_length 20, ratio 0.94, hex_ratio 0) · values masked
 
-A token of letters, digits and + / = \_ -, at least 20 characters long, as varied as a random key: it holds an upper-case letter, a lower-case letter and a digit, and its Shannon entropy is at least 0.94 of what a random token of its length has on average. Nine random keys in ten or more of 24 to 64 characters are found. Hex tokens are left alone, since hashes and request ids are as random as hex keys; UUIDs and numbers are skipped. The token is masked. Random ids and encoded values in a log look the same as keys to this test: base64 of a short English text (14 to 48 bytes) is found in 53 to 70 cases of 100, and about 1 in 100 identifiers that mix upper- and lower-case letters and digits is found.
+A token of letters, digits and + / = \_ -, at least 20 characters long, as varied as a random key: it holds an upper-case letter, a lower-case letter and a digit, and its Shannon entropy is at least 0.94 of what a random token of its length has on average. Nine random keys in ten or more of 24 to 64 characters are found. Hex tokens are left alone, since hashes and request ids are as random as hex keys; UUIDs and numbers are skipped. The token is masked. Random ids and encoded values in a log look the same as keys to this test: base64 of a short English text (14 to 48 bytes) is found about half to two thirds of the time, and about 1 in 100 identifiers that mix upper- and lower-case letters and digits is found.
 
 - Keywords: none: tried on every line
 - Tags: `entropy`

@@ -264,11 +264,11 @@ How each measure decides, in detail:
   rule (fixed thresholds in bits per byte) are refused with a message
   that names their replacement. Two kinds of text look as random as a
   key to this test, and the built-in `high-entropy-token` finds them:
-  base64 of a short English text (14 to 48 bytes of text) is found in
-  53 to 70 cases of 100, since its entropy is 0.94 to 0.97 of a random
-  token's; and about 1 in 100 identifiers that mix upper- and
-  lower-case letters and digits is found. A finding of a redacting `entropy` signature is masked like
-  any secret, so such a value shows masked in the text of every finding
+  base64 of a short English text (14 to 48 bytes of text) is found
+  about half to two thirds of the time, since its entropy is about
+  0.94 to 0.97 of a random token's; and about 1 in 100 identifiers that
+  mix upper- and lower-case letters and digits is found. A finding of a
+  redacting `entropy` signature is masked like any secret, so such a value shows masked in the text of every finding
   ([Masking](#masking)).
 - **`base64-run`** finds, by a scan of the bytes, a longest run of the
   base64 alphabet (`A-Z a-z 0-9 + /`) followed by up to two `=` of
@@ -574,15 +574,16 @@ that carry finding text link here.
   then a finding at its very end has fewer `after` lines, and a last
   line written on since shows the bytes the scan saw.
 
-`masked: true` marks a finding whose excerpt or lines had something
-masked, and every finding of a redacting signature.
+`masked: true` marks a finding whose excerpt, lines, or lines before
+and after it had something masked, and every finding of a redacting
+signature.
 
 **Where.**
 
 | Carrier | What it holds |
 |---|---|
 | `excerpt`, in every answer | the first line, masked; `[masked, N bytes]` on a body line |
-| `lines`, `before` and `after` of `rx trace --signatures --json`, `GET /v1/trace?signatures=` and `GET /v1/findings?text=true` | every line masked, every body line as `[masked, N bytes]`, no line past the scanned text |
+| `lines`, `before` and `after` of `rx trace --signatures --json` and `GET /v1/trace?signatures=`; `lines` and `before` of `GET /v1/findings?text=true` | every line masked, every body line as `[masked, N bytes]`, no line past the scanned text |
 | the human output of `rx trace --signatures` | the same lines as `lines`, `before` and `after` |
 | the [findings cache](caching.md#findings) | excerpts masked before they are stored, so an unmasked value is never written; `meta.ranges.json` keeps where the bodies lie, and an entry is used only with a current one |
 
