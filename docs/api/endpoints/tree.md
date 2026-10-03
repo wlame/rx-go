@@ -139,6 +139,16 @@ Entries are sorted by type (directories first), then by name
 (case-insensitive alphabetical). No client-side sorting is needed for
 basic display.
 
+### Which entries are listed
+
+A listing shows what a caller can open by name. Entries whose name
+starts with a dot are left out unless the server runs with `--hidden`.
+A symbolic link is listed under its own name with the type of its
+target, so a link to a directory is a `directory`. A link that leads
+outside every search root, into a hidden entry, or to nothing is left
+out, and `children_count` does not count it. See
+[Symlinks inside a directory search](../../concepts/security.md#symlinks-inside-a-directory-search).
+
 ## Status codes
 
 | Code | When |
