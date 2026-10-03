@@ -256,10 +256,10 @@ func (b *blockWalker) sameState(o *blockWalker) bool {
 
 // anchorExcerpt builds the excerpt of an anchor line l into dst,
 // masked by every redactor (excerpter.build), and reports whether it
-// holds a mask. The finding is marked masked when its own signature
-// redacts, too. For a redacting signature the anchor's first match is
-// the value (vs, ve, counted from the line's first byte); otherwise they
-// are -1.
+// holds a mask. The finding is marked masked when its own signature is
+// in the scan's redacting set, too. For a redacting signature the
+// anchor's first match is the value (vs, ve, counted from the line's
+// first byte), masked or not; otherwise they are -1.
 func anchorExcerpt(dst []byte, ex *excerpter, cs *compiledSig, anchor *regexp.Regexp, l *line) (excerpt []byte, masked bool, vs, ve int) {
 	excerpt, masked = ex.build(dst, l.view)
 	vs, ve = -1, -1
@@ -268,5 +268,5 @@ func anchorExcerpt(dst []byte, ex *excerpter, cs *compiledSig, anchor *regexp.Re
 			vs, ve = loc[0]+l.shift, loc[1]+l.shift
 		}
 	}
-	return excerpt, masked || cs.redact, vs, ve
+	return excerpt, masked || cs.masks, vs, ve
 }

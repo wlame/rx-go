@@ -51,23 +51,24 @@ type Options struct {
 	// the finding's first line. 0 or less keeps only a line's own
 	// timestamp, as the setting's 0 does.
 	LookbackBytes int
-	// Redactors are the loaded signatures with `redact: true`, selected
-	// or not (signatures.Catalogue.Redactors): every excerpt of every
-	// finding is masked by all of them and by the selected redacting
-	// signatures, so no excerpt shows a value one of them matches on its
-	// line: an anchor's match values, or the values an entropy or
-	// base64-run measure finds. A signature here that does not redact,
-	// or that has neither (another measure, a blank or same run), masks
-	// nothing.
+	// Redactors are the scan's redacting set: with masking on, the
+	// loaded signatures with `redact: true`, selected or not
+	// (signatures.Catalogue.Redactors); with masking off, none. Every
+	// excerpt of every finding is masked by all of them, so no excerpt
+	// shows a value one of them matches on its line: an anchor's match
+	// values, or the values an entropy or base64-run measure finds. A
+	// signature here that does not redact, or that has neither (another
+	// measure, a blank or same run), masks nothing. A selected signature
+	// with `redact: true` masks only when it is here too: a scan given
+	// no redactors masks nothing, its findings included.
 	//
-	// The redacting blocks and `match` runs among them, and among the
-	// selected signatures, are also walked for their bodies, gated by
-	// their keyword clauses: every line a block joined after its anchor
-	// (a block shorter than its min_lines included), and every line of a
-	// run after its first. Those lines are Result.MaskedRanges, and a
-	// finding whose first line is one of them has the excerpt
-	// `[masked, N bytes]`. The body of a PEM key is its key material, and
-	// it holds no value a mask could find.
+	// The redacting blocks and `match` runs among them are also walked
+	// for their bodies, gated by their keyword clauses: every line a
+	// block joined after its anchor (a block shorter than its min_lines
+	// included), and every line of a run after its first. Those lines
+	// are Result.MaskedRanges, and a finding whose first line is one of
+	// them has the excerpt `[masked, N bytes]`. The body of a PEM key is
+	// its key material, and it holds no value a mask could find.
 	Redactors []*signatures.Signature
 	// Progress, when set, is called as the file is read with the bytes
 	// of the file read so far and the file's size, both as stored on
@@ -117,9 +118,10 @@ type Finding struct {
 	// run. Nil otherwise.
 	ValueStart, ValueEnd *int
 	// Masked is true when the finding's text is masked: its signature
-	// redacts, a redacting signature (Options.Redactors, or a selected
-	// one) masked a value in the excerpt, or the first line lies in
-	// Result.MaskedRanges.
+	// redacts and is in Options.Redactors, a redacting signature of
+	// Options.Redactors masked a value in the excerpt, or the first line
+	// lies in Result.MaskedRanges. Always false for a scan given no
+	// redactors.
 	Masked bool
 	// firstLen is the length of the first line without its ending, the
 	// N of the excerpt when that line lies in a masked range. Only the
@@ -150,10 +152,11 @@ type SignatureResult struct {
 type Result struct {
 	BySignature map[string]*SignatureResult
 	// MaskedRanges are the lines of the text that no output shows: the
-	// bodies of every redacting block and run (Options.Redactors), as
+	// bodies of every redacting block and run of Options.Redactors, as
 	// [first, last] line numbers, 1-based and both included, sorted,
 	// with ranges that overlap or touch joined. Empty when there is
-	// none, and for an empty selection, which reads nothing. They are
+	// none, for a scan given no redactors, and for an empty selection,
+	// which reads nothing. They are
 	// the same for every chunking and storage of the text.
 	MaskedRanges [][2]int64
 	// TextLines and TextBytes are how much text the scan read: its line

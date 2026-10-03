@@ -375,7 +375,7 @@ func addRegexFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 		// signature, whatever signature made the finding.
 		var masked bool
 		*exBuf, masked = ex.build((*exBuf)[:0], l.view)
-		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.redact
+		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.masks
 	}
 	out.add(cs, &f)
 }
@@ -413,7 +413,7 @@ func addValueFinding(cs *compiledSig, l *line, idx int64, out sink, exBuf *[]byt
 	if out.storing() {
 		var masked bool
 		*exBuf, masked = ex.build((*exBuf)[:0], l.view)
-		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.redact
+		f.excerpt, f.hasEx, f.masked = *exBuf, true, masked || cs.masks
 	}
 	out.add(cs, &f)
 }

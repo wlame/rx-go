@@ -95,7 +95,7 @@ func BenchmarkScanMeasures(b *testing.B) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	for b.Loop() {
-		if _, err := scanFile(context.Background(), file, sigs, Options{}, defaultTuning()); err != nil {
+		if _, err := scanFile(context.Background(), file, sigs, Options{Redactors: sigs}, defaultTuning()); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -104,7 +104,9 @@ func BenchmarkScanMeasures(b *testing.B) {
 }
 
 // BenchmarkScan measures the one Go pass on a generated 256 MB log:
-// MB/s, and allocations per line. The chunk sub-benchmarks compare
+// MB/s, and allocations per line. The redacting signature of the
+// catalogue masks, as with masking on (the signatures are the
+// redactors too). The chunk sub-benchmarks compare
 // about 8 chunks per worker with 4 (a 1 MiB minimum chunk, so the
 // count differs on this size).
 func BenchmarkScan(b *testing.B) {
@@ -129,7 +131,7 @@ func BenchmarkScan(b *testing.B) {
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)
 			for b.Loop() {
-				if _, err := scanFile(context.Background(), file, sigs, Options{}, tune); err != nil {
+				if _, err := scanFile(context.Background(), file, sigs, Options{Redactors: sigs}, tune); err != nil {
 					b.Fatal(err)
 				}
 			}

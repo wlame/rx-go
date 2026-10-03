@@ -40,13 +40,14 @@ type LineMasker struct {
 // NewLineMasker compiles redactors for masking lines: every signature
 // with `redact: true` and something to mask (an anchor, or the values
 // of an entropy or base64-run measure); the others are left out, so the
-// caller may pass the catalogue's Redactors() as a scan's
-// Options.Redactors takes them. viewBytes is the line view of the scan
+// caller passes the set a scan's Options.Redactors takes. No redactors
+// give a masker that returns every line as it is (valid UTF-8, cut).
+// viewBytes is the line view of the scan
 // whose findings the lines belong to; 0 or less means
 // DefaultLineBytes. The error is the keyword automaton's, refused as a
 // scan refuses it.
 func NewLineMasker(redactors []*signatures.Signature, viewBytes int) (*LineMasker, error) {
-	set, err := compileRedactors(nil, redactors)
+	set, err := compileRedactors(redactors)
 	if err != nil {
 		return nil, err
 	}

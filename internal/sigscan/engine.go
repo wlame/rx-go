@@ -44,9 +44,9 @@ type engine struct {
 	// full[i] is set by the merge once signature i has Cap findings
 	// stored: a worker then only counts that signature's findings.
 	full []atomic.Bool
-	// redact holds every redacting signature of the scan (the selected
-	// ones and Options.Redactors) and their keyword gate: every excerpt
-	// is masked by all of them.
+	// redact holds the redacting set of the scan (Options.Redactors) and
+	// its keyword gate: every excerpt is masked by all of them. It is
+	// empty when the scan masks nothing.
 	redact redactorSet
 	// gapLimit is how many candidates a time-gap keeper holds after it
 	// compacts: max(Cap, maxGapCandidates), which compile sets, or a
@@ -79,10 +79,17 @@ func (r redactor) appendValues(dst []span, view []byte) []span {
 
 // compiledSig is one signature as the scan runs it.
 type compiledSig struct {
-	idx    int32
-	sig    *signatures.Signature
-	kind   signatures.Kind
+	idx  int32
+	sig  *signatures.Signature
+	kind signatures.Kind
+	// redact is the signature's `redact: true`: the anchor's first
+	// match of a redacting block or run is then the finding's value,
+	// whether or not the scan masks.
 	redact bool
+	// masks is true when the signature redacts and is in the scan's
+	// redacting set (Options.Redactors): each of its findings is then
+	// marked masked.
+	masks bool
 	// bodyOnly marks a body recorder: a copy of a redacting block or run
 	// that the walk runs only for where its bodies lie. It builds no
 	// excerpt, and the result leaves it out; its findings give
@@ -107,8 +114,12 @@ type compiledSig struct {
 // compile builds the engine of a selection. A signature id given twice
 // is scanned once. Each measure is compiled to the machinery it runs on
 // (measures.go). After the selected signatures come the body recorders
-// of every redacting block and run, selected or given as a redactor
-// (bodyRecorders); an empty selection has none, since it reads nothing.
+// of every redacting block and run of opts.Redactors (bodyRecorders);
+// an empty selection has none, since it reads nothing.
+//
+// opts.Redactors is the whole redacting set: a selected signature with
+// `redact: true` masks only when it is among them, so a scan given no
+// redactors masks nothing.
 func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	e := &engine{lineBytes: opts.LineBytes, cap: opts.Cap, bodyCap: MaxBodiesPerSignature}
 	if e.lineBytes <= 0 {
@@ -125,13 +136,15 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	e.selected = len(unique)
 	all := unique
 	if len(unique) > 0 {
-		all = slices.Concat(unique, bodyRecorders(unique, opts.Redactors))
+		all = slices.Concat(unique, bodyRecorders(opts.Redactors))
 	}
+	masking := redactingIDs(opts.Redactors)
 	for i, sig := range all {
 		cs, err := compileSig(int32(i), sig) // #nosec G115 -- at most the loaded signatures, twice
 		if err != nil {
 			return nil, err
 		}
+		cs.masks = cs.redact && masking[sig.ID]
 		if i >= e.selected {
 			cs.recordBodies()
 		}
@@ -169,7 +182,7 @@ func compile(sigs []*signatures.Signature, opts Options) (*engine, error) {
 	}
 	e.gate = g
 	e.full = make([]atomic.Bool, len(e.sigs))
-	redact, err := compileRedactors(unique, opts.Redactors)
+	redact, err := compileRedactors(opts.Redactors)
 	if err != nil {
 		return nil, err
 	}
@@ -198,15 +211,27 @@ func recordsBodies(sig *signatures.Signature) bool {
 	return sig.Redact && (sig.Kind == signatures.KindBlock || sig.Kind == signatures.KindRun) && sig.Anchor() != nil
 }
 
-// bodyRecorders returns the redacting blocks and runs of the selected
-// and the given signatures, each id once: the signatures the scan walks
-// a second time, as body recorders, for where their bodies lie. A
-// selected one is walked twice because its findings keep the findings
-// cap and its own min_lines, while its bodies are recorded far past
-// the cap and for every block it opened.
-func bodyRecorders(selected, given []*signatures.Signature) []*signatures.Signature {
+// redactingIDs is the set of ids of the signatures of redactors that
+// redact: the signatures whose own findings a scan marks masked.
+func redactingIDs(redactors []*signatures.Signature) map[string]bool {
+	ids := make(map[string]bool, len(redactors))
+	for _, sig := range redactors {
+		if sig.Redact {
+			ids[sig.ID] = true
+		}
+	}
+	return ids
+}
+
+// bodyRecorders returns the redacting blocks and runs of the given
+// redactors, each id once: the signatures the scan walks a second time,
+// as body recorders, for where their bodies lie. One that is selected
+// too is walked twice because its findings keep the findings cap and
+// its own min_lines, while its bodies are recorded far past the cap and
+// for every block it opened.
+func bodyRecorders(given []*signatures.Signature) []*signatures.Signature {
 	var out []*signatures.Signature
-	for _, sig := range uniqueByID(slices.Concat(selected, given)) {
+	for _, sig := range uniqueByID(given) {
 		if recordsBodies(sig) {
 			out = append(out, sig)
 		}
@@ -249,15 +274,16 @@ type redactorSet struct {
 	gate      *gate
 }
 
-// compileRedactors keeps every redacting signature with something to
-// mask, an anchor or a value measure's values, the selected ones first,
-// each id once, and builds their keyword gate (a value measure has no
-// keywords, so it masks every line it finds a value on).
-func compileRedactors(selected, given []*signatures.Signature) (redactorSet, error) {
+// compileRedactors keeps every redacting signature of given with
+// something to mask, an anchor or a value measure's values, each id
+// once, and builds their keyword gate (a value measure has no keywords,
+// so it masks every line it finds a value on). No signature given is an
+// empty set, which masks nothing.
+func compileRedactors(given []*signatures.Signature) (redactorSet, error) {
 	var set redactorSet
 	seen := map[string]bool{}
 	var sigs []*signatures.Signature
-	for _, sig := range slices.Concat(selected, given) {
+	for _, sig := range given {
 		if !sig.Redact || seen[sig.ID] {
 			continue
 		}

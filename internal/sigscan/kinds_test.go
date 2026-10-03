@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wlame/rx-go/internal/signatures"
 )
 
 // regexSig is a regex signature definition with the given extra
@@ -48,6 +50,10 @@ type fixture struct {
 	value [2]int
 	// timed checks every finding's time against oracleTime.
 	timed bool
+	// masked gives the fixture's signatures to the scan as its
+	// redactors too, as a command with masking on gives the
+	// catalogue's: the redacting ones then mask every excerpt.
+	masked bool
 }
 
 // one is a fixture of a single signature, whose id is read from def.
@@ -60,6 +66,22 @@ func one(name, def, text string, want ...lineSpan) fixture {
 func (fx fixture) withOpts(opts Options) fixture {
 	fx.opts = opts
 	return fx
+}
+
+// withMasking returns the fixture scanned with masking on (masked).
+func (fx fixture) withMasking() fixture {
+	fx.masked = true
+	return fx
+}
+
+// optionsFor returns the fixture's options for a scan of sigs, its
+// loaded signatures: with them as the redactors when it masks.
+func (fx fixture) optionsFor(sigs []*signatures.Signature) Options {
+	opts := fx.opts
+	if fx.masked {
+		opts.Redactors = sigs
+	}
+	return opts
 }
 
 // withValue returns the fixture expecting a value span.
@@ -97,7 +119,8 @@ func (fx fixture) check(t *testing.T, res *Result) {
 // run scans the fixture's text as one plain file and checks it.
 func (fx fixture) run(t *testing.T) {
 	t.Helper()
-	fx.check(t, scanOne(t, fx.text, loadSigs(t, sigFile(fx.def), fx.ids...), fx.opts))
+	sigs := loadSigs(t, sigFile(fx.def), fx.ids...)
+	fx.check(t, scanOne(t, fx.text, sigs, fx.optionsFor(sigs)))
 }
 
 // idOf returns the id of a signature definition.

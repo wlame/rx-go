@@ -210,7 +210,7 @@ var mixedGoldens = map[string][]lineSpan{
 func TestScan_SameAnswerAcrossChunking(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	text := []byte(mixedText())
-	opts := Options{LineBytes: mixedLineBytes}
+	opts := Options{LineBytes: mixedLineBytes, Redactors: sigs}
 	ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, text, sigs, opts)
 	for id, want := range mixedGoldens {
 		if got := spans(ref, id); !slices.Equal(got, want) {
@@ -229,7 +229,7 @@ func TestScan_SameAnswerAcrossChunking(t *testing.T) {
 func TestScan_SameAnswerOnCompressedCopies(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	text := []byte(mixedText())
-	opts := Options{LineBytes: mixedLineBytes}
+	opts := Options{LineBytes: mixedLineBytes, Redactors: sigs}
 	ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, text, sigs, opts)
 	for _, v := range storageVariants() {
 		t.Run(v.name, func(t *testing.T) {
@@ -247,7 +247,7 @@ func TestScan_SameAnswerOnCompressedCopies(t *testing.T) {
 func TestScan_CRLFNoFinalNewlineAndBOM(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	text := mixedText()
-	res := scanOne(t, text, sigs, Options{LineBytes: mixedLineBytes})
+	res := scanOne(t, text, sigs, Options{LineBytes: mixedLineBytes, Redactors: sigs})
 
 	tb := res.BySignature["tb"].Findings[0]
 	if tb.StartLine != 1 || tb.StartOffset != 0 || tb.Excerpt != "Traceback (most recent call last):" {
@@ -276,7 +276,7 @@ func TestScan_CRLFNoFinalNewlineAndBOM(t *testing.T) {
 // chunking and storage gives the one-chunk answer.
 func TestScan_SameAnswerProperty(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
-	opts := Options{LineBytes: mixedLineBytes}
+	opts := Options{LineBytes: mixedLineBytes, Redactors: sigs}
 	variants := append(chunkVariants(), storageVariants()...)
 	for seed := uint64(1); seed <= 6; seed++ {
 		text := []byte(randomText(seed, 160))
@@ -340,7 +340,7 @@ func TestScan_ByteOrderMarkBeforeALongLine(t *testing.T) {
 	sigs := loadSigs(t, mixedCatalogue, mixedIDs...)
 	long := strings.Repeat("a", 2000)
 	text := []byte("\xEF\xBB\xBF" + long + "\n" + long + "\n")
-	opts := Options{LineBytes: mixedLineBytes}
+	opts := Options{LineBytes: mixedLineBytes, Redactors: sigs}
 	ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, text, sigs, opts)
 	if got := spans(ref, "repeats"); !slices.Equal(got, []lineSpan{{1, 2}}) {
 		t.Fatalf("a marked line equal to the next after the mark: findings %v, want one run of lines 1-2", got)
@@ -377,11 +377,12 @@ func TestScan_EveryScenarioFixtureAcrossChunking(t *testing.T) {
 		t.Run(fx.name, func(t *testing.T) {
 			sigs := loadSigs(t, sigFile(fx.def), fx.ids...)
 			text := []byte(fx.text)
-			ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, text, sigs, fx.opts)
+			opts := fx.optionsFor(sigs)
+			ref := scanVariant(t, variant{name: "reference", tune: defaultTuning(), workers: 1}, text, sigs, opts)
 			fx.check(t, ref)
 			for _, v := range variants {
 				t.Run(v.name, func(t *testing.T) {
-					requireSameFindings(t, ref, scanVariant(t, v, text, sigs, fx.opts))
+					requireSameFindings(t, ref, scanVariant(t, v, text, sigs, opts))
 				})
 			}
 		})

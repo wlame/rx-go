@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -374,5 +375,57 @@ func TestScan_RedactorMatchingThroughAFoldLetterMasks(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Options.Redactors is the whole redacting set of a scan: without it a
+// scan masks nothing, the selected redacting signatures included. Every
+// excerpt is its line as it is, no finding is marked masked and no line
+// is in a masked range; the findings and their values lie where they
+// lie when the same signatures are given as redactors, which masks them.
+func TestScan_WithoutRedactorsNothingIsMasked(t *testing.T) {
+	sigs := loadSigs(t, sigFile(pemDef, b64Def,
+		regexSig("cap", `key=(SK[0-9A-Za-z]+)`, "capture: 1", "redact: true"),
+		kindSig("rn", "run", `match: 'token=(\w+)'`, "min: 2")+"    redact: true\n",
+	), "pem-key", "b64", "cap", "rn")
+	ls := []string{
+		"2026-01-15 10:00:00 INFO start",
+		"-----BEGIN PRIVATE KEY-----",
+		keyLine(1),
+		keyLine(2),
+		"QUJDRA==",
+		"-----END PRIVATE KEY-----",
+		"login key=SKabcdefgh12345678 ok",
+		"token=abc1 sent",
+		"token=abc2 sent",
+	}
+	text := lines(ls...)
+	masked := scanOne(t, text, sigs, Options{Redactors: sigs})
+	shown := scanOne(t, text, sigs, Options{})
+
+	if len(masked.MaskedRanges) == 0 || !masked.BySignature["cap"].Findings[0].Masked {
+		t.Fatalf("with redactors: masked ranges %v, cap %+v; the fixture masks nothing", masked.MaskedRanges, masked.BySignature["cap"].Findings)
+	}
+	if len(shown.MaskedRanges) != 0 {
+		t.Errorf("without redactors: masked ranges %v, want none", shown.MaskedRanges)
+	}
+	for _, id := range []string{"pem-key", "b64", "cap", "rn"} {
+		got, want := shown.BySignature[id].Findings, masked.BySignature[id].Findings
+		if len(got) == 0 || len(got) != len(want) {
+			t.Fatalf("%s: %s without redactors, %s with them", id, describe(got), describe(want))
+		}
+		for i, f := range got {
+			if line := ls[f.StartLine-1]; f.Excerpt != line || f.Masked {
+				t.Errorf("%s at line %d: excerpt %q masked=%v, want %q unmasked", id, f.StartLine, f.Excerpt, f.Masked, line)
+			}
+			w := want[i]
+			if f.StartLine != w.StartLine || f.EndLine != w.EndLine || f.StartOffset != w.StartOffset || f.EndOffset != w.EndOffset ||
+				!reflect.DeepEqual(f.ValueStart, w.ValueStart) || !reflect.DeepEqual(f.ValueEnd, w.ValueEnd) {
+				t.Errorf("%s: finding %+v without redactors, %+v with them", id, f, w)
+			}
+		}
+	}
+	if f := shown.BySignature["cap"].Findings[0]; f.ValueStart == nil || ls[6][*f.ValueStart:*f.ValueEnd] != "SKabcdefgh12345678" {
+		t.Errorf("cap value span %v-%v, want the key", f.ValueStart, f.ValueEnd)
 	}
 }

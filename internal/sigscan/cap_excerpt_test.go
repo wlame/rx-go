@@ -92,7 +92,8 @@ func TestScan_ExcerptCutOnACharacterBoundary(t *testing.T) {
 
 // A redacted value is masked in the excerpt (4 characters
 // kept, the rest '*', at most 12), for every kind, and the unmasked
-// bytes appear nowhere in the result.
+// bytes appear nowhere in the result. The signatures are the scan's
+// redactors, as every test of masking below gives them: masking on.
 func TestScan_RedactedValueNeverLeavesTheMatcher(t *testing.T) {
 	const secret = "AKIAIOSFODNN7EXAMPLE"
 	sigs := loadSigs(t, sigFile(
@@ -101,7 +102,7 @@ func TestScan_RedactedValueNeverLeavesTheMatcher(t *testing.T) {
 		kindSig("key-run", "run", `match: 'AKIA[A-Z0-9]{16}'`, "min: 2")+"    redact: true\n",
 	), "key-value", "key-block", "key-run")
 	text := lines("export key="+secret+" and again "+secret, "key="+secret, "  more")
-	res := scanOne(t, text, sigs, Options{})
+	res := scanOne(t, text, sigs, Options{Redactors: sigs})
 	masked := "AKIA************"
 	for _, id := range []string{"key-value", "key-block", "key-run"} {
 		got := res.BySignature[id].Findings
@@ -150,7 +151,7 @@ func TestScan_RedactMasksEveryMatchOnTheLine(t *testing.T) {
 		kindSig("bk", "block", `start: 'AKIA[A-Z0-9]{16}'`, `continue: '^ '`)+"    redact: true\n",
 		kindSig("mk", "run", `match: 'AKIA[A-Z0-9]{16}'`, "min: 2")+"    redact: true\n",
 	), "rk", "bk", "mk")
-	res := scanOne(t, lines("a "+k1+" b "+k2, "a "+k1+" b "+k2, "  x"), sigs, Options{})
+	res := scanOne(t, lines("a "+k1+" b "+k2, "a "+k1+" b "+k2, "  x"), sigs, Options{Redactors: sigs})
 	for _, id := range []string{"rk", "bk", "mk"} {
 		f := res.BySignature[id].Findings[0]
 		if want := "a AKIA************ b AKIA************"; f.Excerpt != want || !f.Masked {
@@ -165,7 +166,7 @@ func TestScan_RedactMasksEveryMatchOnTheLine(t *testing.T) {
 func TestScan_RedactWithoutACaptureSpanMasksTheWholeMatch(t *testing.T) {
 	const secret = "s3cr3tT0kenValue123xyz"
 	sigs := loadSigs(t, sigFile(regexSig("tok", `(?:key=(\S+)|Bearer \S+)`, "capture: 1", "redact: true")), "tok")
-	res := scanOne(t, lines("auth Bearer "+secret, "auth key="+secret), sigs, Options{})
+	res := scanOne(t, lines("auth Bearer "+secret, "auth key="+secret), sigs, Options{Redactors: sigs})
 	got := res.BySignature["tok"].Findings
 	if len(got) != 2 || got[0].Excerpt != "auth Bear************" || got[1].Excerpt != "auth key=s3cr************" {
 		t.Errorf("excerpts %q, want the whole match masked when the group took no part", describe(got))
@@ -179,7 +180,7 @@ func TestScan_RedactWithoutACaptureSpanMasksTheWholeMatch(t *testing.T) {
 func TestScan_RedactMasksByPosition(t *testing.T) {
 	const line = "SECRETXYSECRETXYSECRETXY"
 	sigs := loadSigs(t, sigFile(regexSig("ov", `^\w{8}(\w{16})`, "capture: 1", "redact: true")), "ov")
-	res := scanOne(t, lines(line), sigs, Options{})
+	res := scanOne(t, lines(line), sigs, Options{Redactors: sigs})
 	f := res.BySignature["ov"].Findings[0]
 	if f.Excerpt != "SECR************" || deref(f.ValueStart) != 8 || deref(f.ValueEnd) != 24 {
 		t.Errorf("excerpt %q value %d-%d, want the value at 8-24 and its overlapping copy masked", f.Excerpt, deref(f.ValueStart), deref(f.ValueEnd))
@@ -195,7 +196,7 @@ func TestScan_RedactAnEmptyFirstMatch(t *testing.T) {
 		kindSig("eb", "block", `start: '(?:AKIA[A-Z0-9]{16})?'`, "lines: 1")+"    redact: true\n",
 		kindSig("er", "run", `match: '(?:AKIA[A-Z0-9]{16})?'`, "min: 2")+"    redact: true\n",
 	), "eb", "er")
-	res := scanOne(t, lines("key "+secret, "next "+secret), sigs, Options{})
+	res := scanOne(t, lines("key "+secret, "next "+secret), sigs, Options{Redactors: sigs})
 	for _, id := range []string{"eb", "er"} {
 		if f := res.BySignature[id].Findings[0]; f.Excerpt != "key AKIA************" {
 			t.Errorf("%s: excerpt %q", id, f.Excerpt)
@@ -206,7 +207,8 @@ func TestScan_RedactAnEmptyFirstMatch(t *testing.T) {
 
 // excerptFixtures put the excerpt and redaction cases through the
 // same-answer test: the excerpts, masks and value spans must not depend
-// on the chunking or the storage.
+// on the chunking or the storage. The redaction cases mask
+// (withMasking).
 var excerptFixtures = []fixture{
 	one("excerpt cut on a character boundary", regexSig("err", `ERROR`),
 		lines("ERROR "+strings.Repeat("x", 193)+"é and more", "ERROR short"), lineSpan{1, 1}, lineSpan{2, 2}),
@@ -214,13 +216,14 @@ var excerptFixtures = []fixture{
 		def: regexSig("key-value", `key=(AKIA[A-Z0-9]{16})`, "capture: 1", "redact: true") +
 			kindSig("key-block", "block", `start: 'AKIA[A-Z0-9]{16}'`, `continue: '^ '`) + "    redact: true\n" +
 			kindSig("key-run", "run", `match: 'AKIA[A-Z0-9]{16}'`, "min: 2") + "    redact: true\n",
-		ids:  []string{"key-value", "key-block", "key-run"},
-		text: lines("a key=AKIAAAAAAAAAAAAAAAAA b AKIABBBBBBBBBBBBBBBB", "key=AKIAIOSFODNN7EXAMPLE", "  more"),
-		want: map[string][]lineSpan{"key-value": {{1, 1}, {2, 2}}, "key-block": {{1, 1}, {2, 3}}, "key-run": {{1, 2}}}},
+		ids:    []string{"key-value", "key-block", "key-run"},
+		text:   lines("a key=AKIAAAAAAAAAAAAAAAAA b AKIABBBBBBBBBBBBBBBB", "key=AKIAIOSFODNN7EXAMPLE", "  more"),
+		want:   map[string][]lineSpan{"key-value": {{1, 1}, {2, 2}}, "key-block": {{1, 1}, {2, 3}}, "key-run": {{1, 2}}},
+		masked: true},
 	one("redaction without a capture span", regexSig("tok", `(?:key=(\S+)|Bearer \S+)`, "capture: 1", "redact: true"),
-		lines("auth Bearer s3cr3tT0kenValue123xyz", "auth key=s3cr3tT0kenValue123xyz"), lineSpan{1, 1}, lineSpan{2, 2}),
+		lines("auth Bearer s3cr3tT0kenValue123xyz", "auth key=s3cr3tT0kenValue123xyz"), lineSpan{1, 1}, lineSpan{2, 2}).withMasking(),
 	one("redaction of an overlapping copy", regexSig("ov", `^\w{8}(\w{16})`, "capture: 1", "redact: true"),
-		lines("SECRETXYSECRETXYSECRETXY"), lineSpan{1, 1}).withValue(8, 24),
+		lines("SECRETXYSECRETXYSECRETXY"), lineSpan{1, 1}).withValue(8, 24).withMasking(),
 }
 
 // A run of copies of one value before a secret no longer hides the
@@ -234,7 +237,7 @@ func TestScan_RedactAPaddedSecret(t *testing.T) {
 		kindSig("hex-run", "run", `match: '[0-9a-f]{32}'`, "min: 2")+"    redact: true\n",
 	), "hex-value", "hex-block", "hex-run")
 	line := `{"pad":"` + strings.Repeat("0", 8000) + `","key":"` + key + `"}`
-	res := scanOne(t, lines(line, line), sigs, Options{})
+	res := scanOne(t, lines(line, line), sigs, Options{Redactors: sigs})
 	want := `{"pad":"0000************","key":"9f86************"}`
 	for _, id := range []string{"hex-value", "hex-block", "hex-run"} {
 		if f := res.BySignature[id].Findings[0]; f.Excerpt != want || !f.Masked {
@@ -296,7 +299,7 @@ func TestScan_ExcerptIsValidUTF8(t *testing.T) {
 		fits,
 		over,
 		"ERROR"+strings.Repeat("\xff", 65)+"key=AKIAIOSFODNN7EXAMPLE",
-	), sigs, Options{})
+	), sigs, Options{Redactors: sigs})
 	requireValidExcerpts(t, res)
 	excerpts := map[string]string{}
 	for id, r := range res.BySignature {

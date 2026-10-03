@@ -34,14 +34,17 @@
 // the count stays exact. The answer is the same for any number of
 // workers, any chunk size, and any storage of the text.
 //
-// The bodies of redacting blocks and runs are masked everywhere: every
-// scan also walks each redacting block and `match` run, selected or only
-// loaded (Options.Redactors), for where its bodies lie (every line a
-// block joined after its anchor, every line of a run after its first).
-// Those lines are Result.MaskedRanges, the same for every chunking; a
-// finding whose first line is one of them has the excerpt
-// "[masked, N bytes]". The body of a PEM key holds its key material and
-// no value a mask could find, so only the line's length is shown.
+// Masking is set by Options.Redactors alone, the scan's redacting set: a
+// scan given none masks nothing, and a selected signature with
+// `redact: true` masks only when it is among them. The bodies of the
+// redacting blocks and runs of that set are masked everywhere: the scan
+// also walks each of them, selected or not, for where its bodies lie
+// (every line a block joined after its anchor, every line of a run
+// after its first). Those lines are Result.MaskedRanges, the same for
+// every chunking; a finding whose first line is one of them has the
+// excerpt "[masked, N bytes]". The body of a PEM key holds its key
+// material and no value a mask could find, so only the line's length
+// is shown.
 //
 // Every finding has the time of its first line, or of the nearest
 // earlier stamped line within Options.LookbackBytes (times.go). The
