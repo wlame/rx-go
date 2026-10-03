@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 )
 
 // writeMultiChunkLog writes a log of about 4 MB in which every tenth
@@ -50,8 +52,8 @@ func traceCacheFiles(t *testing.T, cacheDir string) map[string]string {
 	return contents
 }
 
-// `rx trace --json` answered from the trace cache reports the chunk
-// count of the scan that wrote the cache.
+// `rx trace --json` answered from the trace cache answers as the scan
+// that wrote the cache did, its chunk count included.
 func TestTraceCacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 	path := writeMultiChunkLog(t)
 	cacheDir := t.TempDir()
@@ -60,18 +62,15 @@ func TestTraceCacheHitReportsTheChunkCountOfTheScan(t *testing.T) {
 		"RX_CACHE_DIR=" + cacheDir,
 	}
 
-	fresh := traceJSON(t, filepath.Dir(path), env, "trace", "NEEDLE", path)
+	fresh := traceAnswerJSON(t, env, "NEEDLE", path)
 	written := traceCacheFiles(t, cacheDir)
-	cached := traceJSON(t, filepath.Dir(path), env, "trace", "NEEDLE", path)
+	cached := traceAnswerJSON(t, env, "NEEDLE", path)
 
 	if !maps.Equal(traceCacheFiles(t, cacheDir), written) {
 		t.Fatal("the second trace scanned the file instead of reading the cache")
 	}
-	if fresh.FileChunks["f1"] < 2 {
-		t.Fatalf("fixture scanned in %d chunks; the test needs several", fresh.FileChunks["f1"])
+	if chunks, _ := fresh["file_chunks"].(map[string]any)["f1"].(float64); chunks < 2 {
+		t.Fatalf("fixture scanned in %v chunks; the test needs several", chunks)
 	}
-	if cached.FileChunks["f1"] != fresh.FileChunks["f1"] {
-		t.Errorf("cache hit file_chunks = %d, the scan reported %d",
-			cached.FileChunks["f1"], fresh.FileChunks["f1"])
-	}
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }

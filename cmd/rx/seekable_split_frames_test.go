@@ -9,11 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 )
 
 // writeSplitFrameCopies writes a log of about 3.2 MB as a plain file and
@@ -95,53 +95,35 @@ func TestSamplesLinesOnASeekableFileWithSplitFramesEqualThePlainFile(t *testing.
 }
 
 // A full `rx trace` of such a file numbers every match with the line
-// that holds its offset, and the trace cache gives the same answer back.
+// that holds its offset, and the trace cache gives the same answer back
+// in every field.
 func TestTraceOfASeekableFileWithSplitFramesNumbersEveryMatch(t *testing.T) {
 	text, _, zst := writeSplitFrameCopies(t)
 	cacheDir := t.TempDir()
 	env := []string{"RX_LARGE_FILE_MB=1", "RX_CACHE_DIR=" + cacheDir}
 
-	type match struct {
-		Offset             int64 `json:"offset"`
-		AbsoluteLineNumber int64 `json:"absolute_line_number"`
-	}
-	trace := func() []match {
-		code, stdout, stderr := runRxEnv(t, env, "trace", "NEEDLE", zst, "--json")
-		if code != 0 {
-			t.Fatalf("rx trace exited %d: %s", code, stderr)
-		}
-		var ans struct {
-			Matches []match `json:"matches"`
-		}
-		if err := json.Unmarshal([]byte(stdout), &ans); err != nil {
-			t.Fatalf("decode trace JSON: %v", err)
-		}
-		return ans.Matches
-	}
-
-	fresh := trace()
+	fresh := traceAnswerJSON(t, env, "NEEDLE", zst)
 	written := traceCacheFiles(t, cacheDir)
-	cached := trace()
+	cached := traceAnswerJSON(t, env, "NEEDLE", zst)
 	if !maps.Equal(traceCacheFiles(t, cacheDir), written) {
 		t.Fatal("the second trace scanned the file instead of reading the cache")
 	}
-	if len(fresh) < 700 {
-		t.Fatalf("got %d matches; the fixture has 801 NEEDLE lines", len(fresh))
+	matches, _ := fresh["matches"].([]any)
+	if len(matches) < 700 {
+		t.Fatalf("got %d matches; the fixture has 801 NEEDLE lines", len(matches))
 	}
-	for _, m := range fresh {
-		if want := int64(bytes.Count(text[:m.Offset], []byte{'\n'})) + 1; m.AbsoluteLineNumber != want {
-			t.Errorf("match at byte %d: line %d, want %d", m.Offset, m.AbsoluteLineNumber, want)
+	for _, item := range matches {
+		m := item.(map[string]any)
+		offset, line := int64(m["offset"].(float64)), int64(m["absolute_line_number"].(float64))
+		if want := int64(bytes.Count(text[:offset], []byte{'\n'})) + 1; line != want {
+			t.Errorf("match at byte %d: line %d, want %d", offset, line, want)
 		}
 	}
-	if !reflect.DeepEqual(cached, fresh) {
-		t.Errorf("the cached answer differs from the scan's")
-	}
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }
 
-// traceDocument runs `rx trace --json` and returns its answer without
-// the fields that name the file or the run: the path, the file table,
-// the chunk counts, the time, the request ID and the command line.
-func traceDocument(t *testing.T, env []string, args ...string) map[string]any {
+// traceAnswerJSON runs `rx trace --json` and returns its parsed answer.
+func traceAnswerJSON(t *testing.T, env []string, args ...string) map[string]any {
 	t.Helper()
 	code, stdout, stderr := runRxEnv(t, env, append([]string{"trace", "--json"}, args...)...)
 	if code != 0 {
@@ -151,7 +133,16 @@ func traceDocument(t *testing.T, env []string, args ...string) map[string]any {
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		t.Fatalf("decode trace JSON: %v", err)
 	}
-	for _, key := range []string{"path", "files", "file_chunks", "time", "request_id", "cli_command"} {
+	return doc
+}
+
+// traceDocument runs `rx trace --json` and returns its answer without
+// the fields that name the file: the path, the file table and the chunk
+// counts. Answers about two copies of one text can then be compared.
+func traceDocument(t *testing.T, env []string, args ...string) map[string]any {
+	t.Helper()
+	doc := traceAnswerJSON(t, env, args...)
+	for _, key := range []string{"path", "files", "file_chunks"} {
 		delete(doc, key)
 	}
 	return doc
@@ -187,43 +178,6 @@ func TestTraceOfASeekableFileWithSplitFramesEqualsThePlainFile(t *testing.T) {
 	noIndex := traceDocument(t, []string{"RX_CACHE_DIR=" + t.TempDir()}, append(args, zst, "--no-index")...)
 
 	for name, got := range map[string]map[string]any{"cache empty": cold, "cache hit": warm, "--no-index": noIndex} {
-		if diff := firstDifference(got, want); diff != "" {
-			t.Errorf("%s: the trace of the .zst differs from the trace of the plain file: %s", name, diff)
-		}
+		traceanswer.RequireSame(t, name+": the trace of the .zst against the trace of the plain file", got, want)
 	}
-}
-
-// firstDifference names the first place where two decoded JSON values
-// differ, or returns "" when they are equal.
-func firstDifference(got, want any) string {
-	switch w := want.(type) {
-	case map[string]any:
-		g, ok := got.(map[string]any)
-		if !ok || len(g) != len(w) {
-			return fmt.Sprintf("got %.200v, want %.200v", got, want)
-		}
-		for _, key := range slices.Sorted(maps.Keys(w)) {
-			if diff := firstDifference(g[key], w[key]); diff != "" {
-				return key + ": " + diff
-			}
-		}
-	case []any:
-		g, ok := got.([]any)
-		if !ok {
-			return fmt.Sprintf("got %.200v, want a list", got)
-		}
-		for i := range min(len(g), len(w)) {
-			if diff := firstDifference(g[i], w[i]); diff != "" {
-				return fmt.Sprintf("[%d] %s", i, diff)
-			}
-		}
-		if len(g) != len(w) {
-			return fmt.Sprintf("got %d items, want %d", len(g), len(w))
-		}
-	default:
-		if !reflect.DeepEqual(got, want) {
-			return fmt.Sprintf("got %.200v, want %.200v", got, want)
-		}
-	}
-	return ""
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/testutil/traceanswer"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -38,29 +39,15 @@ func cacheFixture(t *testing.T, patterns []string) (string, string, *rxtypes.Tra
 
 // TestCacheHitMatchesFreshScan is the regression test for a cache hit
 // that returned a different line's text than the scan that filled it.
+// The hit answers as the scan did in every field, and every number is
+// the line its text names.
 func TestCacheHitMatchesFreshScan(t *testing.T) {
 	path, _, fresh := cacheFixture(t, []string{"NEEDLE"})
 
 	cached := traceFromCache(t, path, []string{"NEEDLE"})
-	if len(cached.Matches) != len(fresh.Matches) {
-		t.Fatalf("cache hit returned %d matches, fresh scan %d",
-			len(cached.Matches), len(fresh.Matches))
-	}
-	for i := range fresh.Matches {
-		f, c := fresh.Matches[i], cached.Matches[i]
-		if f.Offset != c.Offset {
-			t.Fatalf("match %d: offset %d from cache, %d fresh", i, c.Offset, f.Offset)
-		}
-		if *f.LineText != *c.LineText {
-			t.Fatalf("match %d at offset %d: cache returned %q, fresh scan %q",
-				i, c.Offset, *c.LineText, *f.LineText)
-		}
-		if f.AbsoluteLineNumber != c.AbsoluteLineNumber {
-			t.Fatalf("match %d at offset %d: cache says line %d, fresh scan %d",
-				i, c.Offset, c.AbsoluteLineNumber, f.AbsoluteLineNumber)
-		}
-		want := lineNumberFromText(t, *c.LineText)
-		if c.AbsoluteLineNumber != want {
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
+	for i, c := range cached.Matches {
+		if want := lineNumberFromText(t, *c.LineText); c.AbsoluteLineNumber != want {
 			t.Fatalf("match %d: cache line number %d, line text says %d",
 				i, c.AbsoluteLineNumber, want)
 		}
@@ -188,8 +175,8 @@ func TestCacheStoresFileLineNumbers(t *testing.T) {
 }
 
 // TestCacheHitRebuildsContextLines covers the context window a cache hit
-// has to rebuild from the source: every line of it equals the scan's in
-// every field, its byte offset included.
+// has to rebuild from the source: the hit answers as the scan did in
+// every field, every window line's byte offset included.
 func TestCacheHitRebuildsContextLines(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_LARGE_FILE_MB", "1")
@@ -198,40 +185,17 @@ func TestCacheHitRebuildsContextLines(t *testing.T) {
 	path, _ := writeChunkedFixture(t, "ctx.log", 2<<20)
 
 	opts := Options{ContextBefore: 2, ContextAfter: 2}
-	fresh, err := New().RunWithOptions(context.Background(), []string{path}, []string{"NEEDLE"}, opts)
-	if err != nil {
-		t.Fatalf("first scan: %v", err)
+	fresh := traceOnce(t, path, []string{"NEEDLE"}, opts)
+	if len(fresh.ContextLines) == 0 {
+		t.Fatal("the scan built no context windows")
 	}
-	cached, err := New().RunWithOptions(context.Background(), []string{path}, []string{"NEEDLE"}, opts)
-	if err != nil {
-		t.Fatalf("second scan: %v", err)
+	scanned := false
+	opts.afterScan = func(string) { scanned = true }
+	cached := traceOnce(t, path, []string{"NEEDLE"}, opts)
+	if scanned {
+		t.Fatal("the second trace scanned the file instead of reading the cache")
 	}
-	if len(cached.ContextLines) != len(fresh.ContextLines) {
-		t.Fatalf("cache hit built %d context windows, fresh scan %d",
-			len(cached.ContextLines), len(fresh.ContextLines))
-	}
-	for key, lines := range cached.ContextLines {
-		freshLines, ok := fresh.ContextLines[key]
-		if !ok {
-			t.Fatalf("cache hit invented context window %s", key)
-		}
-		if len(lines) != len(freshLines) {
-			t.Fatalf("%s: cache hit has %d lines, fresh scan %d", key, len(lines), len(freshLines))
-		}
-		for i := range lines {
-			if lines[i].LineText != freshLines[i].LineText {
-				t.Fatalf("%s line %d: cache %q, fresh %q",
-					key, i, lines[i].LineText, freshLines[i].LineText)
-			}
-			if lines[i].AbsoluteLineNumber != freshLines[i].AbsoluteLineNumber {
-				t.Fatalf("%s line %d: cache numbers it %d, fresh %d",
-					key, i, lines[i].AbsoluteLineNumber, freshLines[i].AbsoluteLineNumber)
-			}
-			if lines[i] != freshLines[i] {
-				t.Fatalf("%s line %d: cache %+v, fresh %+v", key, i, lines[i], freshLines[i])
-			}
-		}
-	}
+	traceanswer.RequireSame(t, "cache hit", cached, fresh)
 }
 
 // TestReconstructFromCacheReadsOnlyWhatItNeeds keeps the bounded-read
