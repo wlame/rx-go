@@ -129,6 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A line index records its source file by the absolute path
+  (`source_path`), whatever path the caller gave. It used to record the
+  path as typed, so `rx index a.log` stored `a.log`: `rx index --info`
+  and `rx index --json` showed a path that depended on the directory,
+  and the pruning loop in the caching docs, run from another directory,
+  deleted valid indexes. Trace-cache entries already recorded the
+  absolute path.
+
 - A line index or a trace-cache entry built under one time zone is now
   reused under another. Both compared the file's mtime and ctime as
   local wall-clock text, so an `rx serve` started with `TZ=UTC` and a
