@@ -86,7 +86,8 @@ rather than help it.
   directory).
 - With **`-` as a path**, or with no paths and a pipe on stdin: the
   piped input is spooled to a temporary file and searched, and the
-  output names that file. The file is removed when the search ends.
+  output names that file. The file is removed when the search ends,
+  and no trace-cache entry is written for it.
   A `-` whose input is empty searches nothing and reports no matches,
   rather than falling back to the current directory.
 - ripgrep's matching flags `-i`, `-w`, `-x`, `-F` and `-P` are `rx`

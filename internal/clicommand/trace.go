@@ -199,11 +199,15 @@ func runTrace(out io.Writer, p traceParams) error {
 	}
 
 	// Piped input, either named as "-" or arriving with no path at all.
-	if spooled, cleanup, sErr := spoolStdinFor(filePaths); sErr != nil {
+	// spoolPath is the temporary file it was copied to, "" when there
+	// was none.
+	spoolPath := ""
+	if spooled, spoolFile, cleanup, sErr := spoolStdinFor(filePaths); sErr != nil {
 		return exitWithError(os.Stderr, ExitGenericError, "%s", sErr.Error())
 	} else if cleanup != nil {
 		defer cleanup()
 		filePaths = spooled
+		spoolPath = spoolFile
 	}
 
 	// Ripgrep binary lookup. Missing rg is a 1 exit with clear error.
@@ -264,6 +268,16 @@ func runTrace(out io.Writer, p traceParams) error {
 			return exitWithError(os.Stderr, ExitAccessDenied, "%s", vErr.Error())
 		}
 		validated = append(validated, v)
+	}
+
+	// The spool is deleted when this command ends, so a trace cache
+	// entry for it could never be read again: the engine writes none.
+	// validated[i] is filePaths[i] as the engine will see it.
+	var uncached []string
+	for i, f := range filePaths {
+		if spoolPath != "" && f == spoolPath {
+			uncached = append(uncached, validated[i])
+		}
 	}
 
 	// Existence and readability checks. The engine tolerates a file it
@@ -339,6 +353,7 @@ func runTrace(out io.Writer, p traceParams) error {
 		ContextBefore: resolveBefore(p),
 		ContextAfter:  resolveAfter(p),
 		NoCache:       p.noCache,
+		UncachedPaths: uncached,
 		NoIndex:       p.noIndex,
 		NoRecursive:   p.noRecursive,
 		HookFirer:     firer,
@@ -407,13 +422,14 @@ func resolveTracePositionals(p traceParams) ([]string, []string, error) {
 }
 
 // spoolStdinFor resolves the path list against piped input. It returns
-// the paths to search and a cleanup function when stdin was spooled, or
+// the paths to search, the temporary file stdin was spooled to ("" when
+// stdin carried nothing) and a cleanup function when stdin was read, or
 // a nil cleanup when there was nothing to read.
 //
 // "-" anywhere in the list means "read stdin here"; an empty list with a
 // pipe on stdin means the same. Stdin that carries nothing falls back to
 // the current directory, which is what rx-python does.
-func spoolStdinFor(filePaths []string) ([]string, func(), error) {
+func spoolStdinFor(filePaths []string) ([]string, string, func(), error) {
 	named := false
 	for _, p := range filePaths {
 		if p == "-" {
@@ -423,12 +439,12 @@ func spoolStdinFor(filePaths []string) ([]string, func(), error) {
 	}
 	piped := len(filePaths) == 0 && stdinIsPipe()
 	if !named && !piped {
-		return filePaths, nil, nil
+		return filePaths, "", nil, nil
 	}
 
 	spooled, cleanup, err := spoolStdin()
 	if err != nil {
-		return nil, nil, err
+		return nil, "", nil, err
 	}
 	out := make([]string, 0, len(filePaths)+1)
 	for _, p := range filePaths {
@@ -446,7 +462,7 @@ func spoolStdinFor(filePaths []string) ([]string, func(), error) {
 		// directory instead would be a surprise measured in gigabytes.
 		out = []string{"."}
 	}
-	return out, cleanup, nil
+	return out, spooled, cleanup, nil
 }
 
 // spoolStdin writes piped input to a temporary file and returns its
