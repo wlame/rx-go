@@ -236,8 +236,7 @@ func runServe(out io.Writer, p serveParams) error {
 	catalogue := loadServeSignatures(slog.Default())
 	// Every setting of the scans and of the findings cache is read here,
 	// once; internal/findings and internal/sigscan read no environment.
-	findingsOptions := webapi.FindingsOptionsFromEnv()
-	findingsOptions.Scan.MaskSecrets = p.maskSecrets
+	findingsOptions := serveFindingsOptions(p)
 	findings.SetMaxScans(config.MaxSignatureScans())
 	// GET /v1/findings reads one file's findings on every page, filter
 	// and key press; the decoded answers of the last few files read are
@@ -275,7 +274,9 @@ func runServe(out io.Writer, p serveParams) error {
 		}
 	}
 	_, _ = fmt.Fprintf(out, "Viewer: %s\n", served.Describe())
-	_, _ = fmt.Fprintln(out, secretsBannerLine(p.maskSecrets))
+	// The banner reads the mode from the options the server is given,
+	// so it names the mode the answers have.
+	_, _ = fmt.Fprintln(out, secretsBannerLine(findingsOptions.Scan.MaskSecrets))
 	if apiToken != "" {
 		_, _ = fmt.Fprintln(out, "API token: required on /v1 (RX_API_TOKEN is set)")
 	}
@@ -308,6 +309,16 @@ func runServe(out io.Writer, p serveParams) error {
 		}
 		return nil
 	}
+}
+
+// serveFindingsOptions are the settings of every findings answer of a
+// server started with p: the environment's (webapi.FindingsOptionsFromEnv,
+// RX_MASK_SECRETS included) with the masking mode of the command line,
+// which wins over the variable (p.maskSecrets, from maskSecretsMode).
+func serveFindingsOptions(p serveParams) findings.TraceOptions {
+	opts := webapi.FindingsOptionsFromEnv()
+	opts.Scan.MaskSecrets = p.maskSecrets
+	return opts
 }
 
 // secretsBannerLine is the line of the start banner that says whether

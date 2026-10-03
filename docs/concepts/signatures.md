@@ -755,7 +755,8 @@ rx --signatures=all,-pii -e timeout app.log          # with a pattern
   `--no-cache` reads and writes no entry.
 - The answer lists every finding with its lines read from the file at
   that moment, and the lines before and after one (`-B`, `-A`,
-  `--context`), all masked ([Masking](#masking)). Each line is cut at
+  `--context`), as the file holds them, or all masked when masking is
+  on ([Masking](#masking)). Each line is cut at
   `RX_MAX_LINE_TEXT_BYTES`, and the text of all findings together stops
   at `RX_FINDINGS_TEXT_MAX_BYTES`; the findings past it keep their place
   and say `lines_truncated`.
