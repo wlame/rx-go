@@ -308,3 +308,19 @@ func TestBuildAndCopyText_StopsWhenTheCopyFails(t *testing.T) {
 		t.Errorf("BuildAndCopyText error = %v, want one wrapping %v", err, refused)
 	}
 }
+
+// A seekable file of no text, which `rx compress` writes for an empty
+// input, is a seek table of no frames: its index has no frames, no
+// checkpoints and no lines.
+func TestBuild_EmptyTextHasNoFramesAndNoLines(t *testing.T) {
+	_, zstPath := makeSeekable(t, 0, 4096)
+
+	result, err := buildPath(zstPath)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if result.FrameCount != 0 || len(result.Frames) != 0 || len(result.LineIndex) != 0 ||
+		result.LineCount != 0 || result.DecompressedSizeBytes != 0 {
+		t.Errorf("got %+v, want no frames, checkpoints, lines or text", result)
+	}
+}
