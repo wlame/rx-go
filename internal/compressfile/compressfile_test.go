@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/compression"
-	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 )
 
 // logText is the text every fixture holds: lines that read "LINE <n>",
@@ -28,7 +28,7 @@ func logText(lines int) []byte {
 // decompressedText reads a seekable zstd file back as text.
 func decompressedText(t *testing.T, path string) []byte {
 	t.Helper()
-	if !seekable.IsSeekable(path) {
+	if !seekablefile.IsSeekable(t, path) {
 		t.Fatalf("%s is not a seekable zstd file", path)
 	}
 	f, err := os.Open(path)
@@ -170,7 +170,7 @@ func TestCheck_RefusesWhatCannotBeCompressed(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 	archive := filepath.Join(dir, "logs.tar.gz")
-	if err := os.WriteFile(archive, compressedcopy.Encode(t, compressedcopy.Gzip, []byte("not a tar")), 0o600); err != nil {
+	if err := os.WriteFile(archive, compressedcopy.Encode(t, compressedcopy.Gzip, append([]byte("app.log"), make([]byte, 505)...)), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestCheck_RefusesWhatCannotBeCompressed(t *testing.T) {
 		input, output string
 		want          error
 	}{
-		{"compound archive", archive, archive + ".zst", ErrCompoundArchive},
+		{"archive whose text is not text", archive, archive + ".zst", ErrNotText},
 		{"output is the input", plain, plain, ErrOutputIsInput},
 		{"output is the input by another name", plain, link, ErrOutputIsInput},
 		{"plain input, new output", plain, plain + ".zst", nil},

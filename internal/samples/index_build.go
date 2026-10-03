@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -17,8 +17,8 @@ import (
 // logs.
 var ErrIndexNotStored = errors.New("cannot store the line index")
 
-// IndexWanted reports whether a lookup in path, a file of size bytes,
-// should have a line index built first. `rx samples` and GET
+// IndexWanted reports whether a lookup in a file of the given kind
+// (filekind.Of) and size bytes should have a line index built first. `rx samples` and GET
 // /v1/samples follow the same rule, so the two surfaces leave the same
 // state on disk.
 //
@@ -39,14 +39,15 @@ var ErrIndexNotStored = errors.New("cannot store the line index")
 // counts from the end decompresses the whole file. A plain file pays for
 // its index only once it is big enough that a scan is worth avoiding,
 // which is the size `rx index` starts at.
-func IndexWanted(path string, size int64) bool {
-	if compression.IsCompressed(path) {
+func IndexWanted(kind filekind.Kind, size int64) bool {
+	if kind.IsCompressed() {
 		return true
 	}
 	return size >= int64(config.LargeFileMB())*1024*1024
 }
 
-// NeedsIndexBuild reports whether a lookup in path wants an index
+// NeedsIndexBuild reports whether a lookup in path, a file of the given
+// kind and size, wants an index
 // (IndexWanted) and none that still describes the file is stored, or
 // whether an index stored for path cannot be read at all.
 //
@@ -56,8 +57,8 @@ func IndexWanted(path string, size int64) bool {
 // would warn about it again, so it is rebuilt over the damaged file
 // instead; that read is bounded by the large-file size. Only the cache
 // file is read to find out, never the source.
-func NeedsIndexBuild(path string, size int64) bool {
-	if !IndexWanted(path, size) {
+func NeedsIndexBuild(path string, kind filekind.Kind, size int64) bool {
+	if !IndexWanted(kind, size) {
 		return storedIndexUnreadable(path)
 	}
 	existing, err := index.LoadForSource(path)
@@ -71,8 +72,8 @@ func storedIndexUnreadable(path string) bool {
 	return errors.Is(err, index.ErrIndexUnreadable)
 }
 
-// ShouldBuildIndex reports whether a lookup in path, a file of size
-// bytes, should build its line index before it answers: the lookup needs
+// ShouldBuildIndex reports whether a lookup in path, a file of the given
+// kind (filekind.Of) and size bytes, should build its line index before it answers: the lookup needs
 // one (NeedsIndexBuild) and the index cache can store it
 // (CanStoreIndex). `rx samples` and GET /v1/samples both ask it.
 //
@@ -80,8 +81,8 @@ func storedIndexUnreadable(path string) bool {
 // whole file to make an index nobody keeps, on every lookup. The lookup
 // reads the file without an index instead: the same answer, at the cost
 // of reading the file up to the position asked for.
-func ShouldBuildIndex(path string, size int64) bool {
-	return NeedsIndexBuild(path, size) && CanStoreIndex()
+func ShouldBuildIndex(path string, kind filekind.Kind, size int64) bool {
+	return NeedsIndexBuild(path, kind, size) && CanStoreIndex()
 }
 
 // unstorableWarned holds the index cache directories already reported

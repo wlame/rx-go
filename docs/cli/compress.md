@@ -33,8 +33,8 @@ as it is. A gzip, bzip2, xz or plain (not seekable) zstd file is
 decompressed on the fly and its text is encoded, so a trace of
 `app.log.zst` written from `app.log.gz` finds the same matches, line numbers and offsets as a
 trace of the decompressed `app.log`, and its index counts the text's
-lines. The format is recognized by the extension (`.gz`, `.bz2`, `.xz`,
-`.zst`, ...) and, without one, by the leading magic bytes. The text is
+lines. The format is recognized by the leading magic bytes, never by
+the extension (see [Compression](../concepts/compression.md#how-rx-decides-what-a-file-is)). The text is
 streamed through the encoder, never held in memory whole, and
 `decompressed_size` reports its size.
 
@@ -65,7 +65,7 @@ Three inputs are refused, and nothing is written for them:
 
 | Input | Message |
 |---|---|
-| A compound archive (`.tar.gz`, `.tgz`, `.tar.zst`, `.tar.xz`, `.tar.bz2`, ...) | `compound archives (tar.gz, etc.) are not supported`: its text is a tar stream, not lines |
+| A file whose text is not text: a NUL byte in its first 8 KiB, or in the first 8 KiB of its decompressed text, as in a compressed tar archive (`.tar.gz` and its kin), a binary file or UTF-16 text | `not a text file: …` with the reason, for example `not a text file: a NUL byte in the first 8 KiB of its decompressed text` |
 | A file that is already seekable zstd | `already a seekable zstd file (use --force to re-encode it)`: rx reads it as it is. With `--force` its text is encoded again with this run's `--frame-size` and `--level` |
 | An output path that is the input file, by any name (the default name of a plain `app.log.zst` included) | `the output path is the input file (use --output to name another file)`: the input would be replaced by its own compressed form. `--force` does not lift it |
 

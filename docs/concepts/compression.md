@@ -14,8 +14,43 @@ archived data.
 | zstd (plain) | `.zst` | no | no | yes (slow) | no |
 | **seekable zstd** | `.zst` | **yes** | **no** (see below) | **yes (fast)** | **yes, by frame** |
 
-Format detection is automatic based on the file's magic bytes, not
-its extension.
+## How rx decides what a file is
+
+Every command and every HTTP route — `trace`, `samples`, `index`,
+`compress`, `GET /v1/tree` — decides what a file is by one rule, read
+from the file's own bytes:
+
+- **Format: the magic bytes, never the name.** A gzip (`1f 8b`), bzip2
+  (`BZh`), xz (`fd 37 7a 58 5a 00`) or zstd (`28 b5 2f fd`, or a zstd
+  skippable frame, which pzstd and an empty seekable file start with)
+  signature names the format. A file with none of them is plain text,
+  whatever its extension. So a text file named `app.log.gz` is searched
+  as text, and a gzip file named `app.log` is decompressed. When the
+  extension and the bytes disagree, the bytes win.
+- **Seekable zstd: the seek table.** A zstd file is seekable when it ends
+  with a seek table that describes it, whatever its name (`.zst`,
+  `.zstd` or none).
+- **Text: the first 8 KiB of the text.** A NUL byte in the first 8 KiB
+  of the file's text means the file is not text. For a compressed file
+  the rule reads the decompressed text, so a plain file and its
+  compressed copies are classified alike. This is what refuses a
+  `.tar.gz` (every tar header is padded with NUL bytes), a binary file,
+  and UTF-16 text, which writes every ASCII character next to a NUL
+  (named "UTF-16" in the reason when the text starts with a UTF-16
+  byte-order mark). A NUL byte after the first 8 KiB does not make a
+  file binary: it stays part of its line.
+
+A file that is not text is refused everywhere with a reason that
+starts with "not a text file", for example
+`not a text file: a NUL byte in the first 8 KiB of its decompressed text`.
+`rx trace` and `rx index` skip it and say why; `rx samples` exits 2
+(`GET /v1/samples` answers 400); `rx compress` refuses it
+(`POST /v1/compress` answers 400); `POST /v1/index` answers 400. No line
+index is ever built for it. `GET /v1/tree` reports `is_text: false`.
+
+A compressed file whose first bytes of text cannot be decompressed is
+not refused by the rule: the command that reads it reports the damage
+where it meets it.
 
 ## Why compressed files lose random access
 

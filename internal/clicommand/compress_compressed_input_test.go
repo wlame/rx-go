@@ -13,7 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wlame/rx-go/internal/seekable"
+	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -88,7 +89,7 @@ func TestCompress_GzipInputTracesLikeThePlainLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runCompress: %v (%v)", err, entry["error"])
 	}
-	if !seekable.IsSeekable(output) {
+	if !seekablefile.IsSeekable(t, output) {
 		t.Fatal("the output is not a seekable zstd file")
 	}
 	if size, _ := entry["decompressed_size"].(float64); int64(size) != int64(len(text)) {
@@ -119,7 +120,7 @@ func TestCompress_RefusesWhatItCannotCompress(t *testing.T) {
 		t.Fatalf("write the seekable fixture: %v", err)
 	}
 	archive := filepath.Join(dir, "logs.tar.gz")
-	if err := os.WriteFile(archive, []byte("\x1f\x8b not really"), 0o600); err != nil {
+	if err := os.WriteFile(archive, compressedcopy.Encode(t, compressedcopy.Gzip, append([]byte("app.log"), make([]byte, 505)...)), 0o600); err != nil {
 		t.Fatalf("write archive: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestCompress_RefusesWhatItCannotCompress(t *testing.T) {
 	}{
 		{"seekable zstd input", seekableInput, filepath.Join(dir, "again.zst"),
 			"already a seekable zstd file (use --force to re-encode it)"},
-		{"compound archive", archive, "", "compound archives (tar.gz, etc.) are not supported"},
+		{"archive whose text is not text", archive, "", "not a text file: a NUL byte in the first 8 KiB of its decompressed text"},
 		{"output is the input", plain, plain, "the output path is the input file (use --output to name another file)"},
 	}
 	for _, tc := range cases {
@@ -181,7 +182,7 @@ func TestCompress_ForceReencodesASeekableInput(t *testing.T) {
 	if size, _ := entry["decompressed_size"].(float64); int64(size) != int64(len(text)) {
 		t.Errorf("decompressed_size: got %v, want %d", entry["decompressed_size"], len(text))
 	}
-	if !strings.HasSuffix(fine, ".zst") || !seekable.IsSeekable(fine) {
+	if !strings.HasSuffix(fine, ".zst") || !seekablefile.IsSeekable(t, fine) {
 		t.Error("the re-encoded output is not a seekable zstd file")
 	}
 }

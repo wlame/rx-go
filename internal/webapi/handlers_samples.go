@@ -13,6 +13,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
@@ -203,8 +204,23 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		// per request. The request reads the file without an index,
 		// and the server logs the cause once (samples.ShouldBuildIndex).
 		// RX_NO_INDEX is checked first, so it never touches the cache.
+		// What the file is, decided once through its pin, before any
+		// index is built for it: a file whose text is not text has no
+		// lines, so it is refused rather than answered with its bytes.
+		source, err := paths.Pin(validated)
+		if err != nil {
+			return nil, ErrForbidden(err.Error())
+		}
+		kind, err := samples.Classify(samples.Request{Source: source})
+		if errors.Is(err, filekind.ErrNotText) {
+			return nil, ErrBadRequest(fmt.Sprintf("%s: %s", err.Error(), validated))
+		}
+		if err != nil {
+			return nil, ErrInternal(err.Error())
+		}
+
 		noIndex := config.GetBoolEnv("RX_NO_INDEX", false)
-		if !noIndex && samples.ShouldBuildIndex(validated, stat.Size()) {
+		if !noIndex && samples.ShouldBuildIndex(validated, kind, stat.Size()) {
 			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
 			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
 			stopDeadline()
@@ -230,6 +246,8 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		}
 		resp, err := samples.Resolve(samples.Request{
 			Path:          validated,
+			Source:        source,
+			Kind:          &kind,
 			Offsets:       parsedOffsets,
 			Lines:         parsedLines,
 			BeforeContext: before,

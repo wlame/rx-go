@@ -63,9 +63,6 @@ func TestReadSeekTable_ReadsEveryFooterLayout(t *testing.T) {
 				}
 				offset += int64(len(piece))
 			}
-			if !seekable.IsSeekableFile("app.log.zst", r, r.Size()) {
-				t.Error("IsSeekableFile = false")
-			}
 			reader := seekable.NewTextReader(r, tbl)
 			defer func() { _ = reader.Close() }()
 			got, err := io.ReadAll(reader)
@@ -156,9 +153,6 @@ func TestReadSeekTable_RefusesAFooterWhoseTableDoesNotDescribeTheFile(t *testing
 			_, err := seekable.ReadSeekTable(r, r.Size())
 			if !errors.Is(err, seekable.ErrSeekTableMismatch) {
 				t.Fatalf("ReadSeekTable err = %v, want ErrSeekTableMismatch", err)
-			}
-			if seekable.IsSeekableFile("app.log.zst", r, r.Size()) {
-				t.Error("IsSeekableFile = true for a table that does not describe the file")
 			}
 		})
 	}

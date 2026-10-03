@@ -249,3 +249,15 @@ func DamageFrame(t testing.TB, path string, frame int) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// IsSeekable reports whether the file at path ends with a seek table
+// that describes it (seekable.ReadSeekTable succeeds).
+func IsSeekable(t testing.TB, path string) bool {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // a test's own file
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	_, err = seekable.ReadSeekTable(bytes.NewReader(data), int64(len(data)))
+	return err == nil
+}

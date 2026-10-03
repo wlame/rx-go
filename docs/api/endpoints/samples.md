@@ -187,7 +187,7 @@ client-side and iterate accordingly.
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
-| `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory |
+| `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory; the file is not text |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |
@@ -291,6 +291,16 @@ Status: `400`. Supply exactly one.
 ```
 
 Status: `400`.
+
+### File is not text
+
+```json
+{ "detail": "not a text file: a NUL byte in the first 8 KiB of its decompressed text: /var/log/logs.tar.gz" }
+```
+
+Status: `400`. A file whose text holds a NUL byte in its first 8 KiB
+(decompressed for a compressed file) has no lines; see
+[Compression](../../concepts/compression.md#how-rx-decides-what-a-file-is).
 
 ## Performance notes
 
