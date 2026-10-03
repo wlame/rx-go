@@ -1934,6 +1934,7 @@
                 3
               ],
               "format": "int64",
+              "maximum": 100,
               "minimum": -1,
               "type": "integer"
             }
@@ -1947,6 +1948,7 @@
               "default": -1,
               "description": "Context lines before each offset (-1 = default 3)",
               "format": "int64",
+              "maximum": 100,
               "minimum": -1,
               "type": "integer"
             }
@@ -1960,6 +1962,7 @@
               "default": -1,
               "description": "Context lines after each offset (-1 = default 3)",
               "format": "int64",
+              "maximum": 100,
               "minimum": -1,
               "type": "integer"
             }
