@@ -42,7 +42,7 @@ func patternOrderText(size int) []byte {
 		{110, "a.b"},
 		{130, "axb"},
 	}
-	rng := rand.New(rand.NewSource(90)) //nolint:gosec // reproducible fixture bytes, not a secret
+	rng := rand.New(rand.NewSource(1)) //nolint:gosec // reproducible fixture bytes, not a secret
 	hex := make([]byte, 24)
 	var b bytes.Buffer
 	for line := 1; b.Len() < size; line++ {
