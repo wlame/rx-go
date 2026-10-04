@@ -75,6 +75,16 @@ set (sorted) and the ripgrep flags that change which lines match (`-i`,
 `-w`, `-x`, `-F`, `-P`); its file name carries a hash of the absolute
 source path. `--max-results` is not part of the key.
 
+Because the pattern set is sorted, `-e WARN -e NEEDLE` and
+`-e NEEDLE -e WARN` share one entry. The entry lists the patterns in
+the order of the search that wrote it, and each stored match names its
+pattern by its place in that list; a hit translates it to the reader's
+own pattern IDs, so every match carries the ID of the pattern it
+matched in the reader's order. A pattern given twice is paired copy by
+copy. An entry whose list is not the reader's patterns, or whose match
+names a place the list does not have, is a miss: the trace scans and
+writes a new entry.
+
 When `rx trace` is invoked on a plain file of `RX_LARGE_FILE_MB` (50 MB)
 or more, or on a seekable zstd file, the engine looks for an entry whose
 source identity still matches the file (see below). Hit → load and
