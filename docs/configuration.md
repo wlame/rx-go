@@ -182,13 +182,14 @@ See [concepts/security](concepts/security.md) and
 ## HTTP server
 
 The listening address and the search roots are flags on `rx serve`; see
-[`rx serve`](cli/serve.md). One setting is an environment variable
-because it is a secret, and secrets stay out of flags and process
+[`rx serve`](cli/serve.md). `RX_API_TOKEN` is an environment variable
+only, because it is a secret, and secrets stay out of flags and process
 listings:
 
 | Variable | Default | Description |
 |---|---|---|
 | `RX_API_TOKEN` | unset | When set, every `/v1` request must send `Authorization: Bearer <token>`; others get `401`. `/health`, `/metrics` and the docs stay open, and `/health` reports the value as `<redacted>`. See [security](concepts/security.md#opt-in-api-token). |
+| `RX_TREE_REFRESH_SECONDS` | `5` | How often, in seconds, the viewer reads the loaded (expanded) folders of its files list again while its browser tab is visible, so new, deleted and grown files show without a reload. `rx serve` reads it at start and gives it to the viewer as `tree_refresh_seconds` in [`/health`](api/endpoints/health.md). From 0 to 3600; `0` turns the refresh off. `--tree-refresh` on `rx serve` wins over it. |
 
 ## Variables rx does not read
 
@@ -287,6 +288,7 @@ range:
 | `RX_FINDINGS_MAX_PER_SIGNATURE` | 10000 | 100 | 1000000 | findings kept per signature and file |
 | `RX_MAX_SIGNATURE_SCANS` | 1 | 1 | 64 | signature scans running at once |
 | `RX_FINDINGS_TEXT_MAX_BYTES` | 67108864 | 1048576 | 17179869184 | bytes of findings' text in one answer (1 MiB to 16 GiB) |
+| `RX_TREE_REFRESH_SECONDS` | 5 | 0 | 3600 | seconds between two reads of the viewer's files list |
 
 One rule applies to all of them:
 
@@ -294,8 +296,8 @@ One rule applies to all of them:
 - Not a whole decimal number (`abc`, `1.5`, ` 2`, `2MB`), or below the
   minimum (`0` and negative numbers for every variable except
   `RX_SAMPLES_WAIT_SECONDS`, `RX_TIMESTAMP_LOOKBACK_KB`,
-  `RX_SAMPLES_HEAD_MB` and `RX_CHAIN_OVERLAP_SECONDS`, which take `0`):
-  the default.
+  `RX_SAMPLES_HEAD_MB`, `RX_CHAIN_OVERLAP_SECONDS` and
+  `RX_TREE_REFRESH_SECONDS`, which take `0`): the default.
 - Above the maximum: the maximum.
 
 A value that is not used as it is logs one `invalid_setting` warning

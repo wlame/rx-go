@@ -83,6 +83,7 @@ on an Apple-silicon Mac:
     "hooks_configured": false
   },
   "docs_url": "https://github.com/wlame/rx-tool",
+  "tree_refresh_seconds": 5,
   "search_roots": [
     "/var/log"
   ]
@@ -110,6 +111,7 @@ because rx reads it: nothing does. `RX_SEARCH_ROOTS` is there because
 | `environment` | object | Every env var prefixed with `RX_`, `UVICORN_` or `PROMETHEUS_`, as it is set, whether rx reads it or not. A variable whose name contains `TOKEN`, `SECRET`, `PASSWORD` or `API_KEY` reads `<redacted>`, so `RX_API_TOKEN` never leaves the server ([security](../../concepts/security.md#opt-in-api-token)) |
 | `hooks` | object | Effective webhook env configuration |
 | `docs_url` | string | Static URL to the `rx-tool` project |
+| `tree_refresh_seconds` | integer | How often, in seconds, the viewer reads the loaded (expanded) folders of its files list again while its browser tab is visible, from 0 to 3600: `rx serve --tree-refresh`, else `RX_TREE_REFRESH_SECONDS`, else `5`. `0`: the viewer does not refresh the list by itself. See [`rx serve`](../../cli/serve.md#the-files-list-refresh) |
 | `search_roots` | `string[] \| null` | Configured roots, or `null` when running unsandboxed (rare in serve mode) |
 
 ### `features` field detail

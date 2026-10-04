@@ -35,6 +35,7 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 | `--skip-frontend` | `bool` | `false` | Don't attempt to download or check the `rx-viewer` SPA; serve what is cached |
 | `--update-viewer` | `bool` | `false` | Check GitHub for a newer `rx-viewer` release inside the supported range now, instead of once a day. Exits 2 with `--skip-frontend`, and when `RX_FRONTEND_PATH` is set |
 | `--mask-secrets` | `bool` | `RX_MASK_SECRETS`, else `false` | Mask what the signatures with `redact: true` match in every findings answer the server gives and in the findings cache ([Masking](../concepts/signatures.md#masking)). The mode is the server's, for every request, until it stops; the banner names it |
+| `--tree-refresh` | `int` | `RX_TREE_REFRESH_SECONDS`, else `5` | How often, in seconds, the viewer reads the loaded folders of its files list again; `0` turns it off. From 0 to 3600; another value exits 2. See [The files list refresh](#the-files-list-refresh) |
 
 ### Default behavior
 
@@ -49,6 +50,9 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
   `--mask-secrets` or `RX_MASK_SECRETS=1`. A server that masks and one
   that does not can share a cache directory: each finds the other's
   entries stale and scans again, so neither gives the other's answer.
+- **`--tree-refresh=5`** — the viewer reads the folders open in its
+  files list again every 5 seconds (see
+  [The files list refresh](#the-files-list-refresh)).
 
 ## Examples
 
@@ -68,6 +72,7 @@ Starting RX API server on http://127.0.0.1:7777
 Search root: /home/you/projects/example
 Viewer: v0.8.0 (cached)
 Secrets: shown; start with --mask-secrets or RX_MASK_SECRETS=1 to mask them
+Tree refresh: every 5 s
 API docs available at http://127.0.0.1:7777/docs
 Metrics available at http://127.0.0.1:7777/metrics
 ```
@@ -79,6 +84,31 @@ Metrics available at http://127.0.0.1:7777/metrics
 ```bash
 rx serve --mask-secrets
 ```
+
+`Tree refresh:` says how often the viewer reads its open folders again,
+or `Tree refresh: off`.
+
+### The files list refresh
+
+```bash
+rx serve --tree-refresh=30
+```
+
+The viewer reads each loaded (expanded) folder of its files list again
+every 30 seconds while its browser tab is visible, so a file created,
+deleted or grown under the search root shows without a reload, with
+its size, date and findings and index labels. Each refresh is one
+`GET /v1/tree` request per open folder. The server gives the interval
+to the viewer as `tree_refresh_seconds` in
+[`/health`](../api/endpoints/health.md) and does nothing else with it.
+
+The value comes from `--tree-refresh`, else `RX_TREE_REFRESH_SECONDS`,
+else 5 seconds. `--tree-refresh=0` (or `RX_TREE_REFRESH_SECONDS=0`)
+turns the refresh off: the list changes only when you open a folder
+again or reload the page. The range is 0 to 3600: a flag outside it
+exits 2, and a variable outside it is read by the rule of the
+[integer settings](../configuration.md#integer-settings) (the default
+below the minimum, the maximum above it, with a warning).
 
 ### Production-style bind
 
@@ -188,9 +218,11 @@ set. See [api/webhooks](../api/webhooks.md).
    starts either way. The scan settings (`RX_WORKERS`,
    `RX_SIGNATURES_LINE_BYTES`, `RX_FINDINGS_MAX_PER_SIGNATURE`,
    `RX_TIMESTAMP_LOOKBACK_KB`, `RX_LOG_TZ`, `RX_MAX_LINE_TEXT_BYTES`,
-   `RX_FINDINGS_TEXT_MAX_BYTES`, `RX_MAX_SIGNATURE_SCANS`) and the
-   masking mode (`--mask-secrets`, else `RX_MASK_SECRETS`) are read here
-   too; a change to them or to a signature file takes a restart
+   `RX_FINDINGS_TEXT_MAX_BYTES`, `RX_MAX_SIGNATURE_SCANS`), the
+   masking mode (`--mask-secrets`, else `RX_MASK_SECRETS`) and the
+   files list refresh (`--tree-refresh`, else `RX_TREE_REFRESH_SECONDS`)
+   are read here too; a change to them or to a signature file takes a
+   restart
 8. Register HTTP middleware (request ID, structured logging, panic
    recovery, Prometheus metrics middleware)
 9. Register every endpoint and the static-file catch-all

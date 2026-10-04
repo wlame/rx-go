@@ -135,6 +135,7 @@ func TestIntSettings_GettersReadTheirSetting(t *testing.T) {
 		{FindingsMaxPerSignatureSetting, FindingsMaxPerSignature},
 		{MaxSignatureScansSetting, MaxSignatureScans},
 		{FindingsTextMaxBytesSetting, func() int { return int(FindingsTextMaxBytes()) }},
+		{TreeRefreshSecondsSetting, TreeRefreshSeconds},
 	}
 	if len(cases) != len(IntSettings) {
 		t.Fatalf("%d getters tested, %d settings declared", len(cases), len(IntSettings))

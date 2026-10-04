@@ -28,6 +28,12 @@ type HealthResponse struct {
 	Hooks           map[string]any    `json:"hooks"`
 	DocsURL         string            `json:"docs_url"`
 
+	// TreeRefreshSeconds is how often, in seconds, the viewer reads the
+	// loaded folders of its files list again while its tab is visible:
+	// `rx serve --tree-refresh`, else RX_TREE_REFRESH_SECONDS, else 5.
+	// 0 means the viewer does not refresh the list by itself.
+	TreeRefreshSeconds int `json:"tree_refresh_seconds" minimum:"0" maximum:"3600" doc:"How often, in seconds, the viewer reads the loaded folders of its files list again while its tab is visible: rx serve --tree-refresh, else RX_TREE_REFRESH_SECONDS, else 5. 0: the viewer does not refresh the list by itself."`
+
 	// SearchRoots mirrors search_roots in the Python response. Emitting
 	// it here keeps field order stable with the Python runtime.
 	SearchRoots []string `json:"search_roots"`

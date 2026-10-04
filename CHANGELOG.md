@@ -467,6 +467,14 @@ History maps every removed surface to what replaces it.
   `SignatureInfo`, `GroupInfo`, `LoadErrorInfo`, `FindingsResponse`,
   `FindingsTicks`, `FindingSeries`, `FindingsScanRequest` and
   `TreeFindings`. All of it is additive.
+- `rx serve --tree-refresh=SECONDS` and `RX_TREE_REFRESH_SECONDS`
+  (default 5, from 0 to 3600; 0 turns it off): how often the viewer
+  reads the loaded folders of its files list again while its tab is
+  visible, so new, deleted and grown files show without a reload. The
+  flag wins over the variable, and a flag value outside the range exits
+  2. `/health` gives the interval to the viewer as `tree_refresh_seconds`
+  (an integer, an additive member of contract 2.0), and the start banner
+  names it (`Tree refresh: every 5 s` or `Tree refresh: off`).
 
 ### Changed
 

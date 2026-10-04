@@ -50,14 +50,19 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 			"rx-viewer SPA and Prometheus metrics. SIGINT or SIGTERM triggers a " +
 			"graceful shutdown with a 10s drain.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			treeRefresh, err := treeRefreshSeconds(cmd)
+			if err != nil {
+				return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+			}
 			return runServe(out, serveParams{
-				host:         host,
-				port:         port,
-				searchRoots:  searchRoots,
-				appVersion:   appVersion,
-				skipFrontend: skipFrontend,
-				updateViewer: updateViewer,
-				maskSecrets:  maskSecretsMode(cmd),
+				host:               host,
+				port:               port,
+				searchRoots:        searchRoots,
+				appVersion:         appVersion,
+				skipFrontend:       skipFrontend,
+				updateViewer:       updateViewer,
+				maskSecrets:        maskSecretsMode(cmd),
+				treeRefreshSeconds: treeRefresh,
 			})
 		},
 	}
@@ -71,7 +76,37 @@ func NewServeCommand(out io.Writer, appVersion string) *cobra.Command {
 		"Check GitHub for a newer rx-viewer release inside the supported range now, "+
 			"instead of once a day")
 	bindMaskSecretsFlag(cmd)
+	cmd.Flags().Int(treeRefreshFlag, config.DefaultTreeRefreshSeconds,
+		"How often, in seconds, the viewer reads the open folders of its files list again; 0 turns it off. "+
+			"Without the flag: RX_TREE_REFRESH_SECONDS, else the default")
 	return cmd
+}
+
+// treeRefreshFlag is the flag of `rx serve` that sets how often the
+// viewer reads the loaded folders of its files list again.
+const treeRefreshFlag = "tree-refresh"
+
+// treeRefreshSeconds is the refresh interval of a run of cmd: the value
+// of --tree-refresh when the command line gives it (0 included, which
+// turns the refresh off), otherwise RX_TREE_REFRESH_SECONDS
+// (config.TreeRefreshSeconds). A flag value outside the setting's range
+// is an error that names the range. The variable follows the rule of
+// every integer setting instead: a warning, then the default or the
+// maximum.
+func treeRefreshSeconds(cmd *cobra.Command) (int, error) {
+	// Go note: Changed tells a flag the user wrote from one left at its
+	// default; only then does the flag win over the variable.
+	if !cmd.Flags().Changed(treeRefreshFlag) {
+		return config.TreeRefreshSeconds(), nil
+	}
+	// GetInt fails only for a flag that is not a registered int;
+	// NewServeCommand registered it, so the error is nil here.
+	seconds, _ := cmd.Flags().GetInt(treeRefreshFlag)
+	setting := config.TreeRefreshSecondsSetting
+	if seconds < setting.Min || seconds > setting.Max {
+		return 0, fmt.Errorf("--%s must be from %d to %d seconds, got %d", treeRefreshFlag, setting.Min, setting.Max, seconds)
+	}
+	return seconds, nil
 }
 
 // validateEnvHooks runs the hook-URL guard over RX_HOOK_ON_*_URL.
@@ -96,6 +131,11 @@ type serveParams struct {
 	// answer it gives: --mask-secrets, else RX_MASK_SECRETS
 	// (maskSecretsMode).
 	maskSecrets bool
+	// treeRefreshSeconds is how often the viewer reads the loaded
+	// folders of its files list again, 0 for never: --tree-refresh, else
+	// RX_TREE_REFRESH_SECONDS (treeRefreshSeconds). /health gives it to
+	// the viewer.
+	treeRefreshSeconds int
 }
 
 // viewerMode is how `rx serve` manages the viewer at start-up.
@@ -261,6 +301,9 @@ func runServe(out io.Writer, p serveParams) error {
 		APIToken:    apiToken,
 		Signatures:  catalogue,
 		Findings:    &findingsOptions,
+		// Go note: &p.treeRefreshSeconds points into this call's own
+		// copy of p, which lives as long as the server needs it.
+		TreeRefreshSeconds: &p.treeRefreshSeconds,
 	})
 
 	// Nice startup banner — mirrors Python output.
@@ -277,6 +320,7 @@ func runServe(out io.Writer, p serveParams) error {
 	// The banner reads the mode from the options the server is given,
 	// so it names the mode the answers have.
 	_, _ = fmt.Fprintln(out, secretsBannerLine(findingsOptions.Scan.MaskSecrets))
+	_, _ = fmt.Fprintln(out, treeRefreshBannerLine(p.treeRefreshSeconds))
 	if apiToken != "" {
 		_, _ = fmt.Fprintln(out, "API token: required on /v1 (RX_API_TOKEN is set)")
 	}
@@ -329,6 +373,15 @@ func secretsBannerLine(maskSecrets bool) string {
 		return "Secrets: masked"
 	}
 	return "Secrets: shown; start with --mask-secrets or " + config.MaskingEnv + "=1 to mask them"
+}
+
+// treeRefreshBannerLine is the line of the start banner that says how
+// often the viewer reads the loaded folders of its files list again.
+func treeRefreshBannerLine(seconds int) string {
+	if seconds == 0 {
+		return "Tree refresh: off"
+	}
+	return fmt.Sprintf("Tree refresh: every %d s", seconds)
 }
 
 // The bounds of the findings read cache of `rx serve`: the decoded

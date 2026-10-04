@@ -88,6 +88,16 @@ type Config struct {
 	// built.
 	Findings *findings.TraceOptions
 
+	// TreeRefreshSeconds is how often, in seconds, the viewer reads the
+	// loaded folders of its files list again; /health gives it to the
+	// viewer, and 0 turns the refresh off. `rx serve` sets it from
+	// --tree-refresh or RX_TREE_REFRESH_SECONDS. Nil reads the variable
+	// when the server is built (config.TreeRefreshSeconds).
+	//
+	// Go note: a pointer, because 0 is a value the setting accepts ("off")
+	// and so cannot also mean "not set" the way a zero MaxIndexBuilds does.
+	TreeRefreshSeconds *int
+
 	// buildSamplesIndex builds and stores the index a samples lookup
 	// waits for; samples.BuildIndex unless a test replaces it. Set here,
 	// before the server starts, so no handler goroutine can read it
@@ -273,6 +283,10 @@ func applyConfigDefaults(cfg *Config) {
 	if cfg.Findings == nil {
 		opts := FindingsOptionsFromEnv()
 		cfg.Findings = &opts
+	}
+	if cfg.TreeRefreshSeconds == nil {
+		seconds := config.TreeRefreshSeconds()
+		cfg.TreeRefreshSeconds = &seconds
 	}
 }
 

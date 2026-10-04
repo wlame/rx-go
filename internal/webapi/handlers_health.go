@@ -39,7 +39,8 @@ func registerHealthHandlers(s *Server, api huma.API) {
 		Path:        "/health",
 		Summary:     "Health check and system introspection",
 		Description: "Returns service status, ripgrep availability, app version, OS info, " +
-			"environment variables, and hook configuration.",
+			"environment variables, hook configuration, and tree_refresh_seconds: how often the viewer " +
+			"reads the loaded folders of its files list again (0: never by itself).",
 		Tags:      []string{"General"},
 		Responses: errorResponses(api),
 	}, func(_ context.Context, _ *struct{}) (*healthOutput, error) {
@@ -65,7 +66,9 @@ func buildHealthResponse(s *Server) rxtypes.HealthResponse {
 		Environment:      getAppEnvVariables(),
 		Hooks:            getHookConfigMap(),
 		DocsURL:          "https://github.com/wlame/rx-tool",
-		SearchRoots:      getSearchRootsForHealth(),
+		// NewServer filled it in (applyConfigDefaults), so it is never nil.
+		TreeRefreshSeconds: *s.cfg.TreeRefreshSeconds,
+		SearchRoots:        getSearchRootsForHealth(),
 	}
 }
 

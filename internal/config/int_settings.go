@@ -162,7 +162,22 @@ var (
 	// does not bound an answer. Its maximum, 16 GiB, needs a 64-bit
 	// int, which every platform rx is built for has.
 	FindingsTextMaxBytesSetting = IntSetting{Name: "RX_FINDINGS_TEXT_MAX_BYTES", Default: DefaultFindingsTextMaxBytes, Min: 1 << 20, Max: 16 << 30}
+
+	// TreeRefreshSecondsSetting is RX_TREE_REFRESH_SECONDS: how often, in
+	// seconds, the viewer of `rx serve` reads the loaded folders of its
+	// files list again while its tab is visible; the server reads it at
+	// start and gives it to the viewer in /health. 0 is accepted: the
+	// viewer does not refresh the list by itself. Its maximum is one
+	// hour. `rx serve --tree-refresh` wins over it.
+	TreeRefreshSecondsSetting = IntSetting{Name: "RX_TREE_REFRESH_SECONDS", Default: DefaultTreeRefreshSeconds, Min: 0, Max: 3600}
 )
+
+// DefaultTreeRefreshSeconds is the default of RX_TREE_REFRESH_SECONDS.
+const DefaultTreeRefreshSeconds = 5
+
+// TreeRefreshSeconds returns RX_TREE_REFRESH_SECONDS, from 0 to 3600
+// seconds, or DefaultTreeRefreshSeconds.
+func TreeRefreshSeconds() int { return TreeRefreshSecondsSetting.Value() }
 
 // DefaultFindingsTextMaxBytes is the default of
 // RX_FINDINGS_TEXT_MAX_BYTES: 64 MiB.
@@ -255,6 +270,7 @@ var IntSettings = []IntSetting{
 	FindingsMaxPerSignatureSetting,
 	MaxSignatureScansSetting,
 	FindingsTextMaxBytesSetting,
+	TreeRefreshSecondsSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule
