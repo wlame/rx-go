@@ -46,6 +46,17 @@ task is created. The last one includes a plain zstd input named
 `<input>: the output path is the input file (set "output_path" to
 another file)`, with or without `"force": true`.
 
+The task writes the output the way `rx compress` does: to a hidden
+temporary file in the output's directory, put under the output name
+only once it is whole. Without `"force": true` a file that appears at
+the output name while the task runs is left alone and the task fails
+with `output file already exists: <path> (set "force": true to
+overwrite)`; with it, the output replaces whatever holds the name (a
+symbolic link there is replaced itself, never written through). A task
+that fails leaves the output name as it was, so a forced task that
+fails keeps the file it would have replaced. `compressed_size` is the
+size of the file the task wrote.
+
 ### Frame size syntax
 
 - Plain integer: bytes (`1048576`)

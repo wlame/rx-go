@@ -199,6 +199,16 @@ produces `403` (HTTP) or an access-denied error (CLI) and leaves the
 filesystem untouched: nothing is created, truncated or removed, and
 `force` does not relax the check.
 
+The write itself cannot be redirected after the check. The output's
+directory is opened again from the search root one component at a
+time, refusing any symbolic link on the way, so a directory swapped
+for a link after the check gets nothing written. The output is written
+to a new temporary file created with `O_EXCL` inside that open
+directory and then renamed (with `force`) or hard-linked (without it)
+to the output name; neither step follows a symbolic link at the output
+name, so a link planted there is replaced, or counts as an existing
+output, and the file it leads to is never written.
+
 Without this, an unauthenticated `rx serve` would expose an
 arbitrary-file-write primitive to any client that can reach the socket.
 
