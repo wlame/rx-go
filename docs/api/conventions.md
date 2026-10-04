@@ -73,7 +73,7 @@ message without parsing the string.
 | `400 Bad Request` | Invalid input | Bad regex, malformed offsets/lines, unknown flags, conflicting options |
 | `403 Forbidden` | Path sandbox violation or permission denied | Any path outside `--search-root`; webhook URL that fails SSRF check |
 | `404 Not Found` | Path, task, or cache entry missing | File doesn't exist; task ID unknown; `GET /v1/index` with no cache |
-| `409 Conflict` | Duplicate background task | `POST /v1/index` or `/v1/compress` while one is already running for the same path |
+| `409 Conflict` | Duplicate background task | `POST /v1/index` or `/v1/compress` while one is already running for the same path (a compress task holds its input and its output) |
 | `422 Unprocessable Entity` | Schema validation failure | Missing required query param, wrong type |
 | `500 Internal Server Error` | Unhandled error or panic | Always logged with stack trace |
 | `503 Service Unavailable` | Required dependency missing | `ripgrep` not on `PATH` (trace endpoint) |

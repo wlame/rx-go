@@ -176,11 +176,14 @@ body:
 
 One task per path at a time, whatever the operation: while an index
 task runs for a file, a second index request for it *and* a compress
-request for it get `409 Conflict`, and the other way round. The `409`
-body names the running task in `task_id`. Its `detail` sentence names
-the operation of the refused request, not of the running task: a
-compress refused because an index task runs reads `Compression already
-in progress for … (task: <the index task's ID>)`.
+request for it get `409 Conflict`, and the other way round. A compress
+task holds its output path as well as its input, so a second
+compression into the same output (`app.log` and `app.log.gz` both
+default to `app.log.zst`) and an index request for that output are
+refused too. The `409` body names the running task in `task_id`, and
+its `detail` sentence names the running task's operation and the path
+it holds: a compress refused because an index task runs reads
+`Indexing already in progress for … (task: <the index task's ID>)`.
 
 Finished tasks are swept from memory every 5 minutes if older than
 `RX_TASK_TTL_MINUTES` (default 60). A finished index task keeps its
