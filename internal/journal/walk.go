@@ -276,29 +276,36 @@ func renderedField(name []byte) (shortField, bool) {
 
 // dataField returns what the DATA object at offset gives the renderer:
 // for a field it reads, the field and its value (rendered is true); for
-// any other field, nothing. The answer comes from the cache, or from
-// readData and is then cached: the payload of a field the renderer
-// reads, or only the fact that the object holds another field, so that
-// such an object is read and its name decoded once.
+// any other field, nothing; for a damaged object, its damage. The answer
+// comes from the cache, or from readData and is then cached, damage
+// included, so that an object is read once however many entries list it.
+// An I/O error is not an answer and is not cached.
 func (w *walker) dataField(offset uint64) (field shortField, value []byte, rendered bool, err error) {
-	payload, unread, cached := w.cache.get(offset)
+	answer, cached := w.cache.get(offset)
 	if !cached {
-		if payload, err = w.readData(offset); err != nil {
+		payload, err := w.readData(offset)
+		reason, isDamage := damageReason(err)
+		switch {
+		case isDamage:
+			answer = dataAnswer{damage: reason}
+		case err != nil:
 			return 0, nil, false, err
+		case payload == nil:
+			answer = dataAnswer{unread: true}
+		default:
+			answer = dataAnswer{payload: payload}
 		}
-		unread = payload == nil
-		if unread {
-			w.cache.putUnread(offset)
-		} else {
-			w.cache.put(offset, payload)
-		}
+		w.cache.put(offset, answer)
 	}
-	if unread {
+	switch {
+	case answer.damage != "":
+		return 0, nil, false, &damageError{reason: answer.damage}
+	case answer.unread:
 		return 0, nil, false, nil
 	}
 	// readData returns a payload only when its name, before '=', is one
 	// the renderer reads.
-	name, value, _ := bytes.Cut(payload, []byte("="))
+	name, value, _ := bytes.Cut(answer.payload, []byte("="))
 	field, _ = renderedField(name)
 	return field, value, true, nil
 }
