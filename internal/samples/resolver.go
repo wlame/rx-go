@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -81,6 +80,13 @@ type Request struct {
 	// HTTP API sets RX_SAMPLES_MAX_LINES, so one request cannot make the
 	// server hold an answer of any size.
 	MaxLines int
+	// MaxBytes is the most bytes of line text the answer may hold,
+	// counted with MaxLines, the line breaks not included: past it
+	// Resolve stops and returns ErrTooManyBytes. A line is never held
+	// whole when it alone is longer. 0 is no limit, which the CLI uses;
+	// the HTTP API sets RX_SAMPLES_MAX_BYTES, since samples returns
+	// whole lines and a log's lines can be megabytes long.
+	MaxBytes int64
 
 	// ctx is the context Resolve was called with. Every pass over the
 	// file reads through it (withContext), so a canceled request stops
@@ -200,7 +206,7 @@ func Resolve(ctx context.Context, req Request) (*rxtypes.SamplesResponse, error)
 		Samples:       map[string][]string{},
 		Timestamps:    map[string]int64{},
 	}
-	answer := newCollected(resp, req.MaxLines)
+	answer := newCollected(resp, req)
 	if kind.IsCompressed() {
 		resp.IsCompressed = true
 		name := kind.CompressionName()
@@ -379,22 +385,27 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 	defer func() { _ = cursor.close() }()
 
 	before := newLineRing(req.BeforeContext)
-	r := bufio.NewReaderSize(withContext(req.context(), cursor), readBufferFor(windows[len(windows)-1].start-cursor.offset))
+	lines := newLineReader(withContext(req.context(), cursor), readBufferFor(windows[len(windows)-1].start-cursor.offset))
 	pos, lineNum, next := cursor.offset, cursor.line, 0
 	// active holds the started windows that still want lines, so a line
 	// costs one step per window it belongs to rather than one per
 	// window of the request.
 	var active []*window
 	for {
-		raw, readErr := r.ReadString('\n')
-		if readErr != nil && !errors.Is(readErr, io.EOF) {
+		// Every line may become context of a window that starts later,
+		// so each is kept, but never more of it than the budget could
+		// hold: a longer line is cut, and taking it fails before its
+		// cut text is used.
+		raw, length, ended, readErr := lines.readUpTo(resp.budget.keepPerLine())
+		if readErr != nil {
 			return readErr
 		}
-		if len(raw) == 0 && readErr != nil {
+		if length == 0 {
 			break
 		}
-		text := stripNewline(raw)
-		end := pos + int64(len(raw))
+		text := string(trimOneLineBreak(raw))
+		textBytes := textLength(raw, length)
+		end := pos + length
 
 		// Start every window whose offset falls on this line.
 		for next < len(windows) && windows[next].start < end {
@@ -403,7 +414,7 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 			resp.Offsets[w.key] = lineNum
 			if w.end < 0 {
 				for _, l := range before.lines() {
-					if err := resp.budget.take(); err != nil {
+					if err := resp.budget.take(l.textBytes); err != nil {
 						return err
 					}
 					w.collect = append(w.collect, l.text)
@@ -419,7 +430,7 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 		// window is written at or before the place it is read from.
 		kept := active[:0]
 		for _, w := range active {
-			if err := resp.budget.take(); err != nil {
+			if err := resp.budget.take(textBytes); err != nil {
 				return err
 			}
 			w.collect = append(w.collect, text)
@@ -444,9 +455,9 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 		}
 		active = kept
 
-		before.push(ringLine{text: text, start: pos})
+		before.push(ringLine{text: text, start: pos, textBytes: textBytes})
 		pos, lineNum = end, lineNum+1
-		if readErr != nil {
+		if ended {
 			break
 		}
 		if next >= len(windows) && len(active) == 0 {
@@ -516,6 +527,9 @@ type lineRing struct {
 type ringLine struct {
 	text  string
 	start int64
+	// textBytes is the length of the line's text, which is longer than
+	// text when the line was cut to the answer's byte limit.
+	textBytes int64
 }
 
 func newLineRing(n int) *lineRing {
@@ -706,22 +720,6 @@ func countLines(ctx context.Context, src paths.Pinned) (int64, error) {
 		total++
 	}
 	return total, nil
-}
-
-// stripNewline drops a trailing '\n' and an optional preceding '\r'.
-// Matches Python's `line.rstrip('\n\r')` when working with bytes-mode
-// file iteration.
-func stripNewline(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	if s[len(s)-1] == '\n' {
-		s = s[:len(s)-1]
-	}
-	if len(s) > 0 && s[len(s)-1] == '\r' {
-		s = s[:len(s)-1]
-	}
-	return s
 }
 
 // FormatInt64 returns the JSON-compatible decimal form of n. Exposed

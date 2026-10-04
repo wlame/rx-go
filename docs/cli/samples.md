@@ -63,7 +63,7 @@ once more.
 
 `rx samples` holds whatever answer it is asked for: it runs as your own
 process, so it has no limit on the lines of an answer. The HTTP API has
-one, `RX_SAMPLES_MAX_LINES` (see
+two, `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` (see
 [`GET /v1/samples`](../api/endpoints/samples.md#status-codes)).
 
 ## Flags
