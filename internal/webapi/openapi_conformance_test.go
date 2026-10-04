@@ -311,6 +311,10 @@ func conformanceFixtures(t *testing.T) string {
 		fmt.Fprintf(&timed, "2025-12-10 07:%02d:%02d.%03d INFO request %d served\n", n/60, n%60, n%1000, n)
 	}
 	write("timed.log", timed.Bytes())
+	// Timestamped lines on two dates: a time of day alone names a moment
+	// on each, so a query for one is refused.
+	write("midnight.log", []byte("2025-12-10 23:59:59.000 LINE 1\n2025-12-11 00:00:01.000 LINE 2\n"+
+		"2025-12-11 00:00:02.000 LINE 3\n"))
 	if err := os.MkdirAll(filepath.Join(root, "emptydir"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -396,6 +400,16 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("samples outside the root", "/v1/samples", q("path", "/etc/hosts", "lines", "1"), http.StatusForbidden)
 	get("samples of a missing file", "/v1/samples", q("path", at("nope.log"), "lines", "1"), http.StatusNotFound)
 	get("samples without a path", "/v1/samples", q("lines", "1"), http.StatusUnprocessableEntity)
+	get("samples by time, a single time and a range", "/v1/samples",
+		q("path", at("timed.log"), "timestamps", "2025-12-10T07:01:00", "timestamps", "07:02:00..07:02:05"), http.StatusOK)
+	get("samples by time past the last line", "/v1/samples", q("path", at("timed.log"), "timestamps", "2026-01-01"), http.StatusOK)
+	get("samples by an invalid time", "/v1/samples", q("path", at("timed.log"), "timestamps", "soon"), http.StatusBadRequest)
+	get("samples by time and by line", "/v1/samples", q("path", at("timed.log"), "timestamps", "07:01", "lines", "1"),
+		http.StatusBadRequest)
+	get("samples by time in a file without timestamps", "/v1/samples", q("path", at("three.log"), "timestamps", "07:01"),
+		http.StatusBadRequest)
+	get("samples by a time of day in a file of two dates", "/v1/samples",
+		q("path", at("midnight.log"), "timestamps", "00:00:01"), http.StatusBadRequest)
 
 	get("index before it is built", "/v1/index", q("path", at("app.log")), http.StatusNotFound)
 	get("index outside the root", "/v1/index", q("path", "/etc/hosts"), http.StatusForbidden)

@@ -1,12 +1,12 @@
 # `GET /v1/samples`
 
-Retrieve content lines addressed by byte offset or line number, with
-configurable context. HTTP equivalent of [`rx samples`](../../cli/samples.md).
+Retrieve content lines addressed by byte offset, line number or time,
+with configurable context. HTTP equivalent of [`rx samples`](../../cli/samples.md).
 
 ## Purpose
 
 Given a file and a set of addresses, return the targeted lines plus
-surrounding context. Supports both byte-offset and line-offset modes, on uncompressed files
+surrounding context. Supports byte-offset, line-offset and time modes, on uncompressed files
 and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
 
 ### What a request reads
@@ -40,6 +40,7 @@ and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
 ```text
 GET /v1/samples?path=...&lines=...
 GET /v1/samples?path=...&offsets=...
+GET /v1/samples?path=...&timestamps=...&timestamps=...
 ```
 
 ### Query parameters
@@ -47,8 +48,9 @@ GET /v1/samples?path=...&offsets=...
 | Parameter | Type | Required | Default | Description |
 |---|---|:-:|---|---|
 | `path` | `string` | yes | — | File path (must be a file, not a directory) |
-| `offsets` | `string` | one of two | — | Comma-separated byte offsets / ranges |
-| `lines` | `string` | one of two | — | Comma-separated 1-based line numbers / ranges |
+| `offsets` | `string` | one of three | — | Comma-separated byte offsets / ranges |
+| `lines` | `string` | one of three | — | Comma-separated 1-based line numbers / ranges |
+| `timestamps` | `string`, repeatable | one of three | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the parameter for several, at most 1,000. Never split at commas. See [by time](#by-time) |
 | `context` | `int` | no | `3` | Lines before AND after each target, at most 100 (`-1` = default) |
 | `before_context` | `int` | no | `3` | Lines before (overrides `context`), at most 100 (`-1` = default) |
 | `after_context` | `int` | no | `3` | Lines after (overrides `context`), at most 100 (`-1` = default) |
@@ -59,8 +61,8 @@ GET /v1/samples?path=...&offsets=...
 |---|---|---|
 | `Prefer` | `respond-async` | Lets the server answer [`202`](#response-202-accepted) with the task building the file's line index when the build outlasts `RX_SAMPLES_WAIT_SECONDS` ([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240)). Without it the request waits for the build, however long, and answers `200`. |
 
-Exactly one of `offsets` / `lines` must be provided. Both-set or
-neither-set returns `400`. For a compressed file both are positions in
+Exactly one of `offsets` / `lines` / `timestamps` must be provided.
+More than one, or none, returns `400`. For a compressed file both are positions in
 its decompressed text: `offsets` names bytes of that text, and the
 `lines` map reports where each line starts in it.
 
@@ -75,6 +77,59 @@ Both `offsets` and `lines` accept the same grammar:
 
 No whitespace. Max practical length is limited by the URL length cap
 your proxy imposes.
+
+### By time
+
+`timestamps=T` answers the first line, in file order, whose own
+timestamp is T or later, with its context, as `lines=N` answers line N.
+`timestamps=T1..T2` answers the lines from the line at T1 to the line
+before the first line later than T2, without context; `..T2` and `T1..`
+leave an end open. The rule, the accepted forms of a time and the zone
+settings (`RX_LOG_TZ`, `RX_QUERY_TZ`) are in
+[Timestamps](../../concepts/timestamps.md). The parameter repeats, one
+query per value, because a comma is part of some timestamp formats
+(`2025-12-10 12:34:56,123`):
+
+```bash
+curl -sG 'http://127.0.0.1:7777/v1/samples' --data-urlencode 'path=/var/log/app.log' \
+    --data-urlencode 'timestamps=2025-12-10 12:34:56,123' --data-urlencode 'timestamps=12:34:56..12:34:57' \
+    --data-urlencode 'context=1'
+```
+
+```json
+{
+  "path": "/var/log/app.log",
+  "offsets": {},
+  "lines": {},
+  "before_context": 1,
+  "after_context": 1,
+  "samples": {
+    "12:34:56..12:34:57": [
+      "2025-12-10 12:34:56,123 ERROR LINE 2",
+      "Traceback LINE 3",
+      "2025-12-10 12:34:57,000 INFO LINE 4"
+    ],
+    "2025-12-10 12:34:56,123": [
+      "2025-12-10 12:34:55,000 INFO LINE 1",
+      "2025-12-10 12:34:56,123 ERROR LINE 2",
+      "Traceback LINE 3"
+    ]
+  },
+  "is_compressed": false,
+  "compression_format": null,
+  "cli_command": "rx samples /var/log/app.log --timestamps='2025-12-10 12:34:56,123' --timestamps=12:34:56..12:34:57 --context=1",
+  "timestamps": {"12:34:56..12:34:57": 2, "2025-12-10 12:34:56,123": 2},
+  "time_format": {"format": "iso", "has_zone": false, "assumed_zone": "UTC"}
+}
+```
+
+A time no line reaches answers `-1` and a `null` sample, like a line
+past the end. A value that is not a time, a time of day on a file whose
+first and last timestamps fall on two dates (the message names both),
+and a time query on a file with no timestamp format ("no timestamp
+format recognized in the first 1 MiB") answer `400`. With an index the
+search reads at most one index step; the request builds or waits for
+an index exactly as a `lines` request does.
 
 ### Context defaults
 
@@ -111,7 +166,9 @@ For a 30-line file whose every line reads `LINE <n> payload`,
   },
   "is_compressed": false,
   "compression_format": null,
-  "cli_command": "rx samples /var/log/lines.log --lines=1,30,99"
+  "cli_command": "rx samples /var/log/lines.log --lines=1,30,99",
+  "timestamps": {},
+  "time_format": null
 }
 ```
 
@@ -173,6 +230,8 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 | `is_compressed` | bool | Whether the file was compressed |
 | `compression_format` | `string \| null` | `"gzip"`, `"bzip2"`, `"xz"`, `"zstd"`, `"seekable_zstd"`, or `null` |
 | `cli_command` | string | Equivalent CLI invocation |
+| `timestamps` | `{query: lineNumber}` | Time mode: key is the query, value is the line it found (a range's first line); `-1` when no line is at the time, or the range holds none. `{}` in the other modes |
+| `time_format` | `{format, has_zone, assumed_zone} \| null` | The file's timestamp format, in every mode: the family (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted`, `epoch`), whether most timestamps carry a zone, and the zone a timestamp without one is read in (`RX_LOG_TZ` for a zone-less file, `UTC` otherwise). `null` when no format is recognized in the first mebibyte of the text. Costs no read with an index, at most a mebibyte without |
 
 ### Map ordering
 
@@ -187,7 +246,7 @@ client-side and iterate accordingly.
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
-| `400 Bad Request` | Missing both `offsets` and `lines`; both set; bad spec syntax; `path` is a directory; the file is not text |
+| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |
@@ -279,7 +338,7 @@ Status: `400`. Check the [address syntax](#address-syntax).
 ### Missing address mode
 
 ```json
-{ "detail": "Must provide either 'offsets' or 'lines' parameter." }
+{ "detail": "Must provide one of 'offsets', 'lines' or 'timestamps'." }
 ```
 
 Status: `400`. Supply exactly one.
