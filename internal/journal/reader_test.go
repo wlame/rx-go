@@ -332,6 +332,18 @@ func itemSizes(compact bool) (entryItem, arrayItem uint64) {
 	return 16, 8
 }
 
+// listItemOf returns the file offset of the entry-list item that lists
+// entry i.
+func listItemOf(j journalfile.Journal, i int, compact bool) uint64 {
+	_, arrayItem := itemSizes(compact)
+	for _, a := range j.Arrays {
+		if i < a.FirstEntry+a.Count {
+			return a.Offset + 24 + uint64(i-a.FirstEntry)*arrayItem // #nosec G115 -- a small index
+		}
+	}
+	panic(fmt.Sprintf("no array lists entry %d", i))
+}
+
 // putItem writes an item's offset into data at at, in the item width of
 // the journal.
 func putItem(data []byte, at, value uint64, compact bool) {
@@ -410,10 +422,27 @@ func damageCases() []damageCase {
 			return data, nil, j.Arrays[1].FirstEntry, 0, "not after itself"
 		}},
 		{"an entry pointer that goes back", func(_ *testing.T, j journalfile.Journal, data []byte, compact bool) ([]byte, []int, int, int, string) {
-			_, arrayItem := itemSizes(compact)
-			a := j.Arrays[2]
-			putItem(data, a.Offset+24+5*arrayItem, j.Entries[3].Offset, compact)
-			return data, nil, a.FirstEntry + 5, 0, "goes back"
+			putItem(data, listItemOf(j, 17, compact), j.Entries[3].Offset, compact)
+			return data, []int{17}, -1, 0, "not after the last entry read"
+		}},
+		{"an entry pointer that stays", func(_ *testing.T, j journalfile.Journal, data []byte, compact bool) ([]byte, []int, int, int, string) {
+			putItem(data, listItemOf(j, 17, compact), j.Entries[16].Offset, compact)
+			return data, []int{17}, -1, 0, "not after the last entry read"
+		}},
+		{"an entry pointer beyond the file", func(_ *testing.T, j journalfile.Journal, data []byte, compact bool) ([]byte, []int, int, int, string) {
+			// The entries after it are compared with the last entry read,
+			// not with this pointer, so they are all read.
+			putItem(data, listItemOf(j, 18, compact), 0xfffffff8, compact)
+			return data, []int{18}, -1, 0, "beyond the end of the file"
+		}},
+		{"an entry pointer forward to a DATA object", func(t *testing.T, j journalfile.Journal, data []byte, compact bool) ([]byte, []int, int, int, string) {
+			putItem(data, listItemOf(j, 22, compact), j.Data[dataOf(t, j, "_PID=325")].Offset, compact)
+			return data, []int{22}, -1, 0, "not an ENTRY object"
+		}},
+		{"two bad entry pointers in one array", func(_ *testing.T, j journalfile.Journal, data []byte, compact bool) ([]byte, []int, int, int, string) {
+			putItem(data, listItemOf(j, 13, compact), 0xfffffff8, compact)
+			putItem(data, listItemOf(j, 14, compact), j.Entries[2].Offset, compact)
+			return data, []int{13, 14}, -1, 0, "beyond the end of the file"
 		}},
 		{"an entry item that points at an ENTRY_ARRAY object", func(_ *testing.T, j journalfile.Journal, data []byte, compact bool) ([]byte, []int, int, int, string) {
 			putItem(data, j.Entries[30].Offset+64, j.Arrays[1].Offset, compact)

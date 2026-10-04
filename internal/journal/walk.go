@@ -9,10 +9,13 @@ package journal
 // The walk takes the header's n_entries entries, once: entries a live
 // file lists after its header was read belong to a later read.
 //
-// INVARIANT: every step of the walk moves forward in the file. Each array
-// links to an array after it, and each entry offset is greater than the
-// one before it; a pointer that goes back or stays ends the walk, so a
-// list that points back to itself cannot loop.
+// INVARIANT: the walk ends, and each entry is read at most once. Each
+// array links to an array after it: an array whose link goes back or
+// stays is damaged and ends the walk, so a list that points back to
+// itself cannot loop. Each item is taken once. An entry is read only when
+// its offset is after the last entry read (the last offset that held an
+// ENTRY object); an item that goes back or stays leaves out that one
+// entry, and the walk goes on with the next item.
 
 import (
 	"bytes"
@@ -34,12 +37,15 @@ type walker struct {
 	// handed out so far.
 	total, taken int64
 
-	// The place in the list: the array whose items are being handed out,
-	// the offset of the array after it (0: none), and the last entry
-	// handed out.
+	// The place in the list: the array whose items are being handed out
+	// and the offset of the array after it (0: none).
 	array     itemCursor
 	nextArray uint64
-	lastEntry uint64
+	// lastRead is the offset of the last entry read: the last item whose
+	// offset held an ENTRY object that passed its checks. A wild item (one
+	// beyond the file, or at another object) does not move it, so it
+	// costs only its own entry.
+	lastRead uint64
 	// hasList is false when the header names no entry list.
 	hasList bool
 
@@ -84,10 +90,11 @@ func (w *walker) itemWidths() (entryItem, arrayItem uint64) {
 	return 16, 8
 }
 
-// next returns the offset of the next entry of the list. It returns
-// errListDone after the last entry the header counts, damage when the
-// list cannot go on (the walk ends there), and the reader's error when a
-// read fails.
+// next takes the next item of the list and returns the entry offset it
+// holds; the item counts as taken whatever readEntry finds there. It
+// returns errListDone after the last entry the header counts, damage
+// when the list cannot go on (the walk ends there), and the reader's
+// error when a read fails.
 func (w *walker) next() (uint64, error) {
 	if w.taken == w.total {
 		return 0, errListDone
@@ -103,10 +110,7 @@ func (w *walker) next() (uint64, error) {
 		return 0, err
 	case offset == 0:
 		return 0, w.listEnds()
-	case offset <= w.lastEntry:
-		return 0, damaged("the entry list goes back from offset %d to offset %d", w.lastEntry, offset)
 	}
-	w.lastEntry = offset
 	w.taken++
 	return offset, nil
 }
@@ -164,11 +168,18 @@ func checkItems(o object, itemsOffset, width uint64, what objectRef) error {
 }
 
 // readEntry reads the ENTRY object at offset and the DATA objects it
-// lists, and returns the entry the renderer needs. The ENTRY object is
-// checked as systemd's check_object checks it (journal-file.c:983-1024),
-// and every DATA object is read and decoded: a failure of any of them is
-// damage, and the whole entry is left out, since the damaged item could
-// be its MESSAGE.
+// lists, and returns the entry the renderer needs. The offset must come
+// after the last entry read; an item that goes back or stays is damage,
+// and only its own entry is left out. The ENTRY object is checked as
+// systemd's check_object checks it (journal-file.c:983-1024), and every
+// DATA object is read and decoded: a failure of any of them is damage,
+// and the whole entry is left out, since the damaged item could be its
+// MESSAGE.
+//
+// The last entry read moves to offset once the ENTRY object passes its
+// own checks, before its DATA objects are read: an entry that is real
+// but holds a damaged value is then not read again by a later item that
+// points to it.
 //
 // The entry's Fields hold, for each field the renderer reads, the last
 // item of that name in the entry's stored order: the renderer reads no
@@ -178,6 +189,9 @@ func checkItems(o object, itemsOffset, width uint64, what objectRef) error {
 // payload without '=' names no field and is skipped. The returned Entry
 // is valid until the next call.
 func (w *walker) readEntry(offset uint64) (Entry, error) {
+	if offset <= w.lastRead {
+		return Entry{}, damaged("the entry list points to offset %d, not after the last entry read at offset %d", offset, w.lastRead)
+	}
 	width, _ := w.itemWidths()
 	o, err := w.f.readObject(offset, objectEntry, entryItemsOffset, w.entryChunk[:entryProbeBytes])
 	if err != nil {
@@ -191,6 +205,7 @@ func (w *walker) readEntry(offset uint64) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
+	w.lastRead = offset
 	var items itemCursor
 	items.start(w.f, o, objectEntry, entryItemsOffset, width, w.entryChunk)
 	var picked pickedFields
