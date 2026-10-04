@@ -348,6 +348,7 @@ func indexResponseFrom(idx *rxtypes.UnifiedFileIndex) rxtypes.IndexResponse {
 	if idx.Anomalies != nil {
 		out.AnomalyCount = len(*idx.Anomalies)
 	}
+	out.TimeSummary = timeSummaryFrom(idx.TimeIndex)
 	// The line-length group exists only when the statistics were
 	// computed, and the longest line only when its position is known.
 	if idx.LineLengthMax != nil {
@@ -365,6 +366,29 @@ func indexResponseFrom(idx *rxtypes.UnifiedFileIndex) rxtypes.IndexResponse {
 				ByteOffset: *idx.LineLengthMaxByteOffset,
 			}
 		}
+	}
+	return out
+}
+
+// timeSummaryFrom projects an index's time section for a client: every
+// member but max_before, the per-checkpoint array only a search by time
+// reads. A nil section (no timestamp format) is a null summary.
+func timeSummaryFrom(ti *rxtypes.TimeIndex) *rxtypes.TimeSummary {
+	if ti == nil {
+		return nil
+	}
+	out := &rxtypes.TimeSummary{
+		Format:           ti.Format,
+		HasZone:          ti.HasZone,
+		TimestampedLines: ti.TimestampedLines,
+		BackwardSteps:    ti.BackwardSteps,
+		MaxBackwardMs:    ti.MaxBackwardMs,
+	}
+	if ti.First != nil {
+		out.FirstMs = &ti.First.Ms
+	}
+	if ti.Last != nil {
+		out.LastMs = &ti.Last.Ms
 	}
 	return out
 }

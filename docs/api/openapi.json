@@ -533,6 +533,10 @@
             "description": "Size of the file on disk.",
             "format": "int64",
             "type": "integer"
+          },
+          "time_summary": {
+            "$ref": "#/components/schemas/TimeSummary",
+            "description": "The timestamps of the file's lines; null when no timestamp format is recognized."
           }
         },
         "required": [
@@ -555,6 +559,7 @@
           "anomaly_count",
           "anomaly_summary",
           "anomalies",
+          "time_summary",
           "cli_command"
         ],
         "type": "object"
@@ -685,6 +690,10 @@
           },
           "success": {
             "type": "boolean"
+          },
+          "time_summary": {
+            "$ref": "#/components/schemas/TimeSummary",
+            "description": "The timestamps of the file's lines; null when no timestamp format is recognized."
           }
         },
         "required": [
@@ -709,6 +718,7 @@
           "anomaly_count",
           "anomaly_summary",
           "anomalies",
+          "time_summary",
           "cli_command"
         ],
         "type": "object"
@@ -1223,6 +1233,72 @@
           "result"
         ],
         "type": "object"
+      },
+      "TimeSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "backward_steps": {
+            "description": "How many lines carry a timestamp more than one second earlier than the latest one before them.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_ms": {
+            "description": "The timestamp of the first line that carries one, in ms; null when no line carries one.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "format": {
+            "description": "The timestamp format of the lines.",
+            "enum": [
+              "iso",
+              "clf",
+              "ctime",
+              "syslog",
+              "slash",
+              "dotted",
+              "epoch"
+            ],
+            "type": "string"
+          },
+          "has_zone": {
+            "description": "Whether most timestamps carry a zone, so the values are UTC instants; false means wall-clock time read as UTC.",
+            "type": "boolean"
+          },
+          "last_ms": {
+            "description": "The timestamp of the last line that carries one, in ms; null when no line carries one.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_backward_ms": {
+            "description": "The largest such step back, in ms; 0 when there is none.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "timestamped_lines": {
+            "description": "How many lines carry a timestamp.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "format",
+          "has_zone",
+          "first_ms",
+          "last_ms",
+          "timestamped_lines",
+          "backward_steps",
+          "max_backward_ms"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
       },
       "TraceResponse": {
         "additionalProperties": false,

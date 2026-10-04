@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read, the first and last timestamps, the count of timestamped lines
   and the backward steps; `rx index --json` gives `time_index` for each
   indexed file, and `--info --json` gives it with the rest of the index.
+  `GET /v1/index` and the result of a `POST /v1/index` task carry
+  `time_summary`: `{format, has_zone, first_ms, last_ms,
+  timestamped_lines, backward_steps, max_backward_ms}`, or `null` for a
+  file with no timestamp format (`max_before` is left out). Part of
+  contract 1.5.
 
 ### Changed
 

@@ -51,6 +51,15 @@ GET /v1/index?path=<file>
   "anomaly_count":   0,
   "anomaly_summary": null,
   "anomalies":       null,
+  "time_summary": {
+    "format":            "iso",
+    "has_zone":          false,
+    "first_ms":          1765350004574,
+    "last_ms":           1765353604390,
+    "timestamped_lines": 1387928,
+    "backward_steps":    0,
+    "max_backward_ms":   0
+  },
   "cli_command":     "rx index /var/log/audit-2026-03.log --info --json"
 }
 ```
@@ -74,6 +83,7 @@ The OpenAPI document names this shape `IndexResponse`.
 | `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line |
 | `compression_format` | string \| null | For compressed inputs only |
 | `anomalies` | array \| null | Anomaly detector output — populated when `analyze=true`, `null` otherwise. See [analyzers](../../concepts/analyzers.md) for the shipped catalog |
+| `time_summary` | object \| null | The timestamps of the file's lines, from the index's [time section](../../concepts/line-indexes.md#the-time-section): `format` (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted` or `epoch`), `has_zone`, `first_ms` and `last_ms` (the first and the last timestamped line, `null` when no line carries one), `timestamped_lines`, `backward_steps` and `max_backward_ms`. Values are milliseconds since the Unix epoch: UTC instants when `has_zone` is true, the wall-clock time as written, read as if it were UTC, when it is false. `null` when no timestamp format is recognized in the first mebibyte of the text. The per-checkpoint `max_before` array of the stored index is not included; `rx index --json` gives it. Since contract 1.5 |
 | `cli_command` | string | Equivalent CLI command; see below |
 
 ### The equivalent CLI command
@@ -276,7 +286,7 @@ See [tasks](tasks.md) for the task polling contract.
 
 ## Performance notes
 
-- `GET /v1/index` reads only the stored index (9.3 KB for a 465 MB log)
+- `GET /v1/index` reads only the stored index (15.8 KB for a 465 MB log)
 - `POST /v1/index` without `analyze`: one pass over the file; 120 ms
   for a 465 MB log in the page cache
 - `POST /v1/index` with `analyze`: every line goes through every
