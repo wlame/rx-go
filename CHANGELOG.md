@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   up to 64 GiB. A zstd file whose first frame declares a window above
   16 MiB (`zstd --long` writes 128 MiB) is now taken for text without
   being probed; the command that reads it decompresses it as before.
+- An index build no longer copies the first lines of a file to decide
+  its line ending; it counts the endings where it reads them. A file
+  whose first line is 10 MiB long cost 10 MiB more. The answer is the
+  same.
 - `rx serve` installs viewer 0.5.0: the range of viewer releases it
   accepts is now `0.2.0 <= v < 0.6.0`. Release 0.4.0 refused 0.5.0 and
   came up without the viewer unless one was already cached or

@@ -438,10 +438,11 @@ func TestBuild_LargeFileMBZeroKeepsTheDefaultStep(t *testing.T) {
 	}
 }
 
-// TestDetectLineEnding_EmptySample verifies the default for empty input.
-func TestDetectLineEnding_EmptySample(t *testing.T) {
-	if got := detectLineEnding([]byte{}); got != "LF" {
-		t.Errorf("empty sample → %q, want LF", got)
+// A text with no line ending is taken for LF.
+func TestLineEndingTally_NoLinesIsLF(t *testing.T) {
+	var tally lineEndingTally
+	if got := tally.style(); got != "LF" {
+		t.Errorf("no lines → %q, want LF", got)
 	}
 }
 
