@@ -13,9 +13,10 @@
 # (SYSTEMD_JOURNAL_COMPRESS NONE, XZ, LZ4, ZSTD x SYSTEMD_JOURNAL_COMPACT
 # 0, 1), systemd-journal-remote turns the set's export stream into a
 # journal. The journal is trimmed to its used size, checked against the
-# stream, and stored as SET-COMPRESSION-MODE.journal.zst beside the text
-# journalctl prints for it (SET-COMPRESSION-MODE.txt). Every variant of a
-# set must give the same text.
+# stream, and stored as SET-COMPRESSION-MODE.journal.zst. The text
+# journalctl prints must be the same bytes for the eight variants of a
+# set (compression and compact mode do not change it); it is stored once,
+# as SET.txt.
 #
 # Chain fixtures: systemd-journald itself writes invented messages sent
 # with systemd-cat, rotated between batches, into chain-one-counter/ and
@@ -64,7 +65,7 @@ store() {
 
 make_set_fixtures() {
     local set compression mode compact name raw journal first
-    mkdir -p "$work/streams" "$work/raw" "$work/journals" "$work/export" "$stage"
+    mkdir -p "$work/streams" "$work/raw" "$work/journals" "$work/export" "$work/text" "$stage"
     "$gen" streams --out="$work/streams"
     for set in basic many stamps; do
         first=
@@ -81,10 +82,10 @@ make_set_fixtures() {
                 jctl --file="$journal" -o export > "$work/export/$name.export"
                 "$gen" check --sent="$work/streams/$set.export" --stored="$work/export/$name.export" \
                     --journal="$journal" --compression="$compression" --compact="$compact"
-                text --file="$journal" > "$stage/$name.txt"
+                text --file="$journal" > "$work/text/$name.txt"
                 if [ -z "$first" ]; then
-                    first=$stage/$name.txt
-                elif ! cmp -s "$first" "$stage/$name.txt"; then
+                    first=$work/text/$name.txt
+                elif ! cmp -s "$first" "$work/text/$name.txt"; then
                     echo "make.sh: the text of $name differs from $(basename "$first")" >&2
                     exit 1
                 fi
@@ -92,6 +93,9 @@ make_set_fixtures() {
                 echo "wrote $name"
             done
         done
+        cp "$first" "$stage/$set.txt"
+        chmod 644 "$stage/$set.txt"
+        echo "wrote $set.txt"
     done
 }
 

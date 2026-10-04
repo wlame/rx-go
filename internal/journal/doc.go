@@ -17,6 +17,7 @@
 // An entry without a MESSAGE field is not shown. Line numbers and byte
 // offsets of every rx answer about a journal refer to this text.
 //
-// testdata/ holds invented journals with journalctl's text beside each;
-// testdata/gen writes them (`just journal-fixtures`, which needs Docker).
+// testdata/ holds invented journals and the text journalctl prints for
+// them; testdata/gen writes them (`just journal-fixtures`, which needs
+// Docker).
 package journal

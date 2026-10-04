@@ -1,22 +1,25 @@
 package journal
 
 // The journal fixtures in testdata/ are invented journals with the text
-// `journalctl --file=F --no-pager --utc -q -o short-iso-precise` printed
-// for each (systemd 257, TZ=UTC, LC_ALL=C). `just journal-fixtures`
+// `journalctl --file=F --no-pager --utc -q -o short-iso-precise` prints
+// for them (systemd 257, TZ=UTC, LC_ALL=C). `just journal-fixtures`
 // writes them with Docker; the tests only read them, so they need no
 // Docker and no journalctl.
 //
-//   - NAME.journal.zst and NAME.txt: one journal of a set (basic, many,
-//     stamps) in one variant, NAME = SET-COMPRESSION-MODE, for example
-//     basic-zstd-compact. The journals are stored zstd-compressed; the
-//     helpers below decompress them into a test's temporary directory.
+//   - NAME.journal.zst: one journal of a set (basic, many, stamps) in one
+//     variant, NAME = SET-COMPRESSION-MODE, for example basic-zstd-compact.
+//     The journals are stored zstd-compressed; the helpers below
+//     decompress them into a test's temporary directory.
+//   - SET.txt: the text of every variant of the set. Compression and
+//     compact mode do not change the text; the recipe checks that the
+//     eight variants print the same bytes before it writes the file.
 //   - chain-one-counter/ and chain-two-counters/: the parts of a rotated
 //     journal written by systemd-journald (system.journal and its
 //     system@….journal archives), with all.txt, the text journalctl
 //     prints over every part.
 //   - fixtures.json: one fixtureInfo per journal, with its entry counts.
-//   - render_cases.json: hand-written entries with journalctl's output for
-//     each (renderCase).
+//   - render_cases.json.zst: hand-written entries with journalctl's output
+//     for each (renderCase), read through renderCases.
 
 import (
 	"bytes"
@@ -85,6 +88,16 @@ type fixtureInfo struct {
 // isChainPart reports whether the fixture is a part of a chain, which
 // lives in a directory of its own and has no text file of its own.
 func (f fixtureInfo) isChainPart() bool { return strings.Contains(f.Name, "/") }
+
+// textPath is the file holding journalctl's text for the fixture: its
+// set's SET.txt, or all.txt of its chain, which holds the text of every
+// part of the chain.
+func (f fixtureInfo) textPath() string {
+	if f.isChainPart() {
+		return filepath.Join(fixtureRoot, f.Set, "all.txt")
+	}
+	return filepath.Join(fixtureRoot, f.Set+".txt")
+}
 
 // compressedPath is where the fixture is stored.
 func (f fixtureInfo) compressedPath() string {
@@ -156,6 +169,15 @@ func fixtureDir(tb testing.TB, dir string) string {
 // decompressFixture writes the zstd-decompressed bytes of src to dst.
 func decompressFixture(tb testing.TB, src, dst string) {
 	tb.Helper()
+	if err := os.WriteFile(dst, decompressedFixture(tb, src), 0o600); err != nil {
+		tb.Fatalf("write %s: %v", dst, err)
+	}
+}
+
+// decompressedFixture returns the zstd-decompressed bytes of the file at
+// src, a path such as testdata/render_cases.json.zst.
+func decompressedFixture(tb testing.TB, src string) []byte {
+	tb.Helper()
 	compressed, err := os.ReadFile(src)
 	if err != nil {
 		tb.Fatalf("read fixture: %v", err)
@@ -172,9 +194,7 @@ func decompressFixture(tb testing.TB, src, dst string) {
 	if err != nil {
 		tb.Fatalf("decompress %s: %v", src, err)
 	}
-	if err := os.WriteFile(dst, plain, 0o600); err != nil {
-		tb.Fatalf("write %s: %v", dst, err)
-	}
+	return plain
 }
 
 // readFixtureManifest returns the objects of testdata/fixtures.json.
@@ -191,13 +211,11 @@ func readFixtureManifest(tb testing.TB) []fixtureInfo {
 	return fixtures
 }
 
-// readRenderCases returns the objects of testdata/render_cases.json.
-func readRenderCases(tb testing.TB) []renderCase {
+// renderCases returns the objects of testdata/render_cases.json.zst, in
+// the file's order.
+func renderCases(tb testing.TB) []renderCase {
 	tb.Helper()
-	data, err := os.ReadFile(filepath.Join(fixtureRoot, "render_cases.json"))
-	if err != nil {
-		tb.Fatalf("read the render cases: %v", err)
-	}
+	data := decompressedFixture(tb, filepath.Join(fixtureRoot, "render_cases.json.zst"))
 	var cases []renderCase
 	if err := json.Unmarshal(data, &cases); err != nil {
 		tb.Fatalf("decode the render cases: %v", err)
@@ -272,12 +290,8 @@ func TestFixtures_EveryJournalIsSmallStartsWithTheSignatureAndHasItsText(t *test
 			if !bytes.HasPrefix(journal, signature) {
 				t.Errorf("the journal starts with %q, want %q", journal[:min(len(journal), 8)], signature)
 			}
-			text := filepath.Join(fixtureRoot, filepath.FromSlash(f.Name)+".txt")
-			if f.isChainPart() {
-				text = filepath.Join(fixtureRoot, f.Set, "all.txt")
-			}
-			if _, err := os.Stat(text); err != nil {
-				t.Errorf("no text beside the journal: %v", err)
+			if _, err := os.Stat(f.textPath()); err != nil {
+				t.Errorf("no text for the journal: %v", err)
 			}
 		})
 	}
@@ -316,54 +330,61 @@ func TestFixtures_ChainDirectoryHoldsEveryPartUnderItsJournalName(t *testing.T) 
 }
 
 func TestFixtures_CountsAgreeWithTheText(t *testing.T) {
-	shownByText := map[string]int64{}
+	// Every variant of a set shows the entries of the set's one text; the
+	// parts of a chain together show the entries of its all.txt.
+	shownInChain := map[string]int64{}
 	for _, f := range readFixtureManifest(t) {
 		if f.Entries != f.Shown+f.WithoutMessage {
 			t.Errorf("%s: %d entries, %d shown and %d without a message", f.Name, f.Entries, f.Shown, f.WithoutMessage)
 		}
-		text := filepath.Join(fixtureRoot, filepath.FromSlash(f.Name)+".txt")
 		if f.isChainPart() {
-			text = filepath.Join(fixtureRoot, f.Set, "all.txt")
+			shownInChain[f.textPath()] += f.Shown
+			continue
 		}
-		shownByText[text] += f.Shown
+		if got := shownEntries(t, f.textPath()); got != f.Shown {
+			t.Errorf("%s shows %d entries, fixtures.json says %d for %s", f.textPath(), got, f.Shown, f.Name)
+		}
 	}
-	for text, shown := range shownByText {
-		data, err := os.ReadFile(text)
-		if err != nil {
-			t.Fatalf("read %s: %v", text, err)
-		}
-		if got := int64(len(entryFirstLine.FindAllIndex(data, -1))); got != shown {
-			t.Errorf("%s shows %d entries, fixtures.json says %d", text, got, shown)
+	for text, shown := range shownInChain {
+		if got := shownEntries(t, text); got != shown {
+			t.Errorf("%s shows %d entries, its parts in fixtures.json %d", text, got, shown)
 		}
 	}
 }
 
-func TestFixtures_TextIsTheSameForEveryVariantOfASet(t *testing.T) {
+// shownEntries counts the entries a text of journalctl shows.
+func shownEntries(t *testing.T, text string) int64 {
+	t.Helper()
+	data, err := os.ReadFile(text)
+	if err != nil {
+		t.Fatalf("read %s: %v", text, err)
+	}
+	return int64(len(entryFirstLine.FindAllIndex(data, -1)))
+}
+
+func TestFixtures_EachSetHasOneText(t *testing.T) {
 	for _, set := range fixtureSets {
-		first := filepath.Join(fixtureRoot, set+"-"+fixtureVariants[0]+".txt")
-		want, err := os.ReadFile(first)
+		text := filepath.Join(fixtureRoot, set+".txt")
+		data, err := os.ReadFile(text)
 		if err != nil {
-			t.Fatalf("read %s: %v", first, err)
+			t.Fatalf("read %s: %v", text, err)
 		}
-		if len(want) == 0 {
-			t.Errorf("%s is empty", first)
+		if len(data) == 0 {
+			t.Errorf("%s is empty", text)
 		}
-		for _, variant := range fixtureVariants[1:] {
-			path := filepath.Join(fixtureRoot, set+"-"+variant+".txt")
-			got, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("read %s: %v", path, err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Errorf("%s differs from %s", path, first)
-			}
+		perVariant, err := filepath.Glob(filepath.Join(fixtureRoot, set+"-*.txt"))
+		if err != nil {
+			t.Fatalf("list the texts of %s: %v", set, err)
+		}
+		if len(perVariant) > 0 {
+			t.Errorf("texts of single variants beside %s: %q", text, perVariant)
 		}
 	}
 }
 
 func TestFixtures_RenderCasesDecode(t *testing.T) {
 	const handWrittenCases = 166
-	cases := readRenderCases(t)
+	cases := renderCases(t)
 	names := map[string]bool{}
 	ids := map[string]bool{}
 	for _, c := range cases {
