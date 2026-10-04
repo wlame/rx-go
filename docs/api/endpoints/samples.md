@@ -34,6 +34,12 @@ and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
   count the lines first.
 - **Seekable zstd with an index:** decompresses only the frames that
   hold the wanted lines.
+- **A sample whose first line has no timestamp of its own** (a
+  traceback line) in a file with a timestamp format: the text before
+  that line is read back, at most `RX_TIMESTAMP_LOOKBACK_KB` KiB (64 by
+  default), for `line_timestamps`. A plain file and a seekable zstd file
+  read just that; a gzip, bzip2, xz or plain zstd file decompresses its
+  text up to the line once more. Never with the index.
 
 ## Request
 
@@ -119,7 +125,11 @@ curl -sG 'http://127.0.0.1:7777/v1/samples' --data-urlencode 'path=/var/log/app.
   "compression_format": null,
   "cli_command": "rx samples /var/log/app.log --timestamps='2025-12-10 12:34:56,123' --timestamps=12:34:56..12:34:57 --context=1",
   "timestamps": {"12:34:56..12:34:57": 2, "2025-12-10 12:34:56,123": 2},
-  "time_format": {"format": "iso", "has_zone": false, "assumed_zone": "UTC"}
+  "time_format": {"format": "iso", "has_zone": false, "assumed_zone": "UTC"},
+  "line_timestamps": {
+    "12:34:56..12:34:57": [1765370096123, 1765370096123, 1765370097000],
+    "2025-12-10 12:34:56,123": [1765370095000, 1765370096123, 1765370096123]
+  }
 }
 ```
 
@@ -168,7 +178,8 @@ For a 30-line file whose every line reads `LINE <n> payload`,
   "compression_format": null,
   "cli_command": "rx samples /var/log/lines.log --lines=1,30,99",
   "timestamps": {},
-  "time_format": null
+  "time_format": null,
+  "line_timestamps": null
 }
 ```
 
@@ -232,6 +243,7 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 | `cli_command` | string | Equivalent CLI invocation |
 | `timestamps` | `{query: lineNumber}` | Time mode: key is the query, value is the line it found (a range's first line); `-1` when no line is at the time, or the range holds none. `{}` in the other modes |
 | `time_format` | `{format, has_zone, assumed_zone} \| null` | The file's timestamp format, in every mode: the family (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted`, `epoch`), whether most timestamps carry a zone, and the zone a timestamp without one is read in (`RX_LOG_TZ` for a zone-less file, `UTC` otherwise). `null` when no format is recognized in the first mebibyte of the text. Costs no read with an index, at most a mebibyte without |
+| `line_timestamps` | `{key: (ms \| null)[] \| null} \| null` | The effective timestamp of each sample line, in every mode, keyed and ordered as `samples`: milliseconds since the Unix epoch as a UTC instant (a zone-less file's wall clock read in `RX_LOG_TZ`). A line without a timestamp of its own carries that of the nearest earlier line with one, when that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB (64) before it; otherwise `null`. A key whose sample is `null` maps to `null`; the whole field is `null` when `time_format` is. See [effective timestamps](../../concepts/timestamps.md#effective-timestamps) |
 
 ### Map ordering
 

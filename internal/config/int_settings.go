@@ -87,6 +87,13 @@ var (
 	// SamplesWaitSecondsSetting is RX_SAMPLES_WAIT_SECONDS. 0 is
 	// accepted: a lookup that needs an index answers 202 at once.
 	SamplesWaitSecondsSetting = IntSetting{Name: "RX_SAMPLES_WAIT_SECONDS", Default: DefaultSamplesWaitSeconds, Min: 0, Max: 3600}
+
+	// TimestampLookbackKBSetting is RX_TIMESTAMP_LOOKBACK_KB: how far
+	// back, in KiB, a line without a timestamp of its own looks for the
+	// line whose timestamp it carries in a samples answer. 0 is
+	// accepted: such a line then carries none. Its maximum, 1 MiB,
+	// bounds the read back from each sample's first line.
+	TimestampLookbackKBSetting = IntSetting{Name: "RX_TIMESTAMP_LOOKBACK_KB", Default: DefaultTimestampLookbackKB, Min: 0, Max: 1024}
 )
 
 // IntSettings is every integer setting rx reads, in the order the
@@ -101,6 +108,7 @@ var IntSettings = []IntSetting{
 	AnalyzeWindowLinesSetting,
 	TaskTTLMinutesSetting,
 	SamplesWaitSecondsSetting,
+	TimestampLookbackKBSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

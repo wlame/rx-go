@@ -147,7 +147,7 @@ func TestBudget_LinesRangeRequest_StopsAtEndLine(t *testing.T) {
 	// Request lines 100-200 from a 10k-line file.
 	const startLine = int64(100)
 	const endLine = int64(200)
-	lines, err := readLineRangeWithIndex(pinForTest(t, path), startLine, endLine, nil)
+	lines, _, err := readLineRangeWithIndex(pinForTest(t, path), startLine, endLine, nil)
 	if err != nil {
 		t.Fatalf("readLineRangeWithIndex: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestBudget_LinesRangeMidFile_SeekSkipsPrefix(t *testing.T) {
 	// Request lines 5100-5200. With the index the resolver should seek
 	// to checkpoint 5001 and read from there — about 200 lines * 150 =
 	// 30 KB, not 5200 * 150 = 780 KB.
-	lines, err := readLineRangeWithIndex(pinForTest(t, path), 5100, 5200, idx)
+	lines, _, err := readLineRangeWithIndex(pinForTest(t, path), 5100, 5200, idx)
 	if err != nil {
 		t.Fatalf("readLineRangeWithIndex: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestBudget_LinesSingleWithContext_StopsAfterContext(t *testing.T) {
 
 	// Single line 150 with ±5 context → read lines 145..155, capture
 	// offset of line 150.
-	lines, targetOffset, err := readLinesWithTarget(pinForTest(t, path), 145, 155, 150, nil)
+	lines, _, targetOffset, err := readLinesWithTarget(pinForTest(t, path), 145, 155, 150, nil)
 	if err != nil {
 		t.Fatalf("readLinesWithTarget: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestBudget_LinesRangeNoIndex_FullScanExpected(t *testing.T) {
 
 	// Range that extends to line 500 without an index. The resolver
 	// MUST scan from the top (no seek), but MUST STILL stop at line 500.
-	lines, err := readLineRangeWithIndex(pinForTest(t, path), 1, 500, nil)
+	lines, _, err := readLineRangeWithIndex(pinForTest(t, path), 1, 500, nil)
 	if err != nil {
 		t.Fatalf("readLineRangeWithIndex: %v", err)
 	}

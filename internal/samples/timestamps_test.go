@@ -138,7 +138,7 @@ func answerOf(resp *rxtypes.SamplesResponse, err error) any {
 	}
 	return map[string]any{
 		"timestamps": resp.Timestamps, "samples": resp.Samples, "time_format": resp.TimeFormat,
-		"lines": resp.Lines, "offsets": resp.Offsets,
+		"lines": resp.Lines, "offsets": resp.Offsets, "line_timestamps": resp.LineTimestamps,
 	}
 }
 

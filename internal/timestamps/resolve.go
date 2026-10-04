@@ -131,10 +131,32 @@ func (c ResolveContext) instantToFile(instant int64) int64 {
 
 // fileToInstant is the inverse of instantToFile.
 func (c ResolveContext) fileToInstant(fileMs int64) int64 {
-	if c.HasZone {
+	return fileValueToInstant(fileMs, c.HasZone, c.LogZone)
+}
+
+// fileValueToInstant turns fileMs, a value in the frame of a file whose
+// Format has HasZone = hasZone, into a UTC instant: as it is for a file
+// with zones, read in logZone (nil = UTC) for a file without.
+func fileValueToInstant(fileMs int64, hasZone bool, logZone *time.Location) int64 {
+	if hasZone {
 		return fileMs
 	}
-	return wallToInstant(fileMs, c.LogZone)
+	return wallToInstant(fileMs, logZone)
+}
+
+// InstantOf returns the UTC instant, in milliseconds since the Unix
+// epoch, of fileMs: a Stamp.Ms of a file whose Format has HasZone =
+// hasZone. A file with zones holds instants already; a file without
+// holds wall-clock readings, which are read in logZone, the zone the
+// file was written in (nil means UTC).
+//
+// It returns false when the instant lies outside the years 1 to 9999.
+// Every value the parser returns is inside them, but reading a wall
+// clock near either end in a zone can step outside, and such a value
+// could break an answer that renders it as a date.
+func InstantOf(fileMs int64, hasZone bool, logZone *time.Location) (int64, bool) {
+	instant := fileValueToInstant(fileMs, hasZone, logZone)
+	return instant, inValueRange(instant)
 }
 
 // wallToFile turns a wall-clock reading without a zone into the file's
