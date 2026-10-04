@@ -510,6 +510,30 @@ func TestTextReader_LeavesOutAnEntryWhoseCompressedValueDoesNotDecode(t *testing
 	}
 }
 
+func TestTextReader_LeavesOutAnEntryWhoseValueDecompressesToMoreThan128MiB(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compact=%v", compact), func(t *testing.T) {
+			j := damageJournal(t, journalfile.LZ4, compact)
+			d := dataOf(t, j, string(journalfile.Payload("MESSAGE", bytes.Repeat([]byte("large entry 22; "), 60))))
+			if j.Data[d].StoredAs != journalfile.LZ4 {
+				t.Fatalf("the large message is stored as %s", j.Data[d].StoredAs)
+			}
+			data := bytes.Clone(j.Bytes)
+			// The size lz4 declares: 1 TiB, refused before its buffer is
+			// made.
+			binary.LittleEndian.PutUint64(data[j.Data[d].PayloadOffset:], 1<<40)
+			wantText, want := expectRead(writtenEntries(j), len(j.Entries), []int{22}, len(j.Entries))
+			var text []byte
+			var report Report
+			allocated := allocatedBytes(func() { text, report = readBytes(t, data, Options{}) })
+			checkRead(t, text, report, wantText, want, "decompresses to more than 128 MiB (lz4)")
+			if allocated > 16<<20 {
+				t.Errorf("the read allocated %d bytes", allocated)
+			}
+		})
+	}
+}
+
 func TestTextReader_ShortReadsAtTheEndOfTheFileAreDamageNotErrors(t *testing.T) {
 	j := damageJournal(t, journalfile.Zstd, true)
 	cut := j.Entries[20].Offset + 8
