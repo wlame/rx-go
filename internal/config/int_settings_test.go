@@ -127,6 +127,7 @@ func TestIntSettings_GettersReadTheirSetting(t *testing.T) {
 		{TaskTTLMinutesSetting, func() int { return int(TaskTTL() / time.Minute) }},
 		{SamplesWaitSecondsSetting, func() int { return int(SamplesIndexWait() / time.Second) }},
 		{TimestampLookbackKBSetting, func() int { return int(TimestampLookbackBytes() / 1024) }},
+		{SamplesMaxLinesSetting, SamplesMaxLines},
 	}
 	if len(cases) != len(IntSettings) {
 		t.Fatalf("%d getters tested, %d settings declared", len(cases), len(IntSettings))

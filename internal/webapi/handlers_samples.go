@@ -266,7 +266,16 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			BeforeContext: before,
 			AfterContext:  after,
 			IndexLoader:   loader,
+			// SECURITY: the answer's size is bounded by the operator,
+			// not by the request: a thousand ranges open to the end of
+			// the file would otherwise make the server hold every line
+			// of it a thousand times.
+			MaxLines: config.SamplesMaxLines(),
 		})
+		if errors.Is(err, samples.ErrTooManyLines) {
+			return nil, ErrBadRequest(fmt.Sprintf(
+				"%s; RX_SAMPLES_MAX_LINES sets the limit: ask for fewer positions, shorter ranges or less context", err.Error()))
+		}
 		if samples.IsUsageError(err) {
 			// A time the request names wrongly, or a time query on a
 			// file without timestamps: the request is at fault.

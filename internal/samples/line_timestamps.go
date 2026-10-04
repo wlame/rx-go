@@ -30,12 +30,37 @@ import (
 type collected struct {
 	*rxtypes.SamplesResponse
 	starts map[string][]int64
+	// budget counts the lines the answer holds against the request's
+	// MaxLines; every path that files a line takes it from here first.
+	budget *lineBudget
 }
 
 // newCollected wraps resp, whose maps are already made, for the paths
-// that read lines into it.
-func newCollected(resp *rxtypes.SamplesResponse) *collected {
-	return &collected{SamplesResponse: resp, starts: map[string][]int64{}}
+// that read lines into it, holding at most maxLines lines (0: no
+// limit).
+func newCollected(resp *rxtypes.SamplesResponse, maxLines int) *collected {
+	return &collected{SamplesResponse: resp, starts: map[string][]int64{}, budget: &lineBudget{limit: maxLines}}
+}
+
+// ErrTooManyLines is returned by Resolve when the answer would hold
+// more lines than Request.MaxLines.
+var ErrTooManyLines = errors.New("too many lines for one samples answer")
+
+// lineBudget counts the lines an answer holds against a limit; a limit
+// of 0 is none.
+type lineBudget struct {
+	limit, held int
+}
+
+// take counts one more line, and fails when it would pass the limit.
+// It is called before the line is held, so a refused answer has held
+// at most the limit.
+func (b *lineBudget) take() error {
+	b.held++
+	if b.limit > 0 && b.held > b.limit {
+		return fmt.Errorf("%w: the answer reached %d lines, more than the %d allowed", ErrTooManyLines, b.held, b.limit)
+	}
+	return nil
 }
 
 // stampedLine is a line with a timestamp of its own: where it starts in
