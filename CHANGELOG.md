@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dependencies updated: huma 2.39.1, chi 5.3.1, klauspost/compress
   1.19.1, the Prometheus client 1.24.1 and its model 0.6.3,
-  ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0.
+  ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0. New: pierrec/lz4/v4
+  4.1.33 (BSD-3-Clause license), which decodes the lz4-compressed values
+  of systemd journal files.
 
 ### Fixed
 
