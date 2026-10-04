@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -70,6 +71,17 @@ type countingOSFile struct {
 // Read increments the counter by the number of bytes actually returned.
 func (f *countingOSFile) Read(p []byte) (int, error) {
 	n, err := f.File.Read(p)
+	if n > 0 {
+		f.counter.Add(int64(n))
+	}
+	return n, err
+}
+
+// ReadAt counts reads by position too: the timestamp format is detected
+// from the head of the text read that way, and the read back from the
+// end for a file's last timestamp is one too.
+func (f *countingOSFile) ReadAt(p []byte, off int64) (int, error) {
+	n, err := f.File.ReadAt(p, off)
 	if n > 0 {
 		f.counter.Add(int64(n))
 	}
@@ -395,8 +407,10 @@ func TestBudget_FullResolverFlow_LinesRange(t *testing.T) {
 			key, len(got), endVal-150+1)
 	}
 
-	// Budget: endVal * 150 + bufio overshoot.
-	budget := int64(endVal*150 + 8*1024)
+	// Budget: endVal * 150 + bufio overshoot, plus the head of the
+	// text the timestamp format is detected from (time_format): a
+	// mebibyte, or the whole file when it is smaller.
+	budget := int64(endVal*150+8*1024) + min(totalBytes, timestamps.SampleBytes)
 	bytesRead := counter.Load()
 	if bytesRead > budget {
 		t.Fatalf("Resolve(range 150-%d): read %d bytes, budget %d, file=%d",

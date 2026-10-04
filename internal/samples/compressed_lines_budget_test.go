@@ -56,6 +56,14 @@ func TestStreamedLines_StopAfterTheLastWantedLine(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat: %v", err)
 			}
+			// Without an index the answer also detects the timestamp
+			// format (time_format) from the first mebibyte of the text:
+			// that read is measured on its own and added to the budget.
+			detection := withCountingOpen(t)
+			if _, _, err := detectTimeFormat(pinForTest(t, path), kindOf(t, path)); err != nil {
+				t.Fatalf("detect: %v", err)
+			}
+			detectionRead := detection.Load()
 			for loaderName, loader := range loadersFor(t, path) {
 				end := int64(220)
 				counter := withCountingOpen(t)
@@ -71,7 +79,11 @@ func TestStreamedLines_StopAfterTheLastWantedLine(t *testing.T) {
 				if window := got.Samples["500"]; len(window) != 7 || !strings.HasPrefix(window[3], "LINE 500 ") {
 					t.Fatalf("%s: window of line 500 = %q", loaderName, window)
 				}
-				if read := counter.Load(); read == 0 || read > info.Size()/4+decoderReadAhead {
+				budget := info.Size()/4 + decoderReadAhead
+				if loaderName == "no index" {
+					budget += detectionRead
+				}
+				if read := counter.Load(); read == 0 || read > budget {
 					t.Errorf("%s: read %d of %d compressed bytes for lines near the start",
 						loaderName, read, info.Size())
 				}
