@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -496,5 +498,46 @@ func TestFindingsFolderTask_APostWhileItIsCancellingAnswers409(t *testing.T) {
 	}
 	if done, _ := f.finish(t, next.TaskID); done.Status != "completed" {
 		t.Errorf("the next scan %+v", done)
+	}
+}
+
+// The lists of a folder task's result stop at 1000 entries each while
+// their counts stay exact: 1001 files below the index threshold give
+// skipped 1001 and 1000 skipped_files, and 1001 files whose build fails
+// give failed 1001 and 1000 failed_files, the first ones in the walk's
+// order.
+func TestFolderTask_TheListsOfTheResultStopAtTheirCap(t *testing.T) {
+	var failAll atomic.Bool
+	f := newFindingsFixture(t, func(c *Config) {
+		c.indexFolderFile = func(ctx context.Context, e cachefill.Entry, s cachefill.IndexSettings, b *index.Progress) cachefill.FileResult {
+			if failAll.Load() {
+				return cachefill.FileResult{Path: e.Path, Outcome: cachefill.Failed, Reason: "the build broke", Err: errors.New("the build broke")}
+			}
+			return cachefill.IndexFile(ctx, e, s, b)
+		}
+	})
+	dir := filepath.Join(f.root, "many")
+	const files = rxtypes.MaxFolderListedFiles + 1
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for n := range files {
+		writeFixture(t, filepath.Join(dir, fmt.Sprintf("f%04d.log", n)), []byte("LINE 1\n"))
+	}
+	run := func(body map[string]any) rxtypes.FolderTaskResult {
+		done, _ := f.finish(t, f.startTask(t, "/v1/index", body).TaskID)
+		return folderResult(t, done)
+	}
+
+	skipped := run(map[string]any{"path": dir, "threshold": 1})
+	if skipped.Skipped != files || len(skipped.SkippedFiles) != rxtypes.MaxFolderListedFiles ||
+		filepath.Base(skipped.SkippedFiles[0].Path) != "f0000.log" {
+		t.Errorf("skipped %d, %d listed (first %+v)", skipped.Skipped, len(skipped.SkippedFiles), skipped.SkippedFiles[0])
+	}
+	failAll.Store(true)
+	failed := run(map[string]any{"path": dir, "threshold": 0})
+	if failed.Failed != files || len(failed.FailedFiles) != rxtypes.MaxFolderListedFiles ||
+		failed.FailedFiles[0] != (rxtypes.FailedFile{Path: filepath.Join(validated(t, dir), "f0000.log"), Error: "the build broke"}) {
+		t.Errorf("failed %d, %d listed (first %+v)", failed.Failed, len(failed.FailedFiles), failed.FailedFiles[0])
 	}
 }
