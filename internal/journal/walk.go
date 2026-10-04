@@ -1,0 +1,268 @@
+package journal
+
+// This file walks a journal's entry list and reads its entries. The list
+// is a chain of ENTRY_ARRAY objects that starts at the header's
+// entry_array_offset; each array holds the offsets of entries in the
+// order of their sequence numbers, the order `journalctl --file` prints
+// one file in.
+//
+// The walk takes the header's n_entries entries, once: entries a live
+// file lists after its header was read belong to a later read.
+//
+// INVARIANT: every step of the walk moves forward in the file. Each array
+// links to an array after it, and each entry offset is greater than the
+// one before it; a pointer that goes back or stays ends the walk, so a
+// list that points back to itself cannot loop.
+
+import (
+	"bytes"
+	"errors"
+	"io"
+	"math"
+)
+
+// errListDone ends a walk that took every entry the header counts.
+var errListDone = errors.New("the walk took every entry the header counts")
+
+// walker walks the entry list of one journal and reads its entries. It
+// is used by one goroutine.
+type walker struct {
+	f     *journalFile
+	cache *dataCache
+
+	// total is the number of entries the header counts, taken the number
+	// handed out so far.
+	total, taken int64
+
+	// The place in the list: the array whose items are being handed out,
+	// the offset of the array after it (0: none), and the last entry
+	// handed out.
+	array     itemCursor
+	nextArray uint64
+	lastEntry uint64
+	// hasList is false when the header names no entry list.
+	hasList bool
+
+	// Buffers reused for every object: the items of the current array and
+	// of the current entry, and the first read of a DATA object.
+	arrayChunk, entryChunk, dataProbe []byte
+
+	// fields holds the fields of the entry being read; it is reused, so
+	// an Entry from readEntry is valid until the next call.
+	fields []Field
+}
+
+// newWalker returns a walker at the start of the entry list of the
+// journal r, of size bytes, whose header is h.
+func newWalker(r io.ReaderAt, h Header, size uint64, cacheBytes int64) *walker {
+	return &walker{
+		f: &journalFile{
+			r: r, size: size, end: h.readEnd(size),
+			headerSize: h.HeaderSize, compact: h.Compact,
+		},
+		cache: newDataCache(cacheBytes),
+		// A header may count more entries than an int64 holds; no file
+		// lists that many, so the count is clamped where a Report can
+		// hold it.
+		total:      int64(min(h.NEntries, math.MaxInt64)), // #nosec G115 -- clamped to MaxInt64
+		nextArray:  h.EntryArrayOffset,
+		hasList:    h.EntryArrayOffset != 0,
+		arrayChunk: make([]byte, itemChunkBytes),
+		entryChunk: make([]byte, itemChunkBytes),
+		dataProbe:  make([]byte, dataProbeBytes),
+		fields:     make([]Field, 0, shortFieldCount),
+	}
+}
+
+// itemWidths returns the size of an ENTRY item and of an ENTRY_ARRAY item:
+// 16 and 8 bytes in a regular journal (an offset and a hash, an offset),
+// 4 and 4 in a compact one (32-bit offsets).
+func (w *walker) itemWidths() (entryItem, arrayItem uint64) {
+	if w.f.compact {
+		return 4, 4
+	}
+	return 16, 8
+}
+
+// next returns the offset of the next entry of the list. It returns
+// errListDone after the last entry the header counts, damage when the
+// list cannot go on (the walk ends there), and the reader's error when a
+// read fails.
+func (w *walker) next() (uint64, error) {
+	if w.taken == w.total {
+		return 0, errListDone
+	}
+	if w.array.left == 0 {
+		if err := w.openNextArray(); err != nil {
+			return 0, err
+		}
+	}
+	offset, err := w.array.nextItem()
+	switch {
+	case err != nil:
+		return 0, err
+	case offset == 0:
+		return 0, w.listEnds()
+	case offset <= w.lastEntry:
+		return 0, damaged("the entry list goes back from offset %d to offset %d", w.lastEntry, offset)
+	}
+	w.lastEntry = offset
+	w.taken++
+	return offset, nil
+}
+
+// listEnds is the damage of a list that ends before the entries the
+// header counts.
+func (w *walker) listEnds() error {
+	if !w.hasList {
+		return damaged("the header counts %d entries and names no entry list", w.total)
+	}
+	return damaged("the entry list ends after %d of the %d entries the header counts", w.taken, w.total)
+}
+
+// openNextArray reads the next ENTRY_ARRAY object of the list and makes
+// its items the next ones handed out. As systemd does (check_object,
+// journal-file.c:1044-1063), the array is checked whole first, its link
+// to the next array included: an array that links back is damaged, and
+// its items are not used.
+func (w *walker) openNextArray() error {
+	offset := w.nextArray
+	if offset == 0 {
+		return w.listEnds()
+	}
+	_, width := w.itemWidths()
+	o, err := w.f.readObject(offset, objectEntryArray, entryArrayItemsOffset, w.arrayChunk[:arrayProbeBytes])
+	if err != nil {
+		return err
+	}
+	what := objectRef{objectEntryArray, offset}
+	if err := checkItems(o, entryArrayItemsOffset, width, what); err != nil {
+		return err
+	}
+	next := le.Uint64(o.head[offsetNextEntryArray:])
+	switch {
+	case next%8 != 0:
+		return damaged("%s links to offset %d, not a multiple of 8", what, next)
+	case next != 0 && next <= offset:
+		return damaged("%s links to offset %d, not after itself", what, next)
+	}
+	w.nextArray = next
+	w.array.start(w.f, o, objectEntryArray, entryArrayItemsOffset, width, w.arrayChunk)
+	return nil
+}
+
+// checkItems checks that the object o, whose items of width bytes start
+// at itemsOffset, holds a whole number of them, and at least one.
+func checkItems(o object, itemsOffset, width uint64, what objectRef) error {
+	switch items := o.size - itemsOffset; {
+	case items%width != 0:
+		return damaged("%s has size %d, which does not hold whole %d-byte items", what, o.size, width)
+	case items == 0:
+		return damaged("%s holds no item", what)
+	}
+	return nil
+}
+
+// readEntry reads the ENTRY object at offset and the DATA objects it
+// lists, and returns the entry the renderer needs. The ENTRY object is
+// checked as systemd's check_object checks it (journal-file.c:983-1024),
+// and every DATA object is read and decoded: a failure of any of them is
+// damage, and the whole entry is left out, since the damaged item could
+// be its MESSAGE.
+//
+// The entry's Fields hold, for each field the renderer reads, the last
+// item of that name in the entry's stored order: the renderer reads no
+// other item, and a later item of the same name replaces an earlier one
+// (logs-show.c:145), so the text is the same as with every item, and an
+// entry of many large values holds at most one value per field. A
+// payload without '=' names no field and is skipped. The returned Entry
+// is valid until the next call.
+func (w *walker) readEntry(offset uint64) (Entry, error) {
+	width, _ := w.itemWidths()
+	o, err := w.f.readObject(offset, objectEntry, entryItemsOffset, w.entryChunk[:entryProbeBytes])
+	if err != nil {
+		return Entry{}, err
+	}
+	what := objectRef{objectEntry, offset}
+	if err = checkItems(o, entryItemsOffset, width, what); err != nil {
+		return Entry{}, err
+	}
+	realtime, err := checkEntryHeader(o, what)
+	if err != nil {
+		return Entry{}, err
+	}
+	var items itemCursor
+	items.start(w.f, o, objectEntry, entryItemsOffset, width, w.entryChunk)
+	var picked pickedFields
+	for items.left > 0 {
+		dataOffset, err := items.nextItem()
+		if err != nil {
+			return Entry{}, err
+		}
+		payload, err := w.payload(dataOffset)
+		if err != nil {
+			return Entry{}, err
+		}
+		name, value, hasSeparator := bytes.Cut(payload, []byte("="))
+		if !hasSeparator {
+			continue
+		}
+		if field, read := renderedField(name); read {
+			picked.value[field], picked.present[field] = value, true
+		}
+	}
+	w.fields = w.fields[:0]
+	for field, present := range picked.present {
+		if present {
+			w.fields = append(w.fields, Field{Name: shortFieldNames[field], Value: picked.value[field]})
+		}
+	}
+	return Entry{Realtime: realtime, Fields: w.fields}, nil
+}
+
+// checkEntryHeader checks the fixed fields of an ENTRY object as
+// check_object does (journal-file.c:1001-1022) and returns its realtime:
+// a sequence number above 0, a realtime above 0 and below 2^55, a
+// monotonic time below 2^55 and a boot id that is not all zero.
+// journalctl leaves out an entry that fails one of them.
+func checkEntryHeader(o object, what objectRef) (uint64, error) {
+	seqnum := le.Uint64(o.head[offsetEntrySeqnum:])
+	realtime := le.Uint64(o.head[offsetEntryRealtime:])
+	monotonic := le.Uint64(o.head[offsetEntryMonotonic:])
+	switch {
+	case seqnum == 0:
+		return 0, damaged("%s has the sequence number 0", what)
+	case !validRealtime(realtime):
+		return 0, damaged("%s has the invalid realtime %d", what, realtime)
+	case monotonic >= maxValidTime:
+		return 0, damaged("%s has the invalid monotonic time %d", what, monotonic)
+	case bytes.Count(o.head[offsetEntryBootID:offsetEntryBootID+16], []byte{0}) == 16:
+		return 0, damaged("%s has an empty boot id", what)
+	}
+	return realtime, nil
+}
+
+// renderedField returns the field the renderer reads under name, if any.
+// Comparing string(name) with a string does not copy name.
+func renderedField(name []byte) (shortField, bool) {
+	for field, fieldName := range shortFieldNames {
+		if string(name) == fieldName {
+			return shortField(field), true
+		}
+	}
+	return 0, false
+}
+
+// payload returns the decoded payload of the DATA object at offset, from
+// the cache or read and decoded, then cached.
+func (w *walker) payload(offset uint64) ([]byte, error) {
+	if payload, ok := w.cache.get(offset); ok {
+		return payload, nil
+	}
+	payload, err := w.f.readPayload(offset, w.dataProbe)
+	if err != nil {
+		return nil, err
+	}
+	w.cache.put(offset, payload)
+	return payload, nil
+}

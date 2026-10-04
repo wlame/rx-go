@@ -44,29 +44,64 @@ type Entry struct {
 //
 // Like the standard library's append functions, AppendText returns the
 // extended slice, which may have a new backing array: use the returned
-// slice, not dst. It allocates nothing when dst has room for the text.
+// slice, not dst. It allocates nothing when dst has room for what it
+// reserves before writing: the prefix, the message as stored, 7 bytes
+// more per tab and an indent per newline (textRoom), which is more than
+// the text when stripping removes bytes.
 func AppendText(dst []byte, e Entry) ([]byte, bool) {
+	plan, shown := planText(e)
+	if !shown {
+		return dst, false
+	}
+	// One reservation for the whole text, so that an entry costs at most
+	// one allocation, and none when dst already has room.
+	dst = grow(dst, plan.room)
+	dst = appendStamp(dst, plan.usec)
+	dst = plan.prefix.appendTo(dst)
+	return appendMessage(dst, plan.message, plan.prefix.indent()), true
+}
+
+// textPlan is what AppendText decides about an entry before it writes:
+// the time it shows, the prefix, the message and the room it reserves.
+type textPlan struct {
+	usec    uint64
+	prefix  linePrefix
+	message []byte
+	// room is the number of bytes AppendText reserves for the text, which
+	// is at least the text's length.
+	room int
+}
+
+// planText returns the plan of e's text and whether e is shown.
+func planText(e Entry) (textPlan, bool) {
 	fields := pickFields(e.Fields)
 	message, hasMessage := fields.get(fieldMessage)
 	if !hasMessage {
 		// logs-show.c:598-601: "Skipping message without MESSAGE= field."
-		return dst, false
+		return textPlan{}, false
 	}
 	usec, valid := displayRealtime(e.Realtime, &fields)
 	if !valid {
 		// logs-show.c:377-378 and 625-626: no valid time, the entry is
 		// skipped.
-		return dst, false
+		return textPlan{}, false
 	}
 	prefix := choosePrefix(&fields)
-	indent := prefix.indent()
+	return textPlan{
+		usec:    usec,
+		prefix:  prefix,
+		message: message,
+		room:    prefix.length() + messageRoom(message, prefix.indent()),
+	}, true
+}
 
-	// One reservation for the whole text, so that an entry costs at most
-	// one allocation, and none when dst already has room.
-	dst = grow(dst, prefix.length()+messageRoom(message, indent))
-	dst = appendStamp(dst, usec)
-	dst = prefix.appendTo(dst)
-	return appendMessage(dst, message, indent), true
+// textRoom returns the number of bytes AppendText reserves for e's text,
+// a bound of its length computed without writing it, and whether e is
+// shown. A reader checks it before rendering, so that an entry whose
+// text would be too long is refused before its room is made.
+func textRoom(e Entry) (int, bool) {
+	plan, shown := planText(e)
+	return plan.room, shown
 }
 
 // shortField names one of the fields output_short reads. The constants
