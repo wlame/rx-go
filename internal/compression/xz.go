@@ -89,12 +89,42 @@ func NewXzReader(src io.Reader, dictionaryLimit uint64) (io.Reader, error) {
 	return x, nil
 }
 
+// NewXzPrefixReader returns a reader of the first n bytes of the text of
+// the xz file src, or of all of it when it is shorter. It checks what
+// NewXzReader checks on the way to those bytes, refuses a block that
+// declares a dictionary above dictionaryLimit as NewXzReader does, and
+// reserves a dictionary of at most n bytes (lzma.MinDictCap, 4 KiB, at
+// least) whatever the block declares.
+//
+// A small dictionary decodes those bytes exactly: every block starts
+// with an empty dictionary, so no match among the first n bytes of a
+// block reaches further back than n bytes; and the decoder fills its
+// buffer only up to its capacity before it hands bytes out, so it never
+// decodes a match that reaches further.
+//
+// SECURITY: a value of a few bytes can declare a 128 MiB dictionary and
+// leave its text size out, which makes NewXzReader reserve 128 MiB. A
+// caller that needs only the start of the text, such as the name of a
+// journal field, pays for n bytes instead.
+func NewXzPrefixReader(src io.Reader, dictionaryLimit uint64, n int) (io.Reader, error) {
+	x := &xzReader{src: src, dictionaryLimit: dictionaryLimit, dictionaryCap: max(int64(n), lzma.MinDictCap)}
+	if err := x.startFirstStream(); err != nil {
+		return nil, err
+	}
+	// io.LimitReader stops at n bytes, so no Read reaches text the capped
+	// dictionary could decode wrongly.
+	return io.LimitReader(x, int64(n)), nil
+}
+
 // xzReader is the reader NewXzReader returns. It moves through a file
 // as: stream header, then blocks, then the index and footer that end
 // the stream, then padding and the next stream or the end.
 type xzReader struct {
 	src             io.Reader
 	dictionaryLimit uint64
+	// dictionaryCap, when above 0, is the most dictionary a block gets,
+	// whatever it declares (NewXzPrefixReader).
+	dictionaryCap int64
 
 	// The stream being read: its check id, the number of blocks read so
 	// far, and a digest of their (unpadded size, text size) pairs, which
@@ -253,6 +283,9 @@ func (x *xzReader) openBlock(sizeByte byte) error {
 		check:            newXzCheck(x.checkID),
 	}
 	dictionary = dictionaryForBlock(dictionary, fields.uncompressedSize)
+	if x.dictionaryCap > 0 {
+		dictionary = min(dictionary, x.dictionaryCap)
+	}
 	text, err := lzma.Reader2Config{DictCap: int(dictionary)}.NewReader2(&block.compressed)
 	if err != nil {
 		return fmt.Errorf("xz: block: %w", err)

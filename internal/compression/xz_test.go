@@ -314,3 +314,49 @@ func FuzzNewXzReader(f *testing.F) {
 		}
 	})
 }
+
+// A prefix reader gives the first bytes of the text exactly, refuses a
+// dictionary above the limit as NewXzReader does, and reserves a few KiB
+// however large a dictionary the block declares without its text size:
+// 128 MiB here, which NewXzReader would reserve whole.
+func TestNewXzPrefixReader_DecodesTheStartWithASmallDictionary(t *testing.T) {
+	const prefix = 65
+	text := numberedText(20_000) // about 1.2 MiB
+	plain := xzfile.Encode(t, text, xz.WriterConfig{})
+	cases := map[string][]byte{
+		"8 MiB declared, no text size":   plain,
+		"128 MiB declared, no text size": xzfile.WithDictionaryCode(t, plain, 0, 30),
+		"two blocks":                     xzfile.Encode(t, text[:40], xz.WriterConfig{}),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			want := text[:min(prefix, len(text))]
+			if name == "two blocks" {
+				want = text[:40]
+			}
+			var got []byte
+			var err error
+			allocated := allocatedBy(func() {
+				var r io.Reader
+				if r, err = NewXzPrefixReader(bytes.NewReader(body), WindowLimit, prefix); err == nil {
+					got, err = io.ReadAll(r)
+				}
+			})
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("got %q, %v; want %q", got, err, want)
+			}
+			const budget = 1 << 20
+			if allocated > budget {
+				t.Errorf("allocated %d KiB; budget %d KiB", allocated>>10, budget>>10)
+			}
+		})
+	}
+	// The block header, and so its dictionary, is read at the first Read.
+	r, err := NewXzPrefixReader(bytes.NewReader(xzfile.WithDictionaryCode(t, plain, 0, 32)), WindowLimit, prefix)
+	if err == nil {
+		_, err = io.ReadAll(r)
+	}
+	if !errors.Is(err, ErrDictionaryTooLarge) {
+		t.Errorf("a 256 MiB dictionary gives %v; want ErrDictionaryTooLarge", err)
+	}
+}
