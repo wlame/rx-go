@@ -501,6 +501,45 @@ func TestFindingsFolderTask_APostWhileItIsCancellingAnswers409(t *testing.T) {
 	}
 }
 
+// With every place among the unfinished scans taken, a POST for a
+// directory whose cancelled findings task still holds its place (its
+// scan has not stopped) answers 409 naming that task: it is neither
+// joined nor answered 503.
+func TestFindingsFolderTask_APostWithEveryScanPlaceTakenWhileItIsCancellingAnswers409(t *testing.T) {
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	var once sync.Once
+	f := newFindingsFixture(t, func(c *Config) {
+		// One place: the folder task takes it, so the POST below finds
+		// none free.
+		c.maxUnfinishedScans = 1
+		c.scanFindings = func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue,
+			sel []*signatures.Signature, o findings.ScanOptions) (*findings.Answer, error) {
+			hold := false
+			once.Do(func() { hold = true })
+			if hold {
+				started <- struct{}{}
+				<-ctx.Done()
+				<-release
+			}
+			return findings.Scan(ctx, file, cat, sel, o)
+		}
+	})
+	task := f.startTask(t, "/v1/findings", map[string]any{"path": f.root})
+	<-started
+	if status, raw := f.call(t, http.MethodDelete, "/v1/tasks/"+task.TaskID, nil, nil); status != http.StatusOK ||
+		!strings.Contains(string(raw), `"cancelling"`) {
+		t.Fatalf("DELETE: %d %s", status, raw)
+	}
+	status, raw := f.postStatus(t, "/v1/findings", map[string]any{"path": f.root})
+	var conflict rxtypes.TaskConflictError
+	decode(t, raw, &conflict)
+	if status != http.StatusConflict || conflict.TaskID != task.TaskID || !strings.Contains(conflict.Detail, "cancel") {
+		t.Errorf("POST with every place taken while the scan stops: %d %s", status, raw)
+	}
+	close(release)
+	f.awaitStatus(t, task.TaskID, "cancelled")
+}
+
 // The lists of a folder task's result stop at 1000 entries each while
 // their counts stay exact: 1001 files below the index threshold give
 // skipped 1001 and 1000 skipped_files, and 1001 files whose build fails
@@ -558,6 +597,13 @@ func TestTasks_TheCommandWalksHiddenEntriesWhenTheServerDoes(t *testing.T) {
 	}
 	if done, _ := f.finish(t, scan.TaskID); folderResult(t, done).FilesTotal != 4 {
 		t.Errorf("the hidden file was not listed: %+v", done)
+	}
+	folderIndex := f.startTask(t, "/v1/index", map[string]any{"path": f.root, "threshold": 0})
+	if want := "rx index " + root + " --recursive --hidden --threshold=0"; folderIndex.CLICommand != want {
+		t.Errorf("index task over the directory: %q, want %q", folderIndex.CLICommand, want)
+	}
+	if done, _ := f.finish(t, folderIndex.TaskID); folderResult(t, done).FilesTotal != 4 {
+		t.Errorf("the hidden file was not listed for the index: %+v", done)
 	}
 	index := f.startTask(t, "/v1/index", map[string]any{"path": f.log, "threshold": 0})
 	if want := "rx index " + validated(t, f.log) + " --hidden --threshold=0"; index.CLICommand != want {

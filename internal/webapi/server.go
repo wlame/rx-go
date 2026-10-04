@@ -118,8 +118,10 @@ type Config struct {
 		sel []*signatures.Signature, opts findings.ScanOptions) (*findings.Answer, error)
 
 	// indexFolderFile builds the index of one file of an index task over
-	// a directory; cachefill.IndexFile unless a test replaces it (to
-	// cancel the task between two files).
+	// a directory; cachefill.IndexFile unless a test replaces it: to
+	// cancel the task between two files, to hold one file's build while
+	// the task is cancelled (the build then stops at its next read), or
+	// to make a file's build fail.
 	indexFolderFile func(ctx context.Context, e cachefill.Entry, s cachefill.IndexSettings,
 		build *index.Progress) cachefill.FileResult
 }
