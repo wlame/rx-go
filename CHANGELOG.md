@@ -83,7 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timestamps were written in, and `RX_QUERY_TZ` the zone a time query
   without a zone is read in (unset: the file's own frame, so a time
   copied from a line finds it; `local`: the process's zone). Each takes
-  `UTC`, an IANA zone name or `±HH:MM`; another value keeps the default
+  `UTC`, an IANA zone name or `±HH:MM` (a sign, then two digits
+  in each field); another value keeps the default
   with an `invalid_setting` warning. The zone database is built into
   the binary (about 450 KB), so zone names work without
   `/usr/share/zoneinfo`.
