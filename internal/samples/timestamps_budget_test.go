@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/internal/testutil/counting"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
@@ -135,7 +136,7 @@ func awkwardLines(rng *rand.Rand) [][]byte {
 	var lines [][]byte
 	for i := range 300 {
 		var line string
-		switch i % 6 {
+		switch i % 7 {
 		case 0:
 			line = stamp + " INFO " + strings.Repeat("y", rng.IntN(9000))
 		case 1:
@@ -146,6 +147,9 @@ func awkwardLines(rng *rand.Rand) [][]byte {
 			line = "    at frame " + strings.Repeat("z", rng.IntN(300))
 		case 4:
 			line = stamp + strings.Repeat("\r", 105) + "x" + strings.Repeat("\r", rng.IntN(5000))
+		case 5:
+			// The window's last byte is the \r of a \r\n line break.
+			line = strings.Repeat("x", timestamps.WindowBytes-1) + "\r"
 		default:
 			line = fmt.Sprintf("2025-12-10 07:30:%02d.%03d end", rng.IntN(60), rng.IntN(1000))
 		}
@@ -177,15 +181,20 @@ func TestStampReaders_AgreeWithTheIndexWalk(t *testing.T) {
 			t.Fatalf("line %d (%d bytes): got %+v %v length %d (%v), want %+v %v",
 				i+1, len(line), got, gotOK, length, err, want, wantOK)
 		}
-		// The read back from the end, from this line's start.
+		// The read back from the end, from this line's start, with one
+		// byte past the window in hand, and with a few kilobytes.
 		start := int64(len(bytes.Join(lines[:i], nil)))
-		window, err := lineWindow(bytes.NewReader(text), text[start:min(int64(len(text)), start+timestamps.WindowBytes+1)], start, int64(len(text)))
-		if err != nil {
-			t.Fatalf("line %d: window: %v", i+1, err)
-		}
 		content := bytes.TrimRight(line, "\r\n")
-		if wantWindow := content[:min(len(content), timestamps.WindowBytes)]; !bytes.Equal(window, wantWindow) {
-			t.Fatalf("line %d: window %q, want %q", i+1, window, wantWindow)
+		wantWindow := content[:min(len(content), timestamps.WindowBytes)]
+		for _, inHand := range []int64{timestamps.WindowBytes + 1, 4096} {
+			rest := text[start:min(int64(len(text)), start+inHand)]
+			window, err := lineWindow(bytes.NewReader(text), rest, start, int64(len(text)))
+			if err != nil {
+				t.Fatalf("line %d: window: %v", i+1, err)
+			}
+			if !bytes.Equal(window, wantWindow) {
+				t.Fatalf("line %d, %d bytes in hand: window %q, want %q", i+1, inHand, window, wantWindow)
+			}
 		}
 	}
 	if _, _, length, _ := reader.next(); length != 0 {
@@ -286,5 +295,69 @@ func TestBudget_LookbackReadsAtMostTheSetting(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// crlfTail is a log whose first mebibyte holds timestamped lines and
+// whose tail is lines lines of timestamps.WindowBytes-1 bytes ended by
+// \r\n: the window the parser looks at ends with that \r, and the \n is
+// one byte past it.
+func crlfTail(lines int) []byte {
+	var b bytes.Buffer
+	for b.Len() < tailStepBytes {
+		b.WriteString("2025-12-10 07:30:00.000 INFO first\n")
+	}
+	for range lines {
+		b.WriteString(strings.Repeat("x", timestamps.WindowBytes-1) + "\r\n")
+	}
+	return b.Bytes()
+}
+
+// The read back from the end for the last timestamp reads each byte of
+// a tail of \r\n lines about once, on a plain file and on a seekable
+// one: a step reads its mebibyte and the window past it, and at most
+// one line of a step, the last, is read further to find its end.
+func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
+	text := crlfTail(20_000)
+	parser := parserFor(t, text[:200])
+	steps := int64(len(text)/tailStepBytes + 1)
+	// One step's mebibyte and window, one byte before it, and one
+	// further read of the step's last line.
+	perStep := int64(timestamps.WindowBytes + 1 + 4096)
+
+	plain := counting.NewReaderAt(bytes.NewReader(text))
+	stamp, found, err := lastStampFromEnd(plain, int64(len(text)), parser)
+	if err != nil || !found || stamp.Ms != timeBase {
+		t.Fatalf("plain: last stamp %+v %v %v", stamp, found, err)
+	}
+	if read, budget := plain.Load(), int64(len(text))+steps*perStep; read > budget {
+		t.Errorf("plain: read %d bytes of a %d-byte text; budget %d", read, len(text), budget)
+	}
+
+	path := filepath.Join(t.TempDir(), "tail.log.zst")
+	seekablefile.Write(t, path, seekablefile.SplitEvery(text, 256*1024))
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	table, err := seekable.ReadSeekTable(f, info.Size())
+	if err != nil {
+		t.Fatalf("seek table: %v", err)
+	}
+	file := counting.NewReaderAt(f)
+	compressed := seekableTextAt{file: file, table: table, decoder: seekable.NewDecoder()}
+	stamp, found, err = lastStampFromEnd(compressed, int64(len(text)), parser)
+	if err != nil || !found || stamp.Ms != timeBase {
+		t.Fatalf("seekable: last stamp %+v %v %v", stamp, found, err)
+	}
+	// Each frame is decoded by the steps that cover it, a few times
+	// at most, never once per line.
+	if read, budget := file.Load(), 8*info.Size(); read > budget {
+		t.Errorf("seekable: read %d compressed bytes of a %d-byte file; budget %d", read, info.Size(), budget)
 	}
 }
