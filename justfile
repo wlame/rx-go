@@ -168,6 +168,30 @@ cover:
     awk -v t="$total" -v m="{{coverage_min}}" 'BEGIN { exit (t+0 >= m+0) ? 0 : 1 }' \
         || { echo "FAIL: coverage ${total}% is below the {{coverage_min}}% floor"; exit 1; }
 
+# ── fixtures ─────────────────────────────────────────────────────────────
+
+# Write the journal fixtures of internal/journal/testdata with Docker (not in ci; --skip-chains keeps the chain fixtures)
+[positional-arguments]
+journal-fixtures *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    gen=internal/journal/testdata/gen
+    image=rx-journal-oracle:257
+    docker build --quiet --tag="$image" "$gen" > /dev/null
+    # The generator runs inside the image, so it is built for the
+    # image's Linux architecture (Debian's name for it, arm64 or amd64,
+    # is also Go's).
+    arch=$(docker run --rm "$image" dpkg --print-architecture)
+    mkdir -p dist
+    GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -o dist/journal-fixture-gen "./$gen"
+    # /run is a tmpfs of a fixed size: the chain fixtures' journald
+    # reports its sizes in its own messages.
+    docker run --rm --hostname=journal-fixture --tmpfs=/run:rw,size=256m,mode=755 \
+        --volume="$PWD/dist/journal-fixture-gen:/usr/local/bin/journal-fixture-gen:ro" \
+        --volume="$PWD/$gen/make.sh:/usr/local/bin/make-journal-fixtures:ro" \
+        --volume="$PWD/internal/journal/testdata:/testdata" \
+        "$image" bash /usr/local/bin/make-journal-fixtures "$@"
+
 # ── aggregates ───────────────────────────────────────────────────────────
 
 # Exactly what GitHub CI enforces, in the same order
