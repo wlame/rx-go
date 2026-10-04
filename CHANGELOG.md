@@ -98,6 +98,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `.zst` file is read as seekable only when its seek table describes
+  it: the table's skippable frame runs to the end of the file, the
+  frames it lists end where it starts, and each starts with a zstd
+  frame header whose recorded content size, if any, is the table's.
+  Two seekable files joined with `cat` (or written by two compressions
+  at once) end with the second file's table alone, and rx used to read
+  that table as the whole file's: `rx trace` answered 0 matches where
+  the text holds 66, with exit 0, and cached it, and `rx index` failed.
+  A damaged table placed frames wrongly the same way. Such a file is
+  now read as the plain zstd stream it is, by `rx trace` (one stream,
+  `file_chunks` 1, with a `seek_table_mismatch` warning), `rx samples`,
+  `rx index` and `rx compress` alike, and every answer is the text's.
+  The check reads the table and one frame header per frame. `rx samples`
+  on a seekable file without an index now reads it frame by frame
+  through the table, so a damaged frame fails the lookup with
+  "seekable zstd frame is damaged: frame N" instead of a zstd decoder
+  message, as `rx index` reports it; a line before the damage is still
+  answered.
+
 - `rx trace` and `GET /v1/trace` no longer answer "no matches" for a
   seekable zstd file with a damaged frame, and no longer cache that
   answer. A frame that failed to decompress ended its batch's input to

@@ -12,7 +12,6 @@ import (
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
-	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -139,7 +138,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	// an index is for. Its index's checkpoints sit at frame starts,
 	// which are not always line starts, so the stream does not start
 	// from one.
-	if seekable.IsSeekable(req.Path) {
+	if isSeekable(req.Source) {
 		err := resolveSeekableLines(req, resp)
 		if err == nil {
 			return resp, nil
@@ -147,7 +146,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		if !errors.Is(err, errNoFrameIndex) {
 			return nil, err
 		}
-		if err := resolveCompressedLines(req, format, nil, resp); err != nil {
+		if err := resolveCompressedLines(req, compression.FormatSeekableZstd, nil, resp); err != nil {
 			return nil, err
 		}
 		return resp, nil
