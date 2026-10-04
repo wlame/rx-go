@@ -281,61 +281,36 @@ func TestBudget_LinesSingleWithContext_StopsAfterContext(t *testing.T) {
 		got, targetOffset)
 }
 
-// TestBudget_ByteOffsetRange_StopsAtEndOffset covers the
-// lineNumberForOffset → readLineRange path used in OffsetsMode. A
-// byte-offset range converts both ends to line numbers (linear scan)
-// then calls readLineRange which delegates to readLinesWithTarget
-// with targetLine = startLine.
-//
-// NOTE: lineNumberForOffset currently performs a linear scan from
-// byte 0; byte-offset mode is SLOWER than line mode because of this.
-// This test verifies the CURRENT contract (linear scan acceptable for
-// byte-offset queries — they're rare) — the pertinent budget here is
-// that we don't read PAST the range.
+// TestBudget_ByteOffsetRange_StopsAtEndOffset: a byte-offset range is
+// answered by one pass that stops on the line holding its end offset,
+// not past it.
 func TestBudget_ByteOffsetRange_StopsAtEndOffset(t *testing.T) {
 	// NOT t.Parallel — these tests share the package-level
 	// openFileForSamples seam. Making them parallel would race on the
 	// reassignment in withCountingOpen.
 	const lineCount = 10_000
 	path, totalBytes := makeLargeFixture(t, lineCount)
+
+	// A byte range over roughly lines 100-200: line 100 starts at
+	// offset 99 * 150 = 14850, line 200 at 199 * 150 = 29850.
+	startOff, endOff := int64(15000), int64(30000)
 	counter := withCountingOpen(t)
-
-	// Pick a byte offset range that covers roughly lines 100-200.
-	// Line 100 starts at offset 99 * 150 = 14850. Line 200 starts at
-	// offset 199 * 150 = 29850. Range: 15000..30000.
-	startOff := int64(15000)
-	endOff := int64(30000)
-
-	startLine, err := lineNumberForOffset(pinForTest(t, path), startOff)
+	resp, err := Resolve(t.Context(), Request{
+		Path: path, Offsets: []OffsetOrRange{{Start: startOff, End: &endOff}}, IndexLoader: NoIndex,
+	})
 	if err != nil {
-		t.Fatalf("lineNumberForOffset(start): %v", err)
+		t.Fatalf("Resolve: %v", err)
 	}
-	endLine, err := lineNumberForOffset(pinForTest(t, path), endOff)
-	if err != nil {
-		t.Fatalf("lineNumberForOffset(end): %v", err)
-	}
-	lines, _, err := readLineRange(pinForTest(t, path), startLine, endLine)
-	if err != nil {
-		t.Fatalf("readLineRange: %v", err)
-	}
-	if len(lines) == 0 {
-		t.Fatal("got 0 lines")
+	if got := len(resp.Samples["15000-30000"]); got != 101 {
+		t.Fatalf("got %d lines, want 101 (lines 101 to 201)", got)
 	}
 
-	// Two linear scans + range read. Each linear scan reads up to the
-	// requested offset (not past it). Budget:
-	//   - lineNumberForOffset(start) reads ~startOff bytes
-	//   - lineNumberForOffset(end)   reads ~endOff bytes
-	//   - readLineRange reads ~endLine * 150 bytes
-	// Total worst case: 3 * endLine * 150 + bufio overshoot per open.
-	budget := int64(3*endLine*150 + 3*8*1024)
-	got := counter.Load()
-	if got > budget {
-		t.Fatalf("byte-offset range: read %d bytes, budget %d (file=%d)",
-			got, budget, totalBytes)
+	// The pass up to the end offset with its read buffer, and the head
+	// the timestamp format is looked for in.
+	budget := endOff + 8*1024 + min(totalBytes, timestamps.SampleBytes)
+	if got := counter.Load(); got > budget {
+		t.Fatalf("byte-offset range: read %d bytes, budget %d (file=%d)", got, budget, totalBytes)
 	}
-	t.Logf("byte-offset range read %d bytes for %d lines",
-		got, len(lines))
 }
 
 // TestBudget_LinesRangeNoIndex_FullScanExpected documents the WORST
@@ -497,11 +472,4 @@ func readLinesWithTarget(
 func readLineRangeWithIndex(src paths.Pinned, startLine, endLine int64, idx *rxtypes.UnifiedFileIndex) ([]string, []int64, error) {
 	lines, starts, _, err := readLinesWithTarget(src, startLine, endLine, 0, idx)
 	return lines, starts, err
-}
-
-// readLineRange reads lines startLine..endLine of a plain file without
-// an index and returns where startLine starts.
-func readLineRange(src paths.Pinned, startLine, endLine int64) ([]string, int64, error) {
-	lines, _, offset, err := readLinesWithTarget(src, startLine, endLine, startLine, nil)
-	return lines, offset, err
 }
