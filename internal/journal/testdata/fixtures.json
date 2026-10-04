@@ -1,0 +1,272 @@
+[
+  {
+    "name": "basic-lz4-compact",
+    "set": "basic",
+    "compression": "lz4",
+    "compact": true,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-lz4-regular",
+    "set": "basic",
+    "compression": "lz4",
+    "compact": false,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-none-compact",
+    "set": "basic",
+    "compression": "none",
+    "compact": true,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-none-regular",
+    "set": "basic",
+    "compression": "none",
+    "compact": false,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-xz-compact",
+    "set": "basic",
+    "compression": "xz",
+    "compact": true,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-xz-regular",
+    "set": "basic",
+    "compression": "xz",
+    "compact": false,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-zstd-compact",
+    "set": "basic",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "basic-zstd-regular",
+    "set": "basic",
+    "compression": "zstd",
+    "compact": false,
+    "entries": 15,
+    "shown": 14,
+    "without_message": 1
+  },
+  {
+    "name": "chain-one-counter/system",
+    "set": "chain-one-counter",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 4,
+    "shown": 4,
+    "without_message": 0
+  },
+  {
+    "name": "chain-one-counter/system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8",
+    "set": "chain-one-counter",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 5,
+    "shown": 5,
+    "without_message": 0
+  },
+  {
+    "name": "chain-one-counter/system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000006-00065db7fc111b8d",
+    "set": "chain-one-counter",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 4,
+    "shown": 4,
+    "without_message": 0
+  },
+  {
+    "name": "chain-two-counters/system",
+    "set": "chain-two-counters",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 5,
+    "shown": 5,
+    "without_message": 0
+  },
+  {
+    "name": "chain-two-counters/system@8ce9c43343844cf4b33c5e842d348d5c-0000000000000001-00065db7fc3271f6",
+    "set": "chain-two-counters",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 5,
+    "shown": 5,
+    "without_message": 0
+  },
+  {
+    "name": "chain-two-counters/system@8ce9c43343844cf4b33c5e842d348d5c-0000000000000006-00065db7fc43aca9",
+    "set": "chain-two-counters",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 4,
+    "shown": 4,
+    "without_message": 0
+  },
+  {
+    "name": "many-lz4-compact",
+    "set": "many",
+    "compression": "lz4",
+    "compact": true,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-lz4-regular",
+    "set": "many",
+    "compression": "lz4",
+    "compact": false,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-none-compact",
+    "set": "many",
+    "compression": "none",
+    "compact": true,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-none-regular",
+    "set": "many",
+    "compression": "none",
+    "compact": false,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-xz-compact",
+    "set": "many",
+    "compression": "xz",
+    "compact": true,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-xz-regular",
+    "set": "many",
+    "compression": "xz",
+    "compact": false,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-zstd-compact",
+    "set": "many",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "many-zstd-regular",
+    "set": "many",
+    "compression": "zstd",
+    "compact": false,
+    "entries": 2000,
+    "shown": 2000,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-lz4-compact",
+    "set": "stamps",
+    "compression": "lz4",
+    "compact": true,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-lz4-regular",
+    "set": "stamps",
+    "compression": "lz4",
+    "compact": false,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-none-compact",
+    "set": "stamps",
+    "compression": "none",
+    "compact": true,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-none-regular",
+    "set": "stamps",
+    "compression": "none",
+    "compact": false,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-xz-compact",
+    "set": "stamps",
+    "compression": "xz",
+    "compact": true,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-xz-regular",
+    "set": "stamps",
+    "compression": "xz",
+    "compact": false,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-zstd-compact",
+    "set": "stamps",
+    "compression": "zstd",
+    "compact": true,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  },
+  {
+    "name": "stamps-zstd-regular",
+    "set": "stamps",
+    "compression": "zstd",
+    "compact": false,
+    "entries": 14,
+    "shown": 14,
+    "without_message": 0
+  }
+]

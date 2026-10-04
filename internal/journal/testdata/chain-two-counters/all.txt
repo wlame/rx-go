@@ -1,0 +1,14 @@
+2026-10-13T12:30:51.826678+00:00 journal-fixture systemd-journald[656]: Journal started
+2026-10-13T12:30:51.826695+00:00 journal-fixture systemd-journald[656]: Runtime Journal (/run/log/journal/0123456789abcdef0123456789abcdef) is 8M, max 64M, 56M free.
+2026-10-13T12:30:51.935624+00:00 journal-fixture chaintest[660]: two-counters batch 1 line 1
+2026-10-13T12:30:51.937866+00:00 journal-fixture chaintest[662]: two-counters batch 1 line 2
+2026-10-13T12:30:51.940083+00:00 journal-fixture chaintest[664]: two-counters batch 1 line 3
+2026-10-13T12:30:52.955817+00:00 journal-fixture systemd-journald[656]: Runtime Journal (/run/log/journal/0123456789abcdef0123456789abcdef) is 8M, max 64M, 56M free.
+2026-10-13T12:30:52.970035+00:00 journal-fixture chaintest[670]: two-counters batch 2 line 1
+2026-10-13T12:30:52.974945+00:00 journal-fixture chaintest[672]: two-counters batch 2 line 2
+2026-10-13T12:30:52.979163+00:00 journal-fixture chaintest[674]: two-counters batch 2 line 3
+2026-10-13T12:30:54.024096+00:00 journal-fixture systemd-journald[681]: Journal started
+2026-10-13T12:30:54.024140+00:00 journal-fixture systemd-journald[681]: Runtime Journal (/run/log/journal/0123456789abcdef0123456789abcdef) is 8.4M, max 64M, 55.5M free.
+2026-10-13T12:30:54.136698+00:00 journal-fixture chaintest[685]: two-counters batch 3 line 1
+2026-10-13T12:30:54.143197+00:00 journal-fixture chaintest[687]: two-counters batch 3 line 2
+2026-10-13T12:30:54.151314+00:00 journal-fixture chaintest[689]: two-counters batch 3 line 3
