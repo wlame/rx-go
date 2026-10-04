@@ -205,9 +205,11 @@ func (s *Server) startFindingsScan(req rxtypes.FindingsScanRequest) (*findingsSc
 	if err != nil {
 		return nil, ErrFileAccess(validated, err)
 	}
+	// The command lists what the task lists: --hidden on a server that
+	// serves hidden entries, --mask-secrets on one that masks.
 	cliParams := map[string]any{
-		"path": validated, "signatures": selectionText(req.Signatures), "force": req.Force,
-		"mask_secrets": s.cfg.Findings.Scan.MaskSecrets,
+		"path": validated, "hidden": paths.IncludeHidden(), "signatures": selectionText(req.Signatures),
+		"force": req.Force, "mask_secrets": s.cfg.Findings.Scan.MaskSecrets,
 	}
 	if src.Info().IsDir() {
 		cliParams["recursive"] = true

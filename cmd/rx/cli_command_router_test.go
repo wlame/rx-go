@@ -432,6 +432,32 @@ func TestCLICommand_IndexAndScanTasksRenderCommandsThatDoTheSame(t *testing.T) {
 		}
 	})
 
+	t.Run("scan of a directory on a server that serves hidden entries", func(t *testing.T) {
+		hiddenDir := filepath.Join(f.root, "withhidden")
+		for name, text := range map[string]string{"a.log": "LINE 1 ERROR seen\n", ".secret/b.log": "LINE 1 ERROR hidden\n"} {
+			path := filepath.Join(hiddenDir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		}
+		paths.SetIncludeHidden(true)
+		t.Cleanup(func() { paths.SetIncludeHidden(false) })
+		status := f.runTaskStatus(t, "/v1/findings", map[string]any{"path": hiddenDir})
+		result := status["result"].(map[string]any)
+		rendered, _ := status["cli_command"].(string)
+		want := "rx scan " + hiddenDir + " --recursive --hidden --signatures=default"
+		if rendered != want {
+			t.Fatalf("cli_command\n got  %q\n want %q", rendered, want)
+		}
+		totals := f.runRenderedFresh(t, rendered)["totals"].(map[string]any)
+		if countsOf(totals) != countsOf(result) || result["files_total"] != float64(2) {
+			t.Errorf("rx scan totals %v, the task %v", totals, result)
+		}
+	})
+
 	t.Run("scan of a file", func(t *testing.T) {
 		path := filepath.Join(dir, "a.log")
 		status := f.runTaskStatus(t, "/v1/findings", map[string]any{"path": path, "signatures": "traceback,severity", "force": true})

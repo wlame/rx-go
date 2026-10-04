@@ -541,3 +541,27 @@ func TestFolderTask_TheListsOfTheResultStopAtTheirCap(t *testing.T) {
 		t.Errorf("failed %d, %d listed (first %+v)", failed.Failed, len(failed.FailedFiles), failed.FailedFiles[0])
 	}
 }
+
+// On a server that walks hidden entries (rx serve --hidden, RX_HIDDEN)
+// the command of an index or findings task carries --hidden, so it lists
+// the files the task listed; a server that does not leaves it out.
+func TestTasks_TheCommandWalksHiddenEntriesWhenTheServerDoes(t *testing.T) {
+	f := newFindingsFixture(t, nil)
+	writeFixture(t, filepath.Join(f.root, ".hidden.log"), []byte("2026-01-15 12:00:00 ERROR hidden\n"))
+	root := validated(t, f.root)
+	paths.SetIncludeHidden(true)
+	t.Cleanup(func() { paths.SetIncludeHidden(false) })
+
+	scan := f.startTask(t, "/v1/findings", map[string]any{"path": f.root})
+	if want := "rx scan " + root + " --recursive --hidden --signatures=default"; scan.CLICommand != want {
+		t.Errorf("findings task: %q, want %q", scan.CLICommand, want)
+	}
+	if done, _ := f.finish(t, scan.TaskID); folderResult(t, done).FilesTotal != 4 {
+		t.Errorf("the hidden file was not listed: %+v", done)
+	}
+	index := f.startTask(t, "/v1/index", map[string]any{"path": f.log, "threshold": 0})
+	if want := "rx index " + validated(t, f.log) + " --hidden --threshold=0"; index.CLICommand != want {
+		t.Errorf("index task: %q, want %q", index.CLICommand, want)
+	}
+	f.finish(t, index.TaskID)
+}

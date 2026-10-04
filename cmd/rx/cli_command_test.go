@@ -176,7 +176,12 @@ func TestCLICommand_TableMatchesTheCommandTree(t *testing.T) {
 				}
 				continue
 			}
+			// A flag of the root (--hidden) is inherited by every
+			// subcommand: cobra lists it among the inherited flags.
 			flag := sub.Flags().Lookup(arg.Flag)
+			if flag == nil {
+				flag = sub.InheritedFlags().Lookup(arg.Flag)
+			}
 			switch {
 			case flag == nil:
 				t.Errorf("%s: rx %s has no --%s", name, op.Subcommand, arg.Flag)

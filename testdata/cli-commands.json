@@ -253,6 +253,12 @@
       "expected": "rx scan /var/log/app --recursive --signatures=traceback,sql --force --mask-secrets"
     },
     {
+      "name": "scan of a directory on a server that serves hidden entries",
+      "endpoint": "scan",
+      "params": { "path": "/var/log/app", "recursive": true, "hidden": true, "signatures": "default" },
+      "expected": "rx scan /var/log/app --recursive --hidden --signatures=default"
+    },
+    {
       "name": "compress with every option",
       "endpoint": "compress",
       "params": {

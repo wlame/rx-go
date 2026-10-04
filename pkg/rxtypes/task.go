@@ -13,7 +13,7 @@ type TaskResponse struct {
 	Message    string  `json:"message"`
 	Path       string  `json:"path"`
 	StartedAt  *string `json:"started_at"`
-	CLICommand string  `json:"cli_command" doc:"The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --force when the request forced, and --mask-secrets when the server masks secrets. Empty for a compress task. A request that joined a running task gets that task's command."`
+	CLICommand string  `json:"cli_command" doc:"The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --hidden when the server serves hidden entries, --force when the request forced, and --mask-secrets when the server masks secrets. Empty for a compress task. A request that joined a running task gets that task's command."`
 }
 
 // TaskStatusResponse is returned by GET /v1/tasks/{task_id} and by
@@ -41,7 +41,7 @@ type TaskStatusResponse struct {
 	BytesTotal  *int64     `json:"bytes_total" doc:"The size of the file a findings task reads, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null when bytes_read is."`
 	FilesDone   *int64     `json:"files_done" doc:"For a task over a directory: the entries of files_total the task has ended (indexed or scanned, skipped, or failed). Null for a task over one file, and while the task lists the directory."`
 	FilesTotal  *int64     `json:"files_total" doc:"For a task over a directory: the entries its walk listed (every file under the directory by the file tree's rules, and the entries the walk passed over). Null when files_done is."`
-	CLICommand  string     `json:"cli_command" doc:"The rx command that does what the task does: rx index for an index task started by POST /v1/index, rx scan for a findings task, with --recursive for a directory, --force when the request forced, and --mask-secrets when the server masks secrets. Empty for other tasks: compress, chain_index, and the index builds GET /v1/samples and the log chains start."`
+	CLICommand  string     `json:"cli_command" doc:"The rx command that does what the task does: rx index for an index task started by POST /v1/index, rx scan for a findings task, with --recursive for a directory, --hidden when the server serves hidden entries (rx serve --hidden, RX_HIDDEN), --force when the request forced, and --mask-secrets when the server masks secrets. Empty for other tasks: compress, chain_index, and the index builds GET /v1/samples and the log chains start."`
 	Result      TaskResult `json:"result"`
 }
 

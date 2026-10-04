@@ -435,7 +435,8 @@ History maps every removed surface to what replaces it.
   (`TaskStatusResponse`) of an index or findings task: `rx index PATH`
   (`--force`, `--threshold=N` as requested), `rx scan PATH
   --signatures=SEL` (`--force`, and `--mask-secrets` when the server
-  masks), with `--recursive` for a directory. Other tasks give `""`. A
+  masks), with `--recursive` for a directory and `--hidden` when the
+  server serves hidden entries (`rx serve --hidden`, `RX_HIDDEN`). Other tasks give `""`. A
   task over a directory also reports `files_done` and `files_total`
   (`null` for a task over one file); its `bytes_read` and `bytes_total`
   follow the file it reads (findings) or stay `null` (index), and its

@@ -128,7 +128,8 @@ func (s *Server) startIndexFolder(req rxtypes.IndexRequest, dir paths.Pinned) (*
 		return nil, busyFolder(mgr, req.Path, task)
 	}
 	cli := BuildCLICommand("index_post", map[string]any{
-		"path": dir.Path(), "recursive": true, "force": req.Force, "threshold": req.Threshold,
+		"path": dir.Path(), "recursive": true, "hidden": paths.IncludeHidden(), "force": req.Force,
+		"threshold": req.Threshold,
 	})
 	mgr.SetCLICommand(task.TaskID, cli)
 	// Snapshot the new task before its worker starts: from then on the

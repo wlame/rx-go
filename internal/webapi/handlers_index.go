@@ -202,10 +202,12 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (*postIndexOutput, err
 
 // indexCLICommand is the rx command that does what the index task of
 // one file does: `rx index FILE`, with --force and --threshold=N as the
-// request gave them.
+// request gave them, and --hidden on a server that serves hidden
+// entries.
 func indexCLICommand(absPath string, req rxtypes.IndexRequest) string {
 	return BuildCLICommand("index_post", map[string]any{
 		"path":      absPath,
+		"hidden":    paths.IncludeHidden(),
 		"force":     req.Force,
 		"threshold": req.Threshold,
 	})

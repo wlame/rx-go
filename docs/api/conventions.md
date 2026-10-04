@@ -181,6 +181,9 @@ does what the request did, ready to paste into a shell. A task of
 `POST /v1/index` is `rx index PATH`, one of `POST /v1/findings` is
 `rx scan PATH --signatures=SEL`, and a task over a directory adds
 `--recursive` (`rx scan /var/log/app --recursive --signatures=default`).
+A server that serves hidden entries (`rx serve --hidden`) adds
+`--hidden` to a task's command, so the command lists the files the task
+listed.
 
 - The shape is `rx <subcommand> <positionals...> <--long=value...>`.
   A value that needs shell quoting is quoted after the `=`; a switch
