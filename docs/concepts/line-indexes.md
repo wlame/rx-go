@@ -115,6 +115,8 @@ way a few such lines cannot steer:
 - In a file whose timestamp is further into the line, the first
   timestamp in the line's first 120 bytes counts, so text written before
   the log's own time field can set it.
+- A timestamp outside the years 1 to 9999, read with or without its
+  zone, counts as none.
 
 Every value is milliseconds since the Unix epoch, in the file's frame.
 In a file whose timestamps carry a zone (`Z`, `+02:00`, `UTC`, `GMT`),
