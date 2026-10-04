@@ -24,10 +24,11 @@ func encodeSeekable(t *testing.T, text []byte, frameSize int) []byte {
 	return out.Bytes()
 }
 
-// entryAt returns the position in file of seek-table entry i, in rx's
-// layout: the entries end where the 9-byte footer starts.
+// entryAt returns the position in file of seek-table entry i, in the
+// layout rx writes: the specification's footer, frame count first, and
+// 8-byte entries that end where the 9-byte footer starts.
 func entryAt(file []byte, i int) int {
-	frames := int(binary.LittleEndian.Uint32(file[len(file)-5:]))
+	frames := int(binary.LittleEndian.Uint32(file[len(file)-FooterSize:]))
 	return len(file) - FooterSize - frames*EntrySize + i*EntrySize
 }
 
