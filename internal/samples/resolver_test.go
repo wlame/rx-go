@@ -40,7 +40,7 @@ func TestResolve_LinesMode_SingleWithContext(t *testing.T) {
 		AfterContext:  3,
 		IndexLoader:   NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestResolve_LinesMode_RangeEmitsNegativeOneOffset(t *testing.T) {
 		Lines:       []OffsetOrRange{{Start: 5, End: &end}},
 		IndexLoader: NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestResolve_OffsetsMode_SingleByte(t *testing.T) {
 		AfterContext:  0,
 		IndexLoader:   NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestResolve_OffsetsMode_ByteRange(t *testing.T) {
 		Offsets:     []OffsetOrRange{{Start: 10, End: &end}},
 		IndexLoader: NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestResolve_MultiRange(t *testing.T) {
 		AfterContext:  1,
 		IndexLoader:   NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestResolve_NegativeSingleLine(t *testing.T) {
 		AfterContext:  0,
 		IndexLoader:   NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -221,11 +221,11 @@ func TestResolve_IndexAwareSeek(t *testing.T) {
 	reqNoIdx := reqWithIdx
 	reqNoIdx.IndexLoader = NoIndex
 
-	respA, err := Resolve(reqWithIdx)
+	respA, err := Resolve(t.Context(), reqWithIdx)
 	if err != nil {
 		t.Fatalf("with index: %v", err)
 	}
-	respB, err := Resolve(reqNoIdx)
+	respB, err := Resolve(t.Context(), reqNoIdx)
 	if err != nil {
 		t.Fatalf("no index: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestResolve_NegativeByteOffset(t *testing.T) {
 		AfterContext:  0,
 		IndexLoader:   NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}

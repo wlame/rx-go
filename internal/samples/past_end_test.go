@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 )
 
 // A position past the end of the file is asked-but-unknown, which the
@@ -33,7 +35,7 @@ func pastEndFixture(t *testing.T) (path string, size int64) {
 func TestPastEnd_LineNumberIsUnknownRatherThanClamped(t *testing.T) {
 	path, _ := pastEndFixture(t)
 
-	resp, err := Resolve(Request{
+	resp, err := Resolve(t.Context(), Request{
 		Path:        path,
 		Lines:       []OffsetOrRange{{Start: 99}},
 		IndexLoader: NoIndex,
@@ -58,7 +60,7 @@ func TestPastEnd_ByteOffsetIsUnknownRatherThanClamped(t *testing.T) {
 		t.Fatalf("fixture is %d bytes; the key below assumes 6", size)
 	}
 
-	resp, err := Resolve(Request{
+	resp, err := Resolve(t.Context(), Request{
 		Path:        path,
 		Offsets:     []OffsetOrRange{{Start: past}},
 		IndexLoader: NoIndex,
@@ -81,7 +83,7 @@ func TestPastEnd_ByteOffsetIsUnknownRatherThanClamped(t *testing.T) {
 func TestPastEnd_ValidPositionsInTheSameRequestSurvive(t *testing.T) {
 	path, size := pastEndFixture(t)
 
-	lines, err := Resolve(Request{
+	lines, err := Resolve(t.Context(), Request{
 		Path:          path,
 		Lines:         []OffsetOrRange{{Start: 2}, {Start: 99}},
 		BeforeContext: 0,
@@ -101,7 +103,7 @@ func TestPastEnd_ValidPositionsInTheSameRequestSurvive(t *testing.T) {
 		t.Errorf("lines[99]: got %d, want -1", lines.Lines["99"])
 	}
 
-	offsets, err := Resolve(Request{
+	offsets, err := Resolve(t.Context(), Request{
 		Path:          path,
 		Offsets:       []OffsetOrRange{{Start: 2}, {Start: size + 100}},
 		BeforeContext: 0,
@@ -123,7 +125,7 @@ func TestPastEnd_ValidPositionsInTheSameRequestSurvive(t *testing.T) {
 func TestPastEnd_TheBoundaryItselfIsAnswered(t *testing.T) {
 	path, size := pastEndFixture(t)
 
-	lines, err := Resolve(Request{
+	lines, err := Resolve(t.Context(), Request{
 		Path: path, Lines: []OffsetOrRange{{Start: 3}}, IndexLoader: NoIndex,
 	})
 	if err != nil {
@@ -133,7 +135,7 @@ func TestPastEnd_TheBoundaryItselfIsAnswered(t *testing.T) {
 		t.Error("the last line reported as past the end")
 	}
 
-	offsets, err := Resolve(Request{
+	offsets, err := Resolve(t.Context(), Request{
 		Path: path, Offsets: []OffsetOrRange{{Start: size - 1}}, IndexLoader: NoIndex,
 	})
 	if err != nil {
@@ -141,5 +143,26 @@ func TestPastEnd_TheBoundaryItselfIsAnswered(t *testing.T) {
 	}
 	if offsets.Offsets["5"] != 3 {
 		t.Errorf("the last byte resolved to line %d, want 3", offsets.Offsets["5"])
+	}
+}
+
+// The line after the last of a file that ends with a line break is not
+// a line: asked with context, its sample is the context it reaches and
+// its offset is -1, on the plain file and on its gzip copy alike.
+func TestPastEnd_TheLineAfterTheLastHasNoOffset(t *testing.T) {
+	path, _ := pastEndFixture(t)
+	gz := path + ".gz"
+	writeFile(t, gz, compressedcopy.Encode(t, compressedcopy.Gzip, []byte("a\nb\nc\n")))
+	for _, p := range []string{path, gz} {
+		resp, err := Resolve(t.Context(), Request{Path: p, Lines: []OffsetOrRange{{Start: 4}}, BeforeContext: 1, IndexLoader: NoIndex})
+		if err != nil {
+			t.Fatalf("%s: Resolve: %v", p, err)
+		}
+		if got := resp.Lines["4"]; got != -1 {
+			t.Errorf("%s: lines[4] = %d, want -1", filepath.Base(p), got)
+		}
+		if got := resp.Samples["4"]; len(got) != 1 || got[0] != "c" {
+			t.Errorf("%s: samples[4] = %q, want the context line c", filepath.Base(p), got)
+		}
 	}
 }

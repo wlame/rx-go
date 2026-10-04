@@ -49,11 +49,11 @@ func TestResolve_IgnoresAnIndexBuiltFromAnotherFile(t *testing.T) {
 			withIndex.IndexLoader = loader
 			noIndex.IndexLoader = NoIndex
 
-			got, err := Resolve(withIndex)
+			got, err := Resolve(t.Context(), withIndex)
 			if err != nil {
 				t.Fatalf("Resolve with the other index: %v", err)
 			}
-			want, err := Resolve(noIndex)
+			want, err := Resolve(t.Context(), noIndex)
 			if err != nil {
 				t.Fatalf("Resolve without an index: %v", err)
 			}

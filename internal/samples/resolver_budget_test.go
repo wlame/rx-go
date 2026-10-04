@@ -17,6 +17,7 @@
 package samples
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -396,7 +397,7 @@ func TestBudget_FullResolverFlow_LinesRange(t *testing.T) {
 		},
 		IndexLoader: NoIndex,
 	}
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -452,7 +453,7 @@ func TestBudget_ManyOffsets_OnePassOverTheFile(t *testing.T) {
 	}
 
 	counter := withCountingOpen(t)
-	resp, err := Resolve(Request{Path: path, Offsets: spec, IndexLoader: NoIndex})
+	resp, err := Resolve(t.Context(), Request{Path: path, Offsets: spec, IndexLoader: NoIndex})
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -473,4 +474,34 @@ func TestBudget_ManyOffsets_OnePassOverTheFile(t *testing.T) {
 			read, size, float64(read)/float64(size))
 	}
 	t.Logf("read %d bytes for a %d byte file resolving %d offsets", read, size, len(spec))
+}
+
+// readLinesWithTarget reads lines startLine..endLine of a plain file
+// through the lines pass, with idx's checkpoints when idx is not nil,
+// and returns them, where each starts, and where targetLine starts (-1
+// when the pass does not reach it, or for targetLine 0).
+func readLinesWithTarget(
+	src paths.Pinned, startLine, endLine, targetLine int64,
+	idx *rxtypes.UnifiedFileIndex,
+) ([]string, []int64, int64, error) {
+	w := &wantedLines{first: startLine, last: endLine, target: targetLine, from: startLine, to: endLine, targetOffset: -1}
+	if targetLine > 0 {
+		w.from, w.to = min(startLine, targetLine), max(endLine, targetLine)
+	}
+	err := readWantedLines(context.Background(), plainLines{src: src, idx: idx}, []*wantedLines{w})
+	return w.lines, w.starts, w.targetOffset, err
+}
+
+// readLineRangeWithIndex reads lines startLine..endLine of a plain file
+// through the lines pass.
+func readLineRangeWithIndex(src paths.Pinned, startLine, endLine int64, idx *rxtypes.UnifiedFileIndex) ([]string, []int64, error) {
+	lines, starts, _, err := readLinesWithTarget(src, startLine, endLine, 0, idx)
+	return lines, starts, err
+}
+
+// readLineRange reads lines startLine..endLine of a plain file without
+// an index and returns where startLine starts.
+func readLineRange(src paths.Pinned, startLine, endLine int64) ([]string, int64, error) {
+	lines, _, offset, err := readLinesWithTarget(src, startLine, endLine, startLine, nil)
+	return lines, offset, err
 }

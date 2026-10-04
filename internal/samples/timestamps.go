@@ -3,6 +3,7 @@ package samples
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -31,8 +32,10 @@ var ErrNoTimeFormat = errors.New("no timestamp format recognized in the first 1 
 var ErrTooManyTimestamps = errors.New("too many timestamp values")
 
 // MaxTimestampValues is the most time queries one request may hold.
-// Each costs a search of up to one index step, so the bound keeps the
-// reading one request can ask for proportional to what it gets back.
+// The searches for all of them share their passes (one pass from the
+// start without an index, a pass of at most one index step per
+// checkpoint with one), and their lines are read in one more pass, so
+// the bound limits the work per pass, not the number of passes.
 const MaxTimestampValues = 1000
 
 // IsUsageError reports whether err, from Resolve, is a mistake in the
@@ -217,7 +220,7 @@ func resolveTimestamps(req Request, kind filekind.Kind, times *fileTimes, resp *
 		resolved[i] = r
 		bounds = append(bounds, searchBoundsOf(r)...)
 	}
-	found, err := times.searchBounds(text, bounds)
+	found, err := times.searchBounds(req.context(), text, bounds)
 	if err != nil {
 		return err
 	}
@@ -357,7 +360,7 @@ func (t *fileTimes) resolveContext(req Request, kind filekind.Kind, text textSou
 		return c, nil
 	}
 
-	found, err := t.searchBounds(text, []int64{math.MinInt64})
+	found, err := t.searchBounds(req.context(), text, []int64{math.MinInt64})
 	if err != nil {
 		return c, err
 	}
@@ -403,7 +406,7 @@ func hasWallEndpoint(q timestamps.Query) bool {
 // compressed file (gzip, bzip2, xz, plain zstd) is decompressed from
 // its first byte whatever the checkpoint, so all its bounds share one
 // pass, from the earliest start.
-func (t *fileTimes) searchBounds(text textSource, bounds []int64) (map[int64]lineAt, error) {
+func (t *fileTimes) searchBounds(ctx context.Context, text textSource, bounds []int64) (map[int64]lineAt, error) {
 	found := make(map[int64]lineAt, len(bounds))
 	groups := map[int64][]int64{}
 	for _, bound := range bounds {
@@ -423,7 +426,7 @@ func (t *fileTimes) searchBounds(text textSource, bounds []int64) (map[int64]lin
 	}
 	sort.Slice(starts, func(i, j int) bool { return starts[i] < starts[j] })
 	for _, start := range starts {
-		if err := t.searchFrom(text, start, groups[start], found); err != nil {
+		if err := t.searchFrom(ctx, text, start, groups[start], found); err != nil {
 			return nil, err
 		}
 	}
@@ -470,7 +473,7 @@ func (t *fileTimes) searchStart(bound int64) int64 {
 // A line answers every pending bound its own timestamp reaches. The
 // bounds are kept sorted, so those are a prefix of them, and a line
 // costs one comparison however many bounds are pending.
-func (t *fileTimes) searchFrom(text textSource, start int64, bounds []int64, found map[int64]lineAt) error {
+func (t *fileTimes) searchFrom(ctx context.Context, text textSource, start int64, bounds []int64, found map[int64]lineAt) error {
 	pending := append([]int64(nil), bounds...)
 	sort.Slice(pending, func(i, j int) bool { return pending[i] < pending[j] })
 	cursor, err := text.openNear(start, 0)
@@ -479,7 +482,7 @@ func (t *fileTimes) searchFrom(text textSource, start int64, bounds []int64, fou
 	}
 	defer func() { _ = cursor.close() }()
 
-	lines := newStampReader(cursor, t.parser, searchBufferBytes(t.section != nil))
+	lines := newStampReader(withContext(ctx, cursor), t.parser, searchBufferBytes(t.section != nil))
 	for number := cursor.line; len(pending) > 0; number++ {
 		stamp, ok, length, err := lines.next()
 		if err != nil {
@@ -583,7 +586,7 @@ func contentEndOf(b []byte) int {
 // that reading such a file without an index always has.
 func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp, error) {
 	if !readsByPosition(kind) {
-		return t.lastStampOfStream(req.Source, kind.Format)
+		return t.lastStampOfStream(req.context(), req.Source, kind.Format)
 	}
 	f, err := openFileForSamples(req.Source)
 	if err != nil {
@@ -594,11 +597,11 @@ func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp
 	if !ok {
 		return timestamps.Stamp{}, fmt.Errorf("read the end of %s: the file cannot be read by position", req.Source.Path())
 	}
-	text, size, err := textByPosition(file, kind)
+	text, size, err := textByPosition(req.context(), file, kind)
 	if err != nil {
 		return timestamps.Stamp{}, err
 	}
-	stamp, found, err := lastStampFromEnd(text, size, t.parser)
+	stamp, found, err := lastStampFromEnd(req.context(), text, size, t.parser)
 	if err == nil && !found {
 		err = fmt.Errorf("%s: no timestamped line found reading back from the end", req.Source.Path())
 	}
@@ -607,7 +610,7 @@ func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp
 
 // textByPosition returns the text of file, a plain or seekable zstd
 // file, as a reader by position, and the text's length.
-func textByPosition(file positionalFile, kind filekind.Kind) (io.ReaderAt, int64, error) {
+func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind) (io.ReaderAt, int64, error) {
 	if !kind.IsCompressed() {
 		info, err := file.Stat()
 		if err != nil {
@@ -620,7 +623,7 @@ func textByPosition(file positionalFile, kind filekind.Kind) (io.ReaderAt, int64
 	if len(frames) > 0 {
 		size = frames[len(frames)-1].DecompressedEnd()
 	}
-	return &seekableTextAt{file: file, table: kind.Table, decoder: seekable.NewDecoder()}, size, nil
+	return &seekableTextAt{ctx: ctx, file: file, table: kind.Table, decoder: seekable.NewDecoder()}, size, nil
 }
 
 // seekableTextAt reads a seekable zstd file's text by position. It
@@ -635,6 +638,8 @@ func textByPosition(file positionalFile, kind filekind.Kind) (io.ReaderAt, int64
 // It holds at most two decoded frames, each as long as the seek table
 // says (the decoder refuses a frame that decodes to another length).
 type seekableTextAt struct {
+	// ctx is checked before each frame is decoded.
+	ctx     context.Context
 	file    io.ReaderAt
 	table   *seekable.SeekTable
 	decoder *seekable.Decoder
@@ -682,6 +687,9 @@ func (s *seekableTextAt) frame(index int) ([]byte, error) {
 			return kept.data, nil
 		}
 	}
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
 	data, err := decodeFrameAt(s.decoder, s.file, index, s.table)
 	if err != nil {
 		return nil, err
@@ -692,13 +700,13 @@ func (s *seekableTextAt) frame(index int) ([]byte, error) {
 
 // lastStampOfStream reads a compressed stream to its end and returns
 // the own timestamp of its last timestamped line.
-func (t *fileTimes) lastStampOfStream(src paths.Pinned, format compression.Format) (timestamps.Stamp, error) {
+func (t *fileTimes) lastStampOfStream(ctx context.Context, src paths.Pinned, format compression.Format) (timestamps.Stamp, error) {
 	cursor, err := streamedText{src: src, format: format}.openAt(0)
 	if err != nil {
 		return timestamps.Stamp{}, err
 	}
 	defer func() { _ = cursor.close() }()
-	lines := newStampReader(cursor, t.parser, 64*1024)
+	lines := newStampReader(withContext(ctx, cursor), t.parser, 64*1024)
 	var last timestamps.Stamp
 	for {
 		stamp, ok, length, err := lines.next()
@@ -722,8 +730,11 @@ func (t *fileTimes) lastStampOfStream(src paths.Pinned, format compression.Forma
 // before start, to tell whether start begins a line, and up to
 // timestamps.WindowBytes after end, the most of a line the parser looks
 // at. The latest line start whose line has a timestamp is the answer.
-func lastStampFromEnd(text io.ReaderAt, size int64, parser *timestamps.Parser) (timestamps.Stamp, bool, error) {
+func lastStampFromEnd(ctx context.Context, text io.ReaderAt, size int64, parser *timestamps.Parser) (timestamps.Stamp, bool, error) {
 	for end := size; end > 0; {
+		if err := ctx.Err(); err != nil {
+			return timestamps.Stamp{}, false, err
+		}
 		start := max(0, end-tailStepBytes)
 		from := max(0, start-1)
 		buf := make([]byte, min(size, end+timestamps.WindowBytes)-from)

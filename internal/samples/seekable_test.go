@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
+	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/seekableindex"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -95,7 +97,7 @@ func TestSeekable_IndexDoesNotChangeTheAnswer(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			indexed, err := Resolve(Request{
+			indexed, err := Resolve(t.Context(), Request{
 				Path: zstPath, Lines: tc.lines,
 				BeforeContext: tc.before, AfterContext: tc.after,
 				IndexLoader: loader,
@@ -103,7 +105,7 @@ func TestSeekable_IndexDoesNotChangeTheAnswer(t *testing.T) {
 			if err != nil {
 				t.Fatalf("indexed: %v", err)
 			}
-			streamed, err := Resolve(Request{
+			streamed, err := Resolve(t.Context(), Request{
 				Path: zstPath, Lines: tc.lines,
 				BeforeContext: tc.before, AfterContext: tc.after,
 				IndexLoader: NoIndex,
@@ -141,14 +143,14 @@ func TestSeekable_MatchesThePlainFile(t *testing.T) {
 	plainPath := zstPath[:len(zstPath)-len(".zst")]
 
 	for _, line := range []int64{1, 2, 1362, 9999, 20000} {
-		fromZst, err := Resolve(Request{
+		fromZst, err := Resolve(t.Context(), Request{
 			Path: zstPath, Lines: []OffsetOrRange{{Start: line}},
 			BeforeContext: 2, AfterContext: 2, IndexLoader: loader,
 		})
 		if err != nil {
 			t.Fatalf("zst line %d: %v", line, err)
 		}
-		fromPlain, err := Resolve(Request{
+		fromPlain, err := Resolve(t.Context(), Request{
 			Path: plainPath, Lines: []OffsetOrRange{{Start: line}},
 			BeforeContext: 2, AfterContext: 2, IndexLoader: NoIndex,
 		})
@@ -175,57 +177,54 @@ func TestSeekable_MatchesThePlainFile(t *testing.T) {
 // the file's size: the frame holding it, and the one before when the
 // line is the first the frame holds, since its head may be there.
 func TestSeekable_OneLineCostsAtMostTwoFrames(t *testing.T) {
-	zstPath, loader, totalBytes := makeIndexedSeekable(t, 50000, 64*1024)
+	zstPath, loader, _ := makeIndexedSeekable(t, 50000, 64*1024)
 
 	idx, err := loader(zstPath)
 	if err != nil {
 		t.Fatalf("loader: %v", err)
 	}
-	frames := *idx.Frames
-	if len(frames) < 8 {
+	if frames := *idx.Frames; len(frames) < 8 {
 		t.Fatalf("fixture produced %d frames; the budget needs several", len(frames))
 	}
-
-	start, end, ok := frameRunFor(frames, 25000, 25000)
-	if !ok {
-		t.Fatal("no run for a line that exists")
+	var decoded atomic.Int64
+	orig := decodeSeekableFrame
+	decodeSeekableFrame = func(d *seekable.Decoder, src paths.Pinned, frame int, table *seekable.SeekTable) ([]byte, error) {
+		decoded.Add(1)
+		return orig(d, src, frame, table)
 	}
-	if got := end - start + 1; got < 1 || got > 2 {
+	t.Cleanup(func() { decodeSeekableFrame = orig })
+
+	resp, err := Resolve(t.Context(), Request{Path: zstPath, Lines: []OffsetOrRange{{Start: 25000}}, IndexLoader: loader})
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got := resp.Samples["25000"]; len(got) != 1 || got[0] != "log line number 25000 with padding to make frames" {
+		t.Fatalf("line 25000: %q", got)
+	}
+	if got := decoded.Load(); got < 1 || got > 2 {
 		t.Errorf("frames decompressed for one line: got %d, want 1 or 2", got)
-	}
-
-	read := frames[end].DecompressedOffset + frames[end].DecompressedSize - frames[start].DecompressedOffset
-	if read >= totalBytes/4 {
-		t.Errorf("reading line 25000 decompresses %d of %d bytes; the frame table should make it a fraction",
-			read, totalBytes)
 	}
 }
 
-func TestSeekable_FrameRunCoversTheWholeRequest(t *testing.T) {
-	_, loader, _ := makeIndexedSeekable(t, 50000, 64*1024)
+// The frame a read for a line starts in is the latest whose first line
+// break comes before the line: the line after that break is at or
+// before the line, and the next frame starts on the line or later.
+func TestSeekable_FrameBeforeLineIsTheLatestThatStartsEarlier(t *testing.T) {
+	zstPath, loader, _ := makeIndexedSeekable(t, 50000, 64*1024)
 	idx, _ := loader("")
+	text, err := seekableTextFor(pinForTest(t, zstPath), idx)
+	if err != nil {
+		t.Fatalf("frame table: %v", err)
+	}
 	frames := *idx.Frames
-
-	cases := []struct{ first, last int64 }{
-		{1, 1}, {1, 5000}, {25000, 25000}, {1361, 1363}, {49000, 50000},
-	}
-	for _, tc := range cases {
-		start, end, ok := frameRunFor(frames, tc.first, tc.last)
-		if !ok {
-			t.Errorf("lines %d..%d: no run", tc.first, tc.last)
-			continue
+	for _, line := range []int64{1, 2, 1361, 1362, 1363, 25000, 49999, 50000, 900000} {
+		frame := text.frameBeforeLine(line)
+		if start := text.lineAfterFirstBreak(frame); start > line {
+			t.Errorf("line %d: frame %d starts its first whole line at %d, after it", line, frame, start)
 		}
-		if frames[start].FirstLine > tc.first && start > 0 {
-			t.Errorf("lines %d..%d: run starts at line %d, too late", tc.first, tc.last, frames[start].FirstLine)
+		if frame+1 < len(frames) && frames[frame+1].FirstLine < line {
+			t.Errorf("line %d: frame %d, but frame %d also starts before it", line, frame, frame+1)
 		}
-		if frames[end].LastLine < tc.last && end < len(frames)-1 {
-			t.Errorf("lines %d..%d: run ends at line %d, too early", tc.first, tc.last, frames[end].LastLine)
-		}
-	}
-
-	// A line past the end of the file has no run at all.
-	if _, _, ok := frameRunFor(frames, 900000, 900000); ok {
-		t.Error("a line past the end of the file produced a frame run")
 	}
 }
 
@@ -254,7 +253,7 @@ func TestPlainFile_TrailingNewlineIsNotAnExtraLine(t *testing.T) {
 				t.Fatalf("write: %v", err)
 			}
 
-			resp, err := Resolve(Request{
+			resp, err := Resolve(t.Context(), Request{
 				Path:          path,
 				Lines:         []OffsetOrRange{{Start: 3}},
 				BeforeContext: 2,

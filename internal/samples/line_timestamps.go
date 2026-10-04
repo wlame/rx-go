@@ -167,6 +167,9 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 	covered := int64(-1)
 	var buf []byte
 	for _, start := range asks {
+		if err := req.context().Err(); err != nil {
+			return nil, err
+		}
 		from := max(0, start-lookback)
 		if from <= covered {
 			from = covered
@@ -243,7 +246,7 @@ func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error,
 		if err != nil {
 			return nil, nil, err
 		}
-		return &forwardTextAt{r: cursor}, cursor.close, nil
+		return &forwardTextAt{r: withContext(req.context(), cursor)}, cursor.close, nil
 	}
 	f, err := openFileForSamples(req.Source)
 	if err != nil {
@@ -254,7 +257,7 @@ func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error,
 		_ = f.Close()
 		return nil, nil, fmt.Errorf("read back in %s: the file cannot be read by position", req.Source.Path())
 	}
-	text, _, err := textByPosition(file, kind)
+	text, _, err := textByPosition(req.context(), file, kind)
 	if err != nil {
 		_ = f.Close()
 		return nil, nil, err

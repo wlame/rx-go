@@ -313,11 +313,44 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 		s.frames[holding].FirstLine-s.frames[start].FirstLine-1 < int64(before)) {
 		start--
 	}
-	if start == 0 {
+	return s.cursorAtFrame(start)
+}
+
+// frameBeforeLine returns the frame a read for `line` starts in: the
+// last frame whose first byte lies on a line before `line` and that
+// holds a line break, or frame 0. A frame's FirstLine is the line
+// holding its first byte, so the line after that frame's first break,
+// FirstLine+1, is at or before `line`.
+func (s *seekableText) frameBeforeLine(line int64) int {
+	// sort.Search returns the first frame starting on line `line` or
+	// later; the frame before it is the last one starting earlier.
+	frame := sort.Search(len(s.frames), func(i int) bool {
+		return s.frames[i].FirstLine >= line
+	}) - 1
+	for frame > 0 && endsNoLine(s.frames[frame]) {
+		frame--
+	}
+	return max(frame, 0)
+}
+
+// lineAfterFirstBreak is the number of the line cursorAtFrame(frame)
+// starts at.
+func (s *seekableText) lineAfterFirstBreak(frame int) int64 {
+	if frame == 0 {
+		return 1
+	}
+	return s.frames[frame].FirstLine + 1
+}
+
+// cursorAtFrame returns the text from the first line start in frame:
+// the frame's first byte for frame 0, else the byte after its first line
+// break. A frame's first bytes can be the tail of a line that began in
+// an earlier frame, so a frame start is not known to be a line start.
+func (s *seekableText) cursorAtFrame(frame int) (*textCursor, error) {
+	if frame == 0 {
 		return s.cursorFrom(0, nil, 0, 1), nil
 	}
-
-	data, err := decodeSeekableFrame(s.decoder, s.src, start, s.table)
+	data, err := decodeSeekableFrame(s.decoder, s.src, frame, s.table)
 	if err != nil {
 		return nil, err
 	}
@@ -325,11 +358,11 @@ func (s *seekableText) openNear(offset int64, before int) (*textCursor, error) {
 	if lineBreak < 0 {
 		// The table said this frame ends a line, so it is a frame table
 		// that does not describe the file.
-		return nil, fmt.Errorf("frame %d of %s holds no line break", start, s.src.Path())
+		return nil, fmt.Errorf("frame %d of %s holds no line break", frame, s.src.Path())
 	}
 	rest := data[lineBreak+1:]
-	offsetAfter := s.frames[start].DecompressedOffset + int64(lineBreak) + 1
-	return s.cursorFrom(start+1, rest, offsetAfter, s.frames[start].FirstLine+1), nil
+	offsetAfter := s.frames[frame].DecompressedOffset + int64(lineBreak) + 1
+	return s.cursorFrom(frame+1, rest, offsetAfter, s.lineAfterFirstBreak(frame)), nil
 }
 
 // endsNoLine reports whether a frame holds no line break: it lies inside
