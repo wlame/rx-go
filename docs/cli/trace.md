@@ -159,8 +159,9 @@ once per pattern, each with that pattern's own `submatches`: the lines
 and submatches a pattern gets are exactly the ones a search for it alone
 gives, whatever the other patterns are and in whichever order they
 come. ripgrep decides this too: it reports only that some pattern
-matched, so each pattern is run again alone over the matched lines
-(never the whole file). More efficient than three separate invocations
+matched, so each pattern is run again alone over the matched lines, not
+the whole file; only a line longer than `RX_MAX_LINE_TEXT_BYTES` is read
+again from the file for it. More efficient than three separate invocations
 because the file is scanned once.
 
 ### ripgrep's matching flags
