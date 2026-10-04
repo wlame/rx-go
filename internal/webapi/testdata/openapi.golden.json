@@ -4027,7 +4027,7 @@
                 }
               }
             },
-            "description": "A task for the same path is already running; task_id names it"
+            "description": "The scan task of the same directory was cancelled and its worker has not stopped yet (status cancelling); task_id names it. Ask again once it has ended. A scan of the same file or directory that is running is joined (202), not refused."
           },
           "422": {
             "content": {

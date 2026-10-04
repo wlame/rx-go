@@ -335,12 +335,19 @@ func joinedScan(validated string, running *tasks.Task) *findingsScanOutput {
 }
 
 // findingsScanResponses declares the answers of POST /v1/findings: the
-// error answers, and the 503 of a scan past maxUnfinishedScans with its
-// Retry-After header. The shared 503 description is about ripgrep,
-// which this route does not run.
+// error answers, the 409 of a directory whose cancelled task has not
+// stopped, and the 503 of a scan past maxUnfinishedScans with its
+// Retry-After header. The shared 409 sentence speaks of a task already
+// running, which this route joins instead of refusing, and the shared
+// 503 sentence is about ripgrep, which this route does not run.
 func findingsScanResponses(api huma.API) map[string]*huma.Response {
 	responses := errorResponses(api, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound,
 		http.StatusConflict, http.StatusUnprocessableEntity)
+	// errorResponses builds a new Response for each status on every call,
+	// so changing this one's description touches no other operation.
+	responses[strconv.Itoa(http.StatusConflict)].Description = "The scan task of the same directory was cancelled " +
+		"and its worker has not stopped yet (status cancelling); task_id names it. Ask again once it has ended. " +
+		"A scan of the same file or directory that is running is joined (202), not refused."
 	envelope := api.OpenAPI().Components.Schemas.Schema(reflect.TypeOf(apiError{}), true, "ApiError")
 	full := jsonResponse(fmt.Sprintf("No task started: %d signature scans are queued or running, as many as the "+
 		"server holds. Ask again once one has ended.", maxUnfinishedScans), envelope)

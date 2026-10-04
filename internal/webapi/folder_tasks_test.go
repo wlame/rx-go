@@ -540,6 +540,21 @@ func TestFindingsFolderTask_APostWithEveryScanPlaceTakenWhileItIsCancellingAnswe
 	f.awaitStatus(t, task.TaskID, "cancelled")
 }
 
+// The OpenAPI document describes the 409 of POST /v1/findings as what it
+// is: the answer for a directory whose cancelled scan has not stopped
+// yet. A running scan of the same path is joined, never refused, so the
+// shared sentence about a task "already running" does not apply here.
+func TestFindingsScan_The409DescribesACancellingDirectory(t *testing.T) {
+	doc := NewServer(Config{AppVersion: "findings-409-test"}).API().OpenAPI()
+	response := doc.Paths["/v1/findings"].Post.Responses[strconv.Itoa(http.StatusConflict)]
+	if response == nil {
+		t.Fatal("POST /v1/findings declares no 409")
+	}
+	if strings.Contains(response.Description, "already running") || !strings.Contains(response.Description, "cancelled") {
+		t.Errorf("the 409 of POST /v1/findings reads %q", response.Description)
+	}
+}
+
 // The lists of a folder task's result stop at 1000 entries each while
 // their counts stay exact: 1001 files below the index threshold give
 // skipped 1001 and 1000 skipped_files, and 1001 files whose build fails
