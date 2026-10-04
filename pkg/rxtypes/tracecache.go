@@ -2,9 +2,10 @@ package rxtypes
 
 // TraceCacheMatch is a single cached match entry on disk.
 //
-// Minimal representation: enough information to reconstruct a full Match
-// on cache hit by re-reading the source line (via the index) and re-running
-// the patterns against LineText.
+// Minimal representation: enough information to rebuild a full Match on
+// a cache hit by reading the source line again at Offset. The line text
+// and its number come from the file; the submatches come from the spans
+// stored here, never from running the pattern again.
 //
 // FrameIndex is present only for seekable-zstd caches; for regular
 // files it's omitted from the JSON entirely (pointer + ,omitempty).
@@ -16,6 +17,13 @@ type TraceCacheMatch struct {
 	Offset       int64 `json:"offset"`
 	LineNumber   int64 `json:"line_number"`
 	FrameIndex   *int  `json:"frame_index,omitempty"`
+	// Submatches are the [start, end) byte positions, in the line's own
+	// bytes, of every span ripgrep reported for this match's pattern on
+	// the line, in ripgrep's order (by start). The list is complete: a
+	// scan that left a span out is not cached. It is written as [] when
+	// there is none; null (or no key) marks an entry written before the
+	// spans were stored, which a reader treats as a miss.
+	Submatches [][2]int `json:"submatches"`
 }
 
 // TraceCacheData is the full on-disk schema for a trace-cache file.

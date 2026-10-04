@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
-	"regexp/syntax"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -38,7 +36,6 @@ type ReconstructRequest struct {
 	Cached        []rxtypes.TraceCacheMatch
 	Patterns      []string
 	FileID        string
-	RgExtraArgs   []string
 	ContextBefore int
 	ContextAfter  int
 	UseIndex      bool
@@ -52,9 +49,11 @@ type ReconstructRequest struct {
 // ReconstructFromCache rebuilds full matches and their context lines
 // from the minimal records a trace cache holds.
 //
-// The cache stores only (pattern_index, offset, line_number) per match.
-// The line text, the submatches and the surrounding lines have to come
-// from the source again, and the byte offset is what addresses them.
+// The cache stores (pattern_index, offset, line_number) and the
+// submatch spans per match. The line text, the submatch text and the
+// surrounding lines come from the source again, and the byte offset is
+// what addresses them. The spans are ripgrep's own, as the scan that
+// wrote the entry found them, so no pattern runs again here.
 // The offset is also the only field that cannot be stale: the cache is
 // keyed on the source's size and mtime, so an offset still points at
 // the same bytes, while a stored line number is only as good as the
@@ -95,7 +94,6 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 	}
 	defer func() { _ = src.close() }()
 
-	flags := matchFlagsFrom(req.RgExtraArgs)
 	limits := currentEventLimits()
 	var lineBuf []byte // reused by every line read
 	matches := make([]rxtypes.Match, 0, len(cached))
@@ -163,11 +161,16 @@ func reconstructLines(req ReconstructRequest) ([]rxtypes.Match, []rxtypes.Contex
 			}
 			emitted[line] = true
 			ends[pos] = end
-			read := readLine{text: text, cut: cut, number: line}
+			// lineBuf is reused for the next line, so read.raw is only
+			// valid until then; matchFromCached copies what it keeps.
+			read := readLine{text: text, raw: lineBuf, cut: cut, number: line}
 			for _, cm := range cached[first:next] {
-				m, mErr := matchFromCached(cm, read, req, flags, limits.submatches)
+				// A record the line cannot answer fails the whole pass,
+				// so the file is reported rather than answered without a
+				// match the scan had.
+				m, mErr := matchFromCached(cm, read, req, limits.submatches)
 				if mErr != nil {
-					continue
+					return matches, ctxLines, ends, fmt.Errorf("reconstruct %s: %w", req.Source.Path(), mErr)
 				}
 				matches = append(matches, m)
 			}
@@ -207,32 +210,38 @@ func contextReachPastLastMatch(after int) int {
 }
 
 // readLine is a line a reconstruction pass read: its text as an answer
-// reports it (cut at the line text limit when longer), whether it was
-// cut, and its number.
+// reports it (cut at the line text limit when longer), the bytes
+// readBoundedLine kept (the whole line with its break, or, for a cut
+// line, at least its first limit bytes), whether it was cut, and its
+// number.
 type readLine struct {
 	text   string
+	raw    []byte
 	cut    bool
 	number int
 }
 
 // matchFromCached turns one cached record plus the line it points into
-// into a full match. Submatches are found in the text the line keeps and
-// capped at maxSubmatches; like a scan's, the list is marked as possibly
-// incomplete when it hit the cap or the line was cut.
+// into a full match, with the submatches the record's spans name (see
+// submatchesFromSpans). It fails when the record names a pattern the
+// search does not have or a span the line cannot hold, which only an
+// edited entry or a file changed behind an unchanged identity can give.
 func matchFromCached(
 	cm rxtypes.TraceCacheMatch,
 	line readLine,
 	req ReconstructRequest,
-	flags matchFlags,
 	maxSubmatches int,
 ) (rxtypes.Match, error) {
 	if cm.PatternIndex < 0 || cm.PatternIndex >= len(req.Patterns) {
 		return rxtypes.Match{}, fmt.Errorf(
-			"reconstruct: pattern_index %d out of range (have %d patterns)",
+			"pattern_index %d out of range (have %d patterns)",
 			cm.PatternIndex, len(req.Patterns))
 	}
+	subs, dropped, err := submatchesFromSpans(cm.Submatches, line, maxSubmatches)
+	if err != nil {
+		return rxtypes.Match{}, fmt.Errorf("the record at offset %d: %w", cm.Offset, err)
+	}
 	lineText := line.text
-	subs, capped := submatchesFromPattern(req.Patterns[cm.PatternIndex], line.text, flags, maxSubmatches)
 	return rxtypes.Match{
 		Pattern:             fmt.Sprintf("p%d", cm.PatternIndex+1),
 		File:                req.FileID,
@@ -242,7 +251,7 @@ func matchFromCached(
 		LineText:            &lineText,
 		Submatches:          subs,
 		LineTextTruncated:   line.cut,
-		SubmatchesTruncated: capped || line.cut,
+		SubmatchesTruncated: dropped,
 	}, nil
 }
 
@@ -403,35 +412,58 @@ func (r *lineRing) lines() []ringLine {
 // Submatches
 // ============================================================================
 
-// submatchesFromPattern re-runs the pattern against the line and returns
-// the byte positions of its first max hits, sorted by start, and
-// whether there were more.
+// submatchesFromSpans builds a match's submatches from the spans its
+// cache record stores, under the bounds in force, exactly as the scan's
+// parser bounds ripgrep's list (eventScanner.boundedSubmatches):
 //
-// The pattern is compiled by compileLikeRipgrep, so a rebuilt submatch
-// covers the text rg matched under the request's -i, -w, -x and -F
-// wherever Go's regexp agrees with ripgrep's. A pattern Go cannot
-// compile (PCRE2 under -P) yields no submatches; the match itself is
-// still reported, because the cache recorded which pattern it was.
-func submatchesFromPattern(pattern, line string, flags matchFlags, maxHits int) ([]rxtypes.Submatch, bool) {
-	re, err := compileLikeRipgrep(pattern, flags)
-	if err != nil {
-		return nil, false
-	}
-	// One hit past the cap says whether the cap left any out.
-	locs := re.FindAllStringIndex(line, maxHits+1)
-	capped := len(locs) > maxHits
-	if capped {
-		locs = locs[:maxHits]
-	}
-	subs := make([]rxtypes.Submatch, 0, len(locs))
-	for _, l := range locs {
-		subs = append(subs, rxtypes.Submatch{
-			Text:  line[l[0]:l[1]],
-			Start: l[0],
-			End:   l[1],
+//   - on a cut line only the spans that start inside the kept text stay,
+//     and one that runs past the cut keeps its true start and end and
+//     the part of its bytes the kept text holds;
+//   - at most maxSubmatches spans stay;
+//   - the list is marked as possibly incomplete when a span was left out
+//     or the line was cut, whether or not a span was left out.
+//
+// A span's text is the line's own bytes from start to end, its break
+// included, which is where a `\r$` span on a CRLF line lies. The entry
+// was written under bounds that left no span out (a scan that did is not
+// cached), so a hit under bounds as high or higher answers the scan's
+// list whole, and under lower ones the list a scan under them gives.
+//
+// The work is bounded by maxSubmatches spans per record, whatever the
+// record holds, and the text copied by the line's kept bytes, since an
+// entry's spans do not overlap (checkSubmatchSpans). A span the kept
+// bytes cannot hold is an error.
+func submatchesFromSpans(spans [][2]int, line readLine, maxSubmatches int) ([]rxtypes.Submatch, bool, error) {
+	dropped := line.cut
+	// Never nil: a scan's match carries [] when ripgrep reported no span,
+	// and the hit must encode the same.
+	out := make([]rxtypes.Submatch, 0, min(len(spans), maxSubmatches))
+	for _, span := range spans {
+		start, end := span[0], span[1]
+		// Spans come by start, so the first one left out ends the list.
+		if line.cut && start >= len(line.text) {
+			dropped = true
+			break
+		}
+		if len(out) == maxSubmatches {
+			dropped = true
+			break
+		}
+		textEnd := end
+		if line.cut {
+			textEnd = min(end, len(line.text))
+		}
+		if start < 0 || textEnd < start || textEnd > len(line.raw) {
+			return nil, false, fmt.Errorf("submatch [%d, %d) lies outside its line of %d bytes", start, end, len(line.raw))
+		}
+		out = append(out, rxtypes.Submatch{
+			// string() copies, so the text outlives the reused buffer.
+			Text:  string(line.raw[start:textEnd]),
+			Start: start,
+			End:   end,
 		})
 	}
-	return subs, capped
+	return out, dropped, nil
 }
 
 // ptrInt helper — returns &v.
@@ -442,54 +474,4 @@ func ptrInt(v int) *int { return &v }
 // override via RX_LARGE_FILE_MB.
 func largeFileThresholdBytes() int64 {
 	return int64(config.LargeFileMB()) * 1024 * 1024
-}
-
-// compileLikeRipgrep compiles pattern into a Go regexp that matches what
-// ripgrep matches under flags.
-//
-//   - -F quotes the pattern, so `foo(` and `a.b` are literal text.
-//   - -x anchors it to the whole line. ripgrep lets -x override -w, and
-//     so does this.
-//   - -w wraps it in `\b`, which agrees with ripgrep for any match that
-//     starts and ends on a word character. ripgrep's own rule also
-//     accepts a match whose edge is not a word character; such a match
-//     fails here and is caught by the caller's never-drop fallback.
-//   - -i adds `(?i)` unless the pattern already sets case folding
-//     itself. Under -F an inline flag is literal text, so -i always
-//     applies.
-//
-// Go's regexp is RE2 syntax and ripgrep's default engine is Rust's
-// `regex` crate, which agree on almost everything; a PCRE2 pattern under
-// -P often fails to compile here, and the caller treats that as "cannot
-// tell", never as "did not match".
-func compileLikeRipgrep(pattern string, flags matchFlags) (*regexp.Regexp, error) {
-	// Decided on the pattern as the caller wrote it, before quoting or
-	// wrapping hides its inline flags.
-	foldCase := flags.has(matchIgnoreCase) &&
-		(flags.has(matchFixedString) || !hasInlineFlag(pattern, syntax.FoldCase))
-
-	if flags.has(matchFixedString) {
-		pattern = regexp.QuoteMeta(pattern)
-	}
-	switch {
-	case flags.has(matchWholeLine):
-		pattern = `^(?:` + pattern + `)$`
-	case flags.has(matchWholeWord):
-		pattern = `\b(?:` + pattern + `)\b`
-	}
-	if foldCase {
-		pattern = "(?i)" + pattern
-	}
-	return regexp.Compile(pattern)
-}
-
-// hasInlineFlag parses the pattern just far enough to see whether it
-// already opts into the given syntax flag. Returns false on parse
-// errors (the regex is broken either way; the caller surfaces that).
-func hasInlineFlag(pattern string, flag syntax.Flags) bool {
-	parsed, err := syntax.Parse(pattern, syntax.Perl)
-	if err != nil {
-		return false
-	}
-	return parsed.Flags&flag != 0
 }

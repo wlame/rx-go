@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -532,7 +533,6 @@ func (e *Engine) RunWithOptions(
 				Cached:        cachedMatches,
 				Patterns:      patterns,
 				FileID:        fileID,
-				RgExtraArgs:   opts.RgExtraArgs,
 				ContextBefore: opts.ContextBefore,
 				ContextAfter:  opts.ContextAfter,
 				UseIndex:      !opts.NoIndex,
@@ -760,17 +760,17 @@ func chunksCutALine(results []ChunkResult) bool {
 	return false
 }
 
-// linesCut reports whether any of the lines holds only part of its text
-// or submatches.
+// linesCut reports whether any of the lines holds only part of its text.
 //
-// Such a scan is not written to the trace cache. A cache hit rebuilds
-// each line from the file and its submatches from the text it keeps, so
-// a submatch that runs past a cut would come back ending at the cut,
-// where the scan reports its true end: a hit would answer differently.
-// The scan is repeated instead.
+// Such a scan is not written to the trace cache. Which patterns a cut
+// line belongs to, and their spans, are decided on the whole line read
+// again from the file (creditPatterns), while a cache hit reads only the
+// text the bounds keep; caching only whole lines keeps the hit's answer
+// the scan's. The scan is repeated instead. Whether a pattern's own
+// submatches were left out is decided after crediting (submatchesLeftOut).
 func linesCut(matches []MatchRaw, contexts []ContextRaw) bool {
 	for _, m := range matches {
-		if m.truncated() {
+		if m.LineTextTruncated {
 			return true
 		}
 	}
@@ -905,7 +905,7 @@ func settleFiles(
 				continue
 			}
 			fileMatches = creditedMatches(o.scanned, fc.lines)
-			if o.scanned.cacheable {
+			if o.scanned.cacheable && !submatchesLeftOut(fileMatches) {
 				toCache[o.path] = o.scanned.cacheEntry
 			}
 		}
@@ -913,6 +913,16 @@ func settleFiles(
 		fireOnFile(ctx, opts.HookFirer, o.path, o.readTime, o.size, len(fileMatches))
 	}
 	return matches, toCache, lost, nil
+}
+
+// submatchesLeftOut reports whether any match leaves some of its
+// pattern's submatches out (more than RX_MAX_SUBMATCHES_PER_LINE on its
+// line). Such a file is not written to the trace cache: an entry stores
+// every span of every match, so a hit can apply any bound and answer as
+// a scan under it. Each match's own flag counts, because a pattern alone
+// can find more spans on a line than all the patterns together.
+func submatchesLeftOut(matches []rxtypes.Match) bool {
+	return slices.ContainsFunc(matches, func(m rxtypes.Match) bool { return m.SubmatchesTruncated })
 }
 
 // creditedMatches builds a scanned file's matches: one per line and
