@@ -94,18 +94,30 @@ or `Tree refresh: off`.
 rx serve --tree-refresh=30
 ```
 
-The viewer reads each loaded (expanded) folder of its files list again
-every 30 seconds while its browser tab is visible, so a file created,
-deleted or grown under the search root shows without a reload, with
-its size, date and findings and index labels. Each refresh is one
-`GET /v1/tree` request per open folder. The server gives the interval
-to the viewer as `tree_refresh_seconds` in
-[`/health`](../api/endpoints/health.md) and does nothing else with it.
+With this setting the viewer reads the open folders of its files list
+again every 30 seconds, so a file created, deleted or grown under the
+search root shows without a reload, with its size, date and findings
+and index labels. The server gives the interval to the viewer as
+`tree_refresh_seconds` in [`/health`](../api/endpoints/health.md) and
+does nothing else with it.
+
+While its browser tab is visible, the viewer reads every open folder
+its files list shows again every N seconds (a folder inside a closed
+one is not read): one `GET /v1/tree` per folder, at most four at once,
+and never a second one for a folder whose listing is still on its way.
+In chain mode, a folder whose files changed also gets one
+`GET /v1/logs/chains`. A round starts only after the last one has
+ended. While the tab is hidden the viewer asks nothing; when the tab
+is shown again, a round that fell due meanwhile runs at once. After a
+round in which a listing failed, the next waits twice as long, then
+twice that, up to 60 seconds (or N, when N is longer); a round that
+succeeds brings the wait back to N.
 
 The value comes from `--tree-refresh`, else `RX_TREE_REFRESH_SECONDS`,
 else 5 seconds. `--tree-refresh=0` (or `RX_TREE_REFRESH_SECONDS=0`)
-turns the refresh off: the list changes only when you open a folder
-again or reload the page. The range is 0 to 3600: a flag outside it
+turns the refresh off: the viewer lists a folder when it first opens
+it and when the page is reloaded; closing a folder and opening it
+again shows the rows it already holds. The range is 0 to 3600: a flag outside it
 exits 2, and a variable outside it is read by the rule of the
 [integer settings](../configuration.md#integer-settings) (the default
 below the minimum, the maximum above it, with a warning).
