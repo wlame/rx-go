@@ -60,10 +60,20 @@ var errClosed = errors.New("read of a closed journal text reader")
 // TextReader is an io.Reader of a journal's text.
 //
 // It renders the entries one at a time into an internal buffer and hands
-// the buffer out through Read, so it holds the text of one entry, the
-// DATA cache and one decoded value at a time, never the whole text. It
-// reads the file only through ReadAt and never closes it. A TextReader is
-// used by one goroutine at a time.
+// the buffer out through Read, so it never holds the whole text. What it
+// holds, at most:
+//   - the text of one entry (256 MiB at most; a buffer above 1 MiB is let
+//     go before the next entry);
+//   - the values of the last entry read, one per field the renderer reads
+//     (seven fields, 128 MiB each at most), kept until the next entry or
+//     Close;
+//   - one value being decoded (128 MiB at most);
+//   - the DATA cache (Options.CacheBytes);
+//   - the zstd decoder that reads the names of other fields, with a window
+//     as large as the largest frame read declares (128 MiB at most).
+//
+// It reads the file only through ReadAt and never closes it. A TextReader
+// is used by one goroutine at a time.
 type TextReader struct {
 	walk   *walker
 	report Report
@@ -197,9 +207,13 @@ func (t *TextReader) firstDamage(entry int64, reason string) {
 // Read returned io.EOF.
 func (t *TextReader) Report() Report { return t.report }
 
-// Close releases the reader's buffers and its DATA cache. It does not
-// close the file. Read fails after Close; Report still answers.
+// Close releases the reader's buffers, its DATA cache and its decoder.
+// It does not close the file. Read fails after Close; Report still
+// answers.
 func (t *TextReader) Close() error {
+	if t.walk != nil {
+		t.walk.close()
+	}
 	t.closed = true
 	t.walk, t.buf = nil, nil
 	return nil

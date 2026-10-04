@@ -260,3 +260,53 @@ func TestTextReader_MessageOf4MiBIn200000LinesReadsInBoundedMemory(t *testing.T)
 		})
 	}
 }
+
+// largeUnreadValueJournal writes n entries that each list one value of
+// 4 MiB, in a field the renderer does not read, and a short message of
+// their own. Compressed, the value takes a few hundred bytes: a value
+// that is cheap to store and costly to decode.
+func largeUnreadValueJournal(tb testing.TB, n int, compression journalfile.Compression) journalfile.Journal {
+	tb.Helper()
+	large := journalfile.Payload("COREDUMP", bytes.Repeat([]byte("A"), 4<<20))
+	entries := make([]journalfile.Entry, n)
+	for i := range entries {
+		entries[i] = journalfile.Entry{
+			Realtime: caseRealtime + uint64(i), // #nosec G115 -- a loop index
+			Payloads: [][]byte{large, journalfile.Payload("MESSAGE", fmt.Appendf(nil, "entry %d", i))},
+		}
+	}
+	return journalfile.Write(tb, entries, journalfile.Options{Compression: compression})
+}
+
+func TestTextReader_DecodesOnlyTheNameOfALargeValueTheRendererDoesNotRead(t *testing.T) {
+	const entries = 100
+	for _, compression := range []journalfile.Compression{journalfile.Zstd, journalfile.XZ} {
+		j := largeUnreadValueJournal(t, entries, compression)
+		if stored := j.Data[0]; stored.StoredAs != compression || stored.Size > 64<<10 {
+			t.Fatalf("the large value is stored as %s in %d bytes", stored.StoredAs, stored.Size)
+		}
+		want := expectedTextOf(j)
+		for _, cacheBytes := range []int64{1 << 20, -1} {
+			t.Run(fmt.Sprintf("%s, cache %d", compression, cacheBytes), func(t *testing.T) {
+				w := &compareWriter{want: want}
+				var tr *TextReader
+				allocated := allocatedBytes(func() {
+					tr = streamText(t, bytes.NewReader(j.Bytes), int64(len(j.Bytes)), Options{CacheBytes: cacheBytes}, w)
+				})
+				w.check(t)
+				// Each entry decodes at most the name of the large value,
+				// 65 bytes; with a cache, the first entry alone does. The
+				// value whole is 4 MiB per entry.
+				if limit := int64(entries * namePrefixBytes); tr.walk.decoded > limit {
+					t.Errorf("decoded %d bytes for %d entries, want at most %d", tr.walk.decoded, entries, limit)
+				}
+				// The zstd decoder holds a window as large as the value's
+				// frame declares (4 MiB here), once for the whole read.
+				if allocated > 16<<20 {
+					t.Errorf("the read allocated %d bytes", allocated)
+				}
+				t.Logf("decoded %d bytes, allocated %d bytes", tr.walk.decoded, allocated)
+			})
+		}
+	}
+}

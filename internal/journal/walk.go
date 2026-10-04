@@ -22,6 +22,8 @@ import (
 	"errors"
 	"io"
 	"math"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // errListDone ends a walk that took every entry the header counts.
@@ -56,6 +58,14 @@ type walker struct {
 	// fields holds the fields of the entry being read; it is reused, so
 	// an Entry from readEntry is valid until the next call.
 	fields []Field
+
+	// zstdNames decodes the names of zstd values (namePrefixReader),
+	// made at the first one; nameBuf receives a name.
+	zstdNames *zstd.Decoder
+	nameBuf   [namePrefixBytes]byte
+	// decoded counts the bytes the decoders gave the walk: names and
+	// whole values. Tests read it.
+	decoded int64
 }
 
 // newWalker returns a walker at the start of the entry list of the
@@ -172,7 +182,7 @@ func checkItems(o object, itemsOffset, width uint64, what objectRef) error {
 // after the last entry read; an item that goes back or stays is damage,
 // and only its own entry is left out. The ENTRY object is checked as
 // systemd's check_object checks it (journal-file.c:983-1024), and every
-// DATA object is read and decoded: a failure of any of them is damage,
+// DATA object is read and checked: a failure of any of them is damage,
 // and the whole entry is left out, since the damaged item could be its
 // MESSAGE.
 //
@@ -214,15 +224,11 @@ func (w *walker) readEntry(offset uint64) (Entry, error) {
 		if err != nil {
 			return Entry{}, err
 		}
-		payload, err := w.payload(dataOffset)
+		field, value, rendered, err := w.dataField(dataOffset)
 		if err != nil {
 			return Entry{}, err
 		}
-		name, value, hasSeparator := bytes.Cut(payload, []byte("="))
-		if !hasSeparator {
-			continue
-		}
-		if field, read := renderedField(name); read {
+		if rendered {
 			picked.value[field], picked.present[field] = value, true
 		}
 	}
@@ -268,16 +274,39 @@ func renderedField(name []byte) (shortField, bool) {
 	return 0, false
 }
 
-// payload returns the decoded payload of the DATA object at offset, from
-// the cache or read and decoded, then cached.
-func (w *walker) payload(offset uint64) ([]byte, error) {
-	if payload, ok := w.cache.get(offset); ok {
-		return payload, nil
+// dataField returns what the DATA object at offset gives the renderer:
+// for a field it reads, the field and its value (rendered is true); for
+// any other field, nothing. The answer comes from the cache, or from
+// readData and is then cached: the payload of a field the renderer
+// reads, or only the fact that the object holds another field, so that
+// such an object is read and its name decoded once.
+func (w *walker) dataField(offset uint64) (field shortField, value []byte, rendered bool, err error) {
+	payload, unread, cached := w.cache.get(offset)
+	if !cached {
+		if payload, err = w.readData(offset); err != nil {
+			return 0, nil, false, err
+		}
+		unread = payload == nil
+		if unread {
+			w.cache.putUnread(offset)
+		} else {
+			w.cache.put(offset, payload)
+		}
 	}
-	payload, err := w.f.readPayload(offset, w.dataProbe)
-	if err != nil {
-		return nil, err
+	if unread {
+		return 0, nil, false, nil
 	}
-	w.cache.put(offset, payload)
-	return payload, nil
+	// readData returns a payload only when its name, before '=', is one
+	// the renderer reads.
+	name, value, _ := bytes.Cut(payload, []byte("="))
+	field, _ = renderedField(name)
+	return field, value, true, nil
+}
+
+// close releases the walker's zstd decoder.
+func (w *walker) close() {
+	if w.zstdNames != nil {
+		w.zstdNames.Close()
+		w.zstdNames = nil
+	}
 }
