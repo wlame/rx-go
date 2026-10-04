@@ -60,9 +60,13 @@ type walker struct {
 	fields []Field
 
 	// zstdNames decodes the names of zstd values (namePrefixReader),
-	// made at the first one; nameBuf receives a name.
-	zstdNames *zstd.Decoder
-	nameBuf   [namePrefixBytes]byte
+	// made at the first one; nameStored holds the stored bytes of the
+	// value a name search reads (nameStoredLimit at most), stored reads
+	// them to the decoder, and nameBuf receives the name.
+	zstdNames  *zstd.Decoder
+	nameStored []byte
+	stored     storedReader
+	nameBuf    [namePrefixBytes]byte
 	// decoded counts the bytes the decoders gave the walk: names and
 	// whole values. Tests read it.
 	decoded int64
