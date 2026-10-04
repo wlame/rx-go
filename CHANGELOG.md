@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reading a seekable zstd file by position (the read back of
+  `line_timestamps`, the read back from the end for a time query)
+  decodes each frame once per answer. The read back for each sample
+  decoded every frame it touched again: 200 samples on a file of 4 MiB
+  frames decoded gigabytes.
 - A time query that reads back from the end of a file for its last
   timestamp reads each line of the tail once. A tail of lines whose
   128th byte was the `\r` of a `\r\n` cost one more 4 KiB read per
