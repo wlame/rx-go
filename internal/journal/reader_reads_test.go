@@ -23,7 +23,9 @@ type objectReads struct {
 	starts []uint64 // object starts, sorted; 0 is the header
 	mu     sync.Mutex
 	calls  map[uint64]int
-	bytes  int64
+	// objectBytes are the bytes of the reads that start in each object.
+	objectBytes map[uint64]int64
+	bytes       int64
 }
 
 // newObjectReads wraps r, the bytes of j, to count its reads by object.
@@ -39,7 +41,7 @@ func newObjectReads(r io.ReaderAt, j journalfile.Journal) *objectReads {
 		starts = append(starts, a.Offset)
 	}
 	slices.Sort(starts)
-	return &objectReads{r: r, starts: starts, calls: map[uint64]int{}}
+	return &objectReads{r: r, starts: starts, calls: map[uint64]int{}, objectBytes: map[uint64]int64{}}
 }
 
 func (o *objectReads) ReadAt(p []byte, off int64) (int, error) {
@@ -47,6 +49,7 @@ func (o *objectReads) ReadAt(p []byte, off int64) (int, error) {
 	// The object the read starts in: the last start at or before off.
 	i := sort.Search(len(o.starts), func(i int) bool { return o.starts[i] > uint64(off) }) - 1 // #nosec G115 -- off is never negative here
 	o.calls[o.starts[i]]++
+	o.objectBytes[o.starts[i]] += int64(len(p))
 	o.bytes += int64(len(p))
 	o.mu.Unlock()
 	return o.r.ReadAt(p, off)
@@ -113,6 +116,13 @@ func TestTextReader_ReadsADataObjectInTwoReadsAndALargeShownValueInThree(t *test
 				}
 				if got := reads.calls[d.Offset]; got < 1 || got > limit {
 					t.Errorf("DATA object at %d (%d bytes, %s) read in %d ReadAt calls, want 1 to %d", d.Offset, d.Size, d.StoredAs, got, limit)
+				}
+				// The reads of an object read each of its bytes once, and
+				// the probe may run past its end: a shown value whose stored
+				// bytes pass the name search's is completed with its rest,
+				// not read again from its start.
+				if got, limit := reads.objectBytes[d.Offset], int64(d.Size)+dataProbeBytes; got > limit { // #nosec G115 -- a small size
+					t.Errorf("the reads of the DATA object at %d (%d bytes, %s) took %d bytes, want at most %d", d.Offset, d.Size, d.StoredAs, got, limit)
 				}
 			}
 			for _, e := range j.Entries {
