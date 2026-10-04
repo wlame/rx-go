@@ -642,6 +642,17 @@ happens at all.
   holds one window of at most 16 MiB and refuses a frame that declares
   more; see
   [Compression](compression.md#how-rx-decides-what-a-file-is)
+- Exhausting the server's memory or its disk with one
+  `GET /v1/samples` (a thousand line ranges open to the end of the
+  file held 34 million lines; a thousand windows near the end read a
+  file a thousand times; logs have lines of megabytes) — blocked by
+  reading every window of a request in one pass, and by counting the
+  lines of an answer and the bytes of their text as they are read:
+  past `RX_SAMPLES_MAX_LINES` (100,000) or `RX_SAMPLES_MAX_BYTES`
+  (256 MiB) the request is refused with `400`, and a line longer than
+  the byte limit is never held whole. A client that disconnects stops
+  the read. `rx samples` on the command line has neither limit; see
+  [`GET /v1/samples`](../api/endpoints/samples.md#answer-over-the-line-or-byte-limit)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - SSRF to internal services via hook URLs — blocked by address-range
