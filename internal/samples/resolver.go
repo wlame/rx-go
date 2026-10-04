@@ -384,7 +384,7 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 	}
 	defer func() { _ = cursor.close() }()
 
-	before := newLineRing(req.BeforeContext)
+	before := newLineRing(req.BeforeContext, req.MaxBytes)
 	lines := newLineReader(withContext(req.context(), cursor), readBufferFor(windows[len(windows)-1].start-cursor.offset))
 	pos, lineNum, next := cursor.offset, cursor.line, 0
 	// active holds the started windows that still want lines, so a line
@@ -418,10 +418,16 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 			w.started, w.line = true, lineNum
 			resp.Offsets[w.key] = lineNum
 			if w.end < 0 {
-				for _, l := range before.lines() {
+				context := before.lines()
+				// The whole context is taken before any of it is used:
+				// a line whose text the ring let go is in a context
+				// that passes the byte limit (lineRing).
+				for _, l := range context {
 					if err := resp.budget.take(l.textBytes); err != nil {
 						return err
 					}
+				}
+				for _, l := range context {
 					w.collect = append(w.collect, l.text)
 					w.starts = append(w.starts, l.start)
 				}
@@ -521,10 +527,22 @@ func checkpointBefore(
 
 // lineRing remembers the last n lines read, which is what a window that
 // reaches backwards needs.
+//
+// SECURITY: it keeps at most byteLimit bytes of their text (0: no
+// limit). The lines are held before any window takes them from the
+// answer's budget, so without this bound before_context lines of up to
+// the byte limit each would be in memory at once. When a new line pushes
+// the text past the limit, the oldest lines' text is let go; their
+// sizes stay. A window that later starts includes, with such a line,
+// every newer line that was in the ring when it was let go, so taking
+// the window's context from the budget passes the limit before any of
+// it is used (resolveOffsets takes the whole context first).
 type lineRing struct {
-	buf  []ringLine
-	next int
-	size int
+	buf       []ringLine
+	next      int
+	size      int
+	byteLimit int64
+	keptBytes int64
 }
 
 // ringLine is one remembered line: its text and where it starts in the
@@ -537,21 +555,33 @@ type ringLine struct {
 	textBytes int64
 }
 
-func newLineRing(n int) *lineRing {
+// newLineRing returns a ring of the last n lines that keeps at most
+// byteLimit bytes of their text (0: no limit).
+func newLineRing(n int, byteLimit int64) *lineRing {
 	if n < 0 {
 		n = 0
 	}
-	return &lineRing{buf: make([]ringLine, n)}
+	return &lineRing{buf: make([]ringLine, n), byteLimit: byteLimit}
 }
 
+// push remembers line, forgetting the oldest line when the ring is full
+// and the oldest lines' text when the text kept passes the byte limit.
 func (r *lineRing) push(line ringLine) {
 	if len(r.buf) == 0 {
 		return
 	}
+	r.keptBytes -= int64(len(r.buf[r.next].text))
 	r.buf[r.next] = line
+	r.keptBytes += int64(len(line.text))
 	r.next = (r.next + 1) % len(r.buf)
 	if r.size < len(r.buf) {
 		r.size++
+	}
+	oldest := (r.next - r.size + len(r.buf)) % len(r.buf)
+	for i := 0; r.byteLimit > 0 && r.keptBytes > r.byteLimit && i < r.size; i++ {
+		slot := &r.buf[(oldest+i)%len(r.buf)]
+		r.keptBytes -= int64(len(slot.text))
+		slot.text = ""
 	}
 }
 
