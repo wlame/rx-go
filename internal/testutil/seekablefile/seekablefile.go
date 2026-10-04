@@ -85,3 +85,44 @@ func Write(t testing.TB, path string, frames [][]byte) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// DamageFrame overwrites five bytes in the middle of frame's compressed
+// bytes in the seekable file at path, the way a bad sector or a partial
+// copy damages an archive in one place: the seek table and every other
+// frame stay intact, and the frame's header still parses. It fails the
+// test unless the frame then no longer decompresses, so a test that
+// uses it does test a damaged frame.
+func DamageFrame(t testing.TB, path string, frame int) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	table, err := seekable.ReadSeekTable(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("read seek table of %s: %v", path, err)
+	}
+	if frame < 0 || frame >= table.NumFrames {
+		t.Fatalf("frame %d: %s has %d frames", frame, path, table.NumFrames)
+	}
+	info := table.Frames[frame]
+	const damagedBytes = 5
+	if info.CompressedSize < 4*damagedBytes {
+		t.Fatalf("frame %d is %d bytes, too short to damage in the middle", frame, info.CompressedSize)
+	}
+	at := info.CompressedOffset + info.CompressedSize/2
+	for i := at; i < at+damagedBytes; i++ {
+		data[i] ^= 0xFF
+	}
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("create zstd decoder: %v", err)
+	}
+	defer decoder.Close()
+	if _, err := decoder.DecodeAll(data[info.CompressedOffset:info.CompressedEnd()], nil); err == nil {
+		t.Fatalf("frame %d of %s still decompresses after the damage", frame, path)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // test fixture path the test chose
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
