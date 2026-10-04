@@ -518,6 +518,49 @@ func TestTextReader_ReturnsAnIOErrorFromTheReaderWrapped(t *testing.T) {
 	}
 }
 
+// partialFailingReaderAt fails every read that reaches from or beyond,
+// as failingReaderAt does, but hands out bytes with the error, as
+// os.File.ReadAt does when a read fails partway: those before from, and
+// at least the first half of the bytes asked for.
+type partialFailingReaderAt failingReaderAt
+
+func (f partialFailingReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off+int64(len(p)) <= f.from {
+		return bytes.NewReader(f.data).ReadAt(p, off)
+	}
+	end := min(max(f.from, off+int64(len(p)/2)), int64(len(f.data)))
+	n := 0
+	if off < end {
+		n = copy(p, f.data[off:end])
+	}
+	return n, f.err
+}
+
+func TestTextReader_ReturnsAnIOErrorThatComesWithSomeBytes(t *testing.T) {
+	j := damageJournal(t, journalfile.None, false)
+	failure := errors.New("disk on fire")
+	// From inside entry 25 on, every read fails partway: the bytes that
+	// arrive hold whole object headers, often whole objects.
+	from := int64(j.Entries[25].Offset) + 24 // #nosec G115 -- a small offset
+	r := partialFailingReaderAt{data: j.Bytes, from: from, err: failure}
+	tr, err := NewTextReader(r, int64(len(j.Bytes)), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tr.Close()
+	text, err := io.ReadAll(tr)
+	if !errors.Is(err, failure) {
+		t.Fatalf("ReadAll error = %v, want one wrapping %v; report %+v", err, failure, tr.Report())
+	}
+	full, _ := readBytes(t, j.Bytes, Options{})
+	if !bytes.HasPrefix(full, text) {
+		t.Errorf("the %d bytes read before the error are not the start of the text", len(text))
+	}
+	if _, err := ReadHeader(partialFailingReaderAt{data: j.Bytes, from: 100, err: failure}, int64(len(j.Bytes))); !errors.Is(err, failure) {
+		t.Errorf("ReadHeader error = %v, want one wrapping %v", err, failure)
+	}
+}
+
 func TestTextReader_ReadsOnlyTheEntriesTheHeaderCountsOfALiveFile(t *testing.T) {
 	for _, compact := range []bool{false, true} {
 		t.Run(fmt.Sprintf("compact=%v", compact), func(t *testing.T) {

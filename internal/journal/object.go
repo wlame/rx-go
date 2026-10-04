@@ -124,18 +124,21 @@ var errShortRead = errors.New("the file ends before the bytes asked for")
 // readAtLeast reads into p, which lies before f.end, the bytes at off,
 // and returns how many it read: at least need, or errShortRead when the
 // file ended sooner. Another failure of ReadAt (a disk error, a cancelled
-// read) is returned wrapped: it says nothing about the journal's bytes.
+// read) is returned wrapped, whatever bytes came with it: it says nothing
+// about the journal's bytes, and the bytes before it may be cut short.
 func (f *journalFile) readAtLeast(p []byte, off uint64, need int) (int, error) {
-	// Go note: io.ReaderAt may return io.EOF together with the bytes of
-	// a read that reaches the end of the file, so the count decides.
 	n, err := f.r.ReadAt(p, int64(off)) // #nosec G115 -- off < f.end <= the int64 size the caller gave
-	if n >= need {
+	endOfFile := err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+	switch {
+	case !endOfFile:
+		return n, fmt.Errorf("read the journal at offset %d: %w", off, err)
+	case n >= need:
+		// Go note: io.ReaderAt may return io.EOF together with the bytes
+		// of a read that reaches the end of the file, so the count
+		// decides.
 		return n, nil
 	}
-	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return n, errShortRead
-	}
-	return n, fmt.Errorf("read the journal at offset %d: %w", off, err)
+	return n, errShortRead
 }
 
 // beyondEnd returns the damage of an object that lies or runs beyond the
