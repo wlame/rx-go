@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/wlame/rx-go/internal/config"
 	sandbox "github.com/wlame/rx-go/internal/paths"
@@ -46,79 +45,119 @@ func (t FileTask) EndOffset() int64 { return t.Offset + t.Count }
 // Chunker
 // ============================================================================
 
-// findNextNewlineBytes reads up to the provided amount from r (which
-// should be positioned at startOffset already), looking for the first
-// '\n'. If no newline is found within the read window, returns the
-// position at end-of-read as a best-effort boundary.
-//
-// Returns the ABSOLUTE offset of the byte AFTER the newline (i.e. the
-// start of the next line).
-//
-// Parity with Python's find_next_newline (rx-python/src/rx/file_utils.py):
-//
-//	Python reads up to 256 KB forward from `offset`, finds the first
-//	'\n', and returns `offset + pos + 1`. If no newline found within
-//	the window, returns the end of the read window.
-//
-// The Go version does the same, except it uses os.File.ReadAt instead
-// of seek+read so there's no shared file cursor — this is the native
-// chunking path, with no `dd` subprocess.
-func findNextNewline(f *os.File, startOffset int64, maxReadBytes int) (int64, error) {
-	if maxReadBytes <= 0 {
-		// Match Python's default of 256 KB.
-		maxReadBytes = 256 * 1024
-	}
-	// Cap the read at the available tail of the file — avoids io.EOF
-	// surprises when the requested offset is near the end.
-	fi, err := f.Stat()
-	if err != nil {
-		return 0, err
-	}
-	remaining := fi.Size() - startOffset
-	if remaining <= 0 {
-		// At or past EOF — no newline to find; return the start offset.
-		return startOffset, nil
-	}
-	if int64(maxReadBytes) > remaining {
-		maxReadBytes = int(remaining)
-	}
+// newlineSearchReadBytes is the size of one read of the chunk-boundary
+// newline search. A line longer than this costs the search more reads
+// of the same buffer, never more memory.
+const newlineSearchReadBytes = 256 * 1024
 
-	buf := make([]byte, maxReadBytes)
-	n, err := f.ReadAt(buf, startOffset)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return 0, fmt.Errorf("findNextNewline: ReadAt at %d: %w", startOffset, err)
+// findNextNewline returns the start of the line after the first '\n' at
+// or after from: the absolute offset of the byte after that newline. It
+// reads r forward from from, one len(buf) read at a time, until it
+// finds a newline or reaches limit, and returns limit when no newline
+// lies in [from, limit). It never reads past limit.
+//
+// A file shorter than limit (truncated after its size was taken) ends
+// the search at its end, which also returns limit: the scan of the
+// chunks then fails on its own read, rather than this loop spinning on
+// empty reads.
+//
+// r is an io.ReaderAt (the *os.File the pin opened, in production), so
+// the search moves no shared file cursor.
+func findNextNewline(r io.ReaderAt, from, limit int64, buf []byte) (int64, error) {
+	for pos := from; pos < limit; {
+		window := buf[:min(int64(len(buf)), limit-pos)]
+		n, err := r.ReadAt(window, pos)
+		// ReadAt may return bytes together with io.EOF, so look at the
+		// bytes before the error.
+		if idx := bytes.IndexByte(window[:n], '\n'); idx >= 0 {
+			// The position AFTER the newline: the next chunk starts at
+			// the first byte of the next line, not on the newline.
+			return pos + int64(idx) + 1, nil
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("findNextNewline: ReadAt at %d: %w", pos, err)
+		}
+		if n == 0 {
+			break // the file ends before limit
+		}
+		pos += int64(n)
 	}
-	idx := bytes.IndexByte(buf[:n], '\n')
-	if idx < 0 {
-		// No newline within the read window. Python returns the end of
-		// the window — we do the same. The caller treats this as a
-		// "best-effort" split point; if the file is a single massive
-		// line, the chunker degrades to one task anyway.
-		return startOffset + int64(n), nil
+	return limit, nil
+}
+
+// chunkStarts returns the first byte of each of up to numChunks chunks
+// of the first fileSize bytes of r. The first start is 0; every other
+// is the first byte of a line, found by searching forward from the
+// tentative boundary i*fileSize/numChunks for the next newline. The
+// starts strictly increase and stay below fileSize, so the chunks tile
+// the file without overlap and without cutting a line.
+//
+// A line longer than the gap between tentative boundaries swallows the
+// boundaries it covers: the search from the first of them runs to the
+// line's end, and the others collapse onto that same start and are
+// dropped. A file of very long lines therefore gets fewer, larger
+// chunks — less parallelism, never a different answer.
+//
+// INVARIANT (bounded reads): every search covers bytes no earlier
+// search covered, because a tentative boundary that lies before the
+// point the previous search reached is skipped without reading (its
+// next line start is that point). The planning therefore reads each byte
+// from the first tentative boundary to the end of the file at most
+// once, plus at most one read of newlineSearchReadBytes past the newline
+// for each boundary, with a single buffer of that size: a 100 GB file
+// that is one line is read once here, not once per boundary.
+func chunkStarts(r io.ReaderAt, fileSize, numChunks int64) ([]int64, error) {
+	chunkSize := fileSize / numChunks
+	buf := make([]byte, newlineSearchReadBytes)
+	starts := make([]int64, 0, numChunks)
+	starts = append(starts, 0)
+	// searchedTo is where the previous search ended: the start of the
+	// line after the newline it found, or fileSize when it found none.
+	// No newline lies between that search's tentative boundary and
+	// searchedTo-1.
+	searchedTo := int64(0)
+	for i := int64(1); i < numChunks; i++ {
+		raw := i * chunkSize
+		if raw < searchedTo {
+			// The previous search already read past raw without a
+			// newline: the next line start after raw is searchedTo,
+			// which is a chunk start already, or the end of the file.
+			continue
+		}
+		next, err := findNextNewline(r, raw, fileSize, buf)
+		if err != nil {
+			return nil, err
+		}
+		searchedTo = next
+		// The end of the file starts no chunk: the last chunk runs to it.
+		if next > starts[len(starts)-1] && next < fileSize {
+			starts = append(starts, next)
+		}
 	}
-	// Python returns `offset + pos + 1` — the position AFTER the
-	// newline. That way task N+1 starts at the first byte of the
-	// NEXT line, not on the newline itself.
-	return startOffset + int64(idx) + 1, nil
+	return starts, nil
 }
 
 // GetFileOffsets computes the list of starting byte offsets for chunk
 // tasks on a file. Offsets are newline-aligned (except offset 0).
 //
-// Algorithm (matches rx-python/src/rx/file_utils.py::get_file_offsets):
+// Algorithm (rx-python/src/rx/file_utils.py::get_file_offsets, except
+// for step 5):
 //
 //  1. Estimate the maximum number of chunks the file fits given
 //     MinChunkSize: `max_chunks_by_size = file_size / MinChunkSize`.
 //  2. Cap by RX_MAX_SUBPROCESSES (default 20).
 //  3. Floor at 1.
-//  4. Compute raw offsets at `i * chunk_size` for i in [0, num_chunks).
-//  5. Align offsets >= 1 to the next newline boundary.
+//  4. Compute raw offsets at `i * chunk_size` for i in [0, num_chunks),
+//     chunk_size by integer division as Python's `//`.
+//  5. Move each offset >= 1 to the start of the next line, however far
+//     ahead it is (chunkStarts). rx-python looks only 256 KiB ahead and
+//     otherwise cuts inside the line.
 //  6. Return the aligned offsets. Offset 0 is always first.
 //
 // The returned slice has between 1 and MAX_SUBPROCESSES entries, and
-// is strictly monotonically increasing (enforced by dedup at the end).
-// If two raw offsets collapse to the same aligned offset (possible
-// near long-line boundaries), the duplicates are pruned silently.
+// is strictly monotonically increasing. Raw offsets that land in the
+// same long line collapse onto one start, so a file of long lines gets
+// fewer chunks than planned.
 func GetFileOffsets(src sandbox.Pinned, fileSize int64) ([]int64, error) {
 	if fileSize <= 0 {
 		// Empty file — one task covering zero bytes, matches Python's
@@ -145,45 +184,21 @@ func GetFileOffsets(src sandbox.Pinned, fileSize int64) ([]int64, error) {
 		numChunks = 1
 	}
 
-	// Parity detail: Python's `chunk_size = file_size // num_chunks`
-	// uses integer division. Go's int64 division rounds toward zero
-	// for positive values, matching Python's floor division on
-	// positive values.
-	chunkSize := fileSize / numChunks
-
 	if numChunks == 1 {
 		// Single chunk — no alignment work needed.
 		return []int64{0}, nil
 	}
 
-	// Open the file once and reuse the handle for all alignment lookups.
-	// Python opens a fresh handle inside find_next_newline for each
-	// offset; that's wasteful. ReadAt is goroutine-safe so we could
-	// parallelise alignment, but N <= 20 makes it pointless.
+	// Open the file once, through its pin, and reuse the handle for
+	// every boundary search. Source.Open refuses a path that no longer
+	// leads to the file the trace checked.
 	f, err := src.Open()
 	if err != nil {
 		return nil, fmt.Errorf("GetFileOffsets: open %s: %w", src.Path(), err)
 	}
 	defer func() { _ = f.Close() }()
 
-	aligned := make([]int64, 0, numChunks)
-	aligned = append(aligned, 0)
-	for i := int64(1); i < numChunks; i++ {
-		raw := i * chunkSize
-		al, err := findNextNewline(f, raw, 0)
-		if err != nil {
-			return nil, err
-		}
-		// Prune duplicates: if alignment collapsed onto a previous
-		// offset (because the region had no newlines), skip this chunk.
-		// Same task count invariant as Python when we end up with fewer
-		// chunks than originally planned.
-		if al > aligned[len(aligned)-1] && al < fileSize {
-			aligned = append(aligned, al)
-		}
-	}
-
-	return aligned, nil
+	return chunkStarts(f, fileSize, numChunks)
 }
 
 // CreateFileTasks splits a file into FileTasks by:
