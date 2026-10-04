@@ -52,6 +52,17 @@ A compressed file whose first bytes of text cannot be decompressed is
 not refused by the rule: the command that reads it reports the damage
 where it meets it.
 
+The rule decompresses a zstd file, seekable or not, a stream at a time
+and holds one frame's window, at most 16 MiB, whatever size the frame
+declares: classifying a file, also every file of a `GET /v1/tree`
+listing, costs a few mebibytes at most. A zstd file whose first frame
+declares a larger window (`zstd --long` writes 128 MiB) is taken for
+text without being probed; the command that reads it decompresses it
+with the window it needs. The first mebibyte an index build reads to
+detect the timestamp format is decompressed the same way with at most a
+128 MiB window, the most `zstd -d` accepts without `--long=N`; a file
+whose frames need more cannot be indexed, and the build says why.
+
 ## Why compressed files lose random access
 
 A compressed stream is a state machine. Decompressing byte N typically
