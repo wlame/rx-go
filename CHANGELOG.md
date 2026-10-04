@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-12
+
 Signatures replace the index analysis: rx finds tracebacks, crashes,
 secrets, SQL, bursts of lines and more by itself, with built-in and
 user-written signatures, and caches the findings per file. This
