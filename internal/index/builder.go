@@ -239,7 +239,11 @@ func buildText(
 			return nil, fmt.Errorf("decompress %s: %w", sourcePath, dErr)
 		}
 		defer func() { _ = dec.Close() }()
-		source = dec
+		// The decompressed text is stopped by the context too. A zstd
+		// decoder reads its input ahead in goroutines of its own, so it
+		// can have read the whole compressed file before a cancel comes;
+		// the walk's next read of the text then meets the cancel here.
+		source = stopReads(opts.ctx, dec)
 	}
 
 	// Walk the file. Python uses `for line in f` which yields lines

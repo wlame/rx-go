@@ -78,25 +78,7 @@ func TestRunServe_StartsAndStops(t *testing.T) {
 		done <- runServe(&buf, params)
 	}()
 
-	// Poll until the banner is printed.
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(buf.String(), "Starting RX API server") {
-			break
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
-
-	// Wait for listener to actually be ready. We poll the port.
-	dialTimeout := time.Now().Add(5 * time.Second)
-	for time.Now().Before(dialTimeout) {
-		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
-		if err == nil {
-			_ = c.Close()
-			break
-		}
-		time.Sleep(30 * time.Millisecond)
-	}
+	waitUntilServing(t, &buf, port)
 
 	// Send SIGTERM to ourselves — the server's signal handler catches it.
 	if err := syscall.Kill(syscall.Getpid(), syscall.SIGTERM); err != nil {
@@ -120,6 +102,33 @@ func TestRunServe_StartsAndStops(t *testing.T) {
 	}
 	if !strings.Contains(got, "shutting down") {
 		t.Errorf("shutdown message missing:\n%s", got)
+	}
+}
+
+// waitUntilServing waits until runServe has printed the whole banner and
+// its listener accepts a connection on port, so a signal sent next finds
+// the server up. The startup loads the signature catalogue and checks
+// its examples, which takes seconds under -race on a slow machine; a
+// fixed sleep before the signal is not enough there.
+func waitUntilServing(t *testing.T, out *safeBuffer, port int) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(out.String(), "Metrics available at") {
+		if time.Now().After(deadline) {
+			t.Fatalf("runServe printed no whole banner within 30s:\n%s", out.String())
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	for {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err == nil {
+			_ = c.Close()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runServe does not accept connections on port %d: %v", port, err)
+		}
+		time.Sleep(30 * time.Millisecond)
 	}
 }
 
@@ -169,8 +178,7 @@ func TestRunServe_MultipleSearchRoots(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runServe(&buf, params) }()
 
-	// Wait briefly for banner then kill.
-	time.Sleep(300 * time.Millisecond)
+	waitUntilServing(t, &buf, port)
 	_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 
 	select {
@@ -210,7 +218,7 @@ func TestRunServe_DefaultSearchRootIsCwd(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runServe(&buf, params) }()
 
-	time.Sleep(300 * time.Millisecond)
+	waitUntilServing(t, &buf, port)
 	_ = syscall.Kill(syscall.Getpid(), syscall.SIGTERM)
 	select {
 	case <-done:

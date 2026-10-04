@@ -971,7 +971,18 @@ func TestFindingsRoute_APanickingScanIsCountedAsFailed(t *testing.T) {
 func TestTaskCancelRoute_ACancelAtTheWriteNeverLeavesCancelledEntries(t *testing.T) {
 	for _, cancelFirst := range []bool{true, false} {
 		var f *findingsFixture
-		deleteStatus := 0
+		// Go note: the DELETE runs on the scan's goroutine, and its
+		// answer comes back on this channel. A cancel marks the task
+		// cancelled before the DELETE call has returned to the scan, so
+		// the task can end before the status is known; receiving from
+		// the channel waits for it and orders the two goroutines.
+		deleteStatuses := make(chan int, 1)
+		sendDeleteStatus := func(status int) {
+			select {
+			case deleteStatuses <- status:
+			default: // a second write point keeps the first answer
+			}
+		}
 		f = newFindingsFixture(t, func(c *Config) {
 			c.scanFindings = func(ctx context.Context, file trace.SearchFile, cat *signatures.Catalogue,
 				sel []*signatures.Signature, o findings.ScanOptions) (*findings.Answer, error) {
@@ -979,17 +990,25 @@ func TestTaskCancelRoute_ACancelAtTheWriteNeverLeavesCancelledEntries(t *testing
 				o.MayWrite = func() bool {
 					running, _ := f.manager.CancellableHolder(f.log, "findings")
 					if cancelFirst {
-						deleteStatus, _ = f.call(t, http.MethodDelete, "/v1/tasks/"+running.TaskID, nil, nil)
+						status, _ := f.call(t, http.MethodDelete, "/v1/tasks/"+running.TaskID, nil, nil)
+						sendDeleteStatus(status)
 						return mayWrite()
 					}
 					ok := mayWrite()
-					deleteStatus, _ = f.call(t, http.MethodDelete, "/v1/tasks/"+running.TaskID, nil, nil)
+					status, _ := f.call(t, http.MethodDelete, "/v1/tasks/"+running.TaskID, nil, nil)
+					sendDeleteStatus(status)
 					return ok
 				}
 				return findings.Scan(ctx, file, cat, sel, o)
 			}
 		})
 		task, _ := f.finish(t, f.startScan(t, f.log, "default").TaskID)
+		var deleteStatus int
+		select {
+		case deleteStatus = <-deleteStatuses:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("cancel first %v: the scan never reached its write", cancelFirst)
+		}
 		got := f.getFindings(t)
 		switch {
 		case cancelFirst && (deleteStatus != http.StatusOK || task.Status != "cancelled" || got.State != "none"):

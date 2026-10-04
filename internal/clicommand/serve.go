@@ -198,6 +198,20 @@ func prepareViewer(fm *frontend.Manager, mode viewerMode, stderr io.Writer) fron
 
 // runServe wires everything up and blocks.
 func runServe(out io.Writer, p serveParams) error {
+	// The stop signals are taken first, before the startup work (the
+	// viewer download, the signature catalogue), so a SIGINT or SIGTERM
+	// that arrives during the startup is kept and stops the server as
+	// soon as it is up, instead of going unheard.
+	//
+	// Go note: signal.Notify sends each signal to every channel
+	// registered for it; the buffer of one keeps a signal that arrives
+	// before the select below reads it. signal.Stop unregisters the
+	// channel when runServe returns, so a later runServe in the same
+	// process gets its own signals and no stale channel takes them.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
 	// Read the level from RX_LOG_LEVEL and publish it to webapi, so
 	// /health reports the configured level. slog.Default() stays the
 	// handler, so callers that set their own handler are not disturbed;
@@ -335,9 +349,6 @@ func runServe(out io.Writer, p serveParams) error {
 	}()
 
 	// Wait for either startup failure or shutdown signal.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-
 	select {
 	case err := <-errCh:
 		if err != nil {

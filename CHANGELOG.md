@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies updated: huma 2.39.1, chi 5.3.1, klauspost/compress
+  1.19.1, the Prometheus client 1.24.1 and its model 0.6.3,
+  ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0.
+
+### Fixed
+
+- `rx serve` listens for SIGINT and SIGTERM from its first moment. A
+  Ctrl-C during the startup (the viewer download, the loading of the
+  signature catalogue) was ignored, and the server came up and ran; it
+  now stops as soon as it is up.
+- A stopped index build of a zstd stream file (Stop on a folder's
+  index in the viewer, `DELETE /v1/tasks/{id}`) ends at its next read
+  of the text. The zstd decoder reads its input ahead, so on a small
+  file it could have read every compressed byte before the stop, and
+  the build then ran to its end.
+
 ## [0.8.0] - 2026-10-12
 
 Signatures replace the index analysis: rx finds tracebacks, crashes,

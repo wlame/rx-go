@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
@@ -66,6 +67,44 @@ func TestBuildContext_StopsAtTheNextReadOnceCanceled(t *testing.T) {
 			}
 			if fraction, _ := progress.Fraction(); fraction >= 1 {
 				t.Errorf("the build read the whole file after the cancel (progress %v)", fraction)
+			}
+		})
+	}
+}
+
+// A cancel that comes after the decompressor has read the whole
+// compressed file still stops the build at its next read of the text.
+// The zstd decoder reads its input ahead in goroutines of its own, so on
+// a small file every compressed byte can be read before the walk starts;
+// the cancel is then met on the decompressed text the walk reads.
+func TestBuildContext_StopsWhenTheDecompressorHasReadTheWholeFile(t *testing.T) {
+	dir, names := buildContextFiles(t)
+	for _, name := range names {
+		if !slices.Contains([]string{"app.log.gz", "app.log.xz", "app.log.bz2", "plain.log.zst"}, name) {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			progress := &Progress{}
+			// Wait until the progress has counted the whole compressed
+			// file (or a decompressor that does not read ahead has had
+			// its chance), then cancel.
+			cancelOnceRead := func() {
+				deadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(deadline) {
+					if fraction, _ := progress.Fraction(); fraction >= 1 {
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+				cancel()
+			}
+			_, err := BuildContext(ctx, filepath.Join(dir, name), BuildOptions{
+				StepBytes: 4096, Progress: progress, beforeWalk: cancelOnceRead,
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("BuildContext after a cancel: %v, want the cancel", err)
 			}
 		})
 	}

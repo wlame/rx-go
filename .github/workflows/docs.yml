@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
 
       - name: setup-uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: setup-just
         uses: extractions/setup-just@v4
@@ -70,13 +70,13 @@ jobs:
       # once Pages is enabled.
       - name: configure-pages
         if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
         with:
           enablement: true
 
       - name: upload-artifact
         if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 

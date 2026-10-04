@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: setup-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           # check-latest: without it setup-go takes the newest patch the
           # runner image has cached (1.26.8 when 1.26.9 fixed 11 CVEs in
