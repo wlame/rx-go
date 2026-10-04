@@ -6,19 +6,21 @@ package journal
 // a zstd frame, or for lz4 the decoded size as a little-endian uint64
 // followed by one raw lz4 block.
 //
-// SECURITY: a stored value of more than compression.WindowLimit (128
-// MiB) is damage, in any field, before any of it is read. The renderer
-// reads seven fields. A value of any other field is checked as far as its
-// decoder must go to give the name (zstd: its first block, and the frame
-// checksum when that block is the last; xz: about 4 KiB of text through
-// its dictionary buffer), from at most nameStoredLimit of its stored
-// bytes read at once, so that a value of a few stored bytes that decodes
-// to 128 MiB costs a block of decoding, not 128 MiB per entry that lists
-// it. An lz4 value is decoded whole, since lz4 decodes at most 255 bytes
-// per stored byte. A value of a field the renderer reads may decode to at
-// most 128 MiB; a larger one is damage. A size the file declares is
-// checked against that limit before any buffer is made from it, and a
-// decoder stops at the limit whatever the stream holds.
+// SECURITY: the renderer reads seven fields. A value of any other field
+// costs its name search alone, whatever its size: its stored bytes are
+// read as far as the name needs, at most nameStoredLimit of them in one
+// read, and decoded only as far as the decoder must go to give the name
+// (zstd: its first block, and the frame checksum when that block is the
+// last; xz: about 4 KiB of text through its dictionary buffer; lz4: the
+// sequences that hold the name's bytes). So a core dump kept as one field
+// costs at most 129 KiB of reading, and a value of a few stored bytes
+// that decodes to 128 MiB costs a block of decoding, not 128 MiB per
+// entry that lists it. Such a value is never damage for its size. A
+// value of a field the renderer reads is read whole, so it may be at
+// most compression.WindowLimit (128 MiB), stored or decoded; a larger one
+// is damage. A size the file declares is checked against that limit
+// before any buffer is made from it, and a decoder stops at the limit
+// whatever the stream holds.
 
 import (
 	"bytes"
@@ -78,30 +80,36 @@ func (f *journalFile) dataPayloadOffset() uint64 {
 // name: systemd's longest field name, 64 bytes, and the '='.
 const namePrefixBytes = 64 + 1
 
-// nameStoredLimit is the most stored bytes of a zstd or xz value the
+// nameStoredLimit is the most stored bytes of a compressed value the
 // name search reads: 129 KiB. That holds a zstd block of 128 KiB with the
 // frame's and the block's headers and the checksum, and so the start of
-// the text of any zstd value a compressor writes; and it is more than an
-// xz stream needs for its first 4 KiB of text (a block header of at most
-// 1 KiB and one LZMA2 chunk of at most 64 KiB). A value whose name lies
-// further on in its stored bytes is damage.
+// the text of any zstd value a compressor writes; it is more than an xz
+// stream needs for its first 4 KiB of text (a block header of at most
+// 1 KiB and one LZMA2 chunk of at most 64 KiB); and lz4's first
+// sequences hold the first bytes of its text within a few bytes more
+// than those. A value whose name lies further on in its stored bytes is
+// damage.
 const nameStoredLimit = 129 << 10
 
 // readData reads the DATA object at offset and returns its payload when
 // it holds a field the renderer reads, and nil when it holds any other
-// field or no '='. A DATA object that fails its checks, whose stored
-// value is over 128 MiB, or whose value does not decode as far as the
-// answer needs, is damage.
+// field or no '='. A DATA object that fails its checks, or whose value
+// does not decode as far as the answer needs, is damage; so is a value of
+// a field the renderer reads whose stored bytes pass 128 MiB, which is
+// refused before it is read whole. A value of another field is never
+// damage for its size.
 //
 // Reads: the object's first bytes come with one ReadAt into the walker's
-// probe. When the probe does not hold the stored payload, one more ReadAt
-// reads the rest the answer needs: nothing for an uncompressed value of
-// a field the renderer does not read (the probe holds its name); the
-// whole stored payload for an uncompressed or lz4 value otherwise; up to
-// nameStoredLimit stored bytes for the name of a zstd or xz value. A zstd
-// or xz value of a field the renderer reads is then decoded from those
-// bytes, and only one whose stored bytes pass nameStoredLimit takes a
-// third ReadAt, for the rest. Every other object takes at most two.
+// probe. When the probe does not hold what the answer needs, one more
+// ReadAt reads it: nothing for an uncompressed value of a field the
+// renderer does not read (the probe holds its name); the whole stored
+// payload for an uncompressed value of a field it reads; up to
+// nameStoredLimit stored bytes for the name of a compressed value. A
+// compressed value of a field the renderer reads is then decoded from
+// those bytes, and only one whose stored bytes pass nameStoredLimit takes
+// a third ReadAt, for the rest. Every other object takes at most two, and
+// a value of a field the renderer does not read is read at most as far as
+// the probe and nameStoredLimit stored bytes.
 //
 // The payload returned is the caller's; it does not alias the walker's
 // buffers.
@@ -122,29 +130,18 @@ func (w *walker) readData(offset uint64) ([]byte, error) {
 	switch {
 	case compressed != 0 && !isCompressed:
 		return nil, damaged("%s has the compression flags %#x, more than one compression", what, compressed)
-	case storedSize > maxValue:
-		// Checked before any byte of the value is read, for every field.
-		return nil, damaged("%s holds a value of %d bytes, more than 128 MiB", what, storedSize)
 	case !isCompressed:
 		// The probe holds the payload's first bytes: 950 at least, or
 		// all of them.
 		if !namesRenderedField(o.head[start:]) {
 			return nil, nil
 		}
+		if err = checkShownSize(storedSize, what); err != nil {
+			return nil, err
+		}
 		return f.ownStored(o, start, o.head[start:], what)
-	case compressed == objectCompressedLZ4:
-		var stored, value []byte
-		if stored, err = f.ownStored(o, start, o.head[start:], what); err != nil {
-			return nil, err
-		}
-		value, err = decodeStored(decoder, stored, what)
-		w.decoded += int64(len(value))
-		if err != nil || !namesRenderedField(value) {
-			return nil, err
-		}
-		return value, nil
 	}
-	// zstd or xz: the name first, from at most nameStoredLimit stored
+	// Compressed: the name first, from at most nameStoredLimit stored
 	// bytes; the whole value only for a field the renderer reads.
 	nameStored := w.nameStoredBuffer(min(storedSize, nameStoredLimit))
 	if err = f.readStored(nameStored, o, start, o.head[start:], what); err != nil {
@@ -153,6 +150,9 @@ func (w *walker) readData(offset uint64) ([]byte, error) {
 	name, err := w.decodeName(nameStored, storedSize > nameStoredLimit, compressed, decoder.name, what)
 	w.decoded += int64(len(name))
 	if err != nil || !namesRenderedField(name) {
+		return nil, err
+	}
+	if err = checkShownSize(storedSize, what); err != nil {
 		return nil, err
 	}
 	stored := nameStored
@@ -166,6 +166,15 @@ func (w *walker) readData(offset uint64) ([]byte, error) {
 	value, err := decodeStored(decoder, stored, what)
 	w.decoded += int64(len(value))
 	return value, err
+}
+
+// checkShownSize refuses the stored value of a field the renderer reads
+// when it passes 128 MiB, before it is read whole.
+func checkShownSize(storedSize uint64, what objectRef) error {
+	if storedSize > maxValue {
+		return damaged("%s holds a value of %d bytes, more than 128 MiB", what, storedSize)
+	}
+	return nil
 }
 
 // namesRenderedField reports whether payload, or its first bytes, starts
@@ -238,23 +247,31 @@ func (s *storedReader) Read(p []byte) (int, error) {
 }
 
 // decodeName decodes the first namePrefixBytes bytes of the text of a
-// zstd or xz value from its stored bytes, or all of it when it is
+// compressed value from its stored bytes, or all of it when it is
 // shorter. cut says the stored bytes stop at nameStoredLimit before the
 // value's end: running out of them then is damage, as the name lies
 // further on. The returned slice is valid until the next call.
 //
 // The decoder goes only as far as it must to give those bytes: for zstd
 // its first block, and the frame checksum when that block is the last;
-// for xz about 4 KiB of text, through its dictionary buffer.
+// for xz about 4 KiB of text, through its dictionary buffer; for lz4 the
+// sequences that hold them.
 func (w *walker) decodeName(stored []byte, cut bool, compressed uint8, codec string, what objectRef) ([]byte, error) {
-	w.stored = storedReader{b: stored}
-	n := 0
-	r, err := w.namePrefixReader(compressed, &w.stored)
-	if err == nil {
-		n, err = readPrefix(r, w.nameBuf[:])
+	var n int
+	var atEnd bool
+	var err error
+	if compressed == objectCompressedLZ4 {
+		n, atEnd, err = decodeLZ4Prefix(stored, w.nameBuf[:])
+	} else {
+		w.stored = storedReader{b: stored}
+		var r io.Reader
+		if r, err = w.namePrefixReader(compressed, &w.stored); err == nil {
+			n, err = readPrefix(r, w.nameBuf[:])
+		}
+		atEnd = w.stored.atEnd
 	}
 	switch {
-	case cut && w.stored.atEnd && (err != nil || n < namePrefixBytes):
+	case cut && atEnd && (err != nil || n < namePrefixBytes):
 		return nil, damaged("%s needs more than %d of its stored bytes to give its field name (%s)", what, nameStoredLimit, codec)
 	case err == nil:
 		return w.nameBuf[:n], nil
@@ -262,6 +279,103 @@ func (w *walker) decodeName(stored []byte, cut bool, compressed uint8, codec str
 		return nil, damaged("%s decompresses to more than 128 MiB (%s)", what, codec)
 	}
 	return nil, damaged("%s does not decompress (%s)", what, codec)
+}
+
+// errLZ4Truncated is decodeLZ4Prefix's error for a block that ends inside
+// a sequence before the bytes asked for.
+var errLZ4Truncated = fmt.Errorf("%w: the lz4 block ends inside a sequence", errNotDecoded)
+
+// decodeLZ4Prefix decodes into dst the first len(dst) bytes of the text of
+// a value systemd stores with lz4 (its decoded size as a little-endian
+// uint64, then one raw block), or all of it when it is shorter, as
+// systemd's decompress_startswith_lz4 does with LZ4_decompress_safe_partial
+// (compress.c). It returns the bytes decoded, and atEnd when it used every
+// stored byte it was given.
+//
+// The lz4 block format is a run of sequences. Each starts with a token
+// byte: its high four bits are the number of literal bytes that follow,
+// its low four bits the length of the match after them, less 4; a value
+// of 15 continues in the next bytes, each added until one is not 255.
+// After the literals come a 2-byte little-endian offset back into the
+// text and the match, copied from there byte by byte (it may overlap
+// what it writes). The last sequence ends after its literals.
+//
+// It stops as soon as dst is full: of a long first run of literals, it
+// needs only the bytes it copies. A match that reaches before the start
+// of the text, or a block that ends inside a sequence, is an error.
+func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
+	if len(stored) <= lz4SizePrefix {
+		return 0, true, fmt.Errorf("%w: %d bytes, no block after the size", errNotDecoded, len(stored))
+	}
+	// Never more than the size the value declares.
+	if size := le.Uint64(stored); size < uint64(len(dst)) {
+		dst = dst[:size]
+	}
+	src := stored[lz4SizePrefix:]
+	ip := 0 // the next byte of src to read
+	// length reads the continuation bytes of a length whose 4 bits were
+	// 15, starting from base.
+	length := func(base int) (int, bool) {
+		for {
+			if ip >= len(src) {
+				return 0, false
+			}
+			b := src[ip]
+			ip++
+			base += int(b)
+			if b != 255 {
+				return base, true
+			}
+		}
+	}
+	for n < len(dst) {
+		if ip >= len(src) {
+			return n, true, nil // the block ended after its last literals
+		}
+		token := src[ip]
+		ip++
+		literals := int(token >> 4)
+		if literals == 15 {
+			var ok bool
+			if literals, ok = length(literals); !ok {
+				return n, true, errLZ4Truncated
+			}
+		}
+		available := len(src) - ip
+		copied := copy(dst[n:], src[ip:ip+min(literals, available)])
+		n += copied
+		if n == len(dst) {
+			return n, false, nil
+		}
+		if literals > available {
+			return n, true, errLZ4Truncated
+		}
+		ip += literals
+		if ip == len(src) {
+			return n, true, nil // the last sequence: literals only
+		}
+		if ip+2 > len(src) {
+			return n, true, errLZ4Truncated
+		}
+		offset := int(src[ip]) | int(src[ip+1])<<8
+		ip += 2
+		if offset == 0 || offset > n {
+			return n, false, fmt.Errorf("%w: a match at offset %d of %d bytes of text", errNotDecoded, offset, n)
+		}
+		match := int(token&15) + 4
+		if token&15 == 15 {
+			var ok bool
+			if match, ok = length(match); !ok {
+				return n, true, errLZ4Truncated
+			}
+		}
+		// Byte by byte, as the match may overlap the bytes it writes.
+		for ; match > 0 && n < len(dst); match-- {
+			dst[n] = dst[n-offset]
+			n++
+		}
+	}
+	return n, false, nil
 }
 
 // namePrefixReader returns a reader of the text of the zstd or xz stream

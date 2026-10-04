@@ -280,7 +280,7 @@ func largeUnreadValueJournal(tb testing.TB, n int, compression journalfile.Compr
 
 func TestTextReader_DecodesOnlyTheNameOfALargeValueTheRendererDoesNotRead(t *testing.T) {
 	const entries = 100
-	for _, compression := range []journalfile.Compression{journalfile.Zstd, journalfile.XZ} {
+	for _, compression := range []journalfile.Compression{journalfile.Zstd, journalfile.XZ, journalfile.LZ4} {
 		j := largeUnreadValueJournal(t, entries, compression)
 		if stored := j.Data[0]; stored.StoredAs != compression || stored.Size > 64<<10 {
 			t.Fatalf("the large value is stored as %s in %d bytes", stored.StoredAs, stored.Size)

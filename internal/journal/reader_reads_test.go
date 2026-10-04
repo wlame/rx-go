@@ -352,34 +352,65 @@ func (s sparseReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return len(p), nil
 }
 
-func TestTextReader_RefusesAStoredValueAbove128MiBInAnyField(t *testing.T) {
-	for _, field := range []string{"BLOB", "MESSAGE"} {
-		for _, flags := range []byte{0, objectCompressedZstd, objectCompressedXZ} {
-			t.Run(fmt.Sprintf("%s flags %d", field, flags), func(t *testing.T) {
-				stored := journalfile.Payload(field, []byte("a value of the test"))
-				j, data := craftedJournal(t, 3, flags, stored)
-				// The DATA object claims 128 MiB and one byte of value, in
-				// a file that is that large; only its first bytes exist.
+// A value whose stored bytes pass 128 MiB is damage only in a field the
+// text shows, which is read whole. A value of another field, such as a
+// core dump systemd-coredump keeps in COREDUMP=, costs its name search
+// alone, whatever its size, and its entry is shown.
+//
+// The DATA object declares 128 MiB and one byte of stored value in a
+// file it declares that large: the reader is a sparse one that holds the
+// written journal and zero bytes after it, so the test makes no 128 MiB
+// value. The value's first stored bytes are a real stream of its codec.
+func TestTextReader_StoredValueAbove128MiBIsDamageOnlyInAShownField(t *testing.T) {
+	codecs := []struct {
+		name        string
+		flags       byte
+		compression journalfile.Compression
+	}{
+		{"plain", 0, journalfile.None},
+		{"zstd", objectCompressedZstd, journalfile.Zstd},
+		{"xz", objectCompressedXZ, journalfile.XZ},
+		{"lz4", objectCompressedLZ4, journalfile.LZ4},
+	}
+	for _, field := range []string{"COREDUMP", "MESSAGE"} {
+		for _, codec := range codecs {
+			t.Run(fmt.Sprintf("%s %s", field, codec.name), func(t *testing.T) {
+				// More than the 65 bytes of a name search, so that it
+				// stops inside the value.
+				payload := journalfile.Payload(field, bytes.Repeat([]byte("A"), 200))
+				stored := payload
+				if codec.compression != journalfile.None {
+					stored = journalfile.Stored(t, codec.compression, payload)
+				}
+				j, data := craftedJournal(t, 3, codec.flags, stored)
 				d := j.Data[0]
 				size := int64(d.PayloadOffset-d.Offset) + maxValue + 1                                    // #nosec G115 -- a small header
 				binary.LittleEndian.PutUint64(data[d.Offset+journalfile.OffsetObjectSize:], uint64(size)) // #nosec G115 -- positive
 				fileSize := int64(d.Offset) + size + 1<<20                                                // #nosec G115 -- a small offset
 				binary.LittleEndian.PutUint64(data[96:], uint64(fileSize)-journalfile.HeaderSize)         // #nosec G115 -- positive
-				counted := newObjectReads(sparseReaderAt{data: data, size: fileSize}, j)
-				tr, err := NewTextReader(counted, fileSize, Options{})
+				reads := newObjectReads(sparseReaderAt{data: data, size: fileSize}, j)
+				tr, err := NewTextReader(reads, fileSize, Options{})
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer tr.Close()
-				if _, err := io.ReadAll(tr); err != nil {
+				text, err := io.ReadAll(tr)
+				if err != nil {
 					t.Fatal(err)
 				}
 				report := tr.Report()
-				if report.LeftOut != 3 || !bytes.Contains([]byte(report.DamageReason), []byte("more than 128 MiB")) {
-					t.Errorf("Report = %+v, want 3 entries left out for a value of more than 128 MiB", report)
+				if field == "MESSAGE" {
+					if report.LeftOut != 3 || !bytes.Contains([]byte(report.DamageReason), []byte("more than 128 MiB")) {
+						t.Errorf("Report = %+v, want 3 entries left out for a value of more than 128 MiB", report)
+					}
+				} else {
+					wantText, want := expectRead(writtenEntries(j), 3, nil, 3)
+					checkRead(t, text, report, wantText, want, "")
 				}
-				if counted.bytes > 1<<20 {
-					t.Errorf("read %d bytes", counted.bytes)
+				// The value is read as far as its name search at most: the
+				// probe and up to nameStoredLimit stored bytes.
+				if got, limit := reads.objectBytes[d.Offset], int64(dataProbeBytes+nameStoredLimit); got > limit {
+					t.Errorf("the reads of the value took %d bytes, want at most %d", got, limit)
 				}
 			})
 		}

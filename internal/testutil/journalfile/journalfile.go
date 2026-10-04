@@ -369,6 +369,32 @@ func (b *builder) compress(payload []byte) ([]byte, Compression) {
 	return stored, b.opts.Compression
 }
 
+// Stored returns payload as a DATA object stores it compressed with c
+// (XZ, LZ4 or Zstd), whatever its size: for a test that writes the
+// stored bytes of a value by hand. It fails the test when c is None or
+// when lz4 cannot compress payload.
+func Stored(tb testing.TB, c Compression, payload []byte) []byte {
+	tb.Helper()
+	if c == None {
+		tb.Fatalf("journalfile: Stored needs a compression")
+	}
+	b := newBuilder(tb, Options{Compression: c})
+	defer b.close()
+	var stored []byte
+	switch c {
+	case XZ:
+		stored = b.compressXZ(payload)
+	case LZ4:
+		stored = b.compressLZ4(payload)
+	case Zstd:
+		stored = b.zstd.EncodeAll(payload, nil)
+	}
+	if stored == nil {
+		tb.Fatalf("journalfile: %s cannot compress the %d-byte payload", c, len(payload))
+	}
+	return stored
+}
+
 // compressXZ returns payload as an xz stream without a check, the way
 // systemd's compress_blob_xz writes it.
 func (b *builder) compressXZ(payload []byte) []byte {

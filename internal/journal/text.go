@@ -69,6 +69,8 @@ var errClosed = errors.New("read of a closed journal text reader")
 //     Close;
 //   - one value being decoded (128 MiB at most);
 //   - the DATA cache (Options.CacheBytes);
+//   - the buffer of the stored bytes a name search reads (129 KiB at
+//     most, reused for every value);
 //   - the zstd decoder that reads the names of other fields, with a window
 //     as large as the largest frame read declares (128 MiB at most).
 //
