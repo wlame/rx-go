@@ -197,14 +197,21 @@ Data flow for `rx trace "pattern" big.log`:
    except that a line number which is `-1` in one answer may be the
    true line number in the other. `-1` means "not computed". A number
    that is filled in is the line holding the byte offset, and
-   `relative_line_number` beside it carries the same number. Tests
-   compare trace answers through `internal/testutil/traceanswer`:
-   `RequireAgree` applies this rule, and `RequireSame` is its strict
-   form for two scans that ran to the end, where neither answer has a
-   `-1`. A capped search of a chunked plain file keeps whichever
-   matches its workers found first, so two capped runs can hold
-   different matches; a test that compares capped answers uses a
-   layout where the matches kept are fixed.
+   `relative_line_number` beside it carries the same number. The
+   fields that describe how an answer was produced, not the answer, are
+   outside the rule: `request_id`, `time`, `cli_command` and
+   `file_chunks`. The chunk settings are not part of the trace-cache
+   key, so a cache hit reports the chunk count of the scan that wrote
+   the entry, which may differ from what a scan with today's settings
+   would use. Tests compare trace answers through
+   `internal/testutil/traceanswer`: `RequireAgree` applies this rule,
+   and `RequireSame` is its strict form for two scans that ran to the
+   end, where neither answer has a `-1`. Both leave out the four fields
+   above; a test about one of them checks it on its own. A capped
+   search of a chunked plain file keeps whichever matches its workers
+   found first, so two capped runs can hold different matches; a test
+   that compares capped answers uses a layout where the matches kept
+   are fixed.
 
    There is exactly one thing an index does change, and it is *whether* a
    line number is known rather than *what* it is. A scan cut short by

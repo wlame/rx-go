@@ -12,8 +12,12 @@
 // compared. Two numbers that are both known must be equal.
 //
 // Answers are compared as parsed JSON documents, never as bytes: object
-// key order is not part of the contract. The fields that name the run
-// (request_id, time, cli_command) are left out.
+// key order is not part of the contract. The fields that describe how an
+// answer was produced rather than the answer itself are left out: those
+// that name the run (request_id, time, cli_command) and file_chunks, the
+// chunk count of the scan behind the answer. A trace-cache hit reports
+// the count of the scan that wrote the entry, which differs from a fresh
+// scan's when the chunk settings changed in between.
 //
 // This is test-only infrastructure. It lives under internal/testutil so
 // the trace engine's tests and the CLI's binary tests share one
@@ -35,9 +39,10 @@ import (
 // unnumbered.
 const unknownLine = -1
 
-// runFields are the top-level fields that differ between two runs of
-// one request; they are never compared.
-var runFields = []string{"request_id", "time", "cli_command"}
+// productionFields are the top-level fields that describe how an
+// answer was produced, not the answer: they may differ between two runs
+// of one request and are never compared.
+var productionFields = []string{"request_id", "time", "cli_command", "file_chunks"}
 
 // offsetFields are the fields that hold a numbered object's byte offset:
 // "offset" on a match and "absolute_offset" on a context line.
@@ -99,7 +104,7 @@ func RequireSame(t testing.TB, name string, got, want any) {
 }
 
 // document turns an answer into its parsed JSON document, without the
-// fields that name the run.
+// fields that describe how it was produced.
 func document(answer any) (any, error) {
 	raw, err := json.Marshal(answer)
 	if err != nil {
@@ -110,7 +115,7 @@ func document(answer any) (any, error) {
 		return nil, fmt.Errorf("decode the answer: %w", err)
 	}
 	if top, ok := doc.(map[string]any); ok {
-		for _, field := range runFields {
+		for _, field := range productionFields {
 			delete(top, field)
 		}
 	}

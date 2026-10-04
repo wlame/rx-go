@@ -62,6 +62,20 @@ func TestDifference(t *testing.T) {
 			wantDiff: "",
 		},
 		{
+			name: "the chunk count of the scan behind an answer is not compared",
+			got: func(t *testing.T) map[string]any {
+				doc := answer(t, 2, 2, 3, "")
+				doc["file_chunks"] = map[string]any{"f1": 20.0}
+				return doc
+			},
+			want: func(t *testing.T) map[string]any {
+				doc := answer(t, 2, 2, 3, "")
+				doc["file_chunks"] = map[string]any{"f1": 6.0}
+				return doc
+			},
+			wantDiff: "",
+		},
+		{
 			name:     "a -1 match number resolved to its line agrees",
 			got:      func(t *testing.T) map[string]any { return answer(t, 2, 2, 3, "") },
 			want:     func(t *testing.T) map[string]any { return answer(t, -1, 1, 3, "") },
