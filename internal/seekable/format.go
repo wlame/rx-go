@@ -14,15 +14,23 @@
 //
 // The skippable frame at the tail contains:
 //
-//   - Per-entry records: (compressed_size: u32, decompressed_size: u32)
-//     — 8 bytes each (we don't implement optional checksums).
-//   - Footer: (footer_magic: u32, num_frames: u32, flags: u8) — 9 bytes.
+//   - Per-entry records: (compressed_size: u32, decompressed_size: u32),
+//     8 bytes each, plus a u32 checksum (12 bytes each) when the footer
+//     says the entries carry one. rx never writes checksums and never
+//     checks them; it reads past them.
+//   - A 9-byte footer, in the layout of the zstd seekable format
+//     specification (facebook/zstd, contrib/seekable_format):
+//     (num_frames: u32, descriptor: u8, footer_magic: u32). Bit 7 of
+//     the descriptor is the checksum flag; bits 6 to 2 are reserved and
+//     must be zero.
 //
-// Both the leading skippable-frame header (8 bytes: magic + length)
-// and the tail footer use LittleEndian encoding.
+// rx-go up to v0.3.0 and rx-python write the footer in another order,
+// the legacy rx layout: (footer_magic: u32, num_frames: u32, flags: u8),
+// with bit 0 of flags as the checksum flag. ReadSeekTable reads both
+// layouts and prefers the specification's.
 //
-// Magic constants are compatible with the t2sz / mcuadros spec used by
-// rx-python, so files cross-decode with the Python decoder.
+// The skippable-frame header (8 bytes: magic + length), the entries and
+// the footer use LittleEndian encoding.
 package seekable
 
 // Magic constants. Kept at package level (not file-level) so external
@@ -34,20 +42,26 @@ const (
 	// t2sz/python-seekable convention.
 	SeekableMagic uint32 = 0x184D2A5E
 
-	// FooterMagic identifies the last 9 bytes of a seekable file.
-	// Readers probe tail-first: seek -9, read 9, match FooterMagic.
+	// FooterMagic (Seekable_Magic_Number) marks the 9-byte footer at
+	// the end of a seekable file: its last 4 bytes in the
+	// specification's layout, its first 4 in the legacy rx layout.
 	FooterMagic uint32 = 0x8F92EAB1
 
 	// SkippableHeaderSize is the size of the leading magic + length
 	// prefix of the skippable frame (8 bytes = 4 magic + 4 length).
 	SkippableHeaderSize = 8
 
-	// FooterSize is the size of the trailing footer: magic + num_frames + flags.
+	// FooterSize is the size of the trailing footer: num_frames (4),
+	// descriptor (1) and magic (4), in either layout.
 	FooterSize = 9
 
-	// EntrySize is the size of one seek-table entry without checksums.
-	// We don't emit checksums so the entries are always 8 bytes each.
+	// EntrySize is the size of one seek-table entry without checksums,
+	// the only kind rx writes.
 	EntrySize = 8
+
+	// ChecksumEntrySize is the size of one seek-table entry whose footer
+	// sets the checksum flag: the two sizes and a 4-byte checksum.
+	ChecksumEntrySize = 12
 )
 
 // FrameInfo describes one zstd frame in a seekable file.
@@ -72,6 +86,8 @@ func (f FrameInfo) DecompressedEnd() int64 { return f.DecompressedOffset + f.Dec
 // SeekTable is the parsed seek-table plus convenience fields.
 type SeekTable struct {
 	NumFrames int
-	Flags     byte
-	Frames    []FrameInfo
+	// Flags is the footer's descriptor byte as the file holds it (the
+	// flags byte of a legacy rx footer).
+	Flags  byte
+	Frames []FrameInfo
 }

@@ -32,64 +32,132 @@ const zstdFrameMagic uint32 = 0xFD2FB528
 // dictionary ID (up to 4) and frame content size (up to 8).
 const maxFrameHeaderSize = 18
 
+// footerLayout says where one layout of the 9-byte seek-table footer
+// keeps its three fields, and how it reads its descriptor byte.
+type footerLayout struct {
+	// name says which layout an error is about.
+	name string
+	// magicAt, framesAt and descriptorAt are the positions of
+	// FooterMagic (4 bytes), the frame count (4 bytes) and the
+	// descriptor (1 byte) within the footer.
+	magicAt, framesAt, descriptorAt int
+	// checksumFlag is the descriptor bit that says each entry carries a
+	// 4-byte checksum after its two sizes.
+	checksumFlag byte
+	// reservedBits are descriptor bits that must be zero. A footer with
+	// one of them set is not a table of this layout.
+	reservedBits byte
+}
+
+// footerLayouts are the footer layouts ReadSeekTable reads, in the order
+// it prefers them. The first is the zstd seekable format specification's
+// (contrib/seekable_format in facebook/zstd): Number_Of_Frames,
+// Seek_Table_Descriptor (Checksum_Flag is bit 7, bits 6 to 2 are
+// reserved), Seekable_Magic_Number. The second is the layout rx-go up to
+// v0.3.0 and rx-python write: magic, frame count, flags (bit 0 is the
+// checksum flag; the other bits were never defined, so they are not
+// checked).
+var footerLayouts = [...]footerLayout{
+	{name: "zstd seekable format", framesAt: 0, descriptorAt: 4, magicAt: 5, checksumFlag: 0x80, reservedBits: 0x7C},
+	{name: "legacy rx", magicAt: 0, framesAt: 4, descriptorAt: 8, checksumFlag: 0x01},
+}
+
 // ReadSeekTable parses the seek table at the tail of a seekable zstd
 // file. The caller provides a ReaderAt and the full file size so we
 // can probe absolute offsets without a seek.
 //
 // Algorithm:
-//  1. Read the last 9 bytes (footer) — validate FooterMagic.
-//  2. Derive entry count and flags.
-//  3. Read numFrames × entrySize bytes immediately before the footer.
-//  4. Walk the entries, accumulating compressed/decompressed offsets.
+//  1. Read the last 9 bytes (the footer) once.
+//  2. For each layout in footerLayouts whose magic is where that layout
+//     keeps it, read the table that layout describes and check it
+//     against the file (readTableIn). The first table that describes the
+//     file is the answer.
 //
-// Returns ErrNotSeekable if the footer doesn't match. Returns io.ErrUnexpectedEOF
-// for truncated files. A table that does not describe the file is
-// ErrSeekTableMismatch (see validateSeekTable): a parsed table is never
+// Only crafted bytes can carry the magic in both places: both frame
+// counts would then exceed 2^31, a table of more than 16 GiB. Each
+// table is checked, and only one that describes the file is used.
+//
+// Returns ErrNotSeekable if neither layout finds its magic, and
+// io.ErrUnexpectedEOF for a file shorter than a footer. A table that
+// does not describe the file is ErrSeekTableMismatch, from the
+// preferred layout that found its magic: a parsed table is never
 // returned unchecked.
 func ReadSeekTable(r io.ReaderAt, fileSize int64) (*SeekTable, error) {
 	if fileSize < FooterSize {
 		return nil, io.ErrUnexpectedEOF
 	}
-
-	// Tail 9 bytes = footer.
 	var footer [FooterSize]byte
 	if _, err := r.ReadAt(footer[:], fileSize-FooterSize); err != nil {
 		return nil, fmt.Errorf("read footer: %w", err)
 	}
-	magic := binary.LittleEndian.Uint32(footer[0:4])
-	if magic != FooterMagic {
+	var firstErr error
+	for _, layout := range footerLayouts {
+		if binary.LittleEndian.Uint32(footer[layout.magicAt:]) != FooterMagic {
+			continue
+		}
+		tbl, err := readTableIn(r, fileSize, footer, layout)
+		if err == nil {
+			return tbl, nil
+		}
+		if firstErr == nil {
+			firstErr = fmt.Errorf("%s footer: %w", layout.name, err)
+		}
+	}
+	if firstErr == nil {
 		return nil, ErrNotSeekable
 	}
-	numFrames := int(binary.LittleEndian.Uint32(footer[4:8]))
-	flags := footer[8]
+	return nil, firstErr
+}
 
-	// Bit 0 of flags indicates checksums are included (per the t2sz spec).
-	// rx-go's encoder never emits checksums, but a file produced by t2sz
-	// might. Widen entry size accordingly.
+// readTableIn reads the seek table that footer, read in layout,
+// describes, and returns it only when it describes the file of fileSize
+// bytes:
+//
+//   - the descriptor sets no reserved bit;
+//   - the table fits in the file, and the skippable frame that carries
+//     it starts with the seek-table magic and a length that runs to the
+//     end of the file (checkTableFrame, read before the entries are
+//     allocated);
+//   - its frames end where the table starts, and each starts with a zstd
+//     frame header that agrees with its entry (validateSeekTable).
+//
+// Bounds: the entries buffer is the table's size, which the second
+// check keeps within the file; the frame list holds one FrameInfo per
+// entry. It reads the footer's table and at most maxFrameHeaderSize
+// bytes per frame.
+func readTableIn(r io.ReaderAt, fileSize int64, footer [FooterSize]byte, layout footerLayout) (*SeekTable, error) {
+	numFrames := int64(binary.LittleEndian.Uint32(footer[layout.framesAt:]))
+	descriptor := footer[layout.descriptorAt]
+	if reserved := descriptor & layout.reservedBits; reserved != 0 {
+		return nil, fmt.Errorf("%w: the descriptor %#x sets reserved bits %#x", ErrSeekTableMismatch, descriptor, reserved)
+	}
 	entrySize := int64(EntrySize)
-	if flags&0x01 != 0 {
-		entrySize = 12 // checksums add 4 bytes per entry
+	if descriptor&layout.checksumFlag != 0 {
+		// The checksums are read past and never checked: verifying one
+		// means decompressing its frame, which reading a table must not.
+		entrySize = ChecksumEntrySize
+	}
+	// The skippable frame is its 8-byte header, the entries and the
+	// footer, and it ends the file.
+	tableStart := fileSize - FooterSize - numFrames*entrySize - SkippableHeaderSize
+	if tableStart < 0 {
+		return nil, fmt.Errorf("%w: a table of %d entries does not fit in a file of %d bytes",
+			ErrSeekTableMismatch, numFrames, fileSize)
+	}
+	if err := checkTableFrame(r, fileSize, tableStart); err != nil {
+		return nil, err
 	}
 
-	// Entries live immediately before the footer.
-	entriesSize := int64(numFrames) * entrySize
-	entriesStart := fileSize - FooterSize - entriesSize
-	if entriesStart < 0 {
-		return nil, fmt.Errorf("corrupt seek table: entries would start at negative offset")
-	}
-
-	entries := make([]byte, entriesSize)
-	if _, err := r.ReadAt(entries, entriesStart); err != nil {
+	entries := make([]byte, numFrames*entrySize)
+	if _, err := r.ReadAt(entries, tableStart+SkippableHeaderSize); err != nil {
 		return nil, fmt.Errorf("read seek-table entries: %w", err)
 	}
-
 	frames := make([]FrameInfo, numFrames)
 	var cOff, dOff int64
-	for i := 0; i < numFrames; i++ {
-		base := int64(i) * entrySize
-		cSize := int64(binary.LittleEndian.Uint32(entries[base : base+4]))
-		dSize := int64(binary.LittleEndian.Uint32(entries[base+4 : base+8]))
-		// If flags&0x01 we skip 4 bytes of checksum — intentionally ignored.
+	for i := range frames {
+		entry := entries[int64(i)*entrySize:]
+		cSize := int64(binary.LittleEndian.Uint32(entry[0:4]))
+		dSize := int64(binary.LittleEndian.Uint32(entry[4:8]))
 		frames[i] = FrameInfo{
 			Index:              i,
 			CompressedOffset:   cOff,
@@ -101,39 +169,20 @@ func ReadSeekTable(r io.ReaderAt, fileSize int64) (*SeekTable, error) {
 		dOff += dSize
 	}
 	tbl := &SeekTable{
-		NumFrames: numFrames,
-		Flags:     flags,
+		NumFrames: len(frames),
+		Flags:     descriptor,
 		Frames:    frames,
 	}
-	// The skippable frame that carries the table starts with its 8-byte
-	// header, just before the entries.
-	if err := validateSeekTable(r, fileSize, entriesStart-SkippableHeaderSize, tbl); err != nil {
+	if err := validateSeekTable(r, tableStart, tbl); err != nil {
 		return nil, err
 	}
 	return tbl, nil
 }
 
-// validateSeekTable checks that tbl, parsed from a file of fileSize
-// bytes whose seek-table skippable frame starts at tableStart,
-// describes that file. It is the one check every parsed table goes
-// through, whatever footer layout it was read from:
-//
-//   - the skippable frame at tableStart carries the seek-table magic and
-//     a length that runs to the end of the file;
-//   - the frames, laid end to end from byte 0, end exactly at
-//     tableStart;
-//   - each frame starts with a zstd frame header, and a header that
-//     records the frame's content size records the entry's decompressed
-//     size.
-//
-// It reads the 8-byte skippable header and at most maxFrameHeaderSize
-// bytes per frame, one ReadAt each, and never a frame's data. The frame
-// count is bounded by the table, which fits in the file. An error wraps
-// ErrSeekTableMismatch and says what does not agree.
-func validateSeekTable(r io.ReaderAt, fileSize, tableStart int64, tbl *SeekTable) error {
-	if tableStart < 0 {
-		return fmt.Errorf("%w: the table would start before the file", ErrSeekTableMismatch)
-	}
+// checkTableFrame checks that the skippable frame at tableStart, in a
+// file of fileSize bytes, carries the seek-table magic and a length that
+// runs to the end of the file. It reads the frame's 8-byte header.
+func checkTableFrame(r io.ReaderAt, fileSize, tableStart int64) error {
 	var header [SkippableHeaderSize]byte
 	if _, err := r.ReadAt(header[:], tableStart); err != nil {
 		return fmt.Errorf("read seek-table frame header: %w", err)
@@ -145,6 +194,25 @@ func validateSeekTable(r io.ReaderAt, fileSize, tableStart int64, tbl *SeekTable
 		return fmt.Errorf("%w: the table's frame is %d bytes long, the file leaves %d",
 			ErrSeekTableMismatch, length, fileSize-tableStart-SkippableHeaderSize)
 	}
+	return nil
+}
+
+// validateSeekTable checks that tbl, parsed from a file whose
+// seek-table skippable frame starts at tableStart (already checked by
+// checkTableFrame), describes the frames before it, whatever footer
+// layout it was read from:
+//
+//   - the frames, laid end to end from byte 0, end exactly at
+//     tableStart;
+//   - each frame starts with a zstd frame header, and a header that
+//     records the frame's content size records the entry's decompressed
+//     size.
+//
+// It reads at most maxFrameHeaderSize bytes per frame, one ReadAt each,
+// and never a frame's data. The frame count is bounded by the table,
+// which fits in the file. An error wraps ErrSeekTableMismatch and says
+// what does not agree.
+func validateSeekTable(r io.ReaderAt, tableStart int64, tbl *SeekTable) error {
 	end := int64(0)
 	if tbl.NumFrames > 0 {
 		end = tbl.Frames[tbl.NumFrames-1].CompressedEnd()
