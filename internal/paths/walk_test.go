@@ -47,7 +47,7 @@ func TestWalkDir_RefusesWhatANamedPathCheckRefuses(t *testing.T) {
 		tree.SubDirLink: "directory already searched through '" + filepath.Dir(tree.Deep) + "'",
 		tree.Out:        ReasonLinkOutsideRoots,
 		tree.OutDir:     ReasonLinkOutsideRoots,
-		tree.Visible:    "symlink leads into hidden entry '.private'",
+		tree.Visible:    ReasonLinkHidden,
 		tree.Loop:       ReasonLinkLoop,
 		tree.Self:       "cannot resolve symlink",
 		tree.Dangling:   "cannot resolve symlink",

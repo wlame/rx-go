@@ -485,10 +485,26 @@ func damagedFramesOf(path string, batches [][]*damagedFrameError) error {
 	if more := len(frames) - len(named); more > 0 {
 		list += fmt.Sprintf(" and %d more", more)
 	}
-	// The first reason already says "seekable zstd frame is damaged:
-	// frame N", so it carries the sentinel for errors.Is.
-	return fmt.Errorf("%s: searched around damaged frames %s: %w", path, list, reasons[frames[0]])
+	return &damagedFramesError{path: path, frames: list, first: reasons[frames[0]]}
 }
+
+// damagedFramesError is the error of a seekable scan that went around
+// damaged frames. frames lists their numbers ("2, 7 and 3 more"); first
+// is the decoder's error for the first of them, which already says
+// "seekable zstd frame is damaged: frame N" and so carries the sentinel
+// for errors.Is (through Unwrap).
+type damagedFramesError struct {
+	path   string
+	frames string
+	first  error
+}
+
+func (e *damagedFramesError) Error() string {
+	return fmt.Sprintf("%s: searched around damaged frames %s: %v", e.path, e.frames, e.first)
+}
+
+// Unwrap lets errors.Is find seekable.ErrDamagedFrame in first.
+func (e *damagedFramesError) Unwrap() error { return e.first }
 
 // frameDecoder wraps an open *os.File and a pooled zstd decoder for
 // the writer goroutine in scanFrameBatch. It is intentionally small

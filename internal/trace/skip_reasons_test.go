@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -102,5 +103,52 @@ func TestTraceOfOnlySkippedFilesGivesTheirReasons(t *testing.T) {
 	resp = traceOnce(t, empty, []string{"NEEDLE"}, Options{NoCache: true})
 	if resp.SkipReasons == nil || len(resp.SkipReasons) != 0 {
 		t.Errorf("skip_reasons of an empty directory: %#v, want []", resp.SkipReasons)
+	}
+}
+
+// A reason names what kind of refusal it was and nothing the sandbox
+// keeps out of reach: not where a refused link leads, not the search
+// roots, not an OS error's text with a path in it. The path in the
+// answer is the one the walk met inside the root.
+func TestSkipReasonsDoNotRevealWhatALinkLeadsTo(t *testing.T) {
+	requireRipgrep(t)
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret-target.log")
+	if err := os.WriteFile(secret, []byte("NEEDLE\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	links := map[string]string{
+		filepath.Join(root, "out.log"):  secret,
+		filepath.Join(root, "gone.log"): filepath.Join(outside, "missing-target.log"),
+		filepath.Join(root, "hide.log"): filepath.Join(root, ".private", "key.log"),
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".private"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".private", "key.log"), []byte("NEEDLE\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for link, target := range links {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatalf("symlink: %v", err)
+		}
+	}
+	if err := sandbox.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(sandbox.Reset)
+
+	resp := traceOnce(t, root, []string{"NEEDLE"}, Options{NoCache: true})
+
+	if len(resp.SkipReasons) != len(links) {
+		t.Fatalf("skip_reasons %+v, want one per link", resp.SkipReasons)
+	}
+	for _, item := range resp.SkipReasons {
+		for _, hidden := range []string{outside, "secret-target", "missing-target", ".private", "key.log"} {
+			if strings.Contains(item.Reason, hidden) {
+				t.Errorf("%s: reason %q reveals %q", item.Path, item.Reason, hidden)
+			}
+		}
 	}
 }

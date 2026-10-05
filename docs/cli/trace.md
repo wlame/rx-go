@@ -237,14 +237,18 @@ human output lists each under `Files skipped:`. The reasons:
 |---|---|
 | `not a text file: …` | the first 8 KiB of the text hold a NUL byte (`… UTF-16 text …` when the text starts with a UTF-16 byte-order mark) |
 | `permission denied` | a file, or a subdirectory of a directory being searched, the process may not read; the rest of the tree is still searched |
-| `symlink leads outside all search roots`, `cannot resolve symlink: …`, `symlink loop: …`, … | a link the walk does not follow (see above) |
+| `symlink leads outside all search roots`, `symlink leads into a hidden entry; …`, `cannot resolve symlink: …`, `symlink loop: …`, … | a link the walk does not follow (see above) |
+| `cannot be read`, `no such file or directory` | any other failure to reach the file; the server's log has the error |
 | `not searched in full: the compressed stream ends early; …` | a truncated gzip, bzip2, xz or zstd stream: the matches before its end are kept |
-| `not searched in full: the lines of a damaged frame are left out; …` | a seekable zstd file with a frame that does not decompress (the frame is named): the matches of every other line are kept |
+| `not searched in full: the lines of damaged frames are left out; … (frames 2, 7)` | a seekable zstd file with frames that do not decompress: the matches of every other line are kept |
 | `a matched line matches none of the patterns alone, …` | with several patterns, a matched line could not be credited to one of them |
 | `the path leads to another file than the one that was checked` | the file was replaced between the check and the read |
 
 A file listed with `not searched in full` can still have matches in
-the answer; every other skipped file has none. A file named on the
+the answer; every other skipped file has none. A reason is one of these
+fixed wordings: it never says where a refused link leads or carries an
+error's own text (see
+[Security](../concepts/security.md#symlinks-inside-a-directory-search)). A file named on the
 command line that the process may not read fails the command instead
 of being skipped.
 

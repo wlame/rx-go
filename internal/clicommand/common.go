@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
 )
 
@@ -111,7 +112,9 @@ func exitWithError(w io.Writer, code int, format string, args ...any) *ExitError
 // PrintError writes the one error line every rx failure prints:
 // "Error: " followed by the message with its first letter capitalized.
 func PrintError(w io.Writer, msg string) {
-	_, _ = fmt.Fprintf(w, "Error: %s\n", capitalizeFirst(msg))
+	// SECURITY: a message can name a file whose name holds terminal
+	// control sequences; they are written out, not sent to the terminal.
+	_, _ = fmt.Fprintf(w, "Error: %s\n", output.PrintableMessage(capitalizeFirst(msg)))
 }
 
 // IsReported reports whether err, or an error it wraps, is an ExitError
@@ -163,7 +166,7 @@ func exitCodeForPathError(err error) int {
 // otherwise.
 func accessFailureText(err error) string {
 	if errors.Is(err, fs.ErrPermission) {
-		return "permission denied"
+		return paths.ReasonPermissionDenied
 	}
 	return err.Error()
 }
