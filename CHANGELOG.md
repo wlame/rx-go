@@ -32,7 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rx does not know, a header cut short) is refused by every command as
   `not a text file: a systemd journal rx cannot read: <why>`, and
   `GET /v1/tree` lists it with `is_text: false`. A gzip copy of a
-  journal stays a binary file. rx reads journals itself, with no
+  journal stays a binary file. The progress of a journal's index build
+  and findings scan runs to the end of the journal's last object, not
+  to the end of the file: a live journal is preallocated in 8 MiB steps,
+  and the zeros after its objects are never read (a findings task's
+  `bytes_total` is that end). rx reads journals itself, with no
   `journalctl`, on every system rx runs on; the lz4 values are decoded
   with the new dependency pierrec/lz4/v4 4.1.33 (BSD-3-Clause license).
 
@@ -45,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The progress of a findings scan of a compressed file (a findings
+  task's `bytes_read`) is how far into the file the scan has read. It
+  added the bytes the timestamp detection read from the head of the
+  file to the bytes of the scan itself, so it reported the whole file
+  read before the scan had read it all.
 - `rx serve` listens for SIGINT and SIGTERM from its first moment. A
   Ctrl-C during the startup (the viewer download, the loading of the
   signature catalogue) was ignored, and the server came up and ran; it
