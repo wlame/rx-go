@@ -89,23 +89,34 @@ func TestBuild_ProgressStartsAtZero(t *testing.T) {
 	}
 }
 
-// Two identities are equal when every recorded field is; a missing
-// field differs from a present one.
+// Two identities are equal when every compared field is; a missing
+// field differs from a present one. The local-time text of the times is
+// not compared.
 func TestSourceIdentity_Equal(t *testing.T) {
 	inode, otherInode := uint64(7), uint64(8)
+	device, otherDevice := uint64(1), uint64(2)
+	changed, otherChanged := int64(5), int64(6)
 	fingerprint := "abc"
-	base := SourceIdentity{SizeBytes: 10, ModifiedAt: "t", Inode: &inode, Fingerprint: &fingerprint}
+	same := func(edit func(*SourceIdentity)) SourceIdentity {
+		id := SourceIdentity{SizeBytes: 10, ModifiedAt: "t", ModifiedNs: 3, Inode: &inode, Device: &device, ChangedNs: &changed, Fingerprint: &fingerprint}
+		edit(&id)
+		return id
+	}
+	base := same(func(*SourceIdentity) {})
 	cases := map[string]struct {
 		other SourceIdentity
 		equal bool
 	}{
-		"same values":        {SourceIdentity{SizeBytes: 10, ModifiedAt: "t", Inode: &inode, Fingerprint: &fingerprint}, true},
-		"another size":       {SourceIdentity{SizeBytes: 11, ModifiedAt: "t", Inode: &inode, Fingerprint: &fingerprint}, false},
-		"another mtime":      {SourceIdentity{SizeBytes: 10, ModifiedAt: "u", Inode: &inode, Fingerprint: &fingerprint}, false},
-		"another inode":      {SourceIdentity{SizeBytes: 10, ModifiedAt: "t", Inode: &otherInode, Fingerprint: &fingerprint}, false},
-		"no inode":           {SourceIdentity{SizeBytes: 10, ModifiedAt: "t", Fingerprint: &fingerprint}, false},
-		"no fingerprint":     {SourceIdentity{SizeBytes: 10, ModifiedAt: "t", Inode: &inode}, false},
-		"another changed at": {SourceIdentity{SizeBytes: 10, ModifiedAt: "t", Inode: &inode, ChangedAt: &fingerprint, Fingerprint: &fingerprint}, false},
+		"same values":        {base, true},
+		"another mtime text": {same(func(id *SourceIdentity) { id.ModifiedAt = "u" }), true},
+		"another size":       {same(func(id *SourceIdentity) { id.SizeBytes = 11 }), false},
+		"another mtime":      {same(func(id *SourceIdentity) { id.ModifiedNs = 4 }), false},
+		"another inode":      {same(func(id *SourceIdentity) { id.Inode = &otherInode }), false},
+		"no inode":           {same(func(id *SourceIdentity) { id.Inode = nil }), false},
+		"another device":     {same(func(id *SourceIdentity) { id.Device = &otherDevice }), false},
+		"no device":          {same(func(id *SourceIdentity) { id.Device = nil }), false},
+		"another ctime":      {same(func(id *SourceIdentity) { id.ChangedNs = &otherChanged }), false},
+		"no fingerprint":     {same(func(id *SourceIdentity) { id.Fingerprint = nil }), false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

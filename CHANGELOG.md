@@ -129,6 +129,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A line index or a trace-cache entry built under one time zone is now
+  reused under another. Both compared the file's mtime and ctime as
+  local wall-clock text, so an `rx serve` started with `TZ=UTC` and a
+  CLI in the user's zone rebuilt each other's indexes and rescanned
+  each other's traces on every switch, and an mtime moved by an hour
+  inside the hour a daylight-saving change repeats went unseen. Both
+  now record the two times as nanoseconds since the Unix epoch
+  (`source_mtime_ns`, `source_ctime_ns`) and compare those; the text
+  fields stay, for reading. They also record the device beside the
+  inode (`source_device`), and a stored index is used for a file only
+  when both match, so two files with one inode number on different
+  filesystems are told apart. The index format version is now 7: an
+  index written before is rebuilt once. Trace-cache entries stay at
+  version 6.
+
 - Every checkpoint of a line index now names a line the file has, at
   the byte where it starts (for a seekable `.zst`, a byte inside the
   line). An index used to end with a checkpoint one line past the end

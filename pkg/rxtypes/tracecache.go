@@ -53,6 +53,13 @@ type TraceCacheData struct {
 	SourceInode       *uint64 `json:"source_inode"`
 	SourceChangedAt   *string `json:"source_changed_at"`
 	SourceFingerprint *string `json:"source_fingerprint"`
+	// The compared times and the device, with the meaning of the fields
+	// of the same names in UnifiedFileIndex. SourceModifiedAt and
+	// SourceChangedAt are the same times as local text and are not
+	// compared.
+	SourceMtimeNs int64   `json:"source_mtime_ns"`
+	SourceCtimeNs *int64  `json:"source_ctime_ns"`
+	SourceDevice  *uint64 `json:"source_device"`
 	// Patterns are the patterns of the search that wrote the entry, in
 	// its order. Every search with the same patterns in any order shares
 	// the entry, since PatternsHash sorts them.

@@ -138,6 +138,7 @@ func TestIsValidForSource_MtimeBased(t *testing.T) {
 		SourcePath:       src,
 		SourceSizeBytes:  info.Size(),
 		SourceModifiedAt: formatMtime(info.ModTime()),
+		SourceMtimeNs:    info.ModTime().UnixNano(),
 	}
 	if !IsValidForSource(idx, src) {
 		t.Error("expected valid immediately after write")
@@ -162,6 +163,7 @@ func TestIsValidForSource_SizeChange(t *testing.T) {
 		SourcePath:       src,
 		SourceSizeBytes:  info.Size() + 100, // wrong size
 		SourceModifiedAt: formatMtime(info.ModTime()),
+		SourceMtimeNs:    info.ModTime().UnixNano(),
 	}
 	if IsValidForSource(idx, src) {
 		t.Error("expected invalid when size doesn't match")
@@ -190,6 +192,7 @@ func TestLoadForSource_Valid(t *testing.T) {
 		SourcePath:       src,
 		SourceSizeBytes:  info.Size(),
 		SourceModifiedAt: formatMtime(info.ModTime()),
+		SourceMtimeNs:    info.ModTime().UnixNano(),
 		FileType:         rxtypes.FileTypeText,
 		IsText:           true,
 		LineIndex:        []rxtypes.LineIndexEntry{{LineNumber: 1, ByteOffset: 0}},
@@ -217,6 +220,7 @@ func TestLoadForSource_Stale(t *testing.T) {
 		SourcePath:       src,
 		SourceSizeBytes:  info.Size(),
 		SourceModifiedAt: formatMtime(info.ModTime()),
+		SourceMtimeNs:    info.ModTime().UnixNano(),
 		FileType:         rxtypes.FileTypeText,
 		IsText:           true,
 	}
@@ -304,44 +308,6 @@ func TestFormatMtime_SubSecond_EmitsMicroseconds(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-// TestIsValidForSource_WholeSecondMtime_PythonWrittenCache verifies that
-// a cache written by Python (with no fractional suffix) is still
-// recognized as valid when Go re-reads it, even if the Go formatter's
-// natural output for the same mtime would include ".000000".
-//
-// Concretely: if Python wrote "2024-01-01T10:00:00" to an index, and Go
-// stats the file and sees nanosecond == 0, Go must emit the same string
-// (without suffix). This is the regression guard.
-func TestIsValidForSource_WholeSecondMtime_PythonWrittenCache(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "source.log")
-	if err := os.WriteFile(src, []byte("hello\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Force mtime to a whole second — time.Unix(N, 0) has nanoseconds == 0.
-	wholeSecond := time.Unix(1700000000, 0)
-	if err := os.Chtimes(src, wholeSecond, wholeSecond); err != nil {
-		t.Fatal(err)
-	}
-	info, _ := os.Stat(src)
-
-	// A cache entry written by Python for this mtime would contain
-	// "2023-11-14T..." without the .000000 suffix, formatted in local
-	// time. Reproduce that exact string and expect IsValidForSource to
-	// agree the cache is still valid.
-	pythonStyleMtime := wholeSecond.Local().Format("2006-01-02T15:04:05")
-
-	idx := &rxtypes.UnifiedFileIndex{
-		SourcePath:       src,
-		SourceSizeBytes:  info.Size(),
-		SourceModifiedAt: pythonStyleMtime,
-	}
-	if !IsValidForSource(idx, src) {
-		t.Errorf("Python-written whole-second mtime (%q) should match Go's stat — cache parity broken",
-			pythonStyleMtime)
 	}
 }
 

@@ -577,6 +577,7 @@ func TestIsCacheValid_WrongPatternHash(t *testing.T) {
 		SourcePath:       src,
 		SourceSizeBytes:  srcInfo.Size(),
 		SourceModifiedAt: srcInfo.ModTime().Local().Format("2006-01-02T15:04:05.000000"),
+		SourceMtimeNs:    srcInfo.ModTime().UnixNano(),
 		Patterns:         []string{"error"},
 		PatternsHash:     ComputePatternsHash([]string{"error"}, nil),
 		ChunkCount:       1,
