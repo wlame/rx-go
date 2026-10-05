@@ -149,9 +149,9 @@ func timeRangeOf(path string, fileZone config.Zone) (*rxtypes.TimeRangeResponse,
 }
 
 // buildStreamIndexIfMissing builds and stores the line index of a gzip,
-// bzip2, xz or plain zstd file that has none, the one kind of file
-// whose time range needs it: its last timestamp is at the end of a text
-// that can only be read from the start. A plain or seekable file is
+// bzip2, xz or plain zstd file or a systemd journal that has none, the
+// one kind of file whose time range needs it: its last timestamp is at
+// the end of a text that can only be read from the start. A plain or seekable file is
 // answered from its head and tail without one, however large. A build
 // that fails is logged, and the file answers source "none".
 func buildStreamIndexIfMissing(path string, kind filekind.Kind, size int64, noIndex bool) {
