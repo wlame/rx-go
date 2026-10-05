@@ -30,6 +30,9 @@ var featureTable = []string{
 	"line_timestamps",
 	// time_range: GET /v1/time-range gives a file's time range.
 	"time_range",
+	// file_tz: GET /v1/samples and GET /v1/time-range take `file_tz`,
+	// which reads a file's timestamps in a chosen zone.
+	"file_tz",
 }
 
 // Features returns the names of featureTable, sorted.

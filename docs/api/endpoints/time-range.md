@@ -23,6 +23,7 @@ GET /v1/time-range?path=/var/log/app.log
 | Parameter | Required | Description |
 |---|---|---|
 | `path` | yes | The file. Checked against the search roots like every path |
+| `file_tz` | no | Read the file's timestamps as the wall clock each line writes, in this zone (`UTC`, an IANA name or `±HH:MM`), ignoring any zone a line writes; see [A file zone](#a-file-zone). Another value answers `400` |
 
 ### What a request reads
 
@@ -43,6 +44,40 @@ index. The frames `rx compress` writes by default (4 MiB) and frames of
 the background build a `GET /v1/samples` of it starts (or from
 `POST /v1/index`); ask again when that build ends. `RX_NO_INDEX=true`
 on the server makes every request read without an index.
+
+### A file zone
+
+`file_tz=ZONE` reads each line's timestamp as the wall clock it
+writes, in ZONE ([A file zone](../../concepts/timestamps.md#a-file-zone)):
+`display_zone` is ZONE, `first_ms` and `last_ms` are those wall clocks
+read in ZONE, and `has_zone` and `example` stay the file's. The reads
+are those of the table above, except for an indexed file whose
+timestamps carry zones: its index holds instants, so the first
+timestamp is the stored one plus the offset the index stores for it,
+and the last timestamped line is read again at the byte offset the
+index stores (a window of one line, `source` stays `index`). A gzip,
+bzip2, xz or plain zstd file of that kind cannot be read at an offset:
+it answers `source: none`, with an index too.
+
+```bash
+curl -sG 'http://127.0.0.1:7777/v1/time-range' \
+    --data-urlencode 'path=/var/log/app.log-2025121008' --data-urlencode 'file_tz=Europe/Berlin'
+```
+
+```json
+{
+  "path": "/var/log/app.log-2025121008",
+  "format": "iso",
+  "has_zone": false,
+  "day_first": null,
+  "display_zone": "Europe/Berlin",
+  "example": "2025-12-10 07:00:04.574",
+  "first_ms": 1765346404574,
+  "last_ms": 1765350004390,
+  "source": "scan",
+  "cli_command": "rx time-range /var/log/app.log-2025121008 --file-tz=Europe/Berlin"
+}
+```
 
 ## Response — 200 OK
 
@@ -105,7 +140,7 @@ end, or a seekable file of frames too large to decode for it).
 | Code | Meaning |
 |---:|---|
 | `200 OK` | The answer, with timestamps or without |
-| `400 Bad Request` | The path is a directory, not a text file, or needs more than 128 MiB at once to decompress |
+| `400 Bad Request` | The path is a directory, not a text file, or needs more than 128 MiB at once to decompress; or `file_tz` names no zone (`Invalid file_tz "Mars/Base": invalid time zone: not a zone name; give UTC, an IANA zone name or ±HH:MM`) |
 | `403 Forbidden` | Outside the search roots, a hidden entry, or a file the server may not read |
 | `404 Not Found` | The file does not exist |
 | `422 Unprocessable Entity` | `path` missing |

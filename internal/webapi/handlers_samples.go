@@ -45,6 +45,7 @@ type samplesInput struct {
 	Context       int      `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
 	BeforeContext int      `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
 	AfterContext  int      `query:"after_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
+	FileTZ        string   `query:"file_tz" example:"Europe/Berlin" doc:"Read the file's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM (as RX_LOG_TZ takes it). A zone a line writes is ignored, and the zone takes the place of RX_LOG_TZ for this request. Empty or absent: the file is read as its timestamps say. Another value is refused with 400."`
 	Prefer        string   `header:"Prefer" doc:"RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200."`
 }
 
@@ -169,6 +170,10 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		if in.Offsets == "" && in.Lines == "" && len(in.Timestamps) == 0 {
 			return nil, ErrBadRequest("Must provide one of 'offsets', 'lines' or 'timestamps'.")
 		}
+		fileZone, err := fileZoneOf(in.FileTZ)
+		if err != nil {
+			return nil, err
+		}
 
 		// Context defaults (-1 sentinel = "not provided").
 		defaultCtx := 3
@@ -285,6 +290,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			Offsets:       parsedOffsets,
 			Lines:         parsedLines,
 			Timestamps:    in.Timestamps,
+			FileZone:      fileZone,
 			BeforeContext: before,
 			AfterContext:  after,
 			IndexLoader:   loader,
@@ -321,6 +327,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			"offsets":        in.Offsets,
 			"lines":          in.Lines,
 			"timestamps":     in.Timestamps,
+			"file_tz":        in.FileTZ,
 			"context":        nilIfNegative(in.Context),
 			"before_context": nilIfNegative(in.BeforeContext),
 			"after_context":  nilIfNegative(in.AfterContext),

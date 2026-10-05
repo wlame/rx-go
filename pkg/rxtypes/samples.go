@@ -93,7 +93,7 @@ type SamplesResponse struct {
 	// most RX_TIMESTAMP_LOOKBACK_KB KiB before it. A key whose sample is
 	// null has a null entry. The whole map is nil (null) when the file
 	// has no timestamp format. Present in every mode.
-	LineTimestamps map[string][]*int64 `json:"line_timestamps" nullable:"true" doc:"Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode."`
+	LineTimestamps map[string][]*int64 `json:"line_timestamps" nullable:"true" doc:"Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ, and under the request's file_tz every line's written wall clock is read in that zone. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode."`
 }
 
 // SamplesTimeFormat is the timestamp format of a file a samples answer
@@ -104,5 +104,5 @@ type SamplesTimeFormat struct {
 	_           struct{} `nullable:"true"`
 	Format      string   `json:"format" enum:"iso,clf,ctime,syslog,slash,dotted,epoch" doc:"The timestamp format of the lines."`
 	HasZone     bool     `json:"has_zone" doc:"Whether most timestamps carry a zone."`
-	AssumedZone string   `json:"assumed_zone" doc:"The zone a timestamp without one is read in: RX_LOG_TZ (default UTC) for a file whose timestamps carry no zone, UTC for one whose timestamps do."`
+	AssumedZone string   `json:"assumed_zone" doc:"The zone a timestamp without one is read in: RX_LOG_TZ (default UTC) for a file whose timestamps carry no zone, UTC for one whose timestamps do; the request's file_tz, whatever the file, when it names one."`
 }
