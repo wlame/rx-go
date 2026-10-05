@@ -81,6 +81,7 @@ two, `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` (see
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
 | `-r`, `--regex` | `string` | — | Highlight matches of this regex in context lines (requires color) |
 | `--no-index` | `bool` | `RX_NO_INDEX` or `false` | Do not build or use a line index |
+| `--file-tz` | `string` | — | Read the file's timestamps as wall clock in this zone (`UTC`, an IANA name or `±HH:MM`), ignoring any zone its lines write; see [A file's zone](#a-files-zone) |
 
 `-b` also answers to `--byte-offset` and `-l` to `--line-offset`, the
 spellings rx-python has always used, so a script written against either
@@ -180,6 +181,28 @@ With an index the search reads at most one index step from the
 checkpoint before the answer; without one it reads from the first line.
 The rule, the formats and the zone settings (`RX_LOG_TZ`,
 `RX_QUERY_TZ`) are in [Timestamps](../concepts/timestamps.md).
+
+### A file's zone
+
+`--file-tz=ZONE` reads each line's timestamp as the wall clock it
+writes, in ZONE, for a log whose zone is missing or wrong: a zone the
+line writes (`+02:00`, `Z`, `UTC`) is ignored, and ZONE takes the place
+of `RX_LOG_TZ`. It applies in all three modes: to the time queries, to
+`line_timestamps` and to `time_format.assumed_zone`, which names ZONE;
+`time_format.has_zone` still says whether the file's timestamps carry
+a zone. A query without a zone is read in ZONE too, unless
+`RX_QUERY_TZ` is set. ZONE is `UTC`, an IANA name or `±HH:MM` (two
+digits each, up to 18 hours); another value exits 2.
+
+```bash
+rx samples app.log --timestamps=2025-12-10T07:30:00Z --file-tz=Asia/Tokyo
+```
+
+For a file whose timestamps carry no zone, the index serves the search
+as without the flag. For one whose timestamps carry zones the index
+holds instants, which cannot give back the written wall clocks, so the
+search reads from the first line (the answer is the same, the read
+longer). See [A file zone](../concepts/timestamps.md#a-file-zone).
 
 ### Address syntax
 

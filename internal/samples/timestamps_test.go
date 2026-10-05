@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/internal/testutil/samplesanswer"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
@@ -119,6 +120,8 @@ func writeFile(t *testing.T, path string, data []byte) {
 type timeRequest struct {
 	values        []string
 	before, after int
+	// zone is the request's file zone; the zero value is none.
+	zone config.Zone
 }
 
 // askByTime resolves req against path with the stored index, as `rx
@@ -127,7 +130,7 @@ func askByTime(path string, req timeRequest) (*rxtypes.SamplesResponse, error) {
 	return Resolve(context.Background(), Request{
 		Path: path, Timestamps: req.values,
 		BeforeContext: req.before, AfterContext: req.after,
-		IndexLoader: StoredIndex,
+		FileZone: req.zone, IndexLoader: StoredIndex,
 	})
 }
 

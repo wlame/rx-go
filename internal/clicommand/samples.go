@@ -60,6 +60,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 		noColor    bool
 		regex      string
 		noIndex    bool
+		fileTZ     string
 	)
 	cmd := &cobra.Command{
 		Use:   "samples PATH",
@@ -88,6 +89,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 				colorFlag:  colorFlag,
 				regex:      regex,
 				noIndex:    noIndex || config.GetBoolEnv("RX_NO_INDEX", false),
+				fileTZ:     fileTZ,
 			})
 		},
 	}
@@ -127,6 +129,7 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringVarP(&regex, "regex", "r", "", "Highlight matches of this regex in context lines (requires color)")
 	cmd.Flags().BoolVar(&noIndex, "no-index", false,
 		"Do not build or use a line index (also RX_NO_INDEX)")
+	cmd.Flags().StringVar(&fileTZ, "file-tz", "", fileTZFlagUsage)
 	return cmd
 }
 
@@ -147,6 +150,9 @@ type samplesParams struct {
 	colorFlag  string
 	regex      string
 	noIndex    bool
+	// fileTZ is --file-tz as given; "" reads the file as its
+	// timestamps say.
+	fileTZ string
 }
 
 // runSamples dispatches the CLI request to the shared samples.Resolve
@@ -157,6 +163,10 @@ func runSamples(out io.Writer, p samplesParams) error {
 	if modesGiven(p) != 1 {
 		return exitWithError(os.Stderr, ExitUsageError,
 			"must provide exactly one of --offsets, --lines or --timestamps")
+	}
+	fileZone, zoneErr := parseFileTZ(p.fileTZ)
+	if zoneErr != nil {
+		return zoneErr
 	}
 
 	// Sandbox + stat.
@@ -261,6 +271,7 @@ func runSamples(out io.Writer, p samplesParams) error {
 		Offsets:       parsedOffsets,
 		Lines:         parsedLines,
 		Timestamps:    p.timestamps,
+		FileZone:      fileZone,
 		BeforeContext: before,
 		AfterContext:  after,
 		IndexLoader:   loader,

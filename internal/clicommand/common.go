@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
 )
@@ -183,6 +184,25 @@ func accessFailureText(err error) string {
 // exit code for one the process may not read, the same in `rx trace`,
 // `rx samples` and `rx index`, and the code exitCodeForPathError gives
 // any other failure.
+// fileTZFlagUsage is the help text of --file-tz, the same in every
+// command that takes it.
+const fileTZFlagUsage = "Read the file's timestamps as wall clock in this zone (UTC, an IANA name or ±HH:MM), " +
+	"ignoring any zone its lines write"
+
+// parseFileTZ reads the value of --file-tz: no zone when it is empty,
+// and a usage error naming the value when it names none
+// (config.ParseZone).
+func parseFileTZ(value string) (config.Zone, *ExitError) {
+	if value == "" {
+		return config.Zone{}, nil
+	}
+	zone, err := config.ParseZone(value)
+	if err != nil {
+		return config.Zone{}, exitWithError(os.Stderr, ExitUsageError, "--file-tz=%s: %s", output.Quote(value), err.Error())
+	}
+	return zone, nil
+}
+
 func openFailure(path string, err error) *ExitError {
 	return exitWithError(os.Stderr, exitCodeForPathError(err), "%s: %s", accessFailureText(err), path)
 }

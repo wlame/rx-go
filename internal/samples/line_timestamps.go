@@ -11,7 +11,6 @@ import (
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
-	"github.com/wlame/rx-go/internal/timestamps"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -161,7 +160,6 @@ func (t *fileTimes) lineTimestamps(req Request, kind filekind.Kind, answer *coll
 func (t *fileTimes) effectiveStamps(lines []string, starts []int64, carried stampedLine, lookback int64) []*int64 {
 	out := make([]*int64, len(lines))
 	values := make([]int64, len(lines))
-	hasZone := t.parser.Format().HasZone
 	last := carried
 	for i, text := range lines {
 		if stamp, ok := index.LineStamp(t.parser, []byte(text)); ok {
@@ -171,8 +169,8 @@ func (t *fileTimes) effectiveStamps(lines []string, starts []int64, carried stam
 			continue
 		}
 		// A value whose instant falls outside the years 1 to 9999
-		// (a wall clock at either end, read in RX_LOG_TZ) has none.
-		if instant, ok := timestamps.InstantOf(last.ms, hasZone, t.logZone.Location); ok {
+		// (a wall clock at either end, read in its zone) has none.
+		if instant, ok := t.frame.instant(last.ms); ok {
 			values[i] = instant
 			out[i] = &values[i]
 		}

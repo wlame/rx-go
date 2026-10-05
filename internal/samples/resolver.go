@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -63,7 +64,14 @@ type Request struct {
 	// time (or the lines of a range) through the lines machinery; see
 	// resolveTimestamps. Each value is one query: a value is never split
 	// on commas, which are part of some timestamp formats.
-	Timestamps    []string
+	Timestamps []string
+	// FileZone, when it names a zone, reads every timestamp of the file
+	// as the wall clock its line writes, in that zone: a zone written on
+	// a line is ignored, and the zone takes the place of RX_LOG_TZ for
+	// this request (`--file-tz`, `file_tz`). It applies to the time
+	// queries, line_timestamps, time_format.assumed_zone and TimeRange.
+	// The zero value reads the file as its timestamps say.
+	FileZone      config.Zone
 	BeforeContext int
 	AfterContext  int
 	// Kind is what Source is (filekind.Of), when the caller decided it

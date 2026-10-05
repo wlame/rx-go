@@ -152,6 +152,7 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "offsets", Flag: "offsets", Kind: ArgFlag, Absent: defaultValue("[]")},
 			{Field: "lines", Flag: "lines", Kind: ArgFlag, Absent: defaultValue("[]")},
 			{Field: "timestamps", Flag: "timestamps", Kind: ArgFlag, Absent: defaultValue("[]")},
+			{Field: "file_tz", Flag: "file-tz", Kind: ArgFlag, Absent: defaultValue("")},
 			{Field: "context", Flag: "context", Kind: ArgFlag, Absent: defaultValue("3")},
 			{Field: "before_context", Flag: "before", Kind: ArgFlag, Absent: sameAsField("context")},
 			{Field: "after_context", Flag: "after", Kind: ArgFlag, Absent: sameAsField("context")},
@@ -159,7 +160,10 @@ var cliCommandTable = map[string]CLICommandOperation{
 	},
 	"time_range": {
 		Subcommand: "time-range",
-		Args:       []CLIArg{{Field: "path", Kind: ArgPositional}},
+		Args: []CLIArg{
+			{Field: "path", Kind: ArgPositional},
+			{Field: "file_tz", Flag: "file-tz", Kind: ArgFlag, Absent: defaultValue("")},
+		},
 	},
 	"index_get": {
 		Subcommand: "index",

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rx samples --file-tz=ZONE` (all three modes) and
+  `rx time-range --file-tz=ZONE` read a file's timestamps as the wall
+  clock each line writes, in ZONE, for a log whose zone is missing or
+  wrong: a zone a line writes is ignored, and ZONE takes the place of
+  `RX_LOG_TZ` for the command. It moves the time search,
+  `line_timestamps`, `time_format.assumed_zone` (ZONE), and every member
+  of the time range (`display_zone` is ZONE; `first_ms` and `last_ms`
+  are read in it); `has_zone` stays the file's, and a query without a
+  zone is read in ZONE unless `RX_QUERY_TZ` is set. ZONE is `UTC`, an
+  IANA name or `±HH:MM`, as `RX_LOG_TZ` takes it; another value exits 2
+  naming it. Nothing stored changes. The index of a file whose
+  timestamps carry no zone serves it as before; the index of one whose
+  timestamps carry zones holds instants, so under `--file-tz` the time
+  search reads from the first line instead of starting at a checkpoint,
+  and the time range reads the last timestamped line again at the
+  offset the index stores (a gzip, bzip2, xz or plain zstd file of that
+  kind answers source `none`). An epoch value counts as its UTC wall
+  clock. The human `rx time-range` line shows the times in ZONE.
+
 ### Fixed
 
 - `rx serve` installs viewer 0.6.0: the range of viewer releases it
