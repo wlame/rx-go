@@ -402,6 +402,12 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			continue
 		}
 		info := src.Info()
+		// A named pipe, a socket or a device is refused before anything
+		// else looks at it; a walk has refused it already.
+		if !info.Mode().IsRegular() {
+			unreadable(target, fmt.Errorf("%w: %s", paths.ErrNotRegularFile, path))
+			continue
+		}
 		// Below-threshold files are skipped rather than indexed, and the
 		// command still exits 0; rx-python does the same.
 		if !p.analyze && info.Size() < thresholdBytes {

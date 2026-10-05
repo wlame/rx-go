@@ -137,8 +137,10 @@ func listSearchRoots() rxtypes.TreeResponse {
 // leaves out hidden entries; a symlink it refused — out of every search
 // root, into a hidden entry, or nowhere — is left out here, since
 // listing it would only offer a link that returns 403 and show the size
-// and type of a file outside the roots. A symlink to a directory inside
-// the roots is listed as a directory.
+// and type of a file outside the roots. So is an entry that is neither
+// a regular file nor a directory (a named pipe, a socket, a device),
+// which no route opens. A symlink to a directory inside the roots is
+// listed as a directory.
 func buildTreeResponse(absPath string, entries []paths.ListedEntry) rxtypes.TreeResponse {
 	// Split dirs and files, sort each alphabetically (case-insensitive).
 	dirs := make([]paths.ListedEntry, 0, len(entries))
