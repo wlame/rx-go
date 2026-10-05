@@ -146,14 +146,18 @@ The SPA download failed or was skipped:
 - Rate limited on first fetch
 - `--skip-frontend` was passed
 - `RX_FRONTEND_URL` or `RX_FRONTEND_VERSION` points at a bad source
+- No published `rx-viewer` release lies inside the range this `rx`
+  supports, or the cached viewer lies outside it and could not be
+  replaced
 
 ### Fix
 
-Check the startup log — `rx serve` prints a warning when the fetch
-fails:
+Check the startup output. The banner names the viewer served and why,
+and `rx serve` prints one warning when a download or a check fails:
 
 ```text
-Warning: frontend fetch failed (...). Continuing without SPA.
+Warning: viewer update check: github returned 500. Serving no viewer (/ redirects to /docs).
+Viewer: no viewer (/ redirects to /docs)
 ```
 
 Either:

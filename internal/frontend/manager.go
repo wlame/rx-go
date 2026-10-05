@@ -1,26 +1,32 @@
 // Package frontend manages the rx-viewer SPA bundle — downloading,
 // caching, and validating static-file paths at request time.
 //
-// The Python implementation at rx-python/src/rx/frontend_manager.py
-// fetches dist.tar.gz from GitHub releases. rx-go keeps the same
-// behavior, the same env vars, the same on-disk layout, and the
-// same .metadata.json schema so a cache written by one toolchain
-// loads in the other.
+// The bundle comes from the GitHub releases of rx-viewer (dist.tar.gz
+// plus its .sha256 sidecar). rx-go keeps rx-python's env vars, on-disk
+// layout and .metadata.json schema, so a cache written by one backend
+// loads in the other; when the viewer is refreshed differs (see below).
 //
-// Behavior (matches Python exactly):
+// Which viewer `rx serve` serves:
 //
-//   - RX_FRONTEND_URL set → force download from that URL (every startup).
-//   - RX_FRONTEND_VERSION set → pin to that version; use cached if
-//     present, else download.
-//   - Neither set + valid cache present → use cache, no GitHub hit.
-//   - Neither set + no cache → download latest from GitHub.
+//   - RX_FRONTEND_URL set → download from that URL on every start.
+//   - RX_FRONTEND_VERSION set → pin to that version; use the cache when it
+//     holds that version, else download it. No range check.
+//   - Neither set → the newest published release inside the supported
+//     range (compat.go). A cached viewer inside the range is served as it
+//     is until its last check is a day old; then GitHub's release list is
+//     read once and a newer release inside the range replaces it. A
+//     cached viewer outside the range counts as no cache at all.
+//     `rx serve --update-viewer` runs the check at once (Manager.Update).
 //
 // Directory resolution: RX_FRONTEND_PATH > config.GetFrontendCacheDir().
 //
 // Security: tarball entries are path-sanitized before extraction.
 // Any entry whose resolved path would escape the destination
 // directory (`..`, absolute paths, symlink traversal) is rejected,
-// the tarball is abandoned, and an error is returned.
+// the tarball is abandoned, and an error is returned. A bundle is
+// checked against its release's .sha256 sidecar before it is unpacked,
+// and every redirect of a download is checked against the same address
+// policy the webhook guard uses.
 package frontend
 
 import (
@@ -36,6 +42,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/wlame/rx-go/internal/config"
@@ -56,6 +63,13 @@ const githubAPIBase = "https://api.github.com"
 
 // RequestTimeout applies to GitHub API calls and tarball downloads.
 const RequestTimeout = 30 * time.Second
+
+// ReleaseCheckTimeout bounds the release listing of the daily check
+// when a usable viewer is already cached: the check never delays the
+// server start by more than this before the cached viewer is served.
+// A download that follows a successful listing has the caller's budget,
+// the same a first install has.
+const ReleaseCheckTimeout = 10 * time.Second
 
 // metadataFileName and tempFileName are the non-bundle entries the cache
 // directory holds alongside the extracted viewer.
@@ -126,6 +140,20 @@ type Manager struct {
 
 	HTTPClient *http.Client
 	Logger     *slog.Logger
+
+	// releaseCheckTimeout bounds the release listing of a daily check,
+	// so an offline host or a slow API delays the server start by at
+	// most this much. Tests shorten it.
+	releaseCheckTimeout time.Duration
+
+	// withheld is set when the cached bundle lies outside the supported
+	// range and could not be replaced: the files stay on disk, but
+	// IsAvailable reports false, so the server redirects / to /docs
+	// instead of serving a viewer this backend was not built for.
+	// atomic.Bool because the HTTP handlers read it from their own
+	// goroutines while Ensure, which writes it, may in principle run
+	// again later; a plain bool would be a data race then.
+	withheld atomic.Bool
 }
 
 // Config collects the knobs that can be overridden in tests. Nil
@@ -176,6 +204,7 @@ func NewManager(cfg Config) *Manager {
 	if m.Logger == nil {
 		m.Logger = slog.Default()
 	}
+	m.releaseCheckTimeout = ReleaseCheckTimeout
 	m.envURL = os.Getenv("RX_FRONTEND_URL")
 	m.envVersion = os.Getenv("RX_FRONTEND_VERSION")
 	return m
@@ -231,8 +260,15 @@ func (m *Manager) IndexHTMLPath() string {
 }
 
 // IsAvailable reports whether the cache contains a usable SPA —
-// index.html and an assets/ directory must both be present.
+// index.html and an assets/ directory must both be present, and Ensure
+// has not withheld the bundle for lying outside the supported range.
 func (m *Manager) IsAvailable() bool {
+	return !m.withheld.Load() && m.bundleOnDisk()
+}
+
+// bundleOnDisk reports whether index.html and assets/ are in the cache,
+// whatever version they are.
+func (m *Manager) bundleOnDisk() bool {
 	if fi, err := os.Stat(m.IndexHTMLPath()); err != nil || fi.IsDir() {
 		return false
 	}
@@ -279,49 +315,15 @@ func (m *Manager) WriteMetadata(md *CacheMetadata) error {
 
 // releaseInfo captures the subset of GitHub's Release JSON we need.
 type releaseInfo struct {
-	TagName string         `json:"tag_name"`
-	Assets  []releaseAsset `json:"assets"`
+	TagName    string         `json:"tag_name"`
+	Draft      bool           `json:"draft"`
+	Prerelease bool           `json:"prerelease"`
+	Assets     []releaseAsset `json:"assets"`
 }
 
 type releaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
-}
-
-// fetchLatestRelease queries /repos/{owner}/{repo}/releases/latest.
-// Returns (nil, nil) on 404 (repo has no releases), an error on
-// other failures.
-func (m *Manager) fetchLatestRelease(ctx context.Context) (*releaseInfo, error) {
-	url := fmt.Sprintf("%s/repos/%s/releases/latest", m.APIBase, m.Repo)
-	return m.fetchRelease(ctx, url)
-}
-
-// fetchRelease is the shared HTTP handler for both tag/latest lookups.
-func (m *Manager) fetchRelease(ctx context.Context, url string) (*releaseInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := m.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("github call: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil // no such release
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("github returned %d", resp.StatusCode)
-	}
-
-	var rel releaseInfo
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return nil, fmt.Errorf("decode release: %w", err)
-	}
-	return &rel, nil
 }
 
 // DistURL picks the dist.tar.gz asset from a Release. Returns "" if
@@ -577,60 +579,6 @@ func readDistVersion(cacheDir string) (*Version, error) {
 		return nil, err
 	}
 	return &v, nil
-}
-
-// ============================================================================
-// High-level Ensure
-// ============================================================================
-
-// Ensure runs the "make sure a usable frontend is on disk" algorithm
-// specified in the file doc comment. Returns nil if the cache is in
-// a usable state at return time, or an error explaining why not.
-func (m *Manager) Ensure(ctx context.Context) error {
-	// Case 1: RX_FRONTEND_URL set — force download.
-	if m.envURL != "" {
-		return m.Download(ctx, m.envURL, "custom")
-	}
-
-	// Case 2: RX_FRONTEND_VERSION set.
-	if m.envVersion != "" {
-		cached, _ := m.ReadMetadata()
-		requested := strings.TrimPrefix(m.envVersion, "v")
-		if cached != nil && strings.TrimPrefix(cached.Version.Version, "v") == requested && m.IsAvailable() {
-			return nil
-		}
-		// Download the specific version.
-		url := m.directDownloadURL(m.envVersion)
-		return m.Download(ctx, url, m.envVersion)
-	}
-
-	// Case 3: No overrides + valid cache → use it, no network hit.
-	if m.IsAvailable() {
-		return nil
-	}
-
-	// Case 4: No overrides, no cache → fetch latest release.
-	rel, err := m.fetchLatestRelease(ctx)
-	if err != nil {
-		return fmt.Errorf("fetch latest release: %w", err)
-	}
-	if rel == nil {
-		return errors.New("frontend: no latest release found on github")
-	}
-	if !viewerVersionCompatible(rel.TagName) {
-		// Not an error: the server runs fine without the SPA, and an
-		// operator who wants the newer viewer can name it explicitly.
-		m.Logger.Warn("frontend_version_incompatible",
-			"tag", rel.TagName,
-			"supported", MinViewerVersion+" <= v < "+MaxViewerVersionExclusive,
-			"hint", "set RX_FRONTEND_VERSION to install it anyway")
-		return nil
-	}
-	durl := rel.DistURL()
-	if durl == "" {
-		return errors.New("frontend: latest release has no dist.tar.gz asset")
-	}
-	return m.Download(ctx, durl, rel.TagName)
 }
 
 // ============================================================================

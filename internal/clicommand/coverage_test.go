@@ -967,7 +967,7 @@ func TestServeCommand_Construction(t *testing.T) {
 		t.Error("NewServeCommand should set Use")
 	}
 	// Flag presence spot-check.
-	for _, flag := range []string{"port", "host", "search-root", "skip-frontend"} {
+	for _, flag := range []string{"port", "host", "search-root", "skip-frontend", "update-viewer"} {
 		if cmd.Flags().Lookup(flag) == nil {
 			t.Errorf("serve is missing flag: %s", flag)
 		}

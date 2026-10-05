@@ -113,7 +113,7 @@ func TestRunServe_StartsAndStops(t *testing.T) {
 	}
 
 	got := buf.String()
-	for _, want := range []string{"Starting RX API server", "Search root:", "/docs", "/metrics"} {
+	for _, want := range []string{"Starting RX API server", "Search root:", "Viewer: ", "/docs", "/metrics"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("banner missing %q:\n%s", want, got)
 		}

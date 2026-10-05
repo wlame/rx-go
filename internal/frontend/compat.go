@@ -40,9 +40,20 @@ func viewerVersionCompatible(version string) bool {
 	if !ok {
 		return true
 	}
+	return semverInRange(v)
+}
+
+// semverInRange reports whether v lies inside
+// MinViewerVersion <= v < MaxViewerVersionExclusive.
+func semverInRange(v semver) bool {
 	minV, _ := parseSemver(MinViewerVersion)
 	maxV, _ := parseSemver(MaxViewerVersionExclusive)
 	return compareSemver(v, minV) >= 0 && compareSemver(v, maxV) < 0
+}
+
+// supportedRange renders the range for messages: "0.2.0 <= v < 0.7.0".
+func supportedRange() string {
+	return MinViewerVersion + " <= v < " + MaxViewerVersionExclusive
 }
 
 // semver is the major.minor.patch triple; pre-release and build metadata

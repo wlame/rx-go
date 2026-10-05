@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what `--file-tz` does; a value that names no zone answers `400`
   naming it, and `cli_command` renders `--file-tz=…`. `GET /health`
   lists the feature `file_tz`. Contract 1.6.
+- `rx serve --update-viewer` checks GitHub for a newer `rx-viewer`
+  release inside the supported range at this start, whatever the last
+  check says. Together with `--skip-frontend` it exits 2.
+- The `rx serve` banner names the viewer served and why: `Viewer:
+  viewer 0.6.0 (cached)`, `(updated from 0.2.0)`, `(installed)`,
+  `(set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)`, or `no viewer`.
 
 ### Changed
 
@@ -51,6 +57,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Upgrading `rx` never upgraded its viewer: `rx serve` served a cached
+  viewer for ever. Now, with no `RX_FRONTEND_URL` or
+  `RX_FRONTEND_VERSION` set, it asks GitHub once a day (when
+  `.metadata.json`'s `last_check` is a day old, missing or unreadable)
+  for the newest published release inside the supported range and
+  installs it when it is newer than the cached one, before the server
+  binds. The release list request has a 10-second limit when a viewer is
+  cached. A failed check (offline, an error status, the rate limit, a
+  release without `dist.tar.gz`) keeps the cached viewer, prints one
+  warning, records `last_check` and never stops the server.
+- With no cached viewer, `rx serve` came up without one when GitHub's
+  latest release was past the supported range. It now reads the release
+  list, skips drafts and pre-releases, and installs the newest release
+  inside the range. A cached viewer outside the range is treated as no
+  cache: it is replaced, or not served when no release inside the range
+  can be installed.
 - `rx serve` installs viewer 0.6.0: the range of viewer releases it
   accepts is now `0.2.0 <= v < 0.7.0`. Release 0.5.0 refused 0.6.0 and
   came up without the viewer unless one was already cached or

@@ -21,7 +21,7 @@ This repo is the **flagship backend** of a product with two active repos and a p
 | Repo | Role |
 |---|---|
 | `rx-go` (this repo) | The focus. Reference for the HTTP wire contract and the cache format |
-| `rx-viewer` | Shared Svelte SPA, fetched from GitHub Releases at first `serve` start and served from `~/.cache/rx/frontend/` |
+| `rx-viewer` | Shared Svelte SPA, fetched from GitHub Releases by `serve` (the newest release inside the supported range, checked once a day) and served from `~/.cache/rx/frontend/` |
 | `rx-python` | The original backend, on PyPI as `rx-tool`. **Paused** since 2026-10-02; it stays as it is while this repo moves on. |
 
 `rx-rust` also exists beside them. It is frozen. Do not read it for guidance.

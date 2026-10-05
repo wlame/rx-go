@@ -32,7 +32,8 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 | `--host` | `string` | `127.0.0.1` | Interface to bind |
 | `--port` | `int` | `7777` | TCP port to bind |
 | `--search-root` | `string[]` | current directory | Restrict file access to this directory (repeatable) |
-| `--skip-frontend` | `bool` | `false` | Don't attempt to download the `rx-viewer` SPA |
+| `--skip-frontend` | `bool` | `false` | Don't attempt to download or check the `rx-viewer` SPA; serve what is cached |
+| `--update-viewer` | `bool` | `false` | Check GitHub for a newer `rx-viewer` release inside the supported range now, instead of once a day. Exits 2 with `--skip-frontend` |
 
 ### Default behavior
 
@@ -52,12 +53,14 @@ rx serve
 ```
 
 Binds `127.0.0.1:7777` with the current directory as the only search
-root. Attempts to download the `rx-viewer` SPA from GitHub on first
-start (stored under `~/.cache/rx/frontend/`).
+root. Downloads the `rx-viewer` SPA from GitHub on first start (stored
+under `~/.cache/rx/frontend/`) and checks for a newer release once a day
+after that (see [Viewer updates](#viewer-updates)).
 
 ```text
 Starting RX API server on http://127.0.0.1:7777
 Search root: /home/you/projects/example
+Viewer: viewer 0.6.0 (cached)
 API docs available at http://127.0.0.1:7777/docs
 Metrics available at http://127.0.0.1:7777/metrics
 ```
@@ -94,9 +97,20 @@ when no SPA is cached. Use when:
 RX_FRONTEND_VERSION=v0.2.0 rx serve
 ```
 
-Pins to a specific `rx-viewer` release. Without this, `rx` fetches
-`latest` on first run. Once cached, the SPA is reused until the
-version env var changes.
+Pins to a specific `rx-viewer` release, with no range check and no daily
+check. Once cached, the SPA is reused until the version env var changes.
+Without it, `rx` serves the newest release inside the range it supports
+(see [Viewer updates](#viewer-updates)).
+
+### Check for a newer viewer now
+
+```bash
+rx serve --update-viewer
+```
+
+Asks GitHub for a newer `rx-viewer` release inside the supported range at
+this start, whatever the last check says, and installs it before the
+server binds.
 
 ### Custom SPA cache location
 
@@ -132,8 +146,9 @@ set. See [api/webhooks](../api/webhooks.md).
 4. Print a warning to stderr for a bind other machines can reach, and
    for a search root that is `/` or your home directory (see below)
 5. Look up `ripgrep` on `PATH`; remember the result for `/health`
-6. Best-effort fetch of the `rx-viewer` SPA (60-second timeout, failure
-   is non-fatal)
+6. Best-effort install or check of the `rx-viewer` SPA (see
+   [Viewer updates](#viewer-updates); 60-second budget, failure is
+   non-fatal), then the banner names the viewer served and why
 7. Register HTTP middleware (request ID, structured logging, panic
    recovery, Prometheus metrics middleware)
 8. Register every endpoint and the static-file catch-all
@@ -252,10 +267,45 @@ exposed as a flag).
     the server to pick it up.
 
 !!! warning "Frontend fetch failure is non-fatal"
-    If the first-run SPA download fails (offline, firewall, rate limit),
-    `rx serve` prints a warning and continues. `/` returns a redirect
-    to `/docs`; API clients are unaffected. `/health` still reports
-    normally.
+    If the SPA download or the daily check fails (offline, firewall,
+    rate limit, a release without `dist.tar.gz`), `rx serve` prints one
+    warning and continues: with the cached viewer when there is one,
+    otherwise with `/` redirecting to `/docs`. API clients are
+    unaffected. `/health` still reports normally.
+
+### Viewer updates
+
+With no `RX_FRONTEND_URL` or `RX_FRONTEND_VERSION` set, `rx serve` serves
+the newest published `rx-viewer` release inside the range this `rx` was
+built against (`0.2.0 <= v < 0.7.0` today). Before the server binds:
+
+| Cache | What `rx serve` does | Banner |
+|---|---|---|
+| None | Reads GitHub's release list and installs the newest release inside the range | `viewer 0.6.0 (installed)` |
+| Inside the range, `last_check` under a day old | Serves it; asks GitHub nothing | `viewer 0.6.0 (cached)` |
+| Inside the range, `last_check` a day old, missing or unreadable | Reads the release list; installs a newer release inside the range, or keeps the cache; records `last_check` | `viewer 0.6.0 (updated from 0.2.0)` or `(cached)` |
+| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `viewer 0.6.0 (updated from 0.7.1)` |
+
+`--update-viewer` runs the check at once, whatever `last_check` says.
+
+The release list is one page of GitHub's
+`/repos/wlame/rx-viewer/releases`; drafts, pre-releases and tags that are
+not a plain `vX.Y.Z` are skipped. When a cached viewer exists, the list
+request has a 10-second limit, so an offline host starts at most that
+much later. A failed check keeps the cached viewer, prints one warning
+and records `last_check`, so the next try is a day later (or at the next
+`--update-viewer`). A newer release past the range is logged as
+`frontend_newer_release_outside_range`: upgrading `rx` brings it in.
+
+The check runs before the listener binds, never in the background:
+replacing the bundle's files under a running server could hand a browser
+an `index.html` whose assets are already gone.
+
+`RX_FRONTEND_URL` downloads its URL on every start, and
+`RX_FRONTEND_VERSION` serves its pinned release; neither reads the
+release list, and both leave `--update-viewer` without effect. The
+banner says `(set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)`.
+`--skip-frontend` serves whatever is cached and asks nothing.
 
 !!! note "`/metrics` includes endpoint labels, not path values"
     The Prometheus metrics label requests by **route pattern**

@@ -135,11 +135,11 @@ func TestIsAvailable_True(t *testing.T) {
 }
 
 // ============================================================================
-// fetchLatestRelease — GitHub API error paths
+// fetchReleases — GitHub API error paths
 // ============================================================================
 
-// TestFetchLatestRelease_404 returns nil (no releases yet).
-func TestFetchLatestRelease_404(t *testing.T) {
+// TestFetchReleases_404 is an error: the repository has no release list.
+func TestFetchReleases_404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -149,60 +149,59 @@ func TestFetchLatestRelease_404(t *testing.T) {
 		APIBase:  srv.URL,
 		CacheDir: t.TempDir(),
 	})
-	info, err := m.fetchLatestRelease(context.Background())
-	if err != nil {
-		t.Errorf("404 should yield (nil, nil), got err %v", err)
-	}
-	if info != nil {
-		t.Errorf("404 should yield (nil, nil), got info %v", info)
+	if _, err := m.fetchReleases(context.Background()); err == nil {
+		t.Errorf("expected error on 404")
 	}
 }
 
-// TestFetchLatestRelease_500 returns an error.
-func TestFetchLatestRelease_500(t *testing.T) {
+// TestFetchReleases_500 returns an error.
+func TestFetchReleases_500(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 	m := NewManager(Config{APIBase: srv.URL, CacheDir: t.TempDir()})
-	_, err := m.fetchLatestRelease(context.Background())
+	_, err := m.fetchReleases(context.Background())
 	if err == nil {
 		t.Errorf("expected error on 500")
 	}
 }
 
-// TestFetchLatestRelease_BadJSON returns an error.
-func TestFetchLatestRelease_BadJSON(t *testing.T) {
+// TestFetchReleases_BadJSON returns an error.
+func TestFetchReleases_BadJSON(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("not json"))
 	}))
 	defer srv.Close()
 	m := NewManager(Config{APIBase: srv.URL, CacheDir: t.TempDir()})
-	_, err := m.fetchLatestRelease(context.Background())
+	_, err := m.fetchReleases(context.Background())
 	if err == nil {
 		t.Errorf("expected error on bad JSON")
 	}
 }
 
-// TestFetchLatestRelease_Good parses a valid response.
-func TestFetchLatestRelease_Good(t *testing.T) {
+// TestFetchReleases_Good parses a valid list and asks for one full page.
+func TestFetchReleases_Good(t *testing.T) {
+	var query string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"v1.0.0","assets":[{"name":"dist.tar.gz","browser_download_url":"http://x"}]}`))
+		query = r.URL.RawQuery
+		_, _ = w.Write([]byte(`[{"tag_name":"v1.0.0","draft":false,"prerelease":true,` +
+			`"assets":[{"name":"dist.tar.gz","browser_download_url":"http://x"}]}]`))
 	}))
 	defer srv.Close()
 	m := NewManager(Config{APIBase: srv.URL, CacheDir: t.TempDir()})
-	info, err := m.fetchLatestRelease(context.Background())
+	releases, err := m.fetchReleases(context.Background())
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
-	if info == nil {
-		t.Fatal("expected non-nil release")
+	if query != "per_page=100" {
+		t.Errorf("query = %q, want per_page=100", query)
 	}
-	if info.TagName != "v1.0.0" {
-		t.Errorf("tag: got %s, want v1.0.0", info.TagName)
+	if len(releases) != 1 {
+		t.Fatalf("releases: got %d, want 1", len(releases))
 	}
-	if len(info.Assets) != 1 {
-		t.Errorf("assets: got %d, want 1", len(info.Assets))
+	if r := releases[0]; r.TagName != "v1.0.0" || !r.Prerelease || len(r.Assets) != 1 {
+		t.Errorf("release = %+v", r)
 	}
 }
 
@@ -229,7 +228,7 @@ func TestEnsure_DirectURL_Override(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("RX_FRONTEND_URL", backend.URL+"/dist.tar.gz")
 	m := NewManager(Config{CacheDir: dir})
-	if err := m.Ensure(context.Background()); err != nil {
+	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if !m.IsAvailable() {
@@ -241,16 +240,19 @@ func TestEnsure_DirectURL_Override(t *testing.T) {
 // stub because the manager resolves the download URL from GitHub's real
 // CDN. Coverage for that code path is provided by the direct-URL override
 // test (TestEnsure_DirectURL_Override) plus the GitHub API stub tests
-// in TestFetchLatestRelease_Good.
+// in TestFetchReleases_Good.
 
-// TestEnsure_CacheHit skips GitHub entirely on valid cache.
+// TestEnsure_CacheHit skips GitHub entirely on a valid cache checked
+// within the last day.
 func TestEnsure_CacheHit(t *testing.T) {
 	dir := t.TempDir()
 	// Pre-populate a valid cache.
 	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>cached</html>"), 0o644)
 	_ = os.MkdirAll(filepath.Join(dir, "assets"), 0o755)
+	// A version inside the range, checked an hour ago: no check is due.
 	md := &CacheMetadata{
-		Version: Version{Version: "1.0.0"},
+		Version:   Version{Version: "0.2.0"},
+		LastCheck: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
 	}
 	b, _ := json.Marshal(md)
 	_ = os.WriteFile(filepath.Join(dir, ".metadata.json"), b, 0o644)
@@ -260,7 +262,7 @@ func TestEnsure_CacheHit(t *testing.T) {
 		CacheDir: dir,
 		APIBase:  "http://127.0.0.1:1", // nothing listens here
 	})
-	if err := m.Ensure(context.Background()); err != nil {
+	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure on cache hit: %v", err)
 	}
 	got, _ := os.ReadFile(filepath.Join(dir, "index.html"))
@@ -269,7 +271,7 @@ func TestEnsure_CacheHit(t *testing.T) {
 	}
 }
 
-// TestEnsure_NoReleases — latest endpoint returns 404. Should fail loudly.
+// TestEnsure_NoReleases — the release list answers 404. Should fail loudly.
 func TestEnsure_NoReleases(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -277,7 +279,7 @@ func TestEnsure_NoReleases(t *testing.T) {
 	defer api.Close()
 	dir := t.TempDir()
 	m := NewManager(Config{CacheDir: dir, APIBase: api.URL})
-	if err := m.Ensure(context.Background()); err == nil {
+	if _, err := m.Ensure(context.Background()); err == nil {
 		t.Errorf("expected error when no releases available")
 	}
 }

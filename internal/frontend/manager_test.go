@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // makeFakeTarball returns a minimal valid rx-viewer dist.tar.gz:
@@ -145,10 +146,10 @@ func TestManager_IsAvailable_FalseWhenMissing(t *testing.T) {
 // Fetch & Download via httptest
 // ============================================================================
 
-// TestEnsure_NoCacheFetchesLatest is the "first run" smoke test.
-// With no cache and no env overrides, it should hit /releases/latest,
+// TestEnsure_NoCacheInstallsARelease is the "first run" smoke test.
+// With no cache and no env overrides, it should read the release list,
 // download the asset, extract, and leave a valid cache.
-func TestEnsure_NoCacheFetchesLatest(t *testing.T) {
+func TestEnsure_NoCacheInstallsARelease(t *testing.T) {
 	tarball := makeFakeTarball(t)
 	// Inside the supported viewer range (see compat.go).
 	tag := "v0.2.3"
@@ -156,15 +157,15 @@ func TestEnsure_NoCacheFetchesLatest(t *testing.T) {
 	mux := http.NewServeMux()
 	var srv *httptest.Server
 
-	mux.HandleFunc("/repos/wlame/rx-viewer/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/wlame/rx-viewer/releases", func(w http.ResponseWriter, r *http.Request) {
 		// Need to point to the same server's /dist.tar.gz endpoint.
 		downloadURL := srv.URL + "/dist.tar.gz"
-		resp := map[string]any{
+		resp := []map[string]any{{
 			"tag_name": tag,
 			"assets": []map[string]any{
 				{"name": "dist.tar.gz", "browser_download_url": downloadURL},
 			},
-		}
+		}}
 		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("/dist.tar.gz", func(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +189,7 @@ func TestEnsure_NoCacheFetchesLatest(t *testing.T) {
 	m.envURL = ""
 	m.envVersion = ""
 
-	if err := m.Ensure(context.Background()); err != nil {
+	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if !m.IsAvailable() {
@@ -220,7 +221,7 @@ func TestEnsure_EnvURLForcesDownload(t *testing.T) {
 		Logger:   silentLog(),
 	})
 	m.envURL = srv.URL
-	if err := m.Ensure(context.Background()); err != nil {
+	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if !m.IsAvailable() {
@@ -247,20 +248,21 @@ func TestEnsure_CachedVersionSkipsDownload(t *testing.T) {
 	// APIBase intentionally unreachable — we shouldn't call it.
 	m.APIBase = "http://127.0.0.1:1"
 
-	if err := m.Ensure(context.Background()); err != nil {
+	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 }
 
-// TestEnsure_CacheHitWithoutEnvVars uses cached SPA directly.
+// TestEnsure_CacheHitWithoutEnvVars uses cached SPA directly when it was
+// checked within the last day.
 func TestEnsure_CacheHitWithoutEnvVars(t *testing.T) {
 	dest := t.TempDir()
-	_ = os.WriteFile(filepath.Join(dest, "index.html"), []byte("x"), 0o600)
-	_ = os.Mkdir(filepath.Join(dest, "assets"), 0o700)
+	seedCache(t, dest, "0.2.0", time.Now().Add(-time.Hour))
 
 	m := NewManager(Config{CacheDir: dest, Logger: silentLog()})
+	m.envURL, m.envVersion = "", ""
 	m.APIBase = "http://127.0.0.1:1" // unreachable; should not be called
-	if err := m.Ensure(context.Background()); err != nil {
+	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Errorf("Ensure unexpectedly failed: %v", err)
 	}
 }
@@ -339,22 +341,6 @@ func TestDirectDownloadURL(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("directDownloadURL(%q) = %q, want %q", tc.version, got, tc.want)
 		}
-	}
-}
-
-// TestFetchLatestRelease_404ReturnsNilNil
-func TestFetchLatestRelease_404ReturnsNilNil(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	t.Cleanup(srv.Close)
-	m := NewManager(Config{CacheDir: t.TempDir(), APIBase: srv.URL, Logger: silentLog()})
-	rel, err := m.fetchLatestRelease(context.Background())
-	if err != nil {
-		t.Errorf("want nil err on 404, got %v", err)
-	}
-	if rel != nil {
-		t.Errorf("want nil rel on 404, got %+v", rel)
 	}
 }
 
