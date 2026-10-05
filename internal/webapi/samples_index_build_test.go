@@ -78,6 +78,9 @@ type samplesBuildFixture struct {
 func newSamplesBuildFixture(t *testing.T, wait time.Duration) *samplesBuildFixture {
 	t.Helper()
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	// No early answer from the head of the log: every request takes the
+	// path that waits for the build. The tests of the head set it.
+	t.Setenv("RX_SAMPLES_HEAD_MB", "0")
 	root := t.TempDir()
 	if err := paths.SetSearchRoots([]string{root}); err != nil {
 		t.Fatalf("set roots: %v", err)

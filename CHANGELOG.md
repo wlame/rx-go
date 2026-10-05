@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   many MiB of a file's text, from its first byte, a samples lookup may
   read to answer without a line index when the file wants one and has
   none.
+- `index_build` in every `GET /v1/samples` answer (and `rx samples
+  --json`, always `null` there): the background build of the file's
+  line index that the answer started or joined (`task_id`, `status`,
+  `message`, `path`, `started_at`), to follow at `GET /v1/tasks/{id}`;
+  `null` when no build runs or the request waited for it. Contract 1.6.
 
 ### Changed
 
@@ -61,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the end (`--lines=-1`), anything past the head, a time range
   open to the end and a time of day without a date build the index first
   as before. `rx index` builds it on its own.
+- `GET /v1/samples` answers such a lookup from the head the same way, at
+  once, instead of waiting for the index build (or answering `202`), and
+  starts the build in the background, or joins the one running, naming
+  its task in `index_build`. A refusal the head can give (an answer over
+  the limits, a time named wrongly) is answered at once and starts no
+  build. On a 6.7 GB log with no index, the first `lines=1-1000` took
+  3.2 s waiting for the build; it now takes 0.01 s.
 
 - Line index format 9: the time section records `zone_offsets`, where
   the zone offset the lines write changes, as `[line, minutes]` pairs

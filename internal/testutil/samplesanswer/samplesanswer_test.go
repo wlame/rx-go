@@ -1,6 +1,7 @@
 package samplesanswer
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,14 @@ func TestDifference_IgnoresCLICommand(t *testing.T) {
 	b := answer{Path: "a.log", CLICommand: &other}
 	if diff := Difference(a, b); diff != "" {
 		t.Fatalf("cli_command was compared: %s", diff)
+	}
+}
+
+func TestDifference_IgnoresIndexBuild(t *testing.T) {
+	early := json.RawMessage(`{"path":"a.log","index_build":{"task_id":"t1","status":"running"}}`)
+	indexed := json.RawMessage(`{"path":"a.log","index_build":null}`)
+	if diff := Difference(early, indexed); diff != "" {
+		t.Fatalf("index_build was compared: %s", diff)
 	}
 }
 

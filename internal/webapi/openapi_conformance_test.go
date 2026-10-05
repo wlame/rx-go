@@ -509,10 +509,12 @@ func TestOpenAPIConformance_TraceWithoutRipgrepAnswersAsDeclared(t *testing.T) {
 		query: url.Values{"path": {"/tmp/any.log"}, "regexp": {"x"}}, want: http.StatusServiceUnavailable})
 }
 
-// A lookup in a file whose index is still being built answers 202 with
-// the build's task once the server's wait runs out. A queued index task
-// the manager holds for the file stands in for a long build, so the 202
-// does not depend on how fast a real one is.
+// A lookup in a file whose index is still being built answers from the
+// head of the file with the build's task in index_build when its lines
+// lie in the head, and otherwise 202 with the build's task once the
+// server's wait runs out. A queued index task the manager holds for the
+// file stands in for a long build, so neither answer depends on how
+// fast a real one is.
 func TestOpenAPIConformance_SamplesWhileTheIndexBuildsAnswersAsDeclared(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	root := conformanceFixtures(t)
@@ -532,6 +534,15 @@ func TestOpenAPIConformance_SamplesWhileTheIndexBuildsAnswersAsDeclared(t *testi
 		t.Fatalf("validate: %v", err)
 	}
 	task, _ := manager.Create(held, "index")
+	early := run.check(apiCall{label: "samples from the head while the index builds", method: http.MethodGet,
+		template: "/v1/samples", path: "/v1/samples",
+		query: url.Values{"path": {held}, "lines": {"10"}}, header: http.Header{"Prefer": {"respond-async"}},
+		want: http.StatusOK})
+	if build, _ := early["index_build"].(map[string]any); build["task_id"] != task.TaskID {
+		t.Fatalf("index_build = %v, want the build's task %s", early["index_build"], task.TaskID)
+	}
+
+	t.Setenv("RX_SAMPLES_HEAD_MB", "0")
 	pending := run.check(apiCall{label: "samples while the index builds", method: http.MethodGet,
 		template: "/v1/samples", path: "/v1/samples",
 		query: url.Values{"path": {held}, "lines": {"10"}}, header: http.Header{"Prefer": {"respond-async"}},

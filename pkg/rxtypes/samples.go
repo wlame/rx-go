@@ -94,6 +94,31 @@ type SamplesResponse struct {
 	// null has a null entry. The whole map is nil (null) when the file
 	// has no timestamp format. Present in every mode.
 	LineTimestamps map[string][]*int64 `json:"line_timestamps" nullable:"true" doc:"Each key of samples mapped to the effective timestamp of each line of its sample, in order: milliseconds since the Unix epoch as a UTC instant, or null for a line without one. A line's effective timestamp is its own, or the own timestamp of the nearest earlier line that has one when that line starts at most RX_TIMESTAMP_LOOKBACK_KB KiB before it; a zone-less file's wall clock is read in RX_LOG_TZ, and under the request's file_tz every line's written wall clock is read in that zone. A key whose sample is null maps to null. The whole field is null when the file has no timestamp format. Present in every mode."`
+	// IndexBuild is the background build of the file's line index that
+	// this answer started or joined, so a client can follow it at
+	// GET /v1/tasks/{task_id}; nil when no build runs for the file. It
+	// is set when the answer came from the head of a file that wants an
+	// index and has none (RX_SAMPLES_HEAD_MB). An answer that waited for
+	// the build carries nil, since the build is over; a 202 is the task
+	// itself. It describes how the answer was produced, not the answer,
+	// so the accelerator rule leaves it out. `rx samples` builds nothing
+	// in the background, so its --json always carries null.
+	IndexBuild *SamplesIndexBuild `json:"index_build" doc:"The background build of the file's line index that this answer started or joined, to follow at GET /v1/tasks/{task_id}: set when the answer came from the head of a file that wants an index and has none (RX_SAMPLES_HEAD_MB), and null otherwise: no build runs, the index already exists, or the request waited for the build. It says how the answer was produced; the lines are the same with an index and without."`
+}
+
+// SamplesIndexBuild names the background build of a file's line index
+// that a samples answer started or joined: the fields of the task a 202
+// answer names (TaskResponse). It is a type of its own rather than a
+// TaskResponse because it is nullable, which TaskResponse, also the
+// body of a 202 and of POST /v1/index, is not; the `_` field carries
+// the nullable mark for the reason LineLengthStats gives.
+type SamplesIndexBuild struct {
+	_         struct{} `nullable:"true"`
+	TaskID    string   `json:"task_id" doc:"The build's task: follow it at GET /v1/tasks/{task_id}."`
+	Status    string   `json:"status" doc:"The task's status when the answer was made: queued, running, completed or failed."`
+	Message   string   `json:"message" doc:"What the task does, in words."`
+	Path      string   `json:"path" doc:"The file whose index is built."`
+	StartedAt *string  `json:"started_at" doc:"When the task started, RFC 3339 in UTC."`
 }
 
 // SamplesTimeFormat is the timestamp format of a file a samples answer

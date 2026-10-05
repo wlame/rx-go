@@ -4,9 +4,10 @@
 //
 // Unlike a trace answer, a samples answer has no "not computed" line
 // number: a -1 there means the position is not in the file, which an
-// index cannot change. So the rule is plain equality, with one field
-// left out: cli_command, which describes how an answer was asked for
-// rather than the answer.
+// index cannot change. So the rule is plain equality, with two fields
+// left out: cli_command, which describes how an answer was asked for,
+// and index_build, the background build an answer from the head of a
+// file started; neither is part of the answer.
 //
 // Answers are compared as parsed JSON documents, never as bytes: object
 // key order is not part of the contract.
@@ -34,8 +35,8 @@ import (
 )
 
 // productionFields are the top-level fields that describe how an answer
-// was asked for, not the answer: they are never compared.
-var productionFields = []string{"cli_command"}
+// was asked for or produced, not the answer: they are never compared.
+var productionFields = []string{"cli_command", "index_build"}
 
 // Difference names the first place where got and want disagree, as
 // "samples.12[3]: got …, want …", or returns "" when they are equal in
