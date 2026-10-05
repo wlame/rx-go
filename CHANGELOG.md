@@ -41,8 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release inside the supported range at this start, whatever the last
   check says. Together with `--skip-frontend` it exits 2.
 - The `rx serve` banner names the viewer served and why: `Viewer:
-  viewer 0.6.0 (cached)`, `(updated from 0.2.0)`, `(installed)`,
-  `(set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)`, or `no viewer`.
+  v0.6.0 (cached)`, `(updated from v0.2.0)`, `(installed)`,
+  `(set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)`, or `Viewer: none
+  (/ redirects to /docs)`. A failed download or check prints one
+  warning line that ends with the same text.
 
 ### Changed
 

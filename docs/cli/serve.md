@@ -60,7 +60,7 @@ after that (see [Viewer updates](#viewer-updates)).
 ```text
 Starting RX API server on http://127.0.0.1:7777
 Search root: /home/you/projects/example
-Viewer: viewer 0.6.0 (cached)
+Viewer: v0.6.0 (cached)
 API docs available at http://127.0.0.1:7777/docs
 Metrics available at http://127.0.0.1:7777/metrics
 ```
@@ -281,12 +281,14 @@ built against (`0.2.0 <= v < 0.7.0` today). Before the server binds:
 
 | Cache | What `rx serve` does | Banner |
 |---|---|---|
-| None | Reads GitHub's release list and installs the newest release inside the range | `viewer 0.6.0 (installed)` |
-| Inside the range, `last_check` under a day old | Serves it; asks GitHub nothing | `viewer 0.6.0 (cached)` |
-| Inside the range, `last_check` a day old, missing or unreadable | Reads the release list; installs a newer release inside the range, or keeps the cache; records `last_check` | `viewer 0.6.0 (updated from 0.2.0)` or `(cached)` |
-| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `viewer 0.6.0 (updated from 0.7.1)` |
+| None | Reads GitHub's release list and installs the newest release inside the range | `v0.6.0 (installed)` |
+| Inside the range, `last_check` under a day old | Serves it; asks GitHub nothing | `v0.6.0 (cached)` |
+| Inside the range, `last_check` a day old, missing or unreadable | Reads the release list; installs a newer release inside the range, or keeps the cache; records `last_check` | `v0.6.0 (updated from v0.2.0)` or `v0.2.0 (cached)` |
+| Outside the range | Counts as no cache: installs the newest release inside the range, or serves no viewer | `v0.6.0 (updated from v0.7.1)` or `none (/ redirects to /docs)` |
 
 `--update-viewer` runs the check at once, whatever `last_check` says.
+An update that replaces a cache whose `.metadata.json` records no version
+says `v0.6.0 (replaced a cached viewer of unrecorded version)`.
 
 The release list is one page of GitHub's
 `/repos/wlame/rx-viewer/releases`; drafts, pre-releases and tags that are

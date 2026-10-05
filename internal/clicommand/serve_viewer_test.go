@@ -62,7 +62,7 @@ func TestPrepareViewer_FailedCheckWarnsOnceAndServesTheCache(t *testing.T) {
 		t.Errorf("served = %+v, want the cached 0.2.0", served)
 	}
 	lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Warning: ") || !strings.Contains(lines[0], "viewer 0.2.0 (cached)") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Warning: ") || !strings.HasSuffix(lines[0], ". Viewer: v0.2.0 (cached).") {
 		t.Errorf("stderr = %q, want one warning line naming the cached viewer", stderr.String())
 	}
 	if !fm.IsAvailable() {

@@ -596,12 +596,14 @@ func TestServed_Describe(t *testing.T) {
 		served Served
 		want   string
 	}{
-		{Served{Version: "0.2.0", Reason: ServedFromCache}, "viewer 0.2.0 (cached)"},
-		{Served{Version: "0.6.0", Reason: ServedUpdated, Replaced: "0.2.0"}, "viewer 0.6.0 (updated from 0.2.0)"},
-		{Served{Version: "0.6.0", Reason: ServedInstalled}, "viewer 0.6.0 (installed)"},
-		{Served{Version: "0.7.5", Reason: ServedOverride}, "viewer 0.7.5 (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)"},
-		{Served{Reason: ServedNone}, "no viewer (/ redirects to /docs)"},
-		{Served{Reason: ServedFromCache}, "viewer of unknown version (cached)"},
+		{Served{Version: "0.2.0", Reason: ServedFromCache}, "v0.2.0 (cached)"},
+		{Served{Version: "0.6.0", Reason: ServedUpdated, Replaced: "0.2.0"}, "v0.6.0 (updated from v0.2.0)"},
+		{Served{Version: "v0.6.0", Reason: ServedUpdated}, "v0.6.0 (replaced a cached viewer of unrecorded version)"},
+		{Served{Version: "0.6.0", Reason: ServedInstalled}, "v0.6.0 (installed)"},
+		{Served{Version: "0.7.5", Reason: ServedOverride}, "v0.7.5 (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)"},
+		{Served{Reason: ServedNone}, "none (/ redirects to /docs)"},
+		{Served{Reason: ServedFromCache}, "unrecorded version (cached)"},
+		{Served{Version: "custom", Reason: ServedOverride}, "custom (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)"},
 	}
 	for _, tc := range cases {
 		if got := tc.served.Describe(); got != tc.want {

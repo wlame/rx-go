@@ -124,8 +124,8 @@ const viewerStartTimeout = 60 * time.Second
 
 // prepareViewer runs the viewer step of `rx serve` and returns what will
 // be served. It never fails the start: a failed download or check is
-// written to stderr as one warning line that also says what is served
-// instead (the cached viewer, or none), and the server starts either way.
+// written to stderr as one warning line that ends with the viewer served
+// instead (the cached one, or none), and the server starts either way.
 func prepareViewer(fm *frontend.Manager, mode viewerMode, stderr io.Writer) frontend.Served {
 	if mode == viewerUnmanaged {
 		return fm.Cached()
@@ -138,7 +138,7 @@ func prepareViewer(fm *frontend.Manager, mode viewerMode, stderr io.Writer) fron
 	defer cancel()
 	served, err := ensure(ctx)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "Warning: %v. Serving %s.\n", err, served.Describe())
+		_, _ = fmt.Fprintf(stderr, "Warning: %v. Viewer: %s.\n", err, served.Describe())
 	}
 	return served
 }
