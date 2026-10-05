@@ -102,3 +102,45 @@ func TestOpen_AJournalRxCannotReadIsAnError(t *testing.T) {
 		t.Fatalf("Open: %v, want an error wrapping journal.ErrUnreadable", err)
 	}
 }
+
+// A full read of a text reaches the end of the file, but for a journal
+// only the end of its last object: the space after it is preallocated
+// and never read.
+func TestReadExtent_IsTheFileSizeOrAJournalsContentEnd(t *testing.T) {
+	plain, plainSize := writeFile(t, []byte("LINE 1\nLINE 2\n"))
+	if got := ReadExtent(plain, plainSize, compression.FormatNone); got != plainSize {
+		t.Errorf("plain: ReadExtent = %d, want the size %d", got, plainSize)
+	}
+	path := journalfixture.Journal(t, "basic-xz-compact")
+	f, err := os.Open(path) //nolint:gosec // the test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentEnd, err := journal.ContentEnd(f, info.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalfixture.Preallocate(t, path, 8<<20)
+	if got := ReadExtent(f, 8<<20, compression.FormatJournal); got != contentEnd {
+		t.Errorf("preallocated journal: ReadExtent = %d, want its content end %d", got, contentEnd)
+	}
+	unreadable := journalfixture.Journal(t, "basic-none-regular")
+	journalfixture.AddUnknownIncompatibleFlag(t, unreadable)
+	u, err := os.Open(unreadable) //nolint:gosec // the test's own file
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = u.Close() }()
+	uInfo, err := u.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadExtent(u, uInfo.Size(), compression.FormatJournal); got != uInfo.Size() {
+		t.Errorf("a journal rx cannot read: ReadExtent = %d, want the file size %d", got, uInfo.Size())
+	}
+}

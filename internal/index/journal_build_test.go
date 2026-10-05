@@ -82,3 +82,51 @@ func TestBuildContext_StopsAJournalBuildAfterItsFirstRead(t *testing.T) {
 		t.Errorf("progress %v, want the cancel between the first read and the end", fraction)
 	}
 }
+
+// preallocatedJournalBytes is the size the preallocated journals of these
+// tests are grown to: one step of journald's preallocation.
+const preallocatedJournalBytes = 8 << 20
+
+// A live journal is preallocated: zeros after its last object, inside
+// its arena. Its build reports progress against the end of its last
+// object, so the progress moves from the start and a finished build
+// reaches exactly 1; the index is the one of its text.
+func TestBuild_APreallocatedJournalReportsProgressToTheEnd(t *testing.T) {
+	path := journalfixture.Journal(t, "many-zstd-compact")
+	journalfixture.Preallocate(t, path, preallocatedJournalBytes)
+	progress := &Progress{}
+	var beforeWalk float64
+	idx, err := Build(path, BuildOptions{
+		StepBytes: 4096, Progress: progress,
+		beforeWalk: func() { beforeWalk, _ = progress.Fraction() },
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if fraction, known := progress.Fraction(); !known || fraction != 1 {
+		t.Fatalf("progress after the build = %v (known %v), want 1", fraction, known)
+	}
+	if beforeWalk <= 0 || beforeWalk >= 0.5 {
+		t.Errorf("progress before the walk = %v, want the header's small share of the content", beforeWalk)
+	}
+	text := journalfixture.SetText(t, "many")
+	if lines := int64(bytes.Count(text, []byte("\n"))); idx.LineCount == nil || *idx.LineCount != lines {
+		t.Errorf("line count %v, want %d", idx.LineCount, lines)
+	}
+}
+
+// A cancel stops a preallocated journal's build short of the end too.
+func TestBuildContext_StopsAPreallocatedJournalBuildShortOfTheEnd(t *testing.T) {
+	path := journalfixture.Journal(t, "many-zstd-compact")
+	journalfixture.Preallocate(t, path, preallocatedJournalBytes)
+	progress := &Progress{}
+	ctx := newCanceledAfterTheFirstRead(progress)
+	defer ctx.cancel()
+	_, err := BuildContext(ctx, path, BuildOptions{StepBytes: 4096, Progress: progress})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("BuildContext canceled after its first read: %v, want the cancel", err)
+	}
+	if fraction, _ := progress.Fraction(); fraction == 0 || fraction >= 1 {
+		t.Errorf("progress %v, want the cancel between the first read and the end", fraction)
+	}
+}

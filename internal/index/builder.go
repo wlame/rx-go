@@ -219,9 +219,14 @@ func buildText(
 		return nil, err
 	}
 	// The progress counts the file's own bytes, before any
-	// decompression, so its total is the size the stat saw.
+	// decompression: the highest byte read so far, against how far a
+	// full read of the text reaches. That is the size the stat saw, but
+	// for a journal the end of its last object: a live journal is
+	// preallocated, and the zeros after its objects are never read.
+	// ReadExtent reads a journal's header and tail object through the
+	// file itself, so those reads do not move the progress.
 	if opts.Progress != nil {
-		opts.Progress.start(info.Size())
+		opts.Progress.start(filetext.ReadExtent(src.file, info.Size(), src.kind.Format))
 	}
 
 	// A compressed file is indexed through its decompressor, so the
@@ -259,6 +264,10 @@ func buildText(
 	if err != nil {
 		return nil, err
 	}
+	// The whole text is read. A journal's walk may not have read the
+	// very last bytes of its content (a tail object that no entry lists,
+	// such as a FIELD object), so the progress is set to its end here.
+	opts.Progress.finish()
 
 	// Build the final index.
 	permissions, owner := FileOwnership(info)

@@ -83,6 +83,29 @@ func Open(r io.ReaderAt, size int64, format compression.Format) (*Text, error) {
 	return &Text{reader: dec, decoder: dec}, nil
 }
 
+// ReadExtent returns how far into the file r (size bytes, stored in
+// format) a full read of its text reaches: size for every format but the
+// journal, whose text is read from the objects before the end of its tail
+// object (journal.ContentEnd); the space after that is preallocated and
+// never read. A reader that reports its progress as the highest byte of
+// the file read so far reports it against this extent.
+//
+// It reads nothing for a format other than the journal, and a journal's
+// header and the header of its tail object otherwise; a journal those
+// reads fail on gives size, and the text's own read reports the failure.
+// Read it through the file itself, not through a reader that counts the
+// progress: the tail object lies near the end of the content.
+func ReadExtent(r io.ReaderAt, size int64, format compression.Format) int64 {
+	if format != compression.FormatJournal {
+		return size
+	}
+	end, err := journal.ContentEnd(r, size)
+	if err != nil {
+		return size
+	}
+	return end
+}
+
 // Read copies the next bytes of the text into p. It returns io.EOF after
 // the last byte, and ErrClosed after Close.
 //

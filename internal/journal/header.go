@@ -198,6 +198,45 @@ func unreadable(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrUnreadable, fmt.Sprintf(format, args...))
 }
 
+// ContentEnd returns the offset just past the tail object of the journal
+// r, a file of size bytes: the last object journald wrote, which the
+// header names (tail_object_offset), plus that object's size. journald
+// grows a journal in steps (8 MiB) and writes its objects into the front
+// of that space, so the bytes of a live journal after its tail object are
+// zeros that no reader of the text reaches; a reader that reports how far
+// it has read reports it against this offset.
+//
+// The offset is capped at the end of what a reader may read: the file,
+// or the arena when the header says it ends sooner. It is that read end
+// when the tail object cannot be read: a copy cut short before it, or a
+// header field that names no object (outside the arena, inside the
+// header, misaligned, or an object whose size does not fit).
+//
+// It reads the header and the 16 bytes of the tail object's header. The
+// error is ReadHeader's, or the reader's own, wrapped, when ReadAt fails
+// for another reason than the end of the file.
+func ContentEnd(r io.ReaderAt, size int64) (int64, error) {
+	h, err := ReadHeader(r, size)
+	if err != nil {
+		return 0, err
+	}
+	end := h.readEnd(uint64(size)) // #nosec G115 -- ReadHeader accepted size, so it is at least 208
+	tail := h.TailObjectOffset
+	if tail < h.HeaderSize || tail%8 != 0 || tail >= end || end-tail < objectHeaderSize {
+		return int64(end), nil // #nosec G115 -- end <= size, an int64
+	}
+	var head [objectHeaderSize]byte
+	n, err := r.ReadAt(head[:], int64(tail)) // #nosec G115 -- tail < end <= size
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, fmt.Errorf("read the tail object of the journal: %w", err)
+	}
+	objectSize := le.Uint64(head[offsetObjectSize:])
+	if n < objectHeaderSize || objectSize < objectHeaderSize || objectSize > end-tail {
+		return int64(end), nil // #nosec G115 -- end <= size, an int64
+	}
+	return int64(tail + objectSize), nil // #nosec G115 -- tail + objectSize <= end <= size
+}
+
 // readEnd returns where the reads of a journal end: the end of the file,
 // or the end of the arena when the header says it ends sooner. A sum
 // that overflows ends at the file's end.

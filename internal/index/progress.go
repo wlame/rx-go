@@ -14,11 +14,14 @@ import (
 // then records how far it has read. Both counters are atomics: the build
 // goroutines write them and any number of reader goroutines read them,
 // with no lock and no data race. The unit is whatever the build reads
-// through: for a plain or stream-compressed file, the file's bytes, done
-// being the highest byte of the file read so far (for a stream read from
-// the start, every byte read); for a seekable zstd file, the decompressed
-// text, whose frames are decoded one by one rather than read as a
-// stream. Fraction hides the unit.
+// through: for a plain or stream-compressed file or a journal, the
+// file's bytes, done being the highest byte of the file read so far (for
+// a stream read from the start, every byte read) and the total how far a
+// full read reaches (the file's size, or a journal's content end, before
+// its preallocated space: filetext.ReadExtent); for a seekable zstd file,
+// the decompressed text, whose frames are decoded one by one rather than
+// read as a stream. Fraction hides the unit. A build that read its whole
+// text ends at exactly 1.
 //
 // The zero value is ready to use and reports no progress until the
 // build starts.
@@ -64,6 +67,15 @@ func (p *Progress) reach(end int64) {
 			return
 		}
 	}
+}
+
+// finish records that the build has read all it reads: done becomes at
+// least the total, so Fraction gives exactly 1. A nil p does nothing.
+func (p *Progress) finish() {
+	if p == nil {
+		return
+	}
+	p.reach(p.total.Load())
 }
 
 // countWrites returns w, counting into p every byte written through it.

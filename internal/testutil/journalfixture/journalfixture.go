@@ -268,6 +268,38 @@ func AddUnknownIncompatibleFlag(tb testing.TB, file string) {
 	}
 }
 
+// The header fields Preallocate changes (journal-def.h), little-endian
+// uint64 values.
+const (
+	offsetHeaderSize = 88
+	offsetArenaSize  = 96
+)
+
+// Preallocate grows the journal at file to size bytes with zeros after
+// its last object and raises its arena_size to match, which is what a
+// live journal looks like: journald grows the file in steps (8 MiB) and
+// writes its objects into the front of that space, and the header's
+// arena covers the whole file. The objects, and so the text, stay as
+// they were.
+func Preallocate(tb testing.TB, file string, size int64) {
+	tb.Helper()
+	data, err := os.ReadFile(file) //nolint:gosec // a fixture copy in the test's directory
+	if err != nil {
+		tb.Fatalf("read %s: %v", file, err)
+	}
+	if int64(len(data)) >= size || len(data) < offsetArenaSize+8 {
+		tb.Fatalf("%s is %d bytes; Preallocate grows a journal to more than that (%d)", file, len(data), size)
+	}
+	headerSize := binary.LittleEndian.Uint64(data[offsetHeaderSize:])
+	grown := make([]byte, size)
+	copy(grown, data)
+	binary.LittleEndian.PutUint64(grown[offsetArenaSize:], uint64(size)-headerSize) //nolint:gosec // size is above the file's length here
+
+	if err := os.WriteFile(file, grown, 0o600); err != nil { //nolint:gosec // a fixture copy in the test's directory
+		tb.Fatalf("write %s: %v", file, err)
+	}
+}
+
 // writeDecompressed writes the zstd-decompressed bytes of src to dst.
 func writeDecompressed(tb testing.TB, src, dst string) {
 	tb.Helper()
