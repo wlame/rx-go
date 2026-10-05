@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ZONE.
 - `file_tz=ZONE` on `GET /v1/samples` and `GET /v1/time-range` does
   what `--file-tz` does; a value that names no zone answers `400`
-  naming it, and `cli_command` renders `--file-tz=…`. `GET /health`
+  naming it (its first 64 bytes when it is longer), and `cli_command` renders `--file-tz=…`. `GET /health`
   lists the feature `file_tz`. Contract 1.6.
 - `rx serve --update-viewer` checks GitHub for a newer `rx-viewer`
   release inside the supported range at this start, whatever the last

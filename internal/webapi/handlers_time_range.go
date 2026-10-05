@@ -31,9 +31,27 @@ func fileZoneOf(value string) (config.Zone, error) {
 	}
 	zone, err := config.ParseZone(value)
 	if err != nil {
-		return config.Zone{}, ErrBadRequest(fmt.Sprintf("Invalid file_tz %q: %s", value, err.Error()))
+		return config.Zone{}, ErrBadRequest(fmt.Sprintf("Invalid file_tz %s: %s", quotedPrefix(value), err.Error()))
 	}
 	return zone, nil
+}
+
+// maxEchoedValueBytes is how much of a refused query value an error
+// message quotes: as long as the longest value a zone parameter accepts,
+// so every value that could be meant is quoted whole.
+const maxEchoedValueBytes = 64
+
+// quotedPrefix quotes value for an error message, cut to its first
+// maxEchoedValueBytes bytes with the full length named after it.
+//
+// SECURITY: a query string can carry kilobytes in one parameter; an
+// error body that repeated it whole would grow with whatever the caller
+// sends. %q escapes what the cut leaves of a multi-byte character.
+func quotedPrefix(value string) string {
+	if len(value) <= maxEchoedValueBytes {
+		return fmt.Sprintf("%q", value)
+	}
+	return fmt.Sprintf("%q… (%d bytes)", value[:maxEchoedValueBytes], len(value))
 }
 
 // timeRangeOutput wraps the answer for huma, which takes the body from
