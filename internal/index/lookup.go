@@ -50,20 +50,31 @@ func FindNearestCheckpointForOffset(idx *rxtypes.UnifiedFileIndex, target int64)
 	return idx.LineIndex[i-1]
 }
 
-// CheckpointIndexForOffset returns the position in idx.LineIndex of the
-// last checkpoint whose ByteOffset is <= target, or -1 when there is
-// none.
+// CheckpointForContext returns the checkpoint a pass starts from when it
+// must show `context` lines before the line holding offset, or the zero
+// entry when that pass has to start at the first byte of the file.
 //
-// FindNearestCheckpointForOffset returns the entry itself, which is what
-// most callers want. This variant returns the position because two
-// callers need to step back one checkpoint from it, so that the leading
-// context of the first match is inside the pass they are about to make.
-func CheckpointIndexForOffset(idx *rxtypes.UnifiedFileIndex, target int64) int {
+// The line holding offset is not known before the pass reads it, but
+// the checkpoint at or before offset gives a lower bound: if that
+// checkpoint starts line L, offset is on line L or later. A start at a
+// line no later than L-context therefore leaves at least `context`
+// lines ahead of offset's line, whatever line that turns out to be.
+// That start is found by line number, as a --lines request finds the
+// checkpoint before its own leading context.
+//
+// A checkpoint gap holds as many lines as fit in the index step, which
+// on a log of long lines is only a few, so the answer can be several
+// checkpoints back. Both lookups are binary searches over the index.
+func CheckpointForContext(idx *rxtypes.UnifiedFileIndex, offset int64, context int) rxtypes.LineIndexEntry {
 	if idx == nil || len(idx.LineIndex) == 0 {
-		return -1
+		return rxtypes.LineIndexEntry{}
 	}
-	i := sort.Search(len(idx.LineIndex), func(i int) bool {
-		return idx.LineIndex[i].ByteOffset > target
-	})
-	return i - 1
+	holding := FindNearestCheckpointForOffset(idx, offset)
+	if holding.LineNumber == 0 {
+		return rxtypes.LineIndexEntry{}
+	}
+	// FindNearestCheckpoint returns the zero entry when no checkpoint
+	// starts at or before the wanted line, which is the start of the
+	// file: line 1 at byte 0.
+	return FindNearestCheckpoint(idx, holding.LineNumber-int64(context))
 }
