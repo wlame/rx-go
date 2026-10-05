@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -365,6 +366,13 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	}
 	windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
 
+	// Whether the index cache can store an index is checked once, at
+	// the first file that is about to be built, and the answer holds for
+	// the whole run. sync.OnceValue wraps index.CheckStorable so that
+	// the first call runs it and every later call returns the same
+	// error (or nil) without probing again.
+	checkStorable := sync.OnceValue(index.CheckStorable)
+
 	for _, path := range filesToIndex {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -412,6 +420,18 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 				result.Indexed = append(result.Indexed, indexEntryJSON(idx, index.GetCachePath(path)))
 				continue
 			}
+		}
+
+		// An index the cache cannot store is not built: the build would
+		// read the whole file and the save would then fail. The file's
+		// error names the cause.
+		if storeErr := checkStorable(); storeErr != nil {
+			result.Errors = append(result.Errors, indexErrorItem{
+				Path:     path,
+				Error:    "cannot store the line index: " + storeErr.Error(),
+				exitCode: ExitGenericError,
+			})
+			continue
 		}
 
 		idx, err := index.Build(path, buildOpts)

@@ -65,6 +65,14 @@ Each file is named `<basename>_<hash16>.json`:
 - `<hash16>` is a 16-character hex hash of the absolute source path,
   uniquing entries when multiple files share a basename
 
+A file name is at most 255 bytes, the longest name ext4, xfs, btrfs and
+APFS accept. A base name longer than 233 bytes is cut to 233 (never
+inside a UTF-8 character), so a log with a very long name still gets an
+index; the hash of the whole path keeps two such names apart. A trace
+cache entry's name, `<path_hash16>_<basename>.json`, is cut the same
+way. A filesystem with a shorter limit (eCryptfs allows about 143
+bytes) still refuses the longest names.
+
 Contents: the full `UnifiedFileIndex` struct. See
 [line indexes](line-indexes.md).
 
@@ -254,10 +262,30 @@ with its path, and the next complete scan of that file replaces it.
 A line index that cannot be read (its permissions, an I/O error) or
 parsed (cut short) is treated as absent too, and logged at Warn level
 as `index_unreadable` with its path. A lookup never fails because of
-it: `rx samples` and `GET /v1/samples` read the file without the index,
-and rebuild it over the damaged one when the file is worth an index;
-`GET /v1/index` answers `404` for it as for a missing one; a trace
-leaves a match it cannot number cheaply at `-1`.
+it: `rx samples` and `GET /v1/samples` rebuild it over the damaged one,
+whatever the file's size, and read the file without an index when it
+cannot be rebuilt; `GET /v1/index` answers `404` for it as for a
+missing one; a trace leaves a match it cannot number cheaply at `-1`.
+
+## When the cache cannot be written
+
+A cache directory that is read-only, or an `RX_CACHE_DIR` that names a
+regular file, makes every write fail. Lookups still answer, and answer
+the same:
+
+- `rx samples` and `GET /v1/samples` check that an index can be stored
+  before they build one. When it cannot, they build nothing and read
+  the file without an index, as `--no-index` does, and log one Warn
+  line per process, `index_not_stored`, naming the directory and the
+  cause. `rx serve` starts no index task for such a lookup.
+- `rx index` and `POST /v1/index` fail before they read the file, with
+  an error that starts `cannot store the line index:` and names the
+  cause; `rx index` exits `1`.
+- `rx trace` scans and logs one Warn line per process,
+  `trace_cache_write_failed`, with the cause. A cache directory under a
+  regular file holds no entries, so looking one up is an ordinary miss;
+  `trace_cache_unreadable` is only for an entry that exists and cannot
+  be read or parsed.
 
 ## Cache size
 
