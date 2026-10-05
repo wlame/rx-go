@@ -500,7 +500,7 @@ leaves the last good bundle exactly where it was.
 
 `rx serve` resolves the newest viewer release, but installs it only when
 its version falls inside the range this backend was built against —
-`0.2.0 <= v < 0.6.0` today (the viewer is a 0.x product, where a minor bump
+`0.2.0 <= v < 0.7.0` today (the viewer is a 0.x product, where a minor bump
 may break compatibility). A newer release is logged as
 `frontend_version_incompatible` and skipped; the server runs without the
 SPA rather than serving a viewer that expects fields this backend does not
