@@ -408,10 +408,17 @@ func TestTextReader_StoredValueAbove128MiBIsDamageOnlyInAShownField(t *testing.T
 					checkRead(t, text, report, wantText, want, "")
 				}
 				// The value is read as far as its name search at most: the
-				// probe and up to nameStoredLimit stored bytes.
-				if got, limit := reads.objectBytes[d.Offset], int64(dataProbeBytes+nameStoredLimit); got > limit {
-					t.Errorf("the reads of the value took %d bytes, want at most %d", got, limit)
+				// probe and up to nameStoredLimit stored bytes. The bound is
+				// on every byte read, not on the reads charged to the object:
+				// objectReads charges a read to the last written object
+				// start before it, and the object's declared span covers
+				// every object written after it, so a read of the value past
+				// its first bytes would be charged to a later object.
+				objects := int64(len(j.Data) + len(j.Entries) + len(j.Arrays))
+				if limit := int64(len(data)) + objects*arrayProbeBytes + nameStoredLimit; reads.bytes > limit {
+					t.Errorf("read %d bytes of a journal written in %d bytes, want at most %d", reads.bytes, len(data), limit)
 				}
+				t.Logf("%d objects, written in %d bytes: %d bytes read", objects, len(data), reads.bytes)
 			})
 		}
 	}
