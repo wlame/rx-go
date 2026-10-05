@@ -341,7 +341,7 @@ func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error,
 		_ = f.Close()
 		return nil, nil, fmt.Errorf("read back in %s: the file cannot be read by position", req.Source.Path())
 	}
-	text, _, err := textByPosition(req.context(), file, kind)
+	text, _, err := textByPosition(req.context(), file, kind, noDecodeLimit)
 	if err != nil {
 		_ = f.Close()
 		return nil, nil, err

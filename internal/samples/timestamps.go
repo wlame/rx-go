@@ -608,7 +608,7 @@ func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp
 	if !ok {
 		return timestamps.Stamp{}, fmt.Errorf("read the end of %s: the file cannot be read by position", req.Source.Path())
 	}
-	text, size, err := textByPosition(req.context(), file, kind)
+	text, size, err := textByPosition(req.context(), file, kind, noDecodeLimit)
 	if err != nil {
 		return timestamps.Stamp{}, err
 	}
@@ -623,9 +623,20 @@ func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp
 	return stamp, err
 }
 
+// noDecodeLimit is the decodeLimit of a read by position that decodes
+// as many frames of a seekable file as its reads need.
+const noDecodeLimit = 0
+
+// errDecodeLimit is the error of a read by position of a seekable file
+// that would decode more text than its decodeLimit.
+var errDecodeLimit = errors.New("the frames this read needs decode to more text than its limit")
+
 // textByPosition returns the text of file, a plain or seekable zstd
-// file, as a reader by position, and the text's length.
-func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind) (io.ReaderAt, int64, error) {
+// file, as a reader by position, and the text's length. For a seekable
+// file, the reader decodes at most decodeLimit bytes of frames over its
+// life, or any number with noDecodeLimit; a read that needs more fails
+// with errDecodeLimit.
+func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind, decodeLimit int64) (io.ReaderAt, int64, error) {
 	if !kind.IsCompressed() {
 		info, err := file.Stat()
 		if err != nil {
@@ -638,7 +649,7 @@ func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind
 	if len(frames) > 0 {
 		size = frames[len(frames)-1].DecompressedEnd()
 	}
-	return &seekableTextAt{ctx: ctx, file: file, table: kind.Table, decoder: seekable.NewDecoder()}, size, nil
+	return &seekableTextAt{ctx: ctx, file: file, table: kind.Table, decoder: seekable.NewDecoder(), decodeLimit: decodeLimit}, size, nil
 }
 
 // seekableTextAt reads a seekable zstd file's text by position. It
@@ -652,6 +663,13 @@ func textByPosition(ctx context.Context, file positionalFile, kind filekind.Kind
 //
 // It holds at most two decoded frames, each as long as the seek table
 // says (the decoder refuses a frame that decodes to another length).
+//
+// SECURITY: a frame decodes whole, and holds up to 128 MiB of text, so
+// the bytes a read asks for say little about the work it costs. With a
+// decodeLimit, the reader adds up the text of every frame it decodes
+// and refuses, before decoding it, a frame that would take the sum past
+// the limit; the seek table gives a frame's text length before it is
+// decoded, and the decoder holds the frame to it.
 type seekableTextAt struct {
 	// ctx is checked before each frame is decoded.
 	ctx     context.Context
@@ -660,6 +678,10 @@ type seekableTextAt struct {
 	decoder *seekable.Decoder
 	// kept are the frames decoded last, the most recent first.
 	kept [2]decodedFrame
+	// decodeLimit is the most text the reader decodes over its life;
+	// noDecodeLimit (zero) for no limit. decoded is the text decoded so
+	// far, a frame decoded twice counted twice.
+	decodeLimit, decoded int64
 }
 
 // decodedFrame is one frame's text; data is nil for no frame.
@@ -705,10 +727,17 @@ func (s *seekableTextAt) frame(index int) ([]byte, error) {
 	if err := s.ctx.Err(); err != nil {
 		return nil, err
 	}
+	size := s.table.Frames[index].DecompressedSize
+	// Written as a subtraction so the sum cannot overflow.
+	if s.decodeLimit != noDecodeLimit && size > s.decodeLimit-s.decoded {
+		return nil, fmt.Errorf("frame %d holds %d bytes of text, %d decoded already: %w",
+			index, size, s.decoded, errDecodeLimit)
+	}
 	data, err := decodeFrameAt(s.decoder, s.file, index, s.table)
 	if err != nil {
 		return nil, err
 	}
+	s.decoded += size
 	s.kept[1], s.kept[0] = s.kept[0], decodedFrame{index: index, data: data}
 	return data, nil
 }

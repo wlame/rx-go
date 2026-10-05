@@ -19,7 +19,7 @@ lines show times in, and where the range came from:
 | Source | How the range was found |
 |---|---|
 | `index` | The file's [line index](../concepts/line-indexes.md#the-time-section) stores it. Nothing of the file is read |
-| `scan` | A plain or seekable zstd file without an index: the first mebibyte of the text gives the format and the first timestamp, and a read back from the end, a mebibyte at a time and at most 16 MiB, the last |
+| `scan` | A plain or seekable zstd file without an index: the first mebibyte of the text gives the format and the first timestamp, and a read back from the end, a mebibyte at a time and at most 16 MiB, the last; for a seekable file, at most 32 MiB of frames decoded |
 | `none` | A gzip, bzip2, xz or plain zstd file without an index (under `RX_NO_INDEX`, or when its index could not be built or stored): its last timestamp needs the whole text decompressed, so the range is not given |
 
 A gzip, bzip2, xz or plain zstd file without an index gets one built
@@ -32,7 +32,9 @@ The first and the last timestamp are those of the first and the last
 line, in file order, that carry a timestamp of their own. A file whose
 last timestamped line starts more than 16 MiB before its end (a log
 that ends in a long dump) has no last timestamp from a scan; `rx index`
-gives it one.
+gives it one. So has a seekable zstd file whose frames at the end hold
+more text than the read may decode, 32 MiB in all (a frame decodes
+whole; the default 4 MiB frames and frames of 16 MiB fit).
 
 Times are UTC instants in `--json`. A file whose timestamps carry no
 zone has its wall clock read in `RX_LOG_TZ` (default `UTC`), as

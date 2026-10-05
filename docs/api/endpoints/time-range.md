@@ -29,11 +29,17 @@ GET /v1/time-range?path=/var/log/app.log
 | File | Reads | `source` |
 |---|---|---|
 | Any file whose [line index](../../concepts/line-indexes.md#the-time-section) still describes it | The index only; nothing of the file | `index` |
-| Plain or seekable zstd, no index | The first mebibyte of the text (format, first timestamp, `example`) and a read back from the end, a mebibyte at a time, at most 16 MiB (last timestamp) | `scan` |
+| Plain or seekable zstd, no index | The first mebibyte of the text (format, first timestamp, `example`) and a read back from the end, a mebibyte at a time, at most 16 MiB of text (last timestamp); for a seekable file, at most 32 MiB of frames decoded | `scan` |
 | gzip, bzip2, xz or plain zstd, no index | The first mebibyte of the text (format, `example`) | `none` |
 
 A request never builds an index, never writes to the cache and never
-decompresses a whole file. A stream-compressed file gets its index from
+decompresses a whole file. A seekable zstd file decodes a frame whole
+to read any part of it, and a frame may hold up to 128 MiB of text, so
+the read back from the end decodes the frames it needs only while their
+text adds up to 32 MiB at most: a file whose last frames are larger
+(`rx compress --frame-size=64M`) answers `last_ms: null` without an
+index. The frames `rx compress` writes by default (4 MiB) and frames of
+16 MiB fit. A stream-compressed file gets its index from
 the background build a `GET /v1/samples` of it starts (or from
 `POST /v1/index`); ask again when that build ends. `RX_NO_INDEX=true`
 on the server makes every request read without an index.
@@ -83,7 +89,7 @@ A file without a recognized format:
 | `display_zone` | string \| null | The zone to show this file's times in so they read as its lines do: `RX_LOG_TZ` as set (`UTC` by default, an IANA name or `±HH:MM`) for a file whose timestamps carry no zone, the offset of its first timestamp (`±HH:MM`) for one whose timestamps do |
 | `example` | string \| null | The first timestamp as its line writes it (`2025-12-10 07:00:04.574`, `Dec 10 07:00:12.156`, `2025-12-10 16:18:53,741`): printable ASCII, any other byte as `\xHH`, at most 64 bytes |
 | `first_ms` | int \| null | The timestamp of the first line that has one, as a UTC instant in ms. A file whose timestamps carry no zone has its wall clock read in `RX_LOG_TZ`, as `line_timestamps` reads it. `null` with `source: none` |
-| `last_ms` | int \| null | The same for the last line that has one. `null` with `source: none`, and from a scan when no line within the last 16 MiB of the text has a timestamp |
+| `last_ms` | int \| null | The same for the last line that has one. `null` with `source: none`, and from a scan when no line within the last 16 MiB of the text has a timestamp or, for a seekable file, when the frames that hold it decode to more than 32 MiB |
 | `source` | string | `index`, `scan` or `none` (above) |
 | `cli_command` | string | The command that gives the same answer |
 
@@ -91,8 +97,8 @@ A file without a recognized format:
 first timestamped line, and the same for `last_ms` and the last one
 when the file is in order. With an index and without one the answer is
 the same, except that `first_ms` and `last_ms` may be `null` without
-one (`source: none`, or a last timestamp more than 16 MiB from the
-end).
+one (`source: none`, a last timestamp more than 16 MiB from the
+end, or a seekable file of frames too large to decode for it).
 
 ## Status codes
 

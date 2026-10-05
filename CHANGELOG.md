@@ -23,8 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read in `RX_LOG_TZ` as `line_timestamps` reads them) and `source`:
   `index` when the line index holds them (nothing of the file is read),
   `scan` for a plain or seekable zstd file without one (its first
-  mebibyte, and at most 16 MiB back from its end; past that `last_ms`
-  is `null`), `none` for a gzip, bzip2, xz or plain zstd file without
+  mebibyte, and at most 16 MiB back from its end, decoding at most
+  32 MiB of a seekable file's frames; past either `last_ms` is `null`),
+  `none` for a gzip, bzip2, xz or plain zstd file without
   one, which a request never decompresses whole. A request writes
   nothing to the cache; `rx time-range` builds the index of such a
   stream first, as `rx samples` does. The command prints one line per
