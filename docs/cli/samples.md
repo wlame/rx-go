@@ -84,7 +84,9 @@ frame table names, and a gzip, bzip2, xz or plain zstd stream, which
 must still be decompressed from its first byte, takes its line count
 for a line counted from the end and starts counting lines at the
 checkpoint before the first wanted one. `--no-index` turns the build off
-and the lookup reads the file without an index — slower, same answer.
+and the lookup neither builds nor reads an index, even one already
+stored: it reads the file from the start — slower, same answer. It is
+the flag to reach for when an index is suspect.
 
 `GET /v1/samples` builds the same index as a background task shared by
 every request for the file, and answers a request that sends

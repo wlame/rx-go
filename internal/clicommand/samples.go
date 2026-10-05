@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/wlame/rx-go/internal/config"
-	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
@@ -187,13 +186,6 @@ func runSamples(out io.Writer, p samplesParams) error {
 		after = p.afterCtx
 	}
 
-	// IndexLoader hooks up the cached unified index for index-aware
-	// line-offset seeks. index.LoadForSource returns
-	// (nil, ErrIndexNotFound) when no cache exists, (nil, nil) when
-	// stale, and (idx, nil) when valid. The resolver treats
-	// (nil, nil) as "no index — fall back to linear scan", so we
-	// swallow the not-found error to match that contract and keep
-	// "index missing" non-fatal.
 	// A second lookup in a multi-gigabyte file is the case an index
 	// exists for, so one is built when the file is worth it and none is
 	// cached. `--no-index` opts out for a caller that wants the read to
@@ -211,17 +203,15 @@ func runSamples(out io.Writer, p samplesParams) error {
 		_, _, _ = samples.BuildIndex(p.path, nil)
 	}
 
-	loader := func(path string) (*rxtypes.UnifiedFileIndex, error) {
-		idx, loadErr := index.LoadForSource(path)
-		if loadErr != nil {
-			// Missing cache is not an error for samples; any other
-			// error (permission, IO) propagates so the user sees it.
-			if errors.Is(loadErr, index.ErrIndexNotFound) {
-				return nil, nil
-			}
-			return nil, loadErr
-		}
-		return idx, nil
+	// The loader hands the resolver the stored index for its
+	// index-aware seeks. A missing, stale or damaged index is an absent
+	// one and the resolver reads the file from the start instead.
+	// `--no-index` (or RX_NO_INDEX) reads no index file at all: it is
+	// the escape hatch for a caller who suspects the index, so it must
+	// not consult the very file it is meant to avoid.
+	loader := samples.StoredIndex
+	if p.noIndex {
+		loader = samples.NoIndex
 	}
 
 	req := samples.Request{

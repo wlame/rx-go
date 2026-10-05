@@ -13,7 +13,6 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/config"
-	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
@@ -198,7 +197,8 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		// the build takes longer, so the first look at a 50 GB file does
 		// not hold its HTTP request open while all of it is read. Any
 		// other request waits for the build and answers the lines.
-		if !config.GetBoolEnv("RX_NO_INDEX", false) && samples.NeedsIndexBuild(validated, stat.Size()) {
+		noIndex := config.GetBoolEnv("RX_NO_INDEX", false)
+		if !noIndex && samples.NeedsIndexBuild(validated, stat.Size()) {
 			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
 			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
 			stopDeadline()
@@ -214,16 +214,13 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 
 		// One resolver for both file kinds and both entry points: it
 		// reads a plain file by offset or by line, and streams a
-		// compressed one through its decompressor.
-		loader := func(path string) (*rxtypes.UnifiedFileIndex, error) {
-			idx, loadErr := index.LoadForSource(path)
-			if loadErr != nil {
-				if errors.Is(loadErr, index.ErrIndexNotFound) {
-					return nil, nil
-				}
-				return nil, loadErr
-			}
-			return idx, nil
+		// compressed one through its decompressor. A missing, stale or
+		// damaged index is an absent one, never a 500; under
+		// RX_NO_INDEX no index file is read at all, as `rx samples
+		// --no-index` reads none.
+		loader := samples.StoredIndex
+		if noIndex {
+			loader = samples.NoIndex
 		}
 		resp, err := samples.Resolve(samples.Request{
 			Path:          validated,
