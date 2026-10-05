@@ -56,6 +56,7 @@ func buildHealthResponse(s *Server) rxtypes.HealthResponse {
 		RipgrepAvailable: s.cfg.RipgrepPath != "",
 		AppVersion:       s.cfg.AppVersion,
 		ContractVersion:  ContractVersion,
+		Features:         Features(),
 		GoVersion:        runtime.Version(),
 		OSInfo:           getOSInfo(),
 		SystemResources:  getSystemResources(),

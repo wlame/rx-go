@@ -30,6 +30,13 @@ on an Apple-silicon Mac:
   "ripgrep_available": true,
   "app_version": "dev",
   "contract_version": "1.5",
+  "features": [
+    "line_timestamps",
+    "samples_index_build",
+    "samples_timestamps",
+    "trace_context_and_switches",
+    "trace_matching_flags"
+  ],
   "go_version": "go1.26.2",
   "os_info": {
     "compiler": "gc",
@@ -90,6 +97,7 @@ because rx reads it: nothing does. `RX_SEARCH_ROOTS` is there because
 | `ripgrep_available` | bool | `true` if `rg` is on `PATH`. When `false`, `/v1/trace` returns `503`; the other endpoints do not need it |
 | `app_version` | string | The release tag the binary was built from, or `"dev"` for a build without one |
 | `contract_version` | string | HTTP wire contract version, `MAJOR.MINOR`. A higher minor adds fields or parameters; a different major means a client written for another major cannot read this server |
+| `features` | string[] | The features this build serves, sorted; see [below](#features-field-detail). Never `null` |
 | `go_version` | string | Go toolchain version the binary was built with |
 | `os_info` | object | `{system, machine, compiler, version}` from `runtime.GOOS`, `runtime.GOARCH`, etc. |
 | `system_resources` | object | CPU cores and RAM totals. `ram_*` fields are `null` on non-Linux hosts |
@@ -99,6 +107,23 @@ because rx reads it: nothing does. `RX_SEARCH_ROOTS` is there because
 | `hooks` | object | Effective webhook env configuration |
 | `docs_url` | string | Static URL to the `rx-tool` project |
 | `search_roots` | `string[] \| null` | Configured roots, or `null` when running unsandboxed (rare in serve mode) |
+
+### `features` field detail
+
+A client checks whether a name is listed before it shows a control that
+needs the feature, rather than comparing contract versions. A name is
+listed while the build serves the feature; `contract_version` still
+tells a client whether it can read this server at all.
+
+| Name | The build serves |
+|---|---|
+| `trace_matching_flags` | `ignore_case`, `word_regexp`, `line_regexp`, `fixed_strings` and `pcre2` on [`GET /v1/trace`](trace.md) |
+| `trace_context_and_switches` | `context`, `before_context`, `after_context`, `no_cache`, `no_index` and `no_recursive` on `GET /v1/trace` |
+| `samples_index_build` | [`GET /v1/samples`](samples.md) builds a large or compressed file's line index in a background task and may answer `202` with it; [`GET /v1/tasks/{task_id}`](tasks.md) reports the build's `progress` |
+| `samples_timestamps` | `timestamps` on `GET /v1/samples`: lines by time |
+| `line_timestamps` | `line_timestamps` in every `GET /v1/samples` answer |
+
+rx-python reports no `features`.
 
 ### `constants` field detail
 
