@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   many MiB of a file's text, from its first byte, a samples lookup may
   read to answer without a line index when the file wants one and has
   none.
+- `RX_MAX_INDEX_BUILDS` (default 2, 1 to 64): how many line-index
+  builds that `GET /v1/samples` starts run at once in `rx serve`. A
+  build past it waits in a queue, in order, as a task whose status stays
+  `queued` until a running build ends; lookups name it and wait for it
+  as before, and a lookup in the head of its file is still answered at
+  once. The queue holds at most 256 builds; past that a lookup starts
+  none and one that needs the index reads the file without it. Builds
+  started by `POST /v1/index` are not counted. Before, a lookup in each
+  large file of a tree started a whole-file build on every one at once.
 - `index_build` in every `GET /v1/samples` answer (and `rx samples
   --json`, always `null` there): the background build of the file's
   line index that the answer started or joined (`task_id`, `status`,

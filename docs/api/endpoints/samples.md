@@ -297,6 +297,16 @@ its index serves every later request. A request for a file that changed
 after the build started does not wait for that build and is answered
 from the file.
 
+At most `RX_MAX_INDEX_BUILDS` (2 by default) of these builds run at
+once. A build started past that waits in a queue, in the order it was
+started: its task exists at once with `status` `queued`, and a request
+names it in `index_build` or in a `202` and waits for it as for a
+running one; it starts when a running build ends. The queue holds at
+most 256 builds. Past that a request starts no build: an answer from
+the head has `index_build: null`, and a request that needs the index
+reads the file without one, slower and with the same answer. Builds
+that `POST /v1/index` starts are outside this limit.
+
 A request without `Prefer: respond-async` never gets a `202`: it waits
 for the same shared build and answers `200`, as a client written before
 contract 1.4 expects. `rx samples` never answers this way either: the

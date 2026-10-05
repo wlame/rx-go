@@ -33,6 +33,15 @@ type buildGate struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+
+	// running counts the builds inside build now, and mostAtOnce the
+	// most there have been at one time.
+	running    atomic.Int32
+	mostAtOnce atomic.Int32
+
+	mu sync.Mutex
+	// paths lists the file of each build, in the order they started.
+	paths []string
 }
 
 func newBuildGate(t *testing.T) *buildGate {
@@ -48,9 +57,36 @@ func (g *buildGate) open() { g.once.Do(func() { close(g.release) }) }
 
 func (g *buildGate) build(path string, progress *index.Progress) (*rxtypes.UnifiedFileIndex, string, error) {
 	g.calls.Add(1)
+	now := g.running.Add(1)
+	defer g.running.Add(-1)
+	for most := g.mostAtOnce.Load(); now > most && !g.mostAtOnce.CompareAndSwap(most, now); {
+		most = g.mostAtOnce.Load()
+	}
+	g.mu.Lock()
+	g.paths = append(g.paths, path)
+	g.mu.Unlock()
 	g.started <- struct{}{}
 	<-g.release
 	return samples.BuildIndex(path, progress)
+}
+
+// releaseOne lets one build waiting at the gate go on, and blocks
+// until one takes the release.
+func (g *buildGate) releaseOne(t *testing.T) {
+	t.Helper()
+	select {
+	case g.release <- struct{}{}:
+	case <-time.After(30 * time.Second):
+		t.Fatal("no build waiting at the gate")
+	}
+}
+
+// startedPaths returns the file of each build started so far, in the
+// order they started.
+func (g *buildGate) startedPaths() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.paths...)
 }
 
 // awaitStart blocks until a build has started.
@@ -77,6 +113,13 @@ type samplesBuildFixture struct {
 
 func newSamplesBuildFixture(t *testing.T, wait time.Duration) *samplesBuildFixture {
 	t.Helper()
+	return newLimitedBuildFixture(t, wait, 0)
+}
+
+// newLimitedBuildFixture is newSamplesBuildFixture with at most
+// maxBuilds index builds running at once (0: RX_MAX_INDEX_BUILDS).
+func newLimitedBuildFixture(t *testing.T, wait time.Duration, maxBuilds int) *samplesBuildFixture {
+	t.Helper()
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	// No early answer from the head of the log: every request takes the
 	// path that waits for the build. The tests of the head set it.
@@ -102,6 +145,7 @@ func newSamplesBuildFixture(t *testing.T, wait time.Duration) *samplesBuildFixtu
 		AppVersion:        "unit-test",
 		TaskManager:       f.manager,
 		SamplesIndexWait:  wait,
+		MaxIndexBuilds:    maxBuilds,
 		buildSamplesIndex: f.gate.build,
 	})
 	ts := httptest.NewServer(f.server)
@@ -113,11 +157,17 @@ func newSamplesBuildFixture(t *testing.T, wait time.Duration) *samplesBuildFixtu
 // writeLog (re)writes the gzip log with 300 lines "<word> <n> ...".
 func (f *samplesBuildFixture) writeLog(t *testing.T, word string) {
 	t.Helper()
+	writeGzipLog(t, f.gzPath, word)
+}
+
+// writeGzipLog writes a gzip log at path with 300 lines "<word> <n> ...".
+func writeGzipLog(t *testing.T, path, word string) {
+	t.Helper()
 	var text bytes.Buffer
 	for n := 1; n <= 300; n++ {
 		fmt.Fprintf(&text, "%s %d of the log\n", word, n)
 	}
-	if err := os.WriteFile(f.gzPath, compressedcopy.Encode(t, compressedcopy.Gzip, text.Bytes()), 0o600); err != nil {
+	if err := os.WriteFile(path, compressedcopy.Encode(t, compressedcopy.Gzip, text.Bytes()), 0o600); err != nil {
 		t.Fatalf("write gzip: %v", err)
 	}
 }

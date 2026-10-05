@@ -130,6 +130,7 @@ func TestIntSettings_GettersReadTheirSetting(t *testing.T) {
 		{SamplesMaxLinesSetting, SamplesMaxLines},
 		{SamplesMaxBytesSetting, func() int { return int(SamplesMaxBytes()) }},
 		{SamplesHeadMBSetting, func() int { return int(SamplesHeadBytes() >> 20) }},
+		{MaxIndexBuildsSetting, MaxIndexBuilds},
 	}
 	if len(cases) != len(IntSettings) {
 		t.Fatalf("%d getters tested, %d settings declared", len(cases), len(IntSettings))
