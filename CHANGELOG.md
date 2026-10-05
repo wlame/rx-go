@@ -107,8 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside the range. A cached viewer outside the range is treated as no
   cache: it is replaced, or not served when no release inside the range
   can be installed.
-- `rx serve` installs viewer 0.6.0: the range of viewer releases it
-  accepts is now `0.2.0 <= v < 0.7.0`. Release 0.5.0 refused 0.6.0 and
+- `rx serve` installs viewers 0.6.0 and 0.7.0: the range of viewer
+  releases it accepts is now `0.2.0 <= v < 0.8.0`. Release 0.5.0 refused 0.6.0 and
   came up without the viewer unless one was already cached or
   `RX_FRONTEND_VERSION` pinned an older one.
 
