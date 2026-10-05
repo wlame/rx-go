@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -191,10 +192,8 @@ func TestStampReaders_AgreeWithTheIndexWalk(t *testing.T) {
 		wantWindow := content[:min(len(content), timestamps.WindowBytes)]
 		for _, inHand := range []int64{timestamps.WindowBytes + 1, 4096} {
 			rest := text[start:min(int64(len(text)), start+inHand)]
-			window, err := lineWindow(bytes.NewReader(text), rest, start, int64(len(text)))
-			if err != nil {
-				t.Fatalf("line %d: window: %v", i+1, err)
-			}
+			endsLine := onlyCarriageReturnsBeforeLineEnd(text[start+int64(len(rest)):], true)
+			window := lineWindow(rest, endsLine)
 			if !bytes.Equal(window, wantWindow) {
 				t.Fatalf("line %d, %d bytes in hand: window %q, want %q", i+1, inHand, window, wantWindow)
 			}
@@ -221,6 +220,74 @@ func TestLastStampFromEnd_StepsBackPastATimelessTail(t *testing.T) {
 	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parserFor(t, text[:70]), int64(len(text)))
 	if err != nil || !found || got.Ms != timeBase+1000 {
 		t.Fatalf("last stamp %+v %v %v, want 07:30:01", got, found, err)
+	}
+}
+
+// tailLines are texts whose lines end in long runs of \r bytes: runs
+// about a step long and longer, ended by a \n, by another byte, or by
+// the end of the text, after lines with a timestamp.
+func tailLines() map[string][]byte {
+	const stamp = "2025-12-10 07:30:05.000"
+	texts := map[string][]byte{}
+	for _, run := range []int{tailStepBytes - 60, tailStepBytes + 60, 3 * tailStepBytes} {
+		for _, ending := range []string{"\n", "x\n", "", "\nabc"} {
+			var b bytes.Buffer
+			b.WriteString("2025-12-10 07:30:00.000 first\n")
+			b.WriteString(stamp + strings.Repeat("\r", run) + ending)
+			b.WriteString("abc" + strings.Repeat("\r", run) + "\r" + strings.Repeat("\r", timestamps.WindowBytes) + ending)
+			texts[fmt.Sprintf("run %d ending %q", run, ending)] = b.Bytes()
+		}
+	}
+	texts["awkward lines"] = bytes.Join(awkwardLines(rand.New(rand.NewPCG(7, 11))), nil)
+	return texts
+}
+
+// tailWindow is one line start the read back visits and the window it
+// hands the parser.
+type tailWindow struct {
+	start  int64
+	window string
+}
+
+// The read back from the end visits every line that starts in the last
+// limit bytes, last first, and hands the parser each line's content cut
+// to timestamps.WindowBytes, as an index build does (index.LineStamp
+// over the whole line), however far a run of \r bytes reaches.
+func TestTailWindows_AreTheLinesAsTheIndexSeesThem(t *testing.T) {
+	for name, text := range tailLines() {
+		size := int64(len(text))
+		for _, limit := range []int64{size, 2*tailStepBytes + 512} {
+			t.Run(fmt.Sprintf("%s limit %d", name, limit), func(t *testing.T) {
+				floor := max(0, size-limit)
+				var want []tailWindow
+				start := int64(0)
+				for _, line := range bytes.SplitAfter(text, []byte("\n")) {
+					if len(line) > 0 && start >= floor {
+						content := bytes.TrimRight(line, "\r\n")
+						want = append(want, tailWindow{start, string(content[:min(len(content), timestamps.WindowBytes)])})
+					}
+					start += int64(len(line))
+				}
+				slices.Reverse(want)
+
+				var got []tailWindow
+				err := tailWindows(context.Background(), bytes.NewReader(text), size, limit, func(start int64, window []byte) bool {
+					got = append(got, tailWindow{start, string(window)})
+					return false
+				})
+				if err != nil {
+					t.Fatalf("tailWindows: %v", err)
+				}
+				if len(got) != len(want) {
+					t.Fatalf("%d line starts visited, want %d", len(got), len(want))
+				}
+				for i := range want {
+					if got[i] != want[i] {
+						t.Fatalf("line start %d: got %d %q, want %d %q", i, got[i].start, got[i].window, want[i].start, want[i].window)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -318,15 +385,15 @@ func crlfTail(lines int) []byte {
 
 // The read back from the end for the last timestamp reads each byte of
 // a tail of \r\n lines about once, on a plain file and on a seekable
-// one: a step reads its mebibyte and the window past it, and at most
-// one line of a step, the last, is read further to find its end.
+// one: a step reads its mebibyte, one byte before it and the window
+// past it, and nothing further to find where a line ends.
 func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	text := crlfTail(20_000)
 	parser := parserFor(t, text[:200])
 	steps := int64(len(text)/tailStepBytes + 1)
-	// One step's mebibyte and window, one byte before it, and one
-	// further read of the step's last line.
-	perStep := int64(timestamps.WindowBytes + 1 + 4096)
+	// Past its mebibyte, a step reads the window after it and one byte
+	// before it.
+	perStep := int64(timestamps.WindowBytes + 1)
 
 	plain := counting.NewReaderAt(bytes.NewReader(text))
 	stamp, found, err := lastStampFromEnd(context.Background(), plain, int64(len(text)), parser, int64(len(text)))
