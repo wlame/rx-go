@@ -81,6 +81,15 @@ func expectedTimeIndex(lines []timedLine, base rxtypes.TimeIndex) rxtypes.TimeIn
 			want.First = pointAt(lines, i+1)
 		}
 		want.Last = pointAt(lines, i+1)
+		if want.TimestampedLines == 1 {
+			// Every shape writes one offset throughout: the offset of its
+			// first timestamp, or 0 when its timestamps carry no zone.
+			offset := 0
+			if base.FirstZoneOffsetMinutes != nil {
+				offset = *base.FirstZoneOffsetMinutes
+			}
+			want.ZoneOffsets = []rxtypes.ZoneOffset{{Line: int64(i + 1), OffsetMinutes: offset}}
+		}
 		if seen && maxMs-l.ms > 1000 {
 			want.BackwardSteps++
 			want.MaxBackwardMs = max(want.MaxBackwardMs, maxMs-l.ms)
@@ -575,8 +584,8 @@ func TestSaveLoad_KeepsTheTimeSection(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			built := buildAt(t, t.TempDir(), name, write, text, fileMtime, 128)
-			if built.TimeIndex == nil || built.Version != 8 {
-				t.Fatalf("version %d, time section present %v; want 8 and true", built.Version, built.TimeIndex != nil)
+			if built.TimeIndex == nil || built.Version != 9 {
+				t.Fatalf("version %d, time section present %v; want 9 and true", built.Version, built.TimeIndex != nil)
 			}
 			cachePath, err := Save(built)
 			if err != nil {
