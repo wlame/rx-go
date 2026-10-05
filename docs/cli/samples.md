@@ -200,8 +200,10 @@ rx samples app.log --timestamps=2025-12-10T07:30:00Z --file-tz=Asia/Tokyo
 
 For a file whose timestamps carry no zone, the index serves the search
 as without the flag. For one whose timestamps carry zones the index
-holds instants, which cannot give back the written wall clocks, so the
-search reads from the first line (the answer is the same, the read
+holds instants and records where the written offset changes, so the
+query is shifted by each stretch's offset and the search still starts
+at a checkpoint; only a file whose offset changes more than 1,024 times
+is searched from its first line (the answer is the same, the read
 longer). See [A file zone](../concepts/timestamps.md#a-file-zone).
 
 ### Address syntax

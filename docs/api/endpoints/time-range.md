@@ -51,13 +51,16 @@ on the server makes every request read without an index.
 writes, in ZONE ([A file zone](../../concepts/timestamps.md#a-file-zone)):
 `display_zone` is ZONE, `first_ms` and `last_ms` are those wall clocks
 read in ZONE, and `has_zone` and `example` stay the file's. The reads
-are those of the table above, except for an indexed file whose
-timestamps carry zones: its index holds instants, so the first
-timestamp is the stored one plus the offset the index stores for it,
-and the last timestamped line is read again at the byte offset the
-index stores (a window of one line, `source` stays `index`). A gzip,
-bzip2, xz or plain zstd file of that kind cannot be read at an offset:
-it answers `source: none`, with an index too.
+are those of the table above: an indexed file whose timestamps carry
+zones holds instants and the offset each line writes (`zone_offsets`),
+so each stored timestamp plus its line's offset gives the wall clock,
+with no read. Only when that file's offset changes more than 1,024
+times does the index record no offsets: the first timestamp is then the
+stored one plus the offset the index stores for it, and the last
+timestamped line is read again at the byte offset the index stores (a
+window of one line, `source` stays `index`); a gzip, bzip2, xz or plain
+zstd file, which cannot be read at an offset, then answers
+`source: none`.
 
 ```bash
 curl -sG 'http://127.0.0.1:7777/v1/time-range' \

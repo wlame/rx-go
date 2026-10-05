@@ -20,13 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zone is read in ZONE unless `RX_QUERY_TZ` is set. ZONE is `UTC`, an
   IANA name or `±HH:MM`, as `RX_LOG_TZ` takes it; another value exits 2
   naming it. Nothing stored changes. The index of a file whose
-  timestamps carry no zone serves it as before; the index of one whose
-  timestamps carry zones holds instants, so under `--file-tz` the time
-  search reads from the first line instead of starting at a checkpoint,
-  and the time range reads the last timestamped line again at the
-  offset the index stores (a gzip, bzip2, xz or plain zstd file of that
-  kind answers source `none`). An epoch value counts as its UTC wall
-  clock. The human `rx time-range` line shows the times in ZONE.
+  timestamps carry no zone serves it as before. The index of one whose
+  timestamps carry zones holds instants and records where the written
+  offset changes (`zone_offsets`), so the query is shifted by each
+  stretch's offset: the time search still starts at a checkpoint (about
+  one index step per stretch of one offset), and the time range comes
+  from the index with no read, for a gzip, bzip2, xz or plain zstd file
+  too. A file whose offset changes more than 1,024 times is searched
+  from its first line under `--file-tz`, and its time range reads the
+  last timestamped line again at the offset the index stores (source
+  `none` for a stream-compressed file). An epoch value counts as its
+  UTC wall clock. The human `rx time-range` line shows the times in
+  ZONE.
 - `file_tz=ZONE` on `GET /v1/samples` and `GET /v1/time-range` does
   what `--file-tz` does; a value that names no zone answers `400`
   naming it, and `cli_command` renders `--file-tz=…`. `GET /health`

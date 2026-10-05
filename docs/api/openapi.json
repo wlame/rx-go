@@ -1375,7 +1375,7 @@
             "type": "string"
           },
           "source": {
-            "description": "How the range was found: index (the file's line index; nothing of the file read, except under file_tz the last timestamped line of a file whose timestamps carry zones), scan (the head of the text and a read back from its end, at most 16 MiB), none (a gzip, bzip2, xz or plain zstd file without an index, or under file_tz one whose timestamps carry zones: first_ms and last_ms are null).",
+            "description": "How the range was found: index (the file's line index; nothing of the file read, except under file_tz the last timestamped line of a file whose timestamps carry zones whose offset changes too often for the index to record), scan (the head of the text and a read back from its end, at most 16 MiB), none (a gzip, bzip2, xz or plain zstd file without an index, or under file_tz one whose timestamps carry zones and whose index records no offsets: first_ms and last_ms are null).",
             "enum": [
               "index",
               "scan",
@@ -2484,7 +2484,7 @@
     },
     "/v1/time-range": {
       "get": {
-        "description": "The time range of one file for a timeline: its format, its first and last timestamp as UTC instants, the zone its lines show times in and its first timestamp as written. From the file's line index when there is one; otherwise from the head of its text and at most 16 MiB back from its end, or not at all for a stream-compressed file (source none). file_tz reads the timestamps as wall clock in a chosen zone; for a file whose timestamps carry zones the index then gives the first timestamp and its last timestamped line is read again at the offset it stores (source none for a stream-compressed file).",
+        "description": "The time range of one file for a timeline: its format, its first and last timestamp as UTC instants, the zone its lines show times in and its first timestamp as written. From the file's line index when there is one; otherwise from the head of its text and at most 16 MiB back from its end, or not at all for a stream-compressed file (source none). file_tz reads the timestamps as wall clock in a chosen zone; for a file whose timestamps carry zones the index gives each timestamp with the offset its line writes. When the offset changes too often for the index to record, the index gives the first timestamp and the last timestamped line is read again at the offset it stores (source none for a stream-compressed file).",
         "operationId": "time_range",
         "parameters": [
           {

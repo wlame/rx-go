@@ -74,13 +74,15 @@ const TimeRangeDecodeBytes = 2 * TimeRangeTailBytes
 //
 // Under req.FileZone each of them is the wall clock its line writes,
 // read in that zone, and display_zone names the zone. The index of a
-// file whose timestamps carry zones holds instants, which cannot give
-// back a written wall clock: its first one is the stored instant plus
-// the stored offset of the first timestamp, and its last line is read
-// again at the byte offset the index stores (stampOfLineAt), a window of
-// one line. A gzip, bzip2, xz or plain zstd file cannot be read at an
-// offset, so such a file answers source "none" under a file zone, with
-// an index too.
+// file whose timestamps carry zones holds instants: each is turned back
+// into its line's wall clock with the offset zone_offsets records for
+// the line, and nothing of the file is read. When zone_offsets is null
+// (the offset changes too often to record), the first is the stored
+// instant plus the stored offset of the first timestamp, and the last
+// line is read again at the byte offset the index stores
+// (stampOfLineAt), a window of one line; a gzip, bzip2, xz or plain zstd
+// file cannot be read at an offset, so such a file then answers source
+// "none".
 func TimeRange(ctx context.Context, req Request) (*rxtypes.TimeRangeResponse, error) {
 	req.ctx = ctx
 	if req.Source.IsZero() {
@@ -134,29 +136,47 @@ func rangeOfIndex(req Request, kind filekind.Kind, ti *rxtypes.TimeIndex) (*rxty
 	if ti.Last != nil {
 		r.last = &timestamps.Stamp{Ms: ti.Last.Ms}
 	}
-	if !r.frame.readsStoredFrame(detected) {
-		if err := r.wallClocksOfStoredLines(req, kind, ti, offset); err != nil {
-			return nil, err
-		}
-		if r.last == nil {
-			// The range is unknown without the last timestamp, as for a
-			// stream without an index.
-			resp.Source, r.first = TimeRangeNone, nil
-		}
+	if segments, ok := segmentsToFrame(r.frame, detected, ti); ok {
+		r.shiftToFrame(segments, ti)
+		r.describe(resp)
+		return resp, nil
+	}
+	if err := r.wallClocksOfStoredLines(req, kind, ti, offset); err != nil {
+		return nil, err
+	}
+	if r.last == nil {
+		// The range is unknown without the last timestamp, as for a
+		// stream without an index.
+		resp.Source, r.first = TimeRangeNone, nil
 	}
 	r.describe(resp)
 	return resp, nil
 }
 
+// shiftToFrame turns r's first and last, the values ti stores, into the
+// answer's frame with the offset of the segment holding each line
+// (frameValueAt). Nothing of the file is read: under a file zone the
+// wall clock a line wrote is its stored instant plus the offset
+// zone_offsets records for it.
+func (r *fileRange) shiftToFrame(segments []zoneSegment, ti *rxtypes.TimeIndex) {
+	if r.first != nil {
+		r.first.Ms = frameValueAt(segments, ti.First.Line, ti.First.Ms)
+	}
+	if r.last != nil {
+		r.last.Ms = frameValueAt(segments, ti.Last.Line, ti.Last.Ms)
+	}
+}
+
 // wallClocksOfStoredLines turns r's first and last, the instants an
 // index of a file whose timestamps carry zones stores, into the wall
-// clocks their lines write. The first is its instant plus the offset
-// written with it (firstOffset, which the index stores). The last line's
-// offset is not stored, so the line is read again at the byte offset the
-// index gives; r.last is nil when it cannot be: the file is a stream
-// that cannot be read at an offset, the frame that holds the line would
-// decode more than TimeRangeDecodeBytes, or the line is not read as the
-// index read it.
+// clocks their lines write, for an index that does not record where the
+// written offset changes (zone_offsets null: it changes too often). The
+// first is its instant plus the offset written with it (firstOffset,
+// which the index stores). The last line's offset is not known, so the
+// line is read again at the byte offset the index gives; r.last is nil
+// when it cannot be: the file is a stream that cannot be read at an
+// offset, the frame that holds the line would decode more than
+// TimeRangeDecodeBytes, or the line is not read as the index read it.
 func (r *fileRange) wallClocksOfStoredLines(req Request, kind filekind.Kind, ti *rxtypes.TimeIndex, firstOffset int) error {
 	if r.first != nil {
 		r.first = &timestamps.Stamp{Ms: r.first.Ms + int64(firstOffset)*msPerMinute}

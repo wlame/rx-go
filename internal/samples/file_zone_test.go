@@ -195,16 +195,17 @@ func zonedLargeLog(t *testing.T, n int) (string, []timedLine, int64) {
 	return path, lines, int64(len(text))
 }
 
-// An index of a file whose lines write zones holds instants, which
-// cannot give back the wall clocks a file zone reads: under one, the
-// time search does not start at a checkpoint (max_before) but at the
-// first line, and finds the line a cold search finds. Without the file
-// zone the same index keeps the search to one step. For a file without
-// zones, whose index holds wall clocks, the file zone keeps it to one
-// step too.
-func TestBudget_FileZoneOnAZonedFileSearchesFromTheStart(t *testing.T) {
+// An index of a file whose lines write zones holds instants; under a
+// file zone each is turned back into the wall clock its line wrote with
+// the offset zone_offsets records, so the time search still starts at
+// the checkpoint max_before names and reads about one step, at +03:00
+// as in UTC, and finds the line a cold search finds. Without the file
+// zone the same index keeps the search to one step as before. For a
+// file without zones, whose index holds wall clocks, the file zone
+// keeps it to one step too.
+func TestBudget_FileZoneOnAZonedFileReadsAboutOneStep(t *testing.T) {
 	const step = 64 * 1024
-	path, lines, size := zonedLargeLog(t, 20_000)
+	path, lines, _ := zonedLargeLog(t, 20_000)
 	idx, err := index.Build(path, index.BuildOptions{StepBytes: step})
 	if err != nil {
 		t.Fatalf("index.Build: %v", err)
@@ -221,19 +222,20 @@ func TestBudget_FileZoneOnAZonedFileSearchesFromTheStart(t *testing.T) {
 		return resp.Timestamps[query], counter.Load()
 	}
 
-	utc := zoneNamed(t, "UTC")
-	query := rfc3339(target)
-	line, read := ask(utc, query, loader)
-	if line != 17_347 {
-		t.Fatalf("under a file zone, line %d, want 17347", line)
+	for zoneName, shift := range map[string]int64{"UTC": 0, "+03:00": 3 * 3600 * 1000} {
+		zone := zoneNamed(t, zoneName)
+		query := rfc3339(target - shift)
+		line, read := ask(zone, query, loader)
+		if line != 17_347 {
+			t.Fatalf("in %s, line %d, want 17347", zoneName, line)
+		}
+		if cold, _ := ask(zone, query, NoIndex); cold != line {
+			t.Fatalf("in %s, cold line %d, indexed %d", zoneName, cold, line)
+		}
+		if budget := oneStepBudget(step, 1); read > budget {
+			t.Errorf("in %s, read %d bytes; budget %d", zoneName, read, budget)
+		}
 	}
-	if cold, _ := ask(utc, query, NoIndex); cold != line {
-		t.Fatalf("cold line %d, indexed %d", cold, line)
-	}
-	if read < size*8/10 {
-		t.Errorf("under a file zone read %d bytes of %d; a search from the first line reads past line 17347", read, size)
-	}
-
 	// The same moment in the file's own frame is two hours earlier.
 	ownQuery := rfc3339(target - 2*3600*1000)
 	ownLine, ownRead := ask(config.Zone{}, ownQuery, loader)

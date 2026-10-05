@@ -65,8 +65,9 @@ func registerTimeRangeHandlers(_ *Server, api huma.API) {
 			"From the file's line index when there is one; otherwise from the head of its text and at most " +
 			"16 MiB back from its end, or not at all for a stream-compressed file (source none). " +
 			"file_tz reads the timestamps as wall clock in a chosen zone; for a file whose timestamps carry zones " +
-			"the index then gives the first timestamp and its last timestamped line is read again at the offset it stores " +
-			"(source none for a stream-compressed file).",
+			"the index gives each timestamp with the offset its line writes. When the offset changes too often for " +
+			"the index to record, the index gives the first timestamp and the last timestamped line is read again " +
+			"at the offset it stores (source none for a stream-compressed file).",
 		Tags:      []string{"Context"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusInternalServerError),
 	}, func(ctx context.Context, in *timeRangeInput) (*timeRangeOutput, error) {
