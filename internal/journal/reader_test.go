@@ -510,6 +510,29 @@ func TestTextReader_LeavesOutAnEntryWhoseCompressedValueDoesNotDecode(t *testing
 	}
 }
 
+// A DATA object zeroed after its 16-byte header keeps its type, its lz4
+// flag and its size, and its zeroed links pass their checks; its value is
+// then a size prefix of 0 before a block of zero bytes, which does not
+// decode. The entry is left out: the size prefix must not cut the name
+// search short, or the MESSAGE would be read as a field the text does
+// not show and the entry counted as one without a message.
+func TestTextReader_LeavesOutAnEntryWhoseLZ4MessageIsZeroedAfterItsObjectHeader(t *testing.T) {
+	for _, compact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("compact=%v", compact), func(t *testing.T) {
+			j := damageJournal(t, journalfile.LZ4, compact)
+			d := dataOf(t, j, string(journalfile.Payload("MESSAGE", bytes.Repeat([]byte("large entry 22; "), 60))))
+			if j.Data[d].StoredAs != journalfile.LZ4 {
+				t.Fatalf("the large message is stored as %s", j.Data[d].StoredAs)
+			}
+			data := bytes.Clone(j.Bytes)
+			clear(data[j.Data[d].Offset+objectHeaderSize : j.Data[d].End()])
+			wantText, want := expectRead(writtenEntries(j), len(j.Entries), entriesUsing(j, d), len(j.Entries))
+			text, report := readBytes(t, data, Options{})
+			checkRead(t, text, report, wantText, want, "does not decompress (lz4)")
+		})
+	}
+}
+
 func TestTextReader_LeavesOutAnEntryWhoseValueDecompressesToMoreThan128MiB(t *testing.T) {
 	for _, compact := range []bool{false, true} {
 		t.Run(fmt.Sprintf("compact=%v", compact), func(t *testing.T) {

@@ -112,6 +112,19 @@ func TestDecodeLZ4Prefix_NeedsOnlyTheStoredBytesItDecodes(t *testing.T) {
 	}
 }
 
+func TestDecodeLZ4Prefix_GivesTheBlocksTextWhateverSizeTheValueDeclares(t *testing.T) {
+	text := bytes.Repeat([]byte("MESSAGE=abc"), 200)
+	stored := lz4Stored(t, text)
+	for _, size := range []uint64{0, 3, 17, 1 << 40} {
+		le.PutUint64(stored, size)
+		dst := make([]byte, namePrefixBytes)
+		n, _, err := decodeLZ4Prefix(stored, dst)
+		if err != nil || !bytes.Equal(dst[:n], text[:namePrefixBytes]) {
+			t.Errorf("a declared size of %d gives %q, %v; want %q", size, dst[:n], err, text[:namePrefixBytes])
+		}
+	}
+}
+
 func TestDecodeLZ4Prefix_RefusesBadBlocks(t *testing.T) {
 	stored := lz4Stored(t, bytes.Repeat([]byte("MESSAGE=abc"), 200))
 	block := stored[lz4SizePrefix:]

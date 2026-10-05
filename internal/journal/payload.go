@@ -303,13 +303,16 @@ var errLZ4Truncated = fmt.Errorf("%w: the lz4 block ends inside a sequence", err
 // It stops as soon as dst is full: of a long first run of literals, it
 // needs only the bytes it copies. A match that reaches before the start
 // of the text, or a block that ends inside a sequence, is an error.
+//
+// It does not read the size the value declares, as systemd's partial
+// decode does not. A declared size shorter than the text must not cut
+// what it gives: cut before the '=' of a field the text shows, the name
+// would pass as one of a field the text does not show, and the entry
+// would be shown without the field instead of left out. The whole decode
+// of a shown value (decodeLZ4) holds the block to the declared size.
 func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 	if len(stored) <= lz4SizePrefix {
 		return 0, true, fmt.Errorf("%w: %d bytes, no block after the size", errNotDecoded, len(stored))
-	}
-	// Never more than the size the value declares.
-	if size := le.Uint64(stored); size < uint64(len(dst)) {
-		dst = dst[:size]
 	}
 	src := stored[lz4SizePrefix:]
 	ip := 0 // the next byte of src to read

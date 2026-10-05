@@ -286,6 +286,25 @@ func TestTextReader_StopsDecodingAZstdValueTheTextDoesNotShowAfterItsName(t *tes
 	}
 }
 
+// The size an lz4 value declares does not bound its name search. A size
+// shorter than the name of a field the text shows would otherwise cut
+// the name before its '=', the field would pass as one the text does not
+// show, and the entry would be shown without it: with " unknown" in place
+// of its identifier here. The whole decode of the shown field checks the
+// block against the size and refuses it, so the entry is left out.
+func TestTextReader_LeavesOutAnEntryWhoseLZ4IdentifierDeclaresASizeShorterThanItsName(t *testing.T) {
+	stored := journalfile.Stored(t, journalfile.LZ4, journalfile.Payload("SYSLOG_IDENTIFIER", bytes.Repeat([]byte("A"), 200)))
+	// 17 is the name's length: the text cut there has no '='.
+	for _, size := range []uint64{0, 3, 17} {
+		t.Run(fmt.Sprintf("size %d", size), func(t *testing.T) {
+			j, data := craftedJournal(t, 3, objectCompressedLZ4, stored)
+			binary.LittleEndian.PutUint64(data[j.Data[0].PayloadOffset:], size)
+			text, report := readBytes(t, data, Options{})
+			checkRead(t, text, report, nil, Report{Entries: 3, LeftOut: 3, FirstDamaged: 1}, "does not decompress (lz4)")
+		})
+	}
+}
+
 // startFailingReaderAt fails every read that starts in [from, to), with
 // err, and hands out every byte asked for with the error: the read that a
 // decoder's own reads (io.ReadFull and the like) would take for a success.
