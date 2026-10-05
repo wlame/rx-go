@@ -83,8 +83,8 @@ the position, with a range sorting by its left-hand value
 
 | Where | What |
 |---|---|
-| `cmd/rx/main.go` | Entry point. `preprocessArgs` routes a bare pattern to `trace` |
-| `internal/clicommand/` | One file per subcommand: `trace`, `index`, `samples`, `compress`, `serve` |
+| `cmd/rx/main.go` | Entry point. `preprocessArgs` routes a bare pattern to `trace`; a new subcommand joins `knownSubcommands` there |
+| `internal/clicommand/` | One file per subcommand: `trace`, `index`, `samples`, `time-range`, `compress`, `serve` |
 | `internal/webapi/` | HTTP layer (chi + huma v2), middleware, OpenAPI, SPA fallback, `runDetached` |
 | `internal/trace/` | Search engine: `chunker.go`, `worker.go` (rg subprocess), `seekable.go`, `compressed.go`, `cache.go` |
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
