@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/filetext"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -487,13 +487,15 @@ func feedLinesFromSource(w io.Writer, req creditRequest, refs []lineRef) error {
 	if err != nil {
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)
 	}
-	kind, err := filekind.FormatOfFile(f)
+	// This function owns f and closes it on every path; the text opened
+	// below is released first (deferred calls run last-registered first).
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
 	if err != nil {
-		_ = f.Close()
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)
 	}
+	kind := filekind.FormatOf(f, info.Size())
 	if !kind.IsCompressed() {
-		defer func() { _ = f.Close() }()
 		for _, ref := range refs {
 			line := req.line(ref)
 			length := line.End - line.Offset
@@ -504,10 +506,9 @@ func feedLinesFromSource(w io.Writer, req creditRequest, refs []lineRef) error {
 		return nil
 	}
 
-	// NewReader takes f over: closing the decompressor closes f too.
-	text, err := compression.NewReader(f, kind.Format)
+	// filetext.Open reads f by position and never closes it.
+	text, err := filetext.Open(f, info.Size(), kind.Format)
 	if err != nil {
-		_ = f.Close()
 		return fmt.Errorf("read the matched lines of %s again: %w", source.Path(), err)
 	}
 	defer func() { _ = text.Close() }()

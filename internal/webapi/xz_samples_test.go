@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/ulikunitz/xz"
@@ -36,40 +35,6 @@ func xzCompress(t *testing.T, raw []byte) []byte {
 		t.Fatalf("xz close: %v", err)
 	}
 	return buf.Bytes()
-}
-
-// TestNewCompressedReader_XZRoundTrip verifies the in-package xz reader
-// can decode a stream produced by the same library. Catches any future
-// regression where the reader path is accidentally routed to subprocess
-// or the stdlib fallback.
-func TestNewCompressedReader_XZRoundTrip(t *testing.T) {
-	cases := []struct {
-		name    string
-		content string
-	}{
-		{"empty", ""},
-		{"single_line", "hello xz world\n"},
-		{"multi_line", "line1\nline2\nline3\nline4\nline5\n"},
-		{"binary_ish", string([]byte{0x00, 0x01, 0xff, 0xfe, 0x7f})},
-		{"lorem", strings.Repeat("The quick brown fox jumps over the lazy dog.\n", 100)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			compressed := xzCompress(t, []byte(tc.content))
-			r, err := newCompressedReader(bytes.NewReader(compressed), "xz")
-			if err != nil {
-				t.Fatalf("newCompressedReader: %v", err)
-			}
-			got, err := io.ReadAll(r)
-			if err != nil {
-				t.Fatalf("read: %v", err)
-			}
-			if string(got) != tc.content {
-				t.Errorf("round-trip mismatch: got %q, want %q",
-					truncate(string(got), 80), truncate(tc.content, 80))
-			}
-		})
-	}
 }
 
 // TestSamples_XZ_LineMode verifies GET /v1/samples?path=file.xz&lines=...
@@ -250,14 +215,4 @@ func TestSamples_XZ_NegativeIndex(t *testing.T) {
 	if got[0] != "item=15" {
 		t.Errorf("last line: got %q, want %q", got[0], "item=15")
 	}
-}
-
-// truncate shortens a string to n runes with an ellipsis suffix.
-// Used to keep test failure messages readable when asserting against
-// large decompressed payloads.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }

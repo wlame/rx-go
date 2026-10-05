@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filetext"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 )
@@ -19,7 +20,7 @@ import (
 // ErrUnsupportedCompression is returned by ProcessCompressed when asked
 // to process FormatNone (caller bug) or a format the reader layer
 // doesn't know. The actual format whitelist is enforced by
-// compression.NewReader — this helper is kept exported for API
+// filetext.Open — this helper is kept exported for API
 // compatibility with tests and downstream packages that assert on it.
 var ErrUnsupportedCompression = errors.New("unsupported compression format")
 
@@ -36,7 +37,7 @@ var ErrIncompleteStream = errors.New("compressed stream ended early")
 // STATIC BINARY:
 //
 // Decompression runs in-process. We read the source file ourselves,
-// wrap it in compression.NewReader (which uses compress/gzip,
+// open its text with filetext.Open (which uses compress/gzip,
 // compress/bzip2, github.com/ulikunitz/xz, and
 // github.com/klauspost/compress/zstd — all pure Go), and pipe the
 // resulting io.Reader directly into rg's stdin. No external `gzip`,
@@ -89,23 +90,21 @@ func ProcessCompressed(
 	if err != nil {
 		return nil, nil, time.Since(start), fmt.Errorf("open %s: %w", source.Path(), err)
 	}
-	// R2M2 contract: compression.NewReader takes ownership of src on
-	// success — its returned wrapper's Close will close src. If
-	// NewReader returns an error BEFORE adopting src (construction
-	// failed), we must close src ourselves. The branches below
-	// handle both cases explicitly rather than relying on a defer
-	// that could double-close.
-	dec, err := compression.NewReader(src, format)
+	// This function owns src and closes it on every path. Deferred
+	// calls run last-registered first, so the decoder registered below
+	// is released before the file it reads is closed.
+	defer func() { _ = src.Close() }()
+	info, err := src.Stat()
 	if err != nil {
-		_ = src.Close()
+		return nil, nil, time.Since(start), fmt.Errorf("stat %s: %w", source.Path(), err)
+	}
+	// filetext.Open reads src by position and never closes it.
+	dec, err := filetext.Open(src, info.Size(), format)
+	if err != nil {
 		return nil, nil, time.Since(start), fmt.Errorf("%w: %s (%v)",
 			ErrUnsupportedCompression, format, err)
 	}
-	defer func() {
-		// Close releases the decoder's internal state AND the source
-		// file handle via the chainCloser. One defer, both closes.
-		_ = dec.Close()
-	}()
+	defer func() { _ = dec.Close() }()
 
 	// Per-call child context so we can cancel rg cleanly on early exit
 	// (maxResults hit or error).

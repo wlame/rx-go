@@ -11,12 +11,14 @@ import (
 // goes on.
 //
 // The build sets the total once it knows the size of what it will read,
-// then adds every byte it reads. Both counters are atomics: the build
-// goroutine writes them and any number of reader goroutines read them,
+// then records how far it has read. Both counters are atomics: the build
+// goroutines write them and any number of reader goroutines read them,
 // with no lock and no data race. The unit is whatever the build reads
-// through: the file's bytes for a plain or stream-compressed file, the
-// decompressed text for a seekable zstd file, whose frames are decoded
-// one by one rather than read as a stream. Fraction hides the unit.
+// through: for a plain or stream-compressed file, the file's bytes, done
+// being the highest byte of the file read so far (for a stream read from
+// the start, every byte read); for a seekable zstd file, the decompressed
+// text, whose frames are decoded one by one rather than read as a
+// stream. Fraction hides the unit.
 //
 // The zero value is ready to use and reports no progress until the
 // build starts.
@@ -44,14 +46,24 @@ func (p *Progress) start(total int64) {
 	p.total.Store(total)
 }
 
-// countReads returns r, counting into p every byte read through it.
-// A nil p returns r unchanged, so a build without a Progress pays
-// nothing.
-func (p *Progress) countReads(r io.Reader) io.Reader {
+// reach records that the build has read the file up to end (the offset
+// after the last byte read): done becomes the larger of itself and end.
+// A nil p does nothing.
+//
+// Go note: CompareAndSwap stores end only if done still holds the value
+// just loaded, so two goroutines that read at once (a zstd decoder reads
+// ahead in goroutines of its own) never move done back. The loop retries
+// when another goroutine changed done in between.
+func (p *Progress) reach(end int64) {
 	if p == nil {
-		return r
+		return
 	}
-	return &progressReader{Reader: r, progress: p}
+	for {
+		done := p.done.Load()
+		if end <= done || p.done.CompareAndSwap(done, end) {
+			return
+		}
+	}
 }
 
 // countWrites returns w, counting into p every byte written through it.
@@ -63,22 +75,10 @@ func (p *Progress) countWrites(w io.Writer) io.Writer {
 	return &progressWriter{Writer: w, progress: p}
 }
 
-// progressReader is an io.Reader that adds what it reads to a Progress.
-//
-// Go note: embedding io.Reader gives the struct a Read method; the one
-// declared below takes its place and calls the embedded one.
-type progressReader struct {
-	io.Reader
-	progress *Progress
-}
-
-func (r *progressReader) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	r.progress.done.Add(int64(n))
-	return n, err
-}
-
 // progressWriter is an io.Writer that adds what it writes to a Progress.
+//
+// Go note: embedding io.Writer gives the struct a Write method; the one
+// declared below takes its place and calls the embedded one.
 type progressWriter struct {
 	io.Writer
 	progress *Progress
@@ -90,10 +90,46 @@ func (w *progressWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// readText returns r as a build reads its text through it: counted into
-// the build's Progress and stopped by its context (BuildContext).
-func (o BuildOptions) readText(r io.Reader) io.Reader {
-	return stopReads(o.ctx, o.Progress.countReads(r))
+// readFile returns the build's file r as the build reads it by position:
+// stopped by its context (BuildContext) before each read, and its
+// Progress set to the highest byte read so far. A build with neither a
+// Progress nor a context that can be canceled gets r unchanged.
+func (o BuildOptions) readFile(r io.ReaderAt) io.ReaderAt {
+	ctx := o.ctx
+	if ctx != nil && ctx.Done() == nil {
+		// A context that can never be canceled needs no check.
+		ctx = nil
+	}
+	if ctx == nil && o.Progress == nil {
+		return r
+	}
+	return &buildFile{ReaderAt: r, ctx: ctx, progress: o.Progress}
+}
+
+// buildFile is the file of a build, read by position: each ReadAt first
+// checks the build's context, then records how far it read.
+//
+// Go note: ReadAt may be called from several goroutines at once (a zstd
+// decoder reads ahead in goroutines of its own); ctx.Err and the atomic
+// Progress are safe for that.
+type buildFile struct {
+	io.ReaderAt
+	ctx      context.Context // nil when nothing cancels the build
+	progress *Progress       // nil when nobody follows the build
+}
+
+// ReadAt fails with the context's error once the build is canceled,
+// before reading anything; otherwise it reads and moves the progress to
+// the end of what it read.
+func (f *buildFile) ReadAt(p []byte, off int64) (int, error) {
+	if f.ctx != nil {
+		if err := f.ctx.Err(); err != nil {
+			return 0, err
+		}
+	}
+	n, err := f.ReaderAt.ReadAt(p, off)
+	f.progress.reach(off + int64(n))
+	return n, err
 }
 
 // writeText returns w as the frames of a seekable file are decoded into

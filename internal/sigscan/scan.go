@@ -11,6 +11,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/signatures"
@@ -558,7 +559,9 @@ func mergeInOrder(ctx context.Context, results <-chan outcome, ended <-chan deco
 //     buffer back to the decoder.
 func (s *scanRun) runStream(ctx context.Context, r io.ReaderAt, size int64, format compression.Format) (*merger, error) {
 	counter, _ := r.(*countingReaderAt)
-	rc, err := compression.NewReader(io.NopCloser(io.NewSectionReader(r, 0, size)), format)
+	// filetext.Open reads r by position and never closes it; scanFile
+	// closes the file once the scan is over.
+	rc, err := filetext.Open(r, size, format)
 	if err != nil {
 		return nil, err
 	}

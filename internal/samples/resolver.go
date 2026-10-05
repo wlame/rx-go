@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 
@@ -634,15 +635,20 @@ func (r *lineRing) lines() []ringLine {
 // Low-level file helpers (seeking, line counting)
 // ============================================================================
 
-// readSeekCloser is the narrow interface the line-reading helpers need.
-// Extracted from *os.File so tests can inject counting wrappers that
-// observe byte traffic without changing production signatures. Every
-// method is a direct subset of *os.File's surface — no adapter needed
-// at the call site.
+// readSeekCloser is the narrow interface the line-reading helpers need:
+// a stream with a position for a plain file, and reads by position with
+// the file's size (io.ReaderAt and Stat) for the text of a compressed
+// one, which filetext.Open and the seekable reader take. Extracted from
+// *os.File so tests can inject counting wrappers that observe byte
+// traffic without changing production signatures. Every method is a
+// direct subset of *os.File's surface — no adapter needed at the call
+// site.
 type readSeekCloser interface {
 	io.Reader
 	io.Seeker
 	io.Closer
+	io.ReaderAt
+	Stat() (os.FileInfo, error)
 }
 
 // openFileForSamples is the indirection point tests hook to count

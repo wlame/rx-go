@@ -32,9 +32,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
@@ -60,7 +60,7 @@ type BuildOptions struct {
 	afterPin func()
 
 	// ctx stops the build: once it is canceled, the next read of the
-	// text fails with its error (readText, writeText). Set by
+	// text fails with its error (readFile, writeText). Set by
 	// BuildContext; nil for Build, which nothing stops.
 	ctx context.Context
 
@@ -223,7 +223,6 @@ func buildText(
 	if opts.Progress != nil {
 		opts.Progress.start(info.Size())
 	}
-	statedBytes := opts.readText(io.LimitReader(src.file, info.Size()))
 
 	// A compressed file is indexed through its decompressor, so the
 	// line numbers and byte offsets describe the text inside it. Read
@@ -231,20 +230,21 @@ func buildText(
 	// address compressed noise and the statistics would describe the
 	// container: a gzipped log came back with four times its lines and
 	// a "mixed" line ending. rx-python indexes the same content the same way.
-	source := statedBytes
-	if src.kind.IsCompressed() {
-		// The file itself is closed by Build.
-		dec, dErr := compression.NewReader(io.NopCloser(statedBytes), src.kind.Format)
-		if dErr != nil {
-			return nil, fmt.Errorf("decompress %s: %w", sourcePath, dErr)
-		}
-		defer func() { _ = dec.Close() }()
-		// The decompressed text is stopped by the context too. A zstd
-		// decoder reads its input ahead in goroutines of its own, so it
-		// can have read the whole compressed file before a cancel comes;
-		// the walk's next read of the text then meets the cancel here.
-		source = stopReads(opts.ctx, dec)
+	//
+	// The text is opened from the file's first size bytes, read by
+	// position through readFile: every read checks the build's context
+	// first and moves its progress. filetext.Open never closes the file;
+	// Build closes it.
+	text, err := filetext.Open(opts.readFile(src.file), info.Size(), src.kind.Format)
+	if err != nil {
+		return nil, fmt.Errorf("decompress %s: %w", sourcePath, err)
 	}
+	defer func() { _ = text.Close() }()
+	// The text is stopped by the context too. A zstd decoder reads its
+	// input ahead in goroutines of its own, so it can have read the
+	// whole compressed file before a cancel comes; the walk's next read
+	// of the text then meets the cancel here.
+	source := stopReads(opts.ctx, text)
 
 	// Walk the file. Python uses `for line in f` which yields lines
 	// terminated by the platform's preferred newline. In Go, bufio's

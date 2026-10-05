@@ -39,6 +39,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
@@ -417,20 +418,38 @@ func openText(src *os.File, kind filekind.Kind) (io.ReadCloser, compression.Form
 	if !kind.IsCompressed() {
 		return readCloser{Reader: io.NewSectionReader(src, 0, info.Size()), Closer: src}, format, nil
 	}
-	// compression.NewReader owns src from here on: closing the reader it
-	// returns closes src too. On its error, src is still ours to close.
-	text, err := compression.NewReader(src, format)
+	// filetext.Open reads src by position and never closes it, so the
+	// reader returned here closes both: the text's decoder first, then
+	// src. On its error, src is still ours to close.
+	text, err := filetext.Open(src, info.Size(), format)
 	if err != nil {
 		_ = src.Close()
 		return nil, compression.FormatNone, fmt.Errorf("open %s input: %w", format, err)
 	}
-	return text, format, nil
+	return readCloser{Reader: text, Closer: textAndFile{text: text, file: src}}, format, nil
 }
 
-// readCloser joins a reader with the file it reads from.
+// readCloser joins a reader with what closing it takes.
 type readCloser struct {
 	io.Reader
 	io.Closer
+}
+
+// textAndFile closes a file's text and then the file itself.
+type textAndFile struct {
+	text *filetext.Text
+	file *os.File
+}
+
+// Close releases the text's decoder, then closes the file, and returns
+// the first error of the two.
+func (c textAndFile) Close() error {
+	textErr := c.text.Close()
+	fileErr := c.file.Close()
+	if textErr != nil {
+		return textErr
+	}
+	return fileErr
 }
 
 // isSameFile reports whether output names the input file: the same path

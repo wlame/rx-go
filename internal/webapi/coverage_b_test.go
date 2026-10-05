@@ -18,9 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
-
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -175,68 +172,6 @@ func TestRecoverMiddleware_CatchesPanic(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "Internal server error") {
 		t.Errorf("body missing recovery message: %s", body)
-	}
-}
-
-// ===========================================================================
-// compressed_reader — Read/Close paths
-// ===========================================================================
-
-// TestCompressedReader_ZstdClose exercises the Close() path on the
-// zstd-specific reader wrapper.
-func TestCompressedReader_ZstdClose(t *testing.T) {
-	// Build a zstd stream with klauspost zstd.NewWriter.
-	var buf bytes.Buffer
-	zw, err := zstd.NewWriter(&buf)
-	if err != nil {
-		t.Fatalf("NewWriter: %v", err)
-	}
-	if _, err := zw.Write([]byte("hello zstd\n")); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("close writer: %v", err)
-	}
-
-	r, err := newCompressedReader(&buf, compression.FormatZstd)
-	if err != nil {
-		t.Fatalf("newCompressedReader: %v", err)
-	}
-	// Read a byte so Read path is exercised.
-	bb := make([]byte, 5)
-	if _, err := r.Read(bb); err != nil && err != io.EOF {
-		t.Fatalf("Read: %v", err)
-	}
-	// Close via io.Closer interface.
-	if c, ok := r.(io.Closer); ok {
-		if err := c.Close(); err != nil {
-			t.Errorf("Close: %v", err)
-		}
-	}
-}
-
-// TestCompressedReader_NoneFormat returns the reader as-is for
-// FormatNone.
-func TestCompressedReader_NoneFormat(t *testing.T) {
-	src := strings.NewReader("plain text")
-	r, err := newCompressedReader(src, compression.FormatNone)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	got, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("ReadAll: %v", err)
-	}
-	if string(got) != "plain text" {
-		t.Errorf("FormatNone should pass through: got %q", got)
-	}
-}
-
-// TestCompressedReader_UnknownFormat returns an error.
-func TestCompressedReader_UnknownFormat(t *testing.T) {
-	src := strings.NewReader("x")
-	if _, err := newCompressedReader(src, "lzo"); err == nil {
-		t.Errorf("expected error for unknown format")
 	}
 }
 

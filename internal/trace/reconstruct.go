@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/index"
 	sandbox "github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -19,10 +21,24 @@ import (
 // most this much past that line.
 const reconstructBufferBytes = 256 * 1024
 
+// reconstructFile is what a reconstruction pass needs of the file it
+// reads: a stream with a position for a plain file, and reads by
+// position with the file's size for the text of a compressed one
+// (filetext.Open). An *os.File has all of it.
+//
+// Go note: an interface lists methods; any type that has them satisfies
+// it without saying so, and embedding io.ReadSeekCloser and io.ReaderAt
+// here takes in every method of both.
+type reconstructFile interface {
+	io.ReadSeekCloser
+	io.ReaderAt
+	Stat() (os.FileInfo, error)
+}
+
 // openForReconstruct opens the source a reconstruction pass reads,
 // refusing a path that no longer leads to the file the trace checked.
 // Tests replace it to count the bytes read.
-var openForReconstruct = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
+var openForReconstruct = func(src sandbox.Pinned) (reconstructFile, error) {
 	return src.Open()
 }
 
@@ -322,7 +338,14 @@ func openReconstructSource(req ReconstructRequest, firstOffset int64) (*reconstr
 		return nil, fmt.Errorf("reconstruct: read %s: %w", req.Source.Path(), kErr)
 	}
 	if format != compression.FormatNone {
-		dec, dErr := compression.NewReader(f, format)
+		info, sErr := f.Stat()
+		if sErr != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("reconstruct: read %s: %w", req.Source.Path(), sErr)
+		}
+		// filetext.Open reads f by position and never closes it: the
+		// source's close releases the decoder, then closes f.
+		dec, dErr := filetext.Open(f, info.Size(), format)
 		if dErr != nil {
 			_ = f.Close()
 			return nil, fmt.Errorf("reconstruct: decompress %s: %w", req.Source.Path(), dErr)

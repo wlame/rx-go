@@ -32,6 +32,7 @@ import (
 	"os"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
@@ -353,11 +354,13 @@ func openText(r io.ReaderAt, size int64, kind Kind, windowLimit uint64) (io.Read
 		}
 		return io.NopCloser(dec), nil
 	case kind.IsCompressed():
-		dec, err := compression.NewReader(io.NopCloser(file), kind.Format)
+		// filetext.Open reads r by position and never closes it; closing
+		// the text releases its decoder only.
+		text, err := filetext.Open(r, size, kind.Format)
 		if err != nil {
 			return nil, fmt.Errorf("decompress: %w", err)
 		}
-		return dec, nil
+		return text, nil
 	default:
 		return io.NopCloser(file), nil
 	}

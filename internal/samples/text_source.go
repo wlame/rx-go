@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -181,40 +181,37 @@ func (s streamedText) openAt(offset int64) (*textCursor, error) {
 	return &textCursor{Reader: dec, offset: offset, line: 1, close: dec.Close}, nil
 }
 
-// openedSeekable is what a seekable file opened for samples offers
-// beyond readSeekCloser: reads by position and its size. An *os.File
-// has both.
-type openedSeekable interface {
-	io.ReaderAt
-	Stat() (os.FileInfo, error)
-}
-
 // decompressorFor returns the text of f, a file in format; closing the
-// result closes f. A seekable zstd file is read frame by frame through
-// its seek table (seekable.TextReader), so a damaged frame comes back as
+// result closes f, and on an error f is still the caller's to close. A
+// seekable zstd file is read frame by frame through its seek table
+// (seekable.TextReader), so a damaged frame comes back as
 // seekable.ErrDamagedFrame naming the frame, as trace and index report
-// it, rather than as a zstd stream error. A file without reads by
-// position (a test's counting wrapper) is read as a zstd stream, which
-// gives the same text.
+// it, rather than as a zstd stream error. Every other format is read
+// through filetext.Open, which reads f by position and never closes it.
 func decompressorFor(f readSeekCloser, format compression.Format) (io.ReadCloser, error) {
-	if format == compression.FormatSeekableZstd {
-		if file, ok := f.(openedSeekable); ok {
-			info, err := file.Stat()
-			if err != nil {
-				return nil, err
-			}
-			table, err := seekable.ReadSeekTable(file, info.Size())
-			if err != nil {
-				return nil, err
-			}
-			text := seekable.NewTextReader(file, table)
-			return readCloser{Reader: text, close: func() error {
-				_ = text.Close()
-				return f.Close()
-			}}, nil
-		}
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
 	}
-	return compression.NewReader(f, format)
+	if format == compression.FormatSeekableZstd {
+		table, tableErr := seekable.ReadSeekTable(f, info.Size())
+		if tableErr != nil {
+			return nil, tableErr
+		}
+		text := seekable.NewTextReader(f, table)
+		return readCloser{Reader: text, close: func() error {
+			_ = text.Close()
+			return f.Close()
+		}}, nil
+	}
+	text, err := filetext.Open(f, info.Size(), format)
+	if err != nil {
+		return nil, err
+	}
+	return readCloser{Reader: text, close: func() error {
+		_ = text.Close()
+		return f.Close()
+	}}, nil
 }
 
 // readCloser joins a reader with what closing it takes.

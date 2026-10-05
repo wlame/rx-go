@@ -2,7 +2,6 @@ package trace
 
 import (
 	"fmt"
-	"io"
 	"reflect"
 	"sync/atomic"
 	"testing"
@@ -38,7 +37,7 @@ func TestCacheHit_CappedTraceReadsOnlyToItsLastMatch(t *testing.T) {
 
 	var read *atomic.Int64
 	original := openForReconstruct
-	openForReconstruct = func(src sandbox.Pinned) (io.ReadSeekCloser, error) {
+	openForReconstruct = func(src sandbox.Pinned) (reconstructFile, error) {
 		f, counter := counting.OpenCounting(t, src.Path())
 		read = counter
 		return f, nil

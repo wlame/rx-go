@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 )
 
@@ -39,7 +40,12 @@ func seekableFileText(t *testing.T, path string) []byte {
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	r, err := compression.NewReader(f, compression.FormatSeekableZstd)
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	r, err := filetext.Open(f, info.Size(), compression.FormatSeekableZstd)
 	if err != nil {
 		t.Fatalf("%s is not a seekable zstd file: %v", path, err)
 	}

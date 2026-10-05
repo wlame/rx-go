@@ -358,13 +358,6 @@ func TestFormatTaskTime(t *testing.T) {
 	}
 }
 
-// TestCompressedReader_XzUnsupported.
-func TestCompressedReader_XzUnsupported(t *testing.T) {
-	if _, err := newCompressedReader(strings.NewReader(""), "xz"); err == nil {
-		t.Errorf("xz should not be supported")
-	}
-}
-
 // Samples reads the file itself and never runs ripgrep, so a server
 // without rg still answers it.
 func TestSamples_AnswersWithoutRipgrep(t *testing.T) {
