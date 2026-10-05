@@ -145,7 +145,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		start := time.Now()
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.
-		defer func() { recordEndpoint(prometheus.RecordSamplesRequest, err) }()
+		defer func() { recordEndpoint(ctx, prometheus.RecordSamplesRequest, err) }()
 
 		// Sandbox.
 		validated, err := paths.ValidatePathWithinRoots(in.Path)

@@ -180,7 +180,7 @@ func registerTraceHandlers(s *Server, api huma.API) {
 	}, func(ctx context.Context, in *traceInput) (traceResp *traceOutput, traceErr error) {
 		// One counter increment per request, whichever of the handler's
 		// many returns is taken.
-		defer func() { recordEndpoint(prometheus.RecordTraceRequest, traceErr) }()
+		defer func() { recordEndpoint(ctx, prometheus.RecordTraceRequest, traceErr) }()
 
 		if s.cfg.RipgrepPath == "" {
 			return nil, ErrServiceUnavailable("ripgrep is not available on this system")

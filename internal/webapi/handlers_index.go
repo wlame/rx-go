@@ -92,14 +92,16 @@ func registerIndexHandlers(s *Server, api huma.API) {
 		Tags:        []string{"Operations"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden,
 			http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity),
-	}, func(_ context.Context, in *postIndexInput) (*postIndexOutput, error) {
-		return createIndexTask(s, in.Body)
+	}, func(ctx context.Context, in *postIndexInput) (*postIndexOutput, error) {
+		return createIndexTask(ctx, s, in.Body)
 	})
 }
 
 // createIndexTask is the heavy-lifting half of POST /v1/index, split out
 // so integration tests can drive it without a full HTTP round-trip.
-func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput, err error) {
+// ctx is the request's: the task runs detached from it, and it only
+// decides whether a failure counts as canceled (recordEndpoint).
+func createIndexTask(ctx context.Context, s *Server, req rxtypes.IndexRequest) (out *postIndexOutput, err error) {
 	// A negative window is a mistake the caller made, not a way to spell
 	// "not set" — 0 and null already do that — so it is refused rather
 	// than silently replaced by the default. rx-python refuses it too,
@@ -113,7 +115,7 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 	// analyze counter; a plain index build is not an analyze request.
 	// Counted from one deferred site so every return path is covered.
 	if req.Analyze {
-		defer func() { recordEndpoint(prometheus.RecordAnalyzeRequest, err) }()
+		defer func() { recordEndpoint(ctx, prometheus.RecordAnalyzeRequest, err) }()
 	}
 
 	validated, err := paths.ValidatePathWithinRoots(req.Path)

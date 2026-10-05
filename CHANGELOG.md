@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A request whose client went away before the answer is logged and
+  counted as status `499`, not `500`: the `http_request` log line and
+  `rx_http_responses_total{status_code="499"}` report it, the trace and
+  samples counters count it as `canceled`, and `rx_errors_total` does
+  not count it. The status a client receives is unchanged; only a
+  server error written after the client left is reported this way.
 - `rx serve` serves the directory `RX_FRONTEND_PATH` names as it is.
   The daily viewer check used to treat it as the viewer cache: on a
   local `rx-viewer` build without `.metadata.json` it downloaded the
