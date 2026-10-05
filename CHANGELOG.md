@@ -129,6 +129,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A pattern PCRE2 cannot compile (`rx trace -P -e '('`, or `pcre2=true`
+  over HTTP) is now a usage error: exit 2, or a `400`, with PCRE2's
+  reason, as for a pattern the default engine cannot compile. It used to
+  be answered as 0 matches with every file in `skipped_files`, exit 0
+  and `200`. `-P` against a ripgrep built without PCRE2 is the same
+  usage error, and its message says PCRE2 is missing. rx now runs `rg`
+  once on empty input with the search's patterns and flags before it
+  reads any file, so a pattern error never looks like a file error, on
+  any kind of file; it also fails when no file is found to search,
+  which used to answer 0 matches. Every later `rg` run (chunks,
+  compressed streams, seekable frames, pattern crediting) tells a
+  pattern error from a file error by every wording ripgrep 13 and 14
+  use.
+
 - `rx trace` no longer writes a trace-cache entry for piped input. The
   input is copied to a temporary file that is deleted when the command
   ends, so every trace of 50 MB or more of piped input (the large-file

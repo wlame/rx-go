@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wlame/rx-go/internal/paths"
@@ -48,6 +49,40 @@ func TestTrace_InvalidPatternReturns400(t *testing.T) {
 				t.Errorf("no detail in body: %v", body)
 			}
 		})
+	}
+}
+
+// A pattern PCRE2 cannot compile is the same client error as one the
+// default engine cannot, with PCRE2's reason in the detail, and never a
+// 200 with the file listed as skipped.
+func TestTrace_InvalidPCRE2PatternReturns400WithPCRE2sReason(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "a.log")
+	if err := os.WriteFile(file, []byte("a(b\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := paths.SetSearchRoots([]string{root}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+
+	ts := newServerWithRipgrep(t)
+	query := url.Values{"path": {file}, "regexp": {"("}, "pcre2": {"true"}}
+	resp, err := http.Get(ts.URL + "/v1/trace?" + query.Encode())
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var body map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400 (body: %v)", resp.StatusCode, body)
+	}
+	// The reason is PCRE2's own, whether this ripgrep refuses the
+	// pattern or has no PCRE2 at all.
+	if detail, _ := body["detail"].(string); !strings.Contains(detail, "PCRE2") {
+		t.Errorf("detail should carry PCRE2's reason: %q", detail)
 	}
 }
 

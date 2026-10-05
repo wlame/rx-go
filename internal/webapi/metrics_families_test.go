@@ -95,10 +95,11 @@ func (before metricSnapshot) moved(after metricSnapshot, family string) bool {
 
 // metricsFixture is a sandbox with the files the operations below need:
 // a plain log above the 1 MB large-file threshold the test sets, so it
-// is chunked, cached and indexed; a small log; and a directory holding
-// a binary file, which a trace of the directory skips.
+// is chunked, cached and indexed; a small log; a directory holding a
+// binary file, which a trace of the directory skips; and a .gz file that
+// is not gzip.
 type metricsFixture struct {
-	root, bigLog, smallLog, mixedDir string
+	root, bigLog, smallLog, mixedDir, brokenGz string
 }
 
 func newMetricsFixture(t *testing.T) metricsFixture {
@@ -109,6 +110,7 @@ func newMetricsFixture(t *testing.T) metricsFixture {
 		bigLog:   filepath.Join(root, "big.log"),
 		smallLog: filepath.Join(root, "small.log"),
 		mixedDir: filepath.Join(root, "mixed"),
+		brokenGz: filepath.Join(root, "broken.log.gz"),
 	}
 	var big bytes.Buffer
 	for i := 1; big.Len() < 2*1024*1024; i++ {
@@ -120,6 +122,8 @@ func newMetricsFixture(t *testing.T) metricsFixture {
 	}
 	writeFixture(t, f.bigLog, big.Bytes())
 	writeFixture(t, f.smallLog, []byte("LINE 1 ERROR one\nLINE 2 INFO two\n"))
+	// Named as gzip but not gzip: its scan fails in the worker.
+	writeFixture(t, f.brokenGz, []byte("LINE 1 ERROR one\n"))
 	if err := os.Mkdir(f.mixedDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -179,7 +183,8 @@ func mustGet(t *testing.T, rawURL string) int {
 // TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce drives each
 // operation `serve` offers once — traces that miss, write and hit the
 // trace cache, a capped trace with a webhook, a trace that skips a
-// binary file, an invalid pattern, an analyzing index build, an index
+// binary file, an invalid pattern, a file whose scan fails, an
+// analyzing index build, an index
 // read and a samples request — and checks that every registered rx_*
 // family changed, except the ones familiesAllowedToStayStill excuses.
 func TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce(t *testing.T) {
@@ -221,6 +226,7 @@ func TestMetrics_EveryFamilyMovesWhenEveryOperationRunsOnce(t *testing.T) {
 		}), http.StatusOK},
 		{"trace that skips a binary file", traceURL(f.mixedDir, "ERROR", nil), http.StatusOK},
 		{"trace of an invalid pattern", traceURL(f.smallLog, "(unclosed", nil), http.StatusBadRequest},
+		{"trace of a file whose scan fails", traceURL(f.brokenGz, "ERROR", nil), http.StatusOK},
 	}
 	for _, step := range steps {
 		if got := mustGet(t, step.url); got != step.want {
