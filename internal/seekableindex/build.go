@@ -16,7 +16,6 @@ package seekableindex
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 
@@ -79,16 +78,22 @@ func BuildAndCopyText(r io.ReaderAt, size int64, text io.Writer) (*Result, error
 	if err != nil {
 		return nil, fmt.Errorf("read seek table: %w", err)
 	}
-	if len(table.Frames) == 0 {
-		return nil, errors.New("empty seek table")
-	}
 
 	decoder := seekable.NewDecoder()
 	result := &Result{
-		Frames:          make([]rxtypes.FrameLineInfo, 0, len(table.Frames)),
-		LineIndex:       make([]rxtypes.LineIndexEntry, 0, len(table.Frames)),
-		FrameCount:      len(table.Frames),
-		FrameSizeTarget: table.Frames[0].DecompressedSize,
+		Frames:     make([]rxtypes.FrameLineInfo, 0, len(table.Frames)),
+		LineIndex:  make([]rxtypes.LineIndexEntry, 0, len(table.Frames)),
+		FrameCount: len(table.Frames),
+	}
+	// A table of no frames is a file of no text, which `rx compress`
+	// writes for an empty input: its index has no frames, no
+	// checkpoints and no lines, like the index of an empty plain file.
+	// The loop below then never runs. With no frame to measure, the
+	// frame size target is the encoder's default, the value rx-python
+	// records for such a file.
+	result.FrameSizeTarget = seekable.DefaultFrameSize
+	if len(table.Frames) > 0 {
+		result.FrameSizeTarget = table.Frames[0].DecompressedSize
 	}
 
 	// linesBefore is the number of line breaks in the text before the
