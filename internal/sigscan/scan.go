@@ -147,7 +147,11 @@ func scanFile(ctx context.Context, file trace.SearchFile, sigs []*signatures.Sig
 	if tune.bodyCap > 0 {
 		e.bodyCap = tune.bodyCap
 	}
-	s := newScanRun(e, opts, tune, size)
+	// The progress runs to how far a full read of the text reaches: the
+	// file's size, or a journal's content end, before the space it has
+	// preallocated. ReadExtent reads a journal's header and tail object
+	// through fr itself, so those reads are not counted.
+	s := newScanRun(e, opts, tune, filetext.ReadExtent(fr, size, kind.Format))
 	var m *merger
 	switch {
 	case kind.IsSeekable():
@@ -198,15 +202,31 @@ func scanBytes(ctx context.Context, text []byte, sigs []*signatures.Signature, o
 }
 
 // countingReaderAt counts the bytes read through it, from any number of
-// goroutines (an atomic counter).
+// goroutines (atomic counters): n is every byte read, a byte read twice
+// counted twice (Result.BytesRead), and highest the end of the furthest
+// read, the highest byte of the file read so far (the progress of a
+// stream, which a journal reader reads out of order and in part twice).
 type countingReaderAt struct {
-	r io.ReaderAt
-	n atomic.Int64
+	r       io.ReaderAt
+	n       atomic.Int64
+	highest atomic.Int64
 }
 
+// ReadAt reads through to the file and counts what it read.
+//
+// Go note: CompareAndSwap stores the new end only if highest still holds
+// the value just loaded, so two goroutines that read at once never move
+// highest back; the loop retries when another one changed it in between.
 func (c *countingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	n, err := c.r.ReadAt(p, off)
 	c.n.Add(int64(n))
+	end := off + int64(n)
+	for {
+		seen := c.highest.Load()
+		if end <= seen || c.highest.CompareAndSwap(seen, end) {
+			break
+		}
+	}
 	return n, err
 }
 
@@ -573,7 +593,9 @@ func (s *scanRun) runStream(ctx context.Context, r io.ReaderAt, size int64, form
 	dec := &decoder{r: rc, lineBytes: s.e.lineBytes, batchBytes: s.tune.batchBytes, batchLines: s.tune.batchLines,
 		free: make(chan []byte, maxBufs), maxBufs: maxBufs}
 	if counter != nil {
-		dec.onRead = func() { s.progress.set(counter.n.Load()) }
+		// The progress of a stream is how far into the file its reads have
+		// gone: the highest byte read, never the sum of the reads.
+		dec.onRead = func() { s.progress.set(counter.highest.Load()) }
 	}
 	batches := make(chan *batch, workers)
 	results := make(chan outcome, workers)

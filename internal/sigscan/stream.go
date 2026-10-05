@@ -72,8 +72,8 @@ type decoder struct {
 	carry []byte
 	off   int64
 	seq   int
-	// progress reports the compressed bytes read (through the counting
-	// reader under r).
+	// onRead reports how far the stream has read the file (the highest
+	// byte read through the counting reader under r).
 	onRead func()
 }
 

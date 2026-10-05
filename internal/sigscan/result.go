@@ -72,8 +72,13 @@ type Options struct {
 	Redactors []*signatures.Signature
 	// Progress, when set, is called as the file is read with the bytes
 	// of the file read so far and the file's size, both as stored on
-	// disk (compressed bytes for a compressed file). Calls never overlap
-	// and read never goes down.
+	// disk (compressed bytes for a compressed file). For a stream (a
+	// compressed file or a journal) read is the highest byte of the file
+	// read so far. For a journal, total is the end of its last object
+	// (filetext.ReadExtent): the space a live journal has preallocated
+	// after it is never read. Calls never overlap, read never goes down
+	// and never passes total, and a finished scan's last call reports
+	// read equal to total.
 	Progress func(read, total int64)
 }
 
