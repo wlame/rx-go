@@ -44,6 +44,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/testutil/journalfixture"
@@ -53,14 +54,36 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
+// sameAnswerJournal is one journal the suite reads: a fixture, as stored
+// or preallocated like a live journal (journalfixture.Preallocate, to
+// the next 8 MiB step above its size).
+type sameAnswerJournal struct {
+	fixture     string
+	preallocate bool
+}
+
+// name names the journal's subtest.
+func (j sameAnswerJournal) name() string {
+	if j.preallocate {
+		return j.fixture + "-preallocated"
+	}
+	return j.fixture
+}
+
 // sameAnswerJournals are the journals the suite reads: two sets, each as
 // an uncompressed regular journal and as a zstd-compressed compact one,
-// and the 2,000-entry set as an lz4-compressed compact one.
-var sameAnswerJournals = []string{
-	"basic-none-regular", "basic-zstd-compact",
-	"stamps-none-regular", "stamps-zstd-compact",
-	"many-lz4-compact",
+// the 2,000-entry set as an lz4-compressed compact one, and an
+// xz-compressed regular journal preallocated as a live one is, with
+// zeros after its last object.
+var sameAnswerJournals = []sameAnswerJournal{
+	{fixture: "basic-none-regular"}, {fixture: "basic-zstd-compact"},
+	{fixture: "stamps-none-regular"}, {fixture: "stamps-zstd-compact"},
+	{fixture: "many-lz4-compact"},
+	{fixture: "basic-xz-regular", preallocate: true},
 }
+
+// preallocationStep is how journald grows a journal: 8 MiB at a time.
+const preallocationStep = 8 << 20
 
 // sameAnswerPatterns are the trace patterns: one that matches nearly
 // every line, one that matches a few lines of each set, and one with an
@@ -88,13 +111,21 @@ type sameAnswerFiles struct {
 	paths map[string]string // by storage
 }
 
-// writeSameAnswerFiles writes the journal fixture name, its set's text
-// as a plain file and `rx compress` of the journal into a new directory.
-func writeSameAnswerFiles(t *testing.T, name string) sameAnswerFiles {
+// writeSameAnswerFiles writes the journal j, its set's text as a plain
+// file and `rx compress` of the journal into a new directory.
+func writeSameAnswerFiles(t *testing.T, j sameAnswerJournal) sameAnswerFiles {
 	t.Helper()
-	set, _, _ := strings.Cut(name, "-")
+	set, _, _ := strings.Cut(j.fixture, "-")
 	dir := t.TempDir()
-	journal, err := os.ReadFile(journalfixture.Journal(t, name))
+	stored := journalfixture.Journal(t, j.fixture)
+	if j.preallocate {
+		info, err := os.Stat(stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journalfixture.Preallocate(t, stored, (info.Size()/preallocationStep+1)*preallocationStep)
+	}
+	journal, err := os.ReadFile(stored) //nolint:gosec // the test's own file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,12 +206,12 @@ func TestJournal_AnswersAsItsTextAndItsCompressedCopy(t *testing.T) {
 	t.Setenv("RX_SIGNATURES_PATH", t.TempDir())
 	t.Setenv("RX_MASK_SECRETS", "")
 	t.Setenv("RX_LOG_TZ", "")
-	for _, name := range sameAnswerJournals {
-		t.Run(name, func(t *testing.T) {
+	for _, journal := range sameAnswerJournals {
+		t.Run(journal.name(), func(t *testing.T) {
 			// rx compress builds the copy's index into this cache, which
 			// no surface below reads.
 			t.Setenv("RX_CACHE_DIR", t.TempDir())
-			files := writeSameAnswerFiles(t, name)
+			files := writeSameAnswerFiles(t, journal)
 			t.Run("CLI", func(t *testing.T) {
 				t.Setenv("RX_CACHE_DIR", t.TempDir())
 				runSameAnswerSteps(t, cliSurface{}, files)
@@ -196,31 +227,40 @@ func TestJournal_AnswersAsItsTextAndItsCompressedCopy(t *testing.T) {
 // runSameAnswerSteps asks surface for every answer of the three copies
 // of files' text, with a cache that starts empty:
 //
-//  1. cold: searches and findings, then samples and time ranges, with
-//     no index and nothing cached;
+//  1. cold: every answer is given with no index of its file stored or
+//     built, which the test checks:
+//     - searches and findings, with nothing cached (a search builds no
+//     index; the index cache is empty after them);
+//     - time ranges and samples by lines, offsets and timestamps, asked
+//     where no index can be stored (askColdTimeRangesAndSamples): the
+//     lookups that build an index first, `rx time-range` of a stream
+//     file and a samples lookup in a compressed file, read the file
+//     without one instead. The journal's first and last times are then
+//     not computed (null); the text's and the copy's are read from the
+//     head and the tail;
 //  2. warm: the searches and findings again, the findings from the
 //     findings cache the cold step filled;
-//  3. indexed: each file's line index is built, then every request is
-//     asked again.
+//  3. indexed: each file's line index is built and stored, then every
+//     request is asked again and answered with it.
 //
 // At each step the answers of the three copies agree, and every answer
-// agrees with the cold one of the same file. A cold time range of a
-// file whose index a command builds on the way (`rx time-range` of a
-// stream file) is the indexed answer; the rule holds either way.
+// agrees with the cold one of the same file.
 func runSameAnswerSteps(t *testing.T, surface sameAnswerSurface, files sameAnswerFiles) {
 	queries := samplesQueries(t, files.text)
 
 	coldSearches := askSearches(t, surface, files)
 	requireSearchesAcrossStorages(t, "cold", coldSearches, files.text)
-	// A search builds no index, so the cold searches ran without one.
-	if stored, _ := filepath.Glob(filepath.Join(config.GetIndexCacheDir(), "*")); len(stored) != 0 {
-		t.Fatalf("an index was stored before the cold samples: %v", stored)
-	}
-	coldSamples := askSamples(t, surface, files, queries)
-	requireSamplesAcrossStorages(t, "cold", coldSamples)
-	coldRanges := askTimeRanges(t, surface, files)
+	requireNoIndexStored(t, "after the cold searches")
+	coldRanges, coldSamples := askColdTimeRangesAndSamples(t, surface, files, queries)
 	requireTimeRangesAcrossStorages(t, "cold", coldRanges, false)
+	requireSamplesAcrossStorages(t, "cold", coldSamples)
 	requireTheJournalAnswered(t, coldSearches, coldSamples, coldRanges[asJournal])
+	// Without an index, the journal's time range has no first or last
+	// time: the cold cell is the one without an index.
+	if coldRanges[asJournal]["first_ms"] != nil || coldRanges[asJournal]["last_ms"] != nil {
+		t.Errorf("the journal's cold time range has times %v and %v; without an index it has none",
+			coldRanges[asJournal]["first_ms"], coldRanges[asJournal]["last_ms"])
+	}
 
 	// The findings cache now holds every copy's findings. The trace cache
 	// holds nothing: it stores the scans of files of 1 MiB and more
@@ -235,6 +275,7 @@ func runSameAnswerSteps(t *testing.T, surface sameAnswerSurface, files sameAnswe
 		indexes[storage] = surface.index(t, files.paths[storage])
 	}
 	requireIndexesAcrossStorages(t, indexes)
+	requireCacheEntries(t, "the index cache", config.GetIndexCacheDir())
 
 	indexedSearches := askSearches(t, surface, files)
 	requireSearchesAcrossStorages(t, "indexed", indexedSearches, files.text)
@@ -336,6 +377,67 @@ func askSamples(t *testing.T, surface sameAnswerSurface, files sameAnswerFiles, 
 		}
 	}
 	return answers
+}
+
+// askColdTimeRangesAndSamples asks the time range and every samples
+// query of every copy in a subtest whose cache cannot store a line index
+// (unstorableCache; the subtest restores RX_CACHE_DIR when it ends). A
+// lookup that would build its file's index before it answers (`rx
+// time-range` of a stream file, a samples lookup in a compressed file)
+// then reads the file without one, which is its answer without an
+// index, and no answer can reuse an index another answer stored. Each
+// answer is checked to have started no index build, and the cache to
+// hold no index after them.
+func askColdTimeRangesAndSamples(t *testing.T, surface sameAnswerSurface, files sameAnswerFiles, queries []samplesQuery) (map[string]map[string]any, requestAnswers) {
+	t.Helper()
+	var ranges map[string]map[string]any
+	samplesAnswers := requestAnswers{}
+	asked := t.Run("cold time ranges and samples", func(t *testing.T) {
+		unstorableCache(t)
+		ranges = askTimeRanges(t, surface, files)
+		for _, storage := range sameAnswerStorages {
+			path := files.paths[storage]
+			for _, q := range queries {
+				answer := surface.samples(t, path, q)
+				if answer["index_build"] != nil {
+					t.Fatalf("samples by %s of the %s started an index build: %v", q.name, storage, answer["index_build"])
+				}
+				samplesAnswers.add("samples by "+q.name, storage,
+					fileNeutral(t, answer, path, "is_compressed", "compression_format"))
+			}
+		}
+		requireNoIndexStored(t, "after the cold time ranges and samples")
+	})
+	if !asked {
+		t.FailNow()
+	}
+	return ranges, samplesAnswers
+}
+
+// unstorableCache points RX_CACHE_DIR, for the rest of the test, at a
+// cache that cannot store a line index: its rx entry is a regular file,
+// so the index cache directory under it cannot be made, whoever runs the
+// test (samples.CanStoreIndex is false).
+func unstorableCache(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rx"), []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RX_CACHE_DIR", dir)
+	if samples.CanStoreIndex() {
+		t.Fatalf("the cache %s can store an index", dir)
+	}
+}
+
+// requireNoIndexStored fails the test when the index cache holds an
+// index: an answer asked now is asked without one.
+func requireNoIndexStored(t *testing.T, when string) {
+	t.Helper()
+	stored, err := filepath.Glob(filepath.Join(config.GetIndexCacheDir(), "*"))
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("an index is stored %s: %v (%v)", when, stored, err)
+	}
 }
 
 // askTimeRanges asks the time range of every copy. source says how the
