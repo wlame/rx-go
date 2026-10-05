@@ -38,7 +38,8 @@ one pass.
 ### Bounded reads
 
 On a plain file, `samples` reads only the portion of the file it needs,
-with one exception: the first lookup builds an index (below). Measured
+with one exception: the first lookup past the head of a large file
+builds an index (below). Measured
 on a 465 MB log already in the page cache:
 
 - With an index: seeks to the nearest checkpoint before the first
@@ -47,7 +48,8 @@ on a 465 MB log already in the page cache:
 - Without an index: reads from byte 0 until it reaches the last wanted
   line, then stops. `--lines=1-1000`: 12 ms; `--lines=700000`: 90 ms.
 - The first lookup in a file of `RX_LARGE_FILE_MB` (50 MB) or more
-  with no cached index reads the whole file to build one: 137 ms.
+  with no cached index, whose lines are not all in the first
+  `RX_SAMPLES_HEAD_MB` MiB, reads the whole file to build one: 137 ms.
 
 A gzip, bzip2, xz or plain zstd file is decompressed from its first
 byte up to the last wanted line, then the read stops. A seekable zstd
@@ -98,7 +100,17 @@ A lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in
 any compressed file, builds a line index if none is cached, so the
 next lookup in the same file is fast. That first lookup reads the whole
 file, and `rx samples` waits for it however long it takes. The build
-runs without analysis. Every format uses the index: a plain file seeks
+runs without analysis.
+
+A lookup whose lines all lie in the head of such a file, its first
+`RX_SAMPLES_HEAD_MB` MiB of text (64 by default; decompressed for a
+compressed file), is answered from the head at once and builds no
+index: `--lines=1-1000` on a 7 GB log answers without reading the rest
+of it. The answer is the one the index gives. A position counted back
+from the end (`--lines=-1`), anything past the head, a time range open
+to the end and a time of day without a date build the index first, as
+above. See
+[the first lookup of a large file](../concepts/line-indexes.md#the-first-lookup-of-a-large-file). Every format uses the index: a plain file seeks
 to its checkpoints, a seekable zstd file decodes only the frames its
 frame table names, and a gzip, bzip2, xz or plain zstd stream, which
 must still be decompressed from its first byte, takes its line count

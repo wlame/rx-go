@@ -211,25 +211,6 @@ func runSamples(out io.Writer, p samplesParams) error {
 		after = p.afterCtx
 	}
 
-	// A second lookup in a multi-gigabyte file is the case an index
-	// exists for, so one is built when the file is worth it and none is
-	// cached. `--no-index` opts out for a caller that wants the read to
-	// leave nothing behind. rx-python builds on the same path, and the
-	// answer is identical either way — an index only changes how fast it
-	// is reached.
-	//
-	// The CLI waits for the build however long it takes: a command has
-	// no client to hand a task to, and `rx serve` answers 202 only
-	// because an HTTP request should not hang for minutes.
-	//
-	// When the cache cannot store the index (a read-only cache, or
-	// RX_CACHE_DIR naming a regular file), nothing is built: a build
-	// would read the whole file for an index nobody keeps, on every
-	// call. ShouldBuildIndex logs the cause once and the lookup reads
-	// the file without an index. A build that fails anyway is logged
-	// and the lookup goes on: the index is an accelerator, the answer
-	// is the same without it, and refusing to read a file because its
-	// index could not be written would be the wrong trade.
 	// What the file is, decided once through its pin before any index
 	// is built for it. A file whose text is not text has no lines to
 	// give: it is refused, like a directory, with the reason.
@@ -245,12 +226,6 @@ func runSamples(out io.Writer, p samplesParams) error {
 		// A file the process may not read fails as it does in every
 		// command: "permission denied: <path>", exit code 4.
 		return openFailure(p.path, err)
-	}
-
-	if !p.noIndex && samples.ShouldBuildIndex(p.path, kind, info.Size()) {
-		if _, _, buildErr := samples.BuildIndex(p.path, nil); buildErr != nil {
-			slog.Default().Warn("index_not_built", "path", p.path, "error", buildErr.Error())
-		}
 	}
 
 	// The loader hands the resolver the stored index for its
@@ -278,7 +253,7 @@ func runSamples(out io.Writer, p samplesParams) error {
 	}
 	// The CLI runs as the user's own process and reads to the end of
 	// what it was asked; nothing cancels it but the process ending.
-	resp, err := samples.Resolve(context.Background(), req)
+	resp, err := resolveBuildingIndex(context.Background(), req, info.Size(), p.noIndex)
 	if samples.IsUsageError(err) {
 		// A time the request names wrongly, or a time query on a file
 		// without timestamps: the request, not the file, is at fault.
@@ -314,6 +289,48 @@ func runSamples(out io.Writer, p samplesParams) error {
 	rendered := output.FormatSamplesCLI(resp, colorize, p.regex)
 	_, _ = fmt.Fprintln(out, rendered)
 	return nil
+}
+
+// resolveBuildingIndex answers req, building the file's line index
+// first when the file wants one and has none (samples.ShouldBuildIndex),
+// unless the head of the file answers the request. size is the file's
+// size; noIndex (`--no-index`, RX_NO_INDEX) rules out the build, for a
+// caller that wants the read to leave nothing behind. The answer is
+// identical either way: an index only changes how fast it is reached.
+//
+// A second lookup in a multi-gigabyte file is the case an index exists
+// for, so the first one builds it. But a lookup whose lines lie in the
+// head of the file (RX_SAMPLES_HEAD_MB) is answered from the head
+// (samples.ResolveFromHead), and then nothing is built: a command
+// cannot finish a build in the background, and reading the whole file
+// to answer lines it already has would make the first look at a large
+// file wait for nothing. The index is left to `rx index`, or to a later
+// lookup that needs it. rx-python builds before every such lookup.
+//
+// Any other lookup waits for the build however long it takes: a command
+// has no client to hand a task to, and `rx serve` answers 202 only
+// because an HTTP request should not hang for minutes.
+//
+// When the cache cannot store the index (a read-only cache, or
+// RX_CACHE_DIR naming a regular file), nothing is built: a build would
+// read the whole file for an index nobody keeps, on every call.
+// ShouldBuildIndex logs the cause once and the lookup reads the file
+// without an index. A build that fails anyway is logged and the lookup
+// goes on: the index is an accelerator, the answer is the same without
+// it, and refusing to read a file because its index could not be
+// written would be the wrong trade.
+func resolveBuildingIndex(ctx context.Context, req samples.Request, size int64, noIndex bool) (*rxtypes.SamplesResponse, error) {
+	if noIndex || !samples.ShouldBuildIndex(req.Path, *req.Kind, size) {
+		return samples.Resolve(ctx, req)
+	}
+	resp, answered, err := samples.ResolveFromHead(ctx, req, config.SamplesHeadBytes())
+	if answered {
+		return resp, err
+	}
+	if _, _, buildErr := samples.BuildIndex(req.Path, nil); buildErr != nil {
+		slog.Default().Warn("index_not_built", "path", req.Path, "error", buildErr.Error())
+	}
+	return samples.Resolve(ctx, req)
 }
 
 // shouldColorize decides whether to emit ANSI codes, given the --color
