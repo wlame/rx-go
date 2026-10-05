@@ -254,11 +254,9 @@ func TestEnsure_FailedCheckKeepsTheCache(t *testing.T) {
 	}{
 		{
 			name: "offline",
-			apiBase: func(t *testing.T) string {
-				srv := httptest.NewServer(http.NotFoundHandler())
-				srv.Close() // nothing listens at this address any more
-				return srv.URL
-			},
+			// Port 1 is reserved and nothing listens on it, unlike a
+			// closed test server's port, which a parallel test may reuse.
+			apiBase:   func(*testing.T) string { return "http://127.0.0.1:1" },
 			wantInErr: "viewer update check",
 		},
 		{
