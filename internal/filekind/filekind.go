@@ -17,6 +17,14 @@
 //     this rule and named as UTF-16 when it starts with a byte-order
 //     mark. A .tar.gz is not text by this rule:
 //     every tar header is padded with NUL bytes.
+//   - A systemd journal (signature "LPKSHHRH") is a compressed format
+//     whose text package journal renders. Its header alone decides
+//     whether it is text: the renderer never writes a NUL byte, so a
+//     journal whose header rx can read is text, and one whose header it
+//     cannot read (journal.ReadHeader's error) is not. No entry is
+//     rendered to decide it, so a listing reads the header and no more.
+//     A gzip copy of a journal is a gzip file whose decompressed text is
+//     the journal's bytes, which hold NUL bytes: it is not text.
 //
 // A file that is not text is refused by every command with the reason
 // Kind.NotText gives: `rx trace` and `rx index` skip it and say why,
@@ -33,6 +41,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filetext"
+	"github.com/wlame/rx-go/internal/journal"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 )
@@ -132,9 +141,14 @@ func (k Kind) IsCompressed() bool { return k.Format != compression.FormatNone }
 // be decompressed one at a time.
 func (k Kind) IsSeekable() bool { return k.Format == compression.FormatSeekableZstd }
 
+// IsJournal reports whether the file is a systemd journal, whose text is
+// read from its start as a stream format's is.
+func (k Kind) IsJournal() bool { return k.Format == compression.FormatJournal }
+
 // CompressionName is the compression format a response reports for the
 // file: the stream format, so a seekable zstd file is "zstd" (it is a
-// zstd stream to any other tool), and "" for a plain file.
+// zstd stream to any other tool), "journal" for a systemd journal, and
+// "" for a plain file.
 func (k Kind) CompressionName() string {
 	if k.IsSeekable() {
 		return string(compression.FormatZstd)
@@ -191,8 +205,28 @@ func OfForReading(r io.ReaderAt, size int64) Kind {
 // classify is Of with the largest window its text probe decodes with.
 func classify(r io.ReaderAt, size int64, windowLimit uint64) Kind {
 	kind := FormatOf(r, size)
+	if kind.IsJournal() {
+		kind.NotText = journalNotTextReason(r, size)
+		return kind
+	}
 	kind.NotText = notTextReason(probeText(r, size, kind, windowLimit), kind.IsCompressed())
 	return kind
+}
+
+// journalNotTextReason is the reason the journal r (size bytes) is not
+// text, or "" when it is: decided from its header alone, which it reads
+// once (journal.ReadHeader). A header rx cannot read gives
+// `not a text file: a systemd journal rx cannot read: <why>`. A read
+// error that is not about the header leaves the file text, as the text
+// probe does for every format: the command that reads the file next
+// meets the same error and reports it.
+func journalNotTextReason(r io.ReaderAt, size int64) string {
+	_, err := journal.ReadHeader(r, size)
+	if errors.Is(err, journal.ErrUnreadable) {
+		// err reads "a systemd journal rx cannot read: <why>".
+		return NotTextPrefix + ": " + err.Error()
+	}
+	return ""
 }
 
 // FormatOf decides only the format part of the Kind of the open file r,

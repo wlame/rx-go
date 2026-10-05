@@ -102,6 +102,9 @@ var pathKindByExtension = map[string]string{
 	".bz2":  "compressed",
 	".xz":   "compressed",
 	".lz4":  "compressed",
+	// A journal is read from its start through the journal reader, as a
+	// stream-compressed file is through its decoder.
+	".journal": "compressed",
 }
 
 // pathKindOf labels a request by the most expensive path it touches: a

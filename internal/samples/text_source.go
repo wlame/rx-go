@@ -115,7 +115,7 @@ func (p plainText) openNear(offset int64, before int) (*textCursor, error) {
 }
 
 // ============================================================================
-// Compressed stream: gzip, bzip2, xz, zstd
+// Compressed stream: gzip, bzip2, xz, zstd, systemd journal
 // ============================================================================
 
 // streamedText reads a compressed file that cannot be entered in the

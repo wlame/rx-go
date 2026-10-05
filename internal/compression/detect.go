@@ -1,7 +1,9 @@
 // Package compression names the compression formats rx reads (gzip, xz,
-// bzip2, zstd and its seekable variant), recognizes a format by its
-// signature bytes (DetectFromReader) and opens a stream decoder for each
-// (NewReader).
+// bzip2, zstd and its seekable variant, and the systemd journal, whose
+// text package journal renders), recognizes a format by its signature
+// bytes (DetectFromReader) and opens a stream decoder for each format
+// but the journal (NewReader). The text of a file of any format is
+// opened through package filetext.
 //
 // What a file is, as every command sees it, is decided by package
 // filekind, which uses DetectFromReader for the format and adds the
@@ -30,10 +32,13 @@ const (
 	FormatXz           Format = "xz"
 	FormatBz2          Format = "bz2"
 	FormatSeekableZstd Format = "seekable_zstd"
+	// FormatJournal is a systemd journal file. rx-python has no such
+	// format: it takes a journal for a binary file.
+	FormatJournal Format = "journal"
 )
 
 // magicBytes are the leading-byte signatures for each format. We probe
-// at most 6 bytes (the longest magic, xz's FD 37 7A 58 5A 00).
+// at most 8 bytes (the longest magic, the journal's "LPKSHHRH").
 //
 // Ordering inside the slice matches Python's dict iteration order which
 // is declaration order in CPython 3.7+.
@@ -47,10 +52,14 @@ var magicTable = []magicEntry{
 	{[]byte{0x28, 0xb5, 0x2f, 0xfd}, FormatZstd},
 	{[]byte{0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00}, FormatXz},
 	{[]byte{0x42, 0x5a, 0x68}, FormatBz2}, // "BZh"
+	{[]byte("LPKSHHRH"), FormatJournal},   // the journal signature (journal.Signature)
 }
 
 // extensionMap translates a file suffix (lowercase, including leading
-// dot) to a Format, for naming files only (FormatFromExtension).
+// dot) to a Format, for naming files only (FormatFromExtension). The
+// journal has no row: its text is not a decompressed copy of a file
+// named without the suffix, so `rx compress system.journal` keeps the
+// whole name and writes system.journal.zst.
 var extensionMap = map[string]Format{
 	".gz":    FormatGzip,
 	".gzip":  FormatGzip,
@@ -62,8 +71,9 @@ var extensionMap = map[string]Format{
 }
 
 // magicProbeBytes is how many bytes from the start of a file the magic
-// table needs: its longest entry.
-const magicProbeBytes = 6
+// table needs: its longest entry. A shorter file is matched against the
+// bytes it has, so a 2-byte gzip header is still gzip.
+const magicProbeBytes = 8
 
 // zstdSkippableMagic and zstdSkippableMask recognize a zstd skippable
 // frame: its magic number is any of 0x184D2A50 to 0x184D2A5F (the low

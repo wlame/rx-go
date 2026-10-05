@@ -27,6 +27,7 @@
 package journalfixture
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -234,6 +235,37 @@ func Decompressed(tb testing.TB, src string) []byte {
 		tb.Fatalf("decompress %s: %v", src, err)
 	}
 	return plain
+}
+
+// offsetIncompatibleFlags is where a journal header stores its
+// incompatible flags, a little-endian uint32 (journal-def.h), and
+// unknownIncompatibleFlag a bit of them systemd 257 does not define,
+// which a reader must refuse.
+const (
+	offsetIncompatibleFlags = 12
+	unknownIncompatibleFlag = 1 << 5
+)
+
+// AddUnknownIncompatibleFlag sets an incompatible flag no reader knows
+// in the header of the journal at file: what a journal written by a
+// newer systemd in a way rx cannot read looks like. The rest of the file
+// is left as it was.
+func AddUnknownIncompatibleFlag(tb testing.TB, file string) {
+	tb.Helper()
+	data, err := os.ReadFile(file) //nolint:gosec // a fixture copy in the test's directory
+	if err != nil {
+		tb.Fatalf("read %s: %v", file, err)
+	}
+	if len(data) < offsetIncompatibleFlags+4 {
+		tb.Fatalf("%s is %d bytes, too short for a journal header", file, len(data))
+	}
+	// binary.LittleEndian reads and writes the integer in the byte order
+	// the journal stores it in.
+	flags := binary.LittleEndian.Uint32(data[offsetIncompatibleFlags:])
+	binary.LittleEndian.PutUint32(data[offsetIncompatibleFlags:], flags|unknownIncompatibleFlag)
+	if err := os.WriteFile(file, data, 0o600); err != nil { //nolint:gosec // a fixture copy in the test's directory
+		tb.Fatalf("write %s: %v", file, err)
+	}
 }
 
 // writeDecompressed writes the zstd-decompressed bytes of src to dst.
