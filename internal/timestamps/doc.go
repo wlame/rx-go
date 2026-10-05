@@ -21,6 +21,8 @@
 //     time. [Parser.Own] returns the timestamp written on one line. It
 //     looks at no more than [WindowBytes] of the line and allocates
 //     nothing, because it runs on every line of every index build.
+//     [Parser.Locate] also says where the timestamp is written, and
+//     [Parser.Text] returns it as written, escaped for display.
 //   - [ParseQuery] reads a timestamp query such as `2026-10-06T12:34`,
 //     `14:33:12..14:35` or `..1759754096`. Some endpoints cannot become a
 //     number from the text alone (a time with no date needs the file's

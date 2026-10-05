@@ -100,6 +100,20 @@ func (p *Parser) String() string {
 // of an index build, so a heap allocation here would cost one garbage
 // object per line of a multi-gigabyte file.
 func (p *Parser) Own(line []byte) (Stamp, bool) {
+	s, _, ok := p.Locate(line)
+	return s, ok
+}
+
+// Span is where a timestamp is written in a line: the bytes
+// line[Start:End].
+type Span struct {
+	Start, End int
+}
+
+// Locate is Own that also says where the timestamp is written in line.
+// The span lies within line[:WindowBytes]. Like Own it allocates
+// nothing: a Span is two ints returned by value.
+func (p *Parser) Locate(line []byte) (Stamp, Span, bool) {
 	w := line
 	if len(w) > WindowBytes {
 		w = w[:WindowBytes]
@@ -111,28 +125,28 @@ func (p *Parser) Own(line []byte) (Stamp, bool) {
 }
 
 // anchored tries column 0 and, after a leading `[`, column 1.
-func (p *Parser) anchored(w []byte) (Stamp, bool) {
-	if s, ok := p.at(w, 0); ok {
-		return s, true
+func (p *Parser) anchored(w []byte) (Stamp, Span, bool) {
+	if s, span, ok := p.at(w, 0); ok {
+		return s, span, true
 	}
 	if len(w) > 0 && w[0] == '[' {
 		return p.at(w, 1)
 	}
-	return Stamp{}, false
+	return Stamp{}, Span{}, false
 }
 
 // windowed returns the first valid timestamp that starts at a word
 // boundary within w.
-func (p *Parser) windowed(w []byte) (Stamp, bool) {
+func (p *Parser) windowed(w []byte) (Stamp, Span, bool) {
 	for i := 0; i < len(w) && i < maxEnd; i++ {
 		if !p.fam.startsWith[w[i]] || !p.fam.canStartAfter(w, i) {
 			continue
 		}
-		if s, ok := p.at(w, i); ok {
-			return s, true
+		if s, span, ok := p.at(w, i); ok {
+			return s, span, true
 		}
 	}
-	return Stamp{}, false
+	return Stamp{}, Span{}, false
 }
 
 // canStartAfter reports whether a match of the family may start at w[i]
@@ -150,20 +164,20 @@ func (f *family) canStartAfter(w []byte, i int) bool {
 }
 
 // at reads one timestamp of a line that starts at w[i] and turns it
-// into a Stamp in the file's frame.
-func (p *Parser) at(w []byte, i int) (Stamp, bool) {
+// into a Stamp in the file's frame, with the span it is written in.
+func (p *Parser) at(w []byte, i int) (Stamp, Span, bool) {
 	if i >= len(w) || !p.fam.startsWith[w[i]] {
-		return Stamp{}, false
+		return Stamp{}, Span{}, false
 	}
 	r, end, ok := p.fam.match(w, i)
 	if !ok || end > maxEnd {
-		return Stamp{}, false
+		return Stamp{}, Span{}, false
 	}
 	s, ok := p.finish(r)
 	if !ok {
-		return Stamp{}, false
+		return Stamp{}, Span{}, false
 	}
-	return p.inFileFrame(s), true
+	return p.inFileFrame(s), Span{Start: i, End: end}, true
 }
 
 // inFileFrame puts a line's stamp in the file's frame. A file whose

@@ -16,5 +16,8 @@ func TestOwn_AllocatesNothing(t *testing.T) {
 		if allocs := testing.AllocsPerRun(100, func() { p.Own(line) }); allocs != 0 {
 			t.Errorf("%s: Own allocates %.1f times per call; want 0", bl.format.Family, allocs)
 		}
+		if allocs := testing.AllocsPerRun(100, func() { p.Locate(line) }); allocs != 0 {
+			t.Errorf("%s: Locate allocates %.1f times per call; want 0", bl.format.Family, allocs)
+		}
 	}
 }
