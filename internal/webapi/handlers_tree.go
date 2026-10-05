@@ -13,7 +13,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/wlame/rx-go/internal/compression"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
@@ -254,23 +254,20 @@ func buildEntryMetadata(target paths.Pinned, name string) rxtypes.TreeEntry {
 	entry.Size = &size
 	entry.SizeHuman = &human
 
-	// Compression detection.
-	if compression.IsCompressed(entryPath) {
-		t := true
-		entry.IsCompressed = &t
-		cformat, _ := compression.DetectFromPath(entryPath)
-		if cformat != compression.FormatNone {
-			fs := string(cformat)
-			entry.CompressionFormat = &fs
+	// What the file is, by the rule every command applies (filekind),
+	// read through the pin: compressed or not by its bytes, and text or
+	// not by the first 8 KiB of its text. A file the listing cannot open
+	// is reported as neither compressed nor text.
+	isCompressed, isText := false, false
+	if kind, err := filekind.OfPinned(target); err == nil {
+		isCompressed, isText = kind.IsCompressed(), kind.IsText()
+		if isCompressed {
+			name := kind.CompressionName()
+			entry.CompressionFormat = &name
 		}
-		// Compressed files are "text" for our purposes.
-		entry.IsText = &t
-	} else {
-		f := false
-		entry.IsCompressed = &f
-		isText := looksLikeTextFile(target)
-		entry.IsText = &isText
 	}
+	entry.IsCompressed = &isCompressed
+	entry.IsText = &isText
 
 	// Index status. A peek, not a lookup: listing a directory does not
 	// use its indexes, so it must not move the index cache metrics.
@@ -286,25 +283,6 @@ func buildEntryMetadata(target paths.Pinned, name string) rxtypes.TreeEntry {
 	}
 
 	return entry
-}
-
-// looksLikeTextFile returns true if the first 512 bytes of path contain
-// no NUL bytes. Same heuristic as internal/trace/engine.go:isTextFile.
-// Kept private here to avoid a circular import.
-func looksLikeTextFile(target paths.Pinned) bool {
-	f, err := target.Open()
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-	buf := make([]byte, 512)
-	n, _ := f.Read(buf)
-	for i := 0; i < n; i++ {
-		if buf[i] == 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // wireTimestampLayout is RFC 3339 in UTC with exactly six fractional

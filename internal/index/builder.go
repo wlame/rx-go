@@ -33,6 +33,7 @@ import (
 	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/seekable"
@@ -191,12 +192,21 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", sourcePath, err)
 	}
+	// What the file is, decided by the one rule every command applies
+	// (filekind), from the handle the pin opened. A file that is not
+	// text gets no index, whoever asks for one, so none is ever stored
+	// for a .tar.gz or a binary file.
+	kind := filekind.Of(f, info.Size())
+	if !kind.IsText() {
+		return nil, fmt.Errorf("%w: %s (%s)", filekind.ErrNotText, sourcePath, kind.NotText)
+	}
 	source := openedSource{
 		path:     sourcePath,
 		absPath:  absPath,
 		file:     f,
 		info:     info,
 		identity: IdentityFromOpenFile(f, info),
+		kind:     kind,
 	}
 
 	step := opts.StepBytes
@@ -209,7 +219,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// checkpoint that names a frame lets a lookup decompress that one
 	// frame instead of the stream up to it. rx-python indexes the same
 	// file the same way, and the cache is shared.
-	if seekable.IsSeekableFile(sourcePath, f, info.Size()) {
+	if kind.IsSeekable() {
 		return buildSeekable(source, started, step, opts)
 	}
 	return buildText(source, started, step, opts)
@@ -226,6 +236,8 @@ type openedSource struct {
 	file     *os.File
 	info     os.FileInfo
 	identity SourceIdentity
+	// kind is what the file is (filekind.Of), decided once from file.
+	kind filekind.Kind
 }
 
 // buildText indexes a plain or stream-compressed file by walking its
@@ -251,10 +263,9 @@ func buildText(
 	// container: a 600 MB log came back as 209,365 lines with a "mixed"
 	// line ending. rx-python indexes the same content the same way.
 	source := statedBytes
-	format, _ := compression.DetectFromOpenFile(sourcePath, src.file)
-	if format != compression.FormatNone {
+	if src.kind.IsCompressed() {
 		// The file itself is closed by Build.
-		dec, dErr := compression.NewReader(io.NopCloser(statedBytes), format)
+		dec, dErr := compression.NewReader(io.NopCloser(statedBytes), src.kind.Format)
 		if dErr != nil {
 			return nil, fmt.Errorf("decompress %s: %w", sourcePath, dErr)
 		}
@@ -304,8 +315,8 @@ func buildText(
 
 	// A compressed source records what it is and how much text it
 	// holds; the index's own offsets are positions in that text.
-	if format != compression.FormatNone {
-		name := string(format)
+	if src.kind.IsCompressed() {
+		name := src.kind.CompressionName()
 		idx.CompressionFormat = &name
 		idx.FileType = rxtypes.FileTypeCompressed
 		idx.DecompressedSizeBytes = ptrInt64(stats.TotalBytes)

@@ -117,16 +117,6 @@ func TestEncodeDecode_RoundTrip_Sequential(t *testing.T) {
 
 	encoded := out.Bytes()
 
-	// IsSeekable requires a file on disk.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.zst")
-	if err := os.WriteFile(path, encoded, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !IsSeekable(path) {
-		t.Error("IsSeekable returned false for freshly-written file")
-	}
-
 	// Round-trip via decoder.
 	dec := NewDecoder()
 	parsed, err := ReadSeekTable(bytes.NewReader(encoded), int64(len(encoded)))
@@ -139,7 +129,7 @@ func TestEncodeDecode_RoundTrip_Sequential(t *testing.T) {
 
 	var reconstructed bytes.Buffer
 	for i := 0; i < parsed.NumFrames; i++ {
-		data, err := dec.DecompressFrame(path, i, parsed)
+		data, err := dec.DecompressFrameAt(bytes.NewReader(encoded), i, parsed)
 		if err != nil {
 			t.Fatalf("DecompressFrame %d: %v", i, err)
 		}
@@ -290,47 +280,6 @@ func TestEncoder_EmptyInput(t *testing.T) {
 	encoded := out.Bytes()
 	if len(encoded) < FooterSize {
 		t.Errorf("expected non-empty output, got %d bytes", len(encoded))
-	}
-}
-
-func TestIsSeekable_NonZstExtension(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "not-zst.log")
-	os.WriteFile(path, []byte("plain text"), 0o644)
-	if IsSeekable(path) {
-		t.Error("IsSeekable should return false for non-.zst file")
-	}
-}
-
-// IsSeekableFile reads the footer from the open file it is given and
-// takes only the extension from the name.
-func TestIsSeekableFile_ReadsTheFooterOfTheOpenFile(t *testing.T) {
-	t.Parallel()
-	var encoded bytes.Buffer
-	payload := buildTestPayload(50)
-	enc := NewEncoder(EncoderConfig{FrameSize: 512, Workers: 1})
-	if _, err := enc.Encode(context.Background(), bytes.NewReader(payload), int64(len(payload)), &encoded); err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	seekableBytes := bytes.NewReader(encoded.Bytes())
-	plainBytes := bytes.NewReader(payload)
-
-	if !IsSeekableFile("app.zst", seekableBytes, seekableBytes.Size()) {
-		t.Error("a seekable file named .zst: got false")
-	}
-	if IsSeekableFile("app.log", seekableBytes, seekableBytes.Size()) {
-		t.Error("a seekable file not named .zst: got true")
-	}
-	if IsSeekableFile("app.zst", plainBytes, plainBytes.Size()) {
-		t.Error("a plain file named .zst: got true")
-	}
-}
-
-func TestIsSeekable_MissingFile(t *testing.T) {
-	t.Parallel()
-	if IsSeekable("/absolutely/does/not/exist.zst") {
-		t.Error("IsSeekable should return false for missing file")
 	}
 }
 

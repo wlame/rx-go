@@ -38,8 +38,8 @@ The task writes the input's text, exactly as
 [`rx compress`](../../cli/compress.md#compressed-input) does: a gzip,
 bzip2, xz or plain zstd input is decompressed on the fly, so the output
 traces like the decompressed file, and `decompressed_size` in the
-result is the size of that text. A compound archive (`.tar.gz` and its
-kin), a seekable zstd input without `"force": true`, and an
+result is the size of that text. An input whose text is not text (a
+compressed tar archive, a binary file, UTF-16), a seekable zstd input without `"force": true`, and an
 output path that is the input file are refused with `400` before a
 task is created. The last one includes a plain zstd input named
 `app.log.zst` without `output_path`, whose default name is its own:
@@ -98,7 +98,7 @@ for measured sizes and times.
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued |
-| `400 Bad Request` | Output file exists and `force=false`; the input is a compound archive, or seekable zstd and `force=false`; `output_path` is the input file; bad `frame_size`; body is not valid JSON |
+| `400 Bad Request` | Output file exists and `force=false`; the input is not text, or seekable zstd and `force=false`; `output_path` is the input file; bad `frame_size`; body is not valid JSON |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
 | `409 Conflict` | A task that holds the input path or the output path is already running: a compress or an index task of the input, or a compress task writing the same output |

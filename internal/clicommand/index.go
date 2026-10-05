@@ -15,6 +15,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/analyzer"
 	"github.com/wlame/rx-go/internal/config"
+	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
@@ -172,9 +173,6 @@ func (r *indexBuildResult) skip(path, reason string) {
 func belowThresholdReason(size, thresholdBytes int64) string {
 	return fmt.Sprintf("file size %d bytes is below threshold %d bytes", size, thresholdBytes)
 }
-
-// notTextReason words the skip of a binary file, such as a .tar.gz.
-const notTextReason = "not a text file"
 
 // runIndex dispatches based on the mutually-exclusive mode flags.
 // Precedence (Python parity): --delete > --info > build.
@@ -374,7 +372,9 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	checkStorable := sync.OnceValue(index.CheckStorable)
 
 	for _, path := range filesToIndex {
-		info, err := os.Stat(path)
+		// The file is pinned (checked and tied to the file it leads to
+		// now) and every look at it below goes through the pin.
+		src, err := paths.Pin(path)
 		if err != nil {
 			result.Errors = append(result.Errors, indexErrorItem{
 				Path:     path,
@@ -383,16 +383,28 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			})
 			continue
 		}
+		info := src.Info()
 		// Below-threshold files are skipped rather than indexed, and the
 		// command still exits 0; rx-python does the same.
 		if !p.analyze && info.Size() < thresholdBytes {
 			result.skip(path, belowThresholdReason(info.Size(), thresholdBytes))
 			continue
 		}
-		// A binary file, such as a .tar.gz, has no lines to index;
-		// rx-python skips these too.
-		if !index.IsTextFile(path) {
-			result.skip(path, notTextReason)
+		// What the file is, by the rule every command applies
+		// (filekind). A file whose text is not text, such as a .tar.gz
+		// or a binary file, has no lines to index; rx-python skips a
+		// binary file too.
+		kind, err := filekind.OfPinned(src)
+		if err != nil {
+			result.Errors = append(result.Errors, indexErrorItem{
+				Path:     path,
+				Error:    err.Error(),
+				exitCode: exitCodeForPathError(err),
+			})
+			continue
+		}
+		if !kind.IsText() {
+			result.skip(path, kind.NotText)
 			continue
 		}
 
