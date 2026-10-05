@@ -3,6 +3,7 @@ package journal
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -79,36 +80,133 @@ func lz4Stored(t *testing.T, text []byte) []byte {
 	return out[:lz4SizePrefix+n]
 }
 
-func TestDecodeLZ4Prefix_GivesTheStartOfWhatTheBlockHolds(t *testing.T) {
-	texts := map[string][]byte{
-		"repeats":        bytes.Repeat([]byte("MESSAGE=abc"), 200),
-		"words":          randomWords(4<<10, 3),
-		"one long match": append([]byte("COREDUMP="), bytes.Repeat([]byte{0}, 10_000)...),
-		"short":          []byte("SHORT=value of fewer than 65 bytes, but compressed anyway, aaaaaaaaaaaaaa"),
+// lz4Compressor compresses src into dst as one lz4 block and returns the
+// block's size, or 0 when src does not compress.
+type lz4Compressor struct {
+	name     string
+	compress func(src, dst []byte) (int, error)
+}
+
+// lz4Compressors returns pierrec's lz4 compressors: its default one, its
+// port of the reference implementation's fast one, which systemd calls,
+// and its high-compression levels. Each keeps tables it clears on every
+// call, so the returned compressors serve one goroutine.
+func lz4Compressors() []lz4Compressor {
+	reference := &lz4.CompressorCCompat{}
+	compressors := []lz4Compressor{
+		{"fast", func(src, dst []byte) (int, error) { return lz4.CompressBlock(src, dst, nil) }},
+		{"reference fast", reference.CompressBlock},
 	}
-	for name, text := range texts {
-		t.Run(name, func(t *testing.T) {
-			stored := lz4Stored(t, text)
-			for _, want := range []int{1, 9, namePrefixBytes, len(text)} {
-				dst := make([]byte, want)
-				n, _, err := decodeLZ4Prefix(stored, dst)
-				if err != nil || !bytes.Equal(dst[:n], text[:min(want, len(text))]) {
-					t.Errorf("a %d-byte prefix gives %q, %v; want %q", want, dst[:n], err, text[:min(want, len(text))])
-				}
-			}
-		})
+	levels := []lz4.CompressionLevel{lz4.Level1, lz4.Level2, lz4.Level3, lz4.Level4, lz4.Level5, lz4.Level6, lz4.Level7, lz4.Level8, lz4.Level9}
+	for i, level := range levels {
+		hc := &lz4.CompressorHC{Level: level}
+		compressors = append(compressors, lz4Compressor{fmt.Sprintf("high compression %d", i+1), hc.CompressBlock})
+	}
+	return compressors
+}
+
+// lz4PrefixTexts are values whose first bytes the prefix decoder must
+// give: short ones, ones of many sequences, and ones where a long match
+// gives the rest of the name search's 65 bytes, from right after the
+// name, from further on, or ending exactly at the 65th byte.
+var lz4PrefixTexts = [][]byte{
+	bytes.Repeat([]byte("MESSAGE=abc"), 200),
+	randomWords(4<<10, 3),
+	append([]byte("COREDUMP="), bytes.Repeat([]byte{0}, 10_000)...),
+	append([]byte("MESSAGE="), bytes.Repeat([]byte("A"), 16<<10)...),
+	append([]byte("MESSAGE=a match starts after these words: "), bytes.Repeat([]byte("B"), 4<<10)...),
+	append(append([]byte("BLOB="), bytes.Repeat([]byte("ab"), 30)...), append([]byte("|"), randomWords(1<<10, 4)...)...),
+	[]byte("SHORT=value of fewer than 65 bytes, but compressed anyway, aaaaaaaaaaaaaa"),
+}
+
+// FuzzDecodeLZ4Prefix checks the prefix decoder against pierrec's full
+// decoder. The input, compressed by each of pierrec's compressors, gives
+// a block whose prefix of each length is the start of its full decode,
+// and so of the input. The input as a block, whatever its bytes, ends the
+// decoder without a panic, and where the full decoder accepts it, the
+// prefix is the start of the full decode.
+func FuzzDecodeLZ4Prefix(f *testing.F) {
+	for _, text := range lz4PrefixTexts {
+		f.Add(text)
+	}
+	compressors := lz4Compressors()
+	f.Fuzz(func(t *testing.T, text []byte) {
+		for _, c := range compressors {
+			checkLZ4PrefixOfCompressed(t, c, text)
+		}
+		checkLZ4PrefixOfAnyBlock(t, text)
+	})
+}
+
+// checkLZ4PrefixOfCompressed compresses text with c and checks that every
+// prefix the decoder gives of the block is the start of the full decode.
+func checkLZ4PrefixOfCompressed(t *testing.T, c lz4Compressor, text []byte) {
+	t.Helper()
+	stored := make([]byte, lz4SizePrefix+lz4.CompressBlockBound(len(text)))
+	le.PutUint64(stored, uint64(len(text)))
+	n, err := c.compress(text, stored[lz4SizePrefix:])
+	if err != nil {
+		t.Fatalf("%s: compress %d bytes: %v", c.name, len(text), err)
+	}
+	if n == 0 {
+		return // text lz4 does not compress, which systemd stores as it is
+	}
+	stored = stored[:lz4SizePrefix+n]
+	full := make([]byte, len(text))
+	if m, err := lz4.UncompressBlock(stored[lz4SizePrefix:], full); err != nil || m != len(text) || !bytes.Equal(full, text) {
+		t.Fatalf("%s: the full decode of the block gives %d bytes, %v; want the %d-byte text", c.name, m, err, len(text))
+	}
+	for _, size := range []int{1, 9, namePrefixBytes, len(full)} {
+		dst := make([]byte, size)
+		got, _, err := decodeLZ4Prefix(stored, dst)
+		if want := full[:min(size, len(full))]; err != nil || !bytes.Equal(dst[:got], want) {
+			t.Errorf("%s: a %d-byte prefix gives %d bytes, %v; want the first %d of the full decode", c.name, size, got, err, len(want))
+		}
+	}
+}
+
+// checkLZ4PrefixOfAnyBlock decodes the prefix of block, any bytes, and
+// checks it against pierrec's full decode where that accepts the block.
+// pierrec takes an empty block for an empty text; systemd's decoder
+// (LZ4_decompress_safe_partial) and decodeLZ4Prefix refuse it.
+func checkLZ4PrefixOfAnyBlock(t *testing.T, block []byte) {
+	t.Helper()
+	stored := append(make([]byte, lz4SizePrefix), block...)
+	dst := make([]byte, namePrefixBytes)
+	n, _, err := decodeLZ4Prefix(stored, dst)
+	full := make([]byte, 64<<10)
+	m, fullErr := lz4.UncompressBlock(block, full)
+	if len(block) == 0 || fullErr != nil {
+		return
+	}
+	if want := full[:min(m, len(dst))]; err != nil || !bytes.Equal(dst[:n], want) {
+		t.Errorf("a block the full decoder accepts gives %q, %v; want %q", dst[:n], err, want)
 	}
 }
 
 func TestDecodeLZ4Prefix_NeedsOnlyTheStoredBytesItDecodes(t *testing.T) {
-	// A long first run of literals, cut after the bytes asked for: the
-	// rest of the run is not needed.
-	text := randomWords(64<<10, 5)
-	stored := lz4Stored(t, text)
-	dst := make([]byte, namePrefixBytes)
-	n, atEnd, err := decodeLZ4Prefix(stored[:lz4SizePrefix+200], dst)
-	if err != nil || atEnd || !bytes.Equal(dst[:n], text[:namePrefixBytes]) {
-		t.Errorf("from 200 stored bytes: %q, at end %v, %v", dst[:n], atEnd, err)
+	texts := map[string][]byte{
+		// A long first run of literals: of its bytes the decoder needs
+		// only those it copies.
+		"a long run of literals": randomWords(64<<10, 5),
+		// A long match after the name, of 1 MiB: its offset comes before
+		// its 4 KiB of length bytes, and the first of these already cover
+		// the bytes still missing.
+		"a long match": append([]byte("COREDUMP="), make([]byte, 1<<20)...),
+	}
+	for name, text := range texts {
+		t.Run(name, func(t *testing.T) {
+			stored := lz4Stored(t, text)
+			const cut = lz4SizePrefix + 200
+			if len(stored) <= cut {
+				t.Fatalf("the text is stored in %d bytes, not more than %d", len(stored), cut)
+			}
+			dst := make([]byte, namePrefixBytes)
+			n, atEnd, err := decodeLZ4Prefix(stored[:cut], dst)
+			if err != nil || atEnd || !bytes.Equal(dst[:n], text[:namePrefixBytes]) {
+				t.Errorf("from %d stored bytes: %q, at end %v, %v", cut, dst[:n], atEnd, err)
+			}
+		})
 	}
 }
 

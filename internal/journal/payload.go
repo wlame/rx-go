@@ -12,7 +12,8 @@ package journal
 // read, and decoded only as far as the decoder must go to give the name
 // (zstd: its first block, and the frame checksum when that block is the
 // last; xz: about 4 KiB of text through its dictionary buffer; lz4: the
-// sequences that hold the name's bytes). So a core dump kept as one field
+// sequences that hold the name's bytes, and of a long match only its
+// first length bytes). So a core dump kept as one field
 // costs at most 129 KiB of reading, and a value of a few stored bytes
 // that decodes to 128 MiB costs a block of decoding, not 128 MiB per
 // entry that lists it. Such a value is never damage for its size. A
@@ -27,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
@@ -86,13 +88,16 @@ const namePrefixBytes = 64 + 1
 // the frame's and the block's headers and the checksum, and so the start
 // of the text of any zstd value a compressor writes; it is more than an
 // xz stream needs for its first 4 KiB of text (a block header of at most
-// 1 KiB and one LZMA2 chunk of at most 64 KiB). For lz4 it holds the
-// name of a value whose first run of literals is under about 32 MiB: a
-// run of L literal bytes is announced by about L/255 length bytes before
-// its first byte, so a value that starts with a longer run, of bytes lz4
-// finds no match in, keeps its name further on than the limit and is
-// damage here, though systemd, which reads the length bytes however many
-// there are, gives its name.
+// 1 KiB and one LZMA2 chunk of at most 64 KiB). For lz4, only a run of
+// literals can place the name beyond the limit, never a match. A run of
+// L literal bytes is announced by about L/255 length bytes before its
+// first byte, so when the first 65 bytes of a value's text reach into a
+// run longer than about 32 MiB, of bytes lz4 finds no match in, the name
+// search needs more stored bytes than the limit and the value is damage
+// here, though systemd, which reads the length bytes however many there
+// are, gives its name. A match of any length is written as its offset
+// and then its length bytes, and the name search stops reading those
+// once the match covers the bytes it still lacks (decodeLZ4Prefix).
 const nameStoredLimit = 129 << 10
 
 // readData reads the DATA object at offset and returns its payload when
@@ -259,7 +264,8 @@ func (s *storedReader) Read(p []byte) (int, error) {
 // The decoder goes only as far as it must to give those bytes: for zstd
 // its first block, and the frame checksum when that block is the last;
 // for xz about 4 KiB of text, through its dictionary buffer; for lz4 the
-// sequences that hold them.
+// sequences that hold them, and of a long match only the length bytes
+// those bytes need.
 func (w *walker) decodeName(stored []byte, cut bool, compressed uint8, codec string, what objectRef) ([]byte, error) {
 	var n int
 	var atEnd bool
@@ -304,9 +310,16 @@ var errLZ4Truncated = fmt.Errorf("%w: the lz4 block ends inside a sequence", err
 // text and the match, copied from there byte by byte (it may overlap
 // what it writes). The last sequence ends after its literals.
 //
-// It stops as soon as dst is full: of a long first run of literals, it
-// needs only the bytes it copies. A match that reaches before the start
-// of the text, or a block that ends inside a sequence, is an error.
+// It stops as soon as dst is full, and reads only the stored bytes that
+// dst needs. Of a long run of literals, those are all of its length
+// bytes, which come before the literals, and the literals it copies. Of a
+// long match, those are its offset and only the length bytes that cover
+// what dst still lacks: they come after the offset, and each one after
+// can only make the match longer. So a value whose text is a short name
+// and a match of tens of MiB, written with one length byte per 255 bytes
+// of the match, gives its name from a few stored bytes. A match at
+// offset 0 or one that reaches before the start of the text, or a block
+// that ends inside a sequence before dst is full, is an error.
 //
 // It does not read the size the value declares, as systemd's partial
 // decode does not. A declared size shorter than the text must not cut
@@ -321,9 +334,11 @@ func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 	src := stored[lz4SizePrefix:]
 	ip := 0 // the next byte of src to read
 	// length reads the continuation bytes of a length whose 4 bits were
-	// 15, starting from base.
-	length := func(base int) (int, bool) {
-		for {
+	// 15, starting from base. It stops early, with the length read so
+	// far, once that reaches needed: each byte after can only add to it.
+	// It returns false when src ends inside the length bytes it reads.
+	length := func(base, needed int) (int, bool) {
+		for base < needed {
 			if ip >= len(src) {
 				return 0, false
 			}
@@ -334,6 +349,7 @@ func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 				return base, true
 			}
 		}
+		return base, true
 	}
 	for n < len(dst) {
 		if ip >= len(src) {
@@ -343,8 +359,10 @@ func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 		ip++
 		literals := int(token >> 4)
 		if literals == 15 {
+			// The literals come after their length bytes, so every one of
+			// those is read, however many there are.
 			var ok bool
-			if literals, ok = length(literals); !ok {
+			if literals, ok = length(literals, math.MaxInt); !ok {
 				return n, true, errLZ4Truncated
 			}
 		}
@@ -371,8 +389,11 @@ func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 		}
 		match := int(token&15) + 4
 		if token&15 == 15 {
+			// The match copies text already decoded, so its length bytes
+			// are read only until the match covers the bytes dst still
+			// lacks; it then fills dst and the loop ends.
 			var ok bool
-			if match, ok = length(match); !ok {
+			if match, ok = length(match, len(dst)-n); !ok {
 				return n, true, errLZ4Truncated
 			}
 		}
