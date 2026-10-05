@@ -231,6 +231,48 @@ func (j Journal) EntryPayloads(i int) [][]byte {
 	return payloads
 }
 
+// ZeroEntry clears the bytes of entry i in data, a copy of j.Bytes: an
+// object of size 0, which a reader leaves out as damaged while it reads
+// every other entry.
+func (j Journal) ZeroEntry(data []byte, i int) {
+	e := j.Entries[i]
+	clear(data[e.Offset:e.End()])
+}
+
+// BreakList changes the type byte of the ENTRY_ARRAY object a in data, a
+// copy of j.Bytes, to that of a DATA object: a reader's walk of the entry
+// list ends there, and the entries from j.Arrays[a].FirstEntry on are not
+// reached.
+func (j Journal) BreakList(data []byte, a int) {
+	data[j.Arrays[a].Offset] = ObjectData
+}
+
+// messagesRealtime is the realtime of the first entry MessageEntries
+// writes: 2026-01-15T08:00:00Z, in microseconds since the epoch.
+const messagesRealtime = 1_768_464_000_000_000
+
+// MessageEntries returns one entry per message, each with a host name, an
+// identifier, a pid and its message, one second after the entry before
+// it from 2026-01-15T08:00:00Z: an entry a reader shows as one line,
+// `2026-01-15T08:00:00.000000+00:00 test-host demo-app[4101]: MESSAGE`,
+// for a message of one line.
+func MessageEntries(messages ...string) []Entry {
+	entries := make([]Entry, len(messages))
+	for i, message := range messages {
+		entries[i] = Entry{
+			Realtime:  messagesRealtime + uint64(i)*1_000_000, // #nosec G115 -- a small loop index
+			Monotonic: 1_000 + uint64(i),                      // #nosec G115 -- a small loop index
+			Payloads: [][]byte{
+				Payload("_HOSTNAME", []byte("test-host")),
+				Payload("SYSLOG_IDENTIFIER", []byte("demo-app")),
+				Payload("_PID", []byte("4101")),
+				Payload("MESSAGE", []byte(message)),
+			},
+		}
+	}
+	return entries
+}
+
 // Write returns a journal holding entries, written as opts says. It
 // fails the test when a value cannot be compressed.
 func Write(tb testing.TB, entries []Entry, opts Options) Journal {

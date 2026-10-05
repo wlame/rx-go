@@ -71,6 +71,10 @@ func TestBuild_PythonParity_ReadmeFixture(t *testing.T) {
 	if idx.LineEnding == nil || *idx.LineEnding != want.LineEnding {
 		t.Errorf("LineEnding: got %v, want %q", idx.LineEnding, want.LineEnding)
 	}
+	// A plain file is not a journal: the journal section is null.
+	if idx.Journal != nil {
+		t.Errorf("Journal: got %+v, want nil", idx.Journal)
+	}
 
 	if len(idx.LineIndex) != len(want.LineIndex) {
 		t.Fatalf("LineIndex length: got %d, want %d (Go: %+v)\n(Python: %+v)",

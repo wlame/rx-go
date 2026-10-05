@@ -83,12 +83,20 @@ import (
 // signature findings that replace it live in a cache of their own. A
 // version 10 index may hold an analysis and is treated as absent.
 //
+// Version 12: the index of a systemd journal records a journal section
+// (journal): the entries its text shows, those left out as damaged and
+// those not reached, the first damaged entry with the reason, and the
+// header's state, mode, counter id and first and last sequence numbers.
+// It is null for every other file. A version 11 index is treated as
+// absent: one of a journal has no such section. rx-python's model has
+// no such field.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 11
+const Version = 12
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp

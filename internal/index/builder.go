@@ -306,6 +306,18 @@ func buildText(
 		return nil, fmt.Errorf("%s: %w", sourcePath, err)
 	}
 
+	// A journal's index records what the read of its text found: the
+	// entries shown, left out as damaged and not reached. A damaged
+	// journal is indexed all the same, since its text is a fixed
+	// function of its bytes; the section says what that text lacks.
+	if src.kind.IsJournal() {
+		section, err := journalSection(src, text)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", sourcePath, err)
+		}
+		idx.Journal = section
+	}
+
 	// gated helper — CLI mode skips observation.
 	prometheus.ObserveIndexBuildDuration(time.Since(started))
 	return idx, nil

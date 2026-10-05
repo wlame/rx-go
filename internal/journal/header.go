@@ -32,6 +32,25 @@ const (
 	stateCount = 3
 )
 
+// stateNames are the names of the valid states, indexed by the state.
+var stateNames = [stateCount]string{
+	StateOffline:  "offline",
+	StateOnline:   "online",
+	StateArchived: "archived",
+}
+
+// String returns the state's name: "offline", "online" or "archived",
+// or "state N" for a value ReadHeader refuses.
+//
+// Go note: a String method makes State a fmt.Stringer, so fmt's %s and
+// %v print the name.
+func (s State) String() string {
+	if s >= stateCount {
+		return fmt.Sprintf("state %d", uint8(s))
+	}
+	return stateNames[s]
+}
+
 // Header is what rx reads of a journal's header. Every field is stored
 // little-endian at a fixed offset below 208, the size of the smallest
 // header systemd writes, so every header has them all.

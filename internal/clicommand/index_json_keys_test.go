@@ -9,9 +9,10 @@ package clicommand
 // rx-python, because rx-python is not installed in this repo's test
 // environment. rx-python asserts the same set from its side, in
 // tests/test_index_json_key_parity.py — the two lists have to be edited
-// together, which is the point. `time_index` is the one key rx-python's
-// list does not have yet: rx-go records a time section in every index,
-// and rx-python, paused, has no such field.
+// together, which is the point. `time_index` and `journal` are the keys
+// rx-python's list does not have yet: rx-go records a time section and a
+// journal section (null for a file that is not a systemd journal) in
+// every index, and rx-python, paused, has no such fields.
 
 import (
 	"bytes"
@@ -35,6 +36,7 @@ var expectedIndexEntryKeys = []string{
 	"file_type",
 	"index_entries",
 	"index_path",
+	"journal",
 	"line_count",
 	"line_ending",
 	"line_index",

@@ -136,6 +136,37 @@ type UnifiedFileIndex struct {
 	// was recognized in the first mebibyte of the text. rx-go only:
 	// rx-python's model has no such field.
 	TimeIndex *TimeIndex `json:"time_index"`
+
+	// Journal is what the build found reading a systemd journal: the
+	// entries it showed, left out and did not reach, and the facts of
+	// the journal's header. Null for a file that is not a journal.
+	// rx-go only: rx-python's model has no such field.
+	Journal *JournalInfo `json:"journal"`
+}
+
+// JournalInfo is the journal section of a line index: what a full read
+// of a systemd journal's text found, and some facts of its header. A
+// damaged journal is read as far as it can be: an entry that cannot be
+// read whole is left out, and the entries after the place where the
+// entry list breaks off are not reached. Entries is always Shown +
+// WithoutMessage + LeftOut + NotReached.
+//
+// The `_` field makes the schema itself nullable, for the reason
+// LineLengthStats gives.
+type JournalInfo struct {
+	_                 struct{} `nullable:"true"`
+	Entries           int64    `json:"entries" doc:"The entries the journal's header counts."`
+	Shown             int64    `json:"shown" doc:"The entries in the text, each one line, or more for a message of several lines."`
+	WithoutMessage    int64    `json:"without_message" doc:"The entries with no MESSAGE field, which journalctl does not show either."`
+	LeftOut           int64    `json:"left_out" doc:"The damaged entries left out of the text: an entry any object of which cannot be read."`
+	NotReached        int64    `json:"not_reached" doc:"The entries after the place where the journal's entry list breaks off, which no read can reach."`
+	FirstDamagedEntry *int64   `json:"first_damaged_entry" doc:"The 1-based number, in the order of the entry list, of the first entry left out or not reached; null when none is."`
+	DamageReason      *string  `json:"damage_reason" doc:"Why that entry was left out or not reached; null when none is."`
+	State             string   `json:"state" enum:"online,offline,archived" doc:"The header's state: online while a writer has the journal open (or had it when it stopped without closing it), offline when closed, archived when rotated away."`
+	Compact           bool     `json:"compact" doc:"Whether the journal is in compact mode."`
+	SeqnumID          string   `json:"seqnum_id" doc:"The id of the counter that numbered the entries, as 32 lowercase hex digits; the journals of one journald share it."`
+	HeadSeqnum        uint64   `json:"head_seqnum" doc:"The sequence number of the first entry, as the header gives it."`
+	TailSeqnum        uint64   `json:"tail_seqnum" doc:"The sequence number of the last entry, as the header gives it."`
 }
 
 // TimeIndex is the time section of a line index: the timestamp format

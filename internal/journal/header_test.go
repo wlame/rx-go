@@ -186,3 +186,13 @@ func TestReadHeader_ReturnsAnIOErrorWrapped(t *testing.T) {
 		t.Errorf("ReadHeader error = %v, want one wrapping %v and not ErrUnreadable", err, failure)
 	}
 }
+
+func TestState_StringNamesEachState(t *testing.T) {
+	for state, want := range map[State]string{
+		StateOffline: "offline", StateOnline: "online", StateArchived: "archived", State(7): "state 7",
+	} {
+		if got := state.String(); got != want {
+			t.Errorf("State(%d).String() = %q, want %q", uint8(state), got, want)
+		}
+	}
+}

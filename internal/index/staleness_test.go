@@ -64,7 +64,7 @@ func TestLoadRefusesAnIndexWrittenByAnotherVersion(t *testing.T) {
 	writeNumberedFile(t, src, 200)
 	idx := buildIndexFor(t, src)
 
-	for _, version := range []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 999} {
+	for _, version := range []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 999} {
 		idx.Version = version
 		raw, err := json.Marshal(idx)
 		if err != nil {
@@ -91,8 +91,8 @@ func TestLoadRefusesAnIndexWrittenByAnotherVersion(t *testing.T) {
 // analysis_performed, analysis_window_lines, analysis_detector_set,
 // anomalies, anomaly_summary and, in its answers, anomaly_count. It is
 // an index of another version: absent, not logged as damaged, and the
-// next build writes a format 11 index without those fields in its
-// place.
+// next build writes an index of the current format without those
+// fields in its place.
 func TestLoadFromPath_AFormat10IndexWithAnAnalysisIsAbsent(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	src := filepath.Join(t.TempDir(), "app.log")
@@ -144,8 +144,8 @@ func TestLoadFromPath_AFormat10IndexWithAnAnalysisIsAbsent(t *testing.T) {
 	if err := json.Unmarshal(stored, &rebuiltDoc); err != nil {
 		t.Fatalf("parse rebuilt index: %v", err)
 	}
-	if rebuilt.Version != 11 || rebuiltDoc["version"] != float64(11) {
-		t.Errorf("rebuilt index has version %d (stored %v), want 11", rebuilt.Version, rebuiltDoc["version"])
+	if rebuilt.Version != Version || rebuiltDoc["version"] != float64(Version) {
+		t.Errorf("rebuilt index has version %d (stored %v), want %d", rebuilt.Version, rebuiltDoc["version"], Version)
 	}
 	for _, field := range []string{
 		"analysis_performed", "analysis_window_lines", "analysis_detector_set",
