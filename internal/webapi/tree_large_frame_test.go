@@ -10,9 +10,12 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/ulikunitz/xz"
+
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/seekable"
 	"github.com/wlame/rx-go/internal/testutil/seekablefile"
+	"github.com/wlame/rx-go/internal/testutil/xzfile"
 )
 
 // largeFrameDir is a directory holding two seekable files of about
@@ -89,6 +92,65 @@ func TestTree_FilesDeclaringLargeFramesAreListedInAFewMebibytes(t *testing.T) {
 	for _, entry := range body.Entries {
 		if entry.CompressionFormat == nil || *entry.CompressionFormat != "zstd" {
 			t.Errorf("%s: compression_format = %v, want zstd", entry.Name, entry.CompressionFormat)
+		}
+		if entry.IsText == nil || !*entry.IsText {
+			t.Errorf("%s: is_text = %v, want true", entry.Name, entry.IsText)
+		}
+	}
+}
+
+// A listing classifies every xz file in it too. An xz block header names
+// the dictionary the decoder reserves, so a 64-byte file could cost
+// gigabytes; the probe refuses a dictionary above its limit before
+// reserving it, and takes the file for text. Before, each of these
+// files cost the 2 GiB its header names.
+func TestTree_XzFilesDeclaringHugeDictionariesAreListedInAFewMebibytes(t *testing.T) {
+	small := xzfile.Encode(t, []byte("hello\n"), xz.WriterConfig{})
+	dir := t.TempDir()
+	for _, name := range []string{"a.xz", "b.xz", "c.xz"} {
+		if err := os.WriteFile(filepath.Join(dir, name), xzfile.WithDictionaryCode(t, small, 0, 38), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := paths.SetSearchRoots([]string{dir}); err != nil {
+		t.Fatalf("set roots: %v", err)
+	}
+	t.Cleanup(paths.Reset)
+	ts := newTestServer(t)
+
+	var body struct {
+		Entries []struct {
+			Name              string  `json:"name"`
+			IsText            *bool   `json:"is_text"`
+			CompressionFormat *string `json:"compression_format"`
+		} `json:"entries"`
+	}
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	resp, err := http.Get(ts.URL + "/v1/tree?path=" + dir) //nolint:noctx // test server
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	runtime.ReadMemStats(&after)
+
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("GET /v1/tree allocated %d KiB", allocated>>10)
+	const budget = 16 << 20
+	if allocated > budget {
+		t.Errorf("GET /v1/tree allocated %d MiB for three files of %d bytes; budget %d MiB",
+			allocated>>20, len(small), budget>>20)
+	}
+	if len(body.Entries) != 3 {
+		t.Fatalf("got %d entries, want 3: %+v", len(body.Entries), body.Entries)
+	}
+	for _, entry := range body.Entries {
+		if entry.CompressionFormat == nil || *entry.CompressionFormat != "xz" {
+			t.Errorf("%s: compression_format = %v, want xz", entry.Name, entry.CompressionFormat)
 		}
 		if entry.IsText == nil || !*entry.IsText {
 			t.Errorf("%s: is_text = %v, want true", entry.Name, entry.IsText)
