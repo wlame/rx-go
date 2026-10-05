@@ -54,7 +54,7 @@ func compressOne(t *testing.T, p compressParams) (map[string]any, error) {
 	t.Helper()
 	var buf bytes.Buffer
 	p.jsonOutput = true
-	runErr := runCompress(&buf, p)
+	runErr := runCompress(context.Background(), &buf, p)
 	var decoded compressResult
 	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode: %v (%s)", err, buf.String())

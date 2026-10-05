@@ -92,6 +92,17 @@ its hidden temporary file and nothing under the output name.
 `--output` and `--output-dir` are mutually exclusive. `--output` is
 only valid with exactly one input path.
 
+Two input paths that would be compressed to one output are refused
+before anything is written, with or without `--force`, and the command
+exits 2: `rx compress app.log app.log.gz` (both default to
+`app.log.zst`), the same path given twice, or two inputs with one
+default name under `--output-dir`. Compress them in separate commands
+and name another output with `--output`.
+
+`Ctrl-C` (SIGINT) or SIGTERM stops the encoding: the temporary file is
+removed, nothing is written under the output name, files after the
+current one are not started, and the command exits 5.
+
 When search roots are configured, the destination is validated against
 them exactly like the input path: `--output`, `--output-dir` and the
 derived default output path must all resolve inside a root, or the file
