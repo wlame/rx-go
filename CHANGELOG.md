@@ -7,13 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- rx reads systemd journal files: `system.journal`, its
+  `system@….journal` archives and any other file in journald's binary
+  format, regular or compact, with values stored plain or compressed
+  with xz, lz4 or zstd. A journal is recognized by its first bytes
+  (`LPKSHHRH`), whatever its name: a journal named `app.log` is a
+  journal, and a text file named `system.journal` is text. Its text is,
+  entry by entry, exactly what
+  `journalctl --file=F --no-pager --utc -q -o short-iso-precise` of
+  systemd 257 prints for it, and every command works on that text as on
+  the decompressed text of a gzip file: `rx trace` (a directory search
+  includes journals), `rx samples` by line, offset and time, `rx index`,
+  `rx time-range`, the findings of `rx trace --signatures`, `rx scan`
+  and `POST /v1/findings`, and `rx compress`, which writes the text as
+  seekable zstd under the journal's whole name with `.zst` added
+  (`system.journal.zst`). Line numbers and byte offsets refer to the
+  text. Answers report `is_compressed: true` and
+  `compression_format: "journal"`, and a journal's line index has
+  `file_type: "compressed"`. An entry rx cannot read whole (a damaged or
+  cut-short journal) is left out of the text, and the entries after it
+  are read. A journal whose header rx cannot read (an incompatible flag
+  rx does not know, a header cut short) is refused by every command as
+  `not a text file: a systemd journal rx cannot read: <why>`, and
+  `GET /v1/tree` lists it with `is_text: false`. A gzip copy of a
+  journal stays a binary file. rx reads journals itself, with no
+  `journalctl`, on every system rx runs on; the lz4 values are decoded
+  with the new dependency pierrec/lz4/v4 4.1.33 (BSD-3-Clause license).
+
 ### Changed
 
 - Dependencies updated: huma 2.39.1, chi 5.3.1, klauspost/compress
   1.19.1, the Prometheus client 1.24.1 and its model 0.6.3,
-  ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0. New: pierrec/lz4/v4
-  4.1.33 (BSD-3-Clause license), which decodes the lz4-compressed values
-  of systemd journal files.
+  ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0 (and pierrec/lz4/v4
+  4.1.33 added, see Added).
 
 ### Fixed
 
