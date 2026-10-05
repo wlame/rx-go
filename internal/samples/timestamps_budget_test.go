@@ -107,7 +107,7 @@ func TestBudget_LastTimestampReadsOneStepFromTheEnd(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = f.Close() })
 	text := counting.NewReaderAt(f)
-	stamp, found, err := lastStampFromEnd(context.Background(), text, size, parserFor(t, textOf(lines)))
+	stamp, found, err := lastStampFromEnd(context.Background(), text, size, parserFor(t, textOf(lines)), size)
 	if err != nil || !found || stamp.Ms != lines[len(lines)-1].ms {
 		t.Fatalf("last stamp %+v, %v, %v; want %d", stamp, found, err, lines[len(lines)-1].ms)
 	}
@@ -203,7 +203,7 @@ func TestStampReaders_AgreeWithTheIndexWalk(t *testing.T) {
 	if _, _, length, _ := reader.next(); length != 0 {
 		t.Fatalf("a line after the last: %d bytes", length)
 	}
-	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parser)
+	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parser, int64(len(text)))
 	if err != nil || !found || got != lastWant {
 		t.Fatalf("last stamp %+v %v %v, want %+v", got, found, err, lastWant)
 	}
@@ -218,7 +218,7 @@ func TestLastStampFromEnd_StepsBackPastATimelessTail(t *testing.T) {
 		b.WriteString("    at a frame of a very long traceback\n")
 	}
 	text := b.Bytes()
-	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parserFor(t, text[:70]))
+	got, found, err := lastStampFromEnd(context.Background(), bytes.NewReader(text), int64(len(text)), parserFor(t, text[:70]), int64(len(text)))
 	if err != nil || !found || got.Ms != timeBase+1000 {
 		t.Fatalf("last stamp %+v %v %v, want 07:30:01", got, found, err)
 	}
@@ -329,7 +329,7 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	perStep := int64(timestamps.WindowBytes + 1 + 4096)
 
 	plain := counting.NewReaderAt(bytes.NewReader(text))
-	stamp, found, err := lastStampFromEnd(context.Background(), plain, int64(len(text)), parser)
+	stamp, found, err := lastStampFromEnd(context.Background(), plain, int64(len(text)), parser, int64(len(text)))
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("plain: last stamp %+v %v %v", stamp, found, err)
 	}
@@ -354,7 +354,7 @@ func TestBudget_LastTimestampReadsACRLFTailOnce(t *testing.T) {
 	}
 	file := counting.NewReaderAt(f)
 	compressed := &seekableTextAt{ctx: context.Background(), file: file, table: table, decoder: seekable.NewDecoder()}
-	stamp, found, err = lastStampFromEnd(context.Background(), compressed, int64(len(text)), parser)
+	stamp, found, err = lastStampFromEnd(context.Background(), compressed, int64(len(text)), parser, int64(len(text)))
 	if err != nil || !found || stamp.Ms != timeBase {
 		t.Fatalf("seekable: last stamp %+v %v %v", stamp, found, err)
 	}

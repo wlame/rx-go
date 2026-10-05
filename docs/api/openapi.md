@@ -61,7 +61,7 @@ Endpoints are grouped by `tag` in the spec and UI:
 |---|---|
 | General | `/health` |
 | Search | `/v1/trace` |
-| Context | `/v1/samples` |
+| Context | `/v1/samples`, `/v1/time-range` |
 | Indexing | `GET /v1/index`, `POST /v1/index` |
 | Operations | `POST /v1/compress`, `GET /v1/tasks/*` |
 | FileTree | `/v1/tree` |

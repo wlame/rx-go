@@ -33,12 +33,21 @@ const backwardStepMs = 1000
 // an *os.File passed as r is left where it was, and a walk that reads
 // the same handle afterwards starts at its beginning.
 func DetectTimeFormat(r io.ReaderAt, size int64, kind filekind.Kind) (timestamps.Format, bool, error) {
+	format, ok, _, err := DetectTimeFormatAndHead(r, size, kind)
+	return format, ok, err
+}
+
+// DetectTimeFormatAndHead is DetectTimeFormat that also returns the
+// head of the text it read (at most timestamps.SampleBytes bytes), for
+// a caller that looks for the first timestamp in it without reading the
+// head a second time.
+func DetectTimeFormatAndHead(r io.ReaderAt, size int64, kind filekind.Kind) (timestamps.Format, bool, []byte, error) {
 	head, err := filekind.ReadTextHead(r, size, kind, timestamps.SampleBytes)
 	if err != nil {
-		return timestamps.Format{}, false, fmt.Errorf("read the head of the text: %w", err)
+		return timestamps.Format{}, false, nil, fmt.Errorf("read the head of the text: %w", err)
 	}
 	format, ok := timestamps.Detect(head)
-	return format, ok, nil
+	return format, ok, head, nil
 }
 
 // LineStamp returns the own timestamp of one line of a file's text, as

@@ -14,7 +14,8 @@ import (
 // quoted with output.Quote (Python-shlex-compatible).
 //
 // operation names a row of cliCommandTable: "trace", "samples",
-// "index_get", "index_post" or "compress"; an unknown name renders "".
+// "time_range", "index_get", "index_post" or "compress"; an unknown
+// name renders "".
 // params holds the request's values keyed by request field name; CLIArg
 // lists the Go types a value may have.
 //
@@ -155,6 +156,10 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "before_context", Flag: "before", Kind: ArgFlag, Absent: sameAsField("context")},
 			{Field: "after_context", Flag: "after", Kind: ArgFlag, Absent: sameAsField("context")},
 		},
+	},
+	"time_range": {
+		Subcommand: "time-range",
+		Args:       []CLIArg{{Field: "path", Kind: ArgPositional}},
 	},
 	"index_get": {
 		Subcommand: "index",
