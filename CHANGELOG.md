@@ -129,6 +129,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` no longer writes a trace-cache entry for piped input. The
+  input is copied to a temporary file that is deleted when the command
+  ends, so every trace of 50 MB or more of piped input (the large-file
+  size) left an entry nothing could ever read or remove. A file named
+  beside `-` is still cached.
+
 - A relative `RX_CACHE_DIR` or `XDG_CACHE_HOME` is now made absolute
   against the directory `rx` starts in. It used to stay relative, so
   the cache was looked up under whatever directory a command ran from,

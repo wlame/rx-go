@@ -31,6 +31,12 @@ type Options struct {
 	ContextBefore int
 	ContextAfter  int
 	NoCache       bool // true = don't read or write the trace cache
+	// UncachedPaths are files, spelled as in the paths given to
+	// RunWithOptions, whose trace cache is neither read nor written,
+	// whatever NoCache says. The CLI lists the temporary file it spools
+	// piped input to: the file is deleted when the command ends, so an
+	// entry for it could never be read again.
+	UncachedPaths []string
 	NoIndex       bool // true = don't consult the unified index
 	// NoRecursive controls directory expansion: when false (the
 	// zero-value default), `rx trace <dir>` walks the full subtree
@@ -58,6 +64,12 @@ type Options struct {
 	// test seam, unexported like afterScan: a test uses it to retarget
 	// a link or replace a file at the last moment before the read.
 	beforeRead func()
+}
+
+// usesTraceCache reports whether the trace cache is read and written
+// for the file at path.
+func (o *Options) usesTraceCache(path string) bool {
+	return !o.NoCache && !slices.Contains(o.UncachedPaths, path)
 }
 
 // applyDefaults fills zero fields with sane defaults.
@@ -212,7 +224,7 @@ func (e *Engine) RunWithOptions(
 		// whose seek table does not describe it is read as the plain
 		// zstd stream it still is, below.
 		if tbl, ok := seekTableOf(src); ok {
-			if !opts.NoCache {
+			if opts.usesTraceCache(fp) {
 				if info, cerr := GetCompressedCacheInfo(fp, patterns, opts.RgExtraArgs); cerr == nil {
 					buckets = append(buckets, fileBucket{
 						kind: "cached-seekable", path: fp, src: src, size: sz, info: fi, cacheInfo: info,
@@ -232,7 +244,7 @@ func (e *Engine) RunWithOptions(
 			continue
 		}
 		// Regular files — try cache if large enough.
-		if !opts.NoCache && sz >= largeFileThresholdBytes() {
+		if opts.usesTraceCache(fp) && sz >= largeFileThresholdBytes() {
 			if cached, cerr := GetCachedScan(fp, patterns, opts.RgExtraArgs); cerr == nil {
 				buckets = append(buckets, fileBucket{
 					kind: "cached-regular", path: fp, src: src, size: sz, info: fi, cachedMatch: cached.Matches,
@@ -1232,7 +1244,8 @@ func dedupStrings(in []string) []string {
 // answer is to be written to the trace cache, and if so starts the
 // record with the file's identity as info saw it. It returns nil when
 // the answer is not to be cached: the cache is off, a result cap is
-// set, or the file is below the size threshold for its kind.
+// set, the file is one the cache is not used for (UncachedPaths), or
+// the file is below the size threshold for its kind.
 //
 // Taking the identity here, before the scan, is what keeps a growing
 // log from being cached as larger than the part that was scanned.
@@ -1240,7 +1253,7 @@ func dedupStrings(in []string) []string {
 // seekable-zstd one, whose lower threshold ShouldCache applies.
 func scanToCache(opts Options, path string, info os.FileInfo, compressionFormat string) *ScannedFile {
 	compressed := compressionFormat != ""
-	if opts.NoCache {
+	if !opts.usesTraceCache(path) {
 		return nil
 	}
 	if !ShouldCache(info.Size(), opts.MaxResults, true, compressed) {
