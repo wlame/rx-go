@@ -13,8 +13,12 @@ type TreeEntry struct {
 	SizeHuman *string `json:"size_human"`
 	// ModifiedAt is RFC 3339 in UTC with six fractional digits, e.g.
 	// "2026-09-06T00:53:24.438322Z". rx-python renders the same string.
-	ModifiedAt        *string `json:"modified_at" format:"date-time"`
-	IsText            *bool   `json:"is_text"`
+	ModifiedAt *string `json:"modified_at" format:"date-time"`
+	IsText     *bool   `json:"is_text"`
+	// NotTextReason says why a file's text is not text, in the words
+	// every command refuses the file with; nil for a text file, a
+	// directory and a file the listing could not open.
+	NotTextReason     *string `json:"not_text_reason" doc:"Why the file is not text, in the words every command refuses it with, starting with 'not a text file': a NUL byte in the first 8 KiB of its text, UTF-16 text, or a systemd journal whose header rx cannot read. Null for a text file, a directory, and a file the listing could not open."`
 	IsCompressed      *bool   `json:"is_compressed"`
 	CompressionFormat *string `json:"compression_format"`
 	IsIndexed         *bool   `json:"is_indexed"`

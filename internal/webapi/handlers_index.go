@@ -309,6 +309,9 @@ func indexResponseFrom(idx *rxtypes.UnifiedFileIndex) rxtypes.IndexResponse {
 		CompressionFormat:     idx.CompressionFormat,
 		DecompressedSizeBytes: idx.DecompressedSizeBytes,
 		CompressionRatio:      idx.CompressionRatio,
+		// The stored journal section as it is, or null for a file that
+		// is not a journal.
+		Journal: idx.Journal,
 	}
 	out.TimeSummary = timeSummaryFrom(idx.TimeIndex)
 	// The line-length group exists only when the statistics were

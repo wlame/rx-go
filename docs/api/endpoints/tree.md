@@ -62,8 +62,8 @@ GET /v1/tree?path=<dir>            # list dir contents
   "path":    "/var/log",
   "parent":  "/var",
   "is_search_root": false,
-  "total_entries": 3,
-  "total_size":    623186112,
+  "total_entries": 4,
+  "total_size":    623190208,
   "total_size_human": "594.3 MiB",
   "entries": [
     {
@@ -82,6 +82,7 @@ GET /v1/tree?path=<dir>            # list dir contents
       "modified_at": "2026-04-18T13:42:10Z",
       "is_compressed": false,
       "is_text":       true,
+      "not_text_reason": null,
       "is_indexed":    true,
       "line_count":    3528914,
       "findings":      {"state": "full", "count": 412}
@@ -94,10 +95,24 @@ GET /v1/tree?path=<dir>            # list dir contents
       "size_human":  "39.1 MiB",
       "modified_at": "2026-04-01T00:05:12Z",
       "is_compressed":      true,
-      "compression_format": "seekable_zstd",
+      "compression_format": "zstd",
       "is_text":            true,
+      "not_text_reason":    null,
       "is_indexed":         false,
       "findings":           null
+    },
+    {
+      "name":        "dump.bin",
+      "path":        "/var/log/dump.bin",
+      "type":        "file",
+      "size":        4096,
+      "size_human":  "4.0 KiB",
+      "modified_at": "2026-04-02T10:00:00Z",
+      "is_compressed":   false,
+      "is_text":         false,
+      "not_text_reason": "not a text file: a NUL byte in its first 8 KiB",
+      "is_indexed":      false,
+      "findings":        null
     }
   ]
 }
@@ -127,8 +142,9 @@ GET /v1/tree?path=<dir>            # list dir contents
 | `size_human` | string | Files only |
 | `children_count` | int | Directories only — non-recursive entry count |
 | `is_compressed` | bool | Files only |
-| `compression_format` | string | Compressed files only — `"gzip"`, `"bz2"`, `"xz"`, `"zstd"` (a seekable zstd file is `"zstd"`), decided by the magic bytes |
-| `is_text` | bool | Files only — false when the first 8 KiB of the file's text (decompressed for a compressed file) hold a NUL byte, the rule every command refuses a file by |
+| `compression_format` | string | Compressed files only — `"gzip"`, `"bz2"`, `"xz"`, `"zstd"` (a seekable zstd file is `"zstd"`) or `"journal"` (a systemd journal), decided by the magic bytes, never by the name |
+| `is_text` | bool | Files only — false when the first 8 KiB of the file's text (decompressed for a compressed file) hold a NUL byte or start as UTF-16 text, or for a systemd journal whose header rx cannot read: the rules every command refuses a file by. A journal whose header rx can read is text |
+| `not_text_reason` | string \| null | Files only — why `is_text` is false, in the words every command refuses the file with: `not a text file: a NUL byte in its first 8 KiB` (`… in the first 8 KiB of its decompressed text` for a compressed file), `not a text file: UTF-16 text, which rx does not decode` (`its decompressed text is UTF-16, …`), or `not a text file: a systemd journal rx cannot read: <why>`. `null` for a text file, a directory, and a file the listing could not open. Since contract 2.1 |
 | `is_indexed` | bool | Files only — whether a line index exists in cache |
 | `line_count` | int64 | Files with an index that has a line count |
 | `findings` | object \| null | Text files only: what the findings cache holds for the file, `{"state": "full" \| "partial", "count": N}` (`count` sums the findings of every current entry, opt-in signatures included); `null` for a directory, a file that is not text, and a file the cache holds nothing current for. Read from the file's `meta.json` alone, its identity compared by the stat the listing already holds, so a listing reads nothing more of the file. Since contract 2.0 |

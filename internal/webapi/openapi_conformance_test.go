@@ -40,6 +40,7 @@ import (
 	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/internal/sigscan"
 	"github.com/wlame/rx-go/internal/tasks"
+	"github.com/wlame/rx-go/internal/testutil/journalfixture"
 )
 
 // goldenResourceURL is the name the golden document is registered under
@@ -338,6 +339,15 @@ func conformanceFixtures(t *testing.T) string {
 	// A chain whose frozen part has no timestamps: an invalid chain.
 	write("broken/x.log", []byte("2025-12-10 07:00:03.000 LINE 2\n"))
 	write("broken/x.log.1", []byte("no time here\n"))
+	// A damaged systemd journal, whose index has a journal section with
+	// a first damaged entry, and one whose header rx cannot read, which
+	// the tree lists with its not_text_reason.
+	if err := os.MkdirAll(filepath.Join(root, "journal"), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeDamagedJournal(t, filepath.Join(root, "journal"), "system.journal")
+	unreadable := copyJournal(t, "basic-none-regular", filepath.Join(root, "journal"), "flags.journal")
+	journalfixture.AddUnknownIncompatibleFlag(t, unreadable)
 	return root
 }
 
@@ -535,6 +545,10 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("trace a seekable zstd file", "/v1/trace", q("path", at("app.log.zst"), "regexp", "ERROR", "max_results", "3"), http.StatusOK)
 	get("samples of a seekable zstd file", "/v1/samples", q("path", at("app.log.zst"), "lines", "2000"), http.StatusOK)
 	get("index of a seekable zstd file", "/v1/index", q("path", at("app.log.zst")), http.StatusOK)
+	journalIndex := post("index a damaged journal", "/v1/index", map[string]any{"path": at("journal/system.journal"), "threshold": 0}, http.StatusOK)
+	run.finishTask("finished index task of a damaged journal", journalIndex)
+	get("index of a damaged journal", "/v1/index", q("path", at("journal/system.journal")), http.StatusOK)
+	get("tree of a directory of journals", "/v1/tree", q("path", at("journal")), http.StatusOK)
 	minimal := post("compress with only input_path", "/v1/compress", map[string]any{"input_path": at("seven.log")}, http.StatusOK)
 	run.finishTask("finished minimal compress task", minimal)
 	failing := post("compress a truncated gzip file", "/v1/compress",

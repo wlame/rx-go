@@ -295,6 +295,8 @@ type IndexResponse struct {
 
 	TimeSummary *TimeSummary `json:"time_summary" doc:"The timestamps of the file's lines; null when no timestamp format is recognized."`
 
+	Journal *JournalInfo `json:"journal" doc:"What the build found reading a systemd journal: the entries its text shows, those left out as damaged and those not reached, and some facts of its header. Null for a file that is not a journal."`
+
 	CLICommand string `json:"cli_command" doc:"The rx command that gives this answer."`
 }
 

@@ -61,7 +61,9 @@ func TestContractVersion_IsTheDeclaredConstant(t *testing.T) {
 
 // Contract 2.0 removed the index analysis and GET /v1/detectors, so
 // /health reports major 2: a viewer that knows only major 1 refuses
-// this server rather than reading fields it no longer sends.
+// this server rather than reading fields it no longer sends. Contract
+// 2.1 added the journal section of the index answers and the tree's
+// not_text_reason, so the minor is 1.
 func TestHealth_ReportsContract2(t *testing.T) {
 	ts := newTestServer(t)
 
@@ -75,7 +77,7 @@ func TestHealth_ReportsContract2(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	if got := body["contract_version"]; got != "2.0" {
-		t.Errorf("contract_version %v, want 2.0", got)
+	if got := body["contract_version"]; got != "2.1" {
+		t.Errorf("contract_version %v, want 2.1", got)
 	}
 }

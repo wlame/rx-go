@@ -59,11 +59,32 @@ GET /v1/index?path=<file>
     "backward_steps":    0,
     "max_backward_ms":   0
   },
+  "journal":         null,
   "cli_command":     "rx index /var/log/audit-2026-03.log --info --json"
 }
 ```
 
 The OpenAPI document names this shape `IndexResponse`.
+
+The `journal` member of a systemd journal's index (a journal whose
+entry 3 is damaged and whose entry list breaks off after entry 4):
+
+```json
+"journal": {
+  "entries":             12,
+  "shown":               3,
+  "without_message":     0,
+  "left_out":            1,
+  "not_reached":         8,
+  "first_damaged_entry": 3,
+  "damage_reason":       "the ENTRY object at offset 1160 has size 0",
+  "state":               "archived",
+  "compact":             false,
+  "seqnum_id":           "5e910d000102030405060708090a0b0c",
+  "head_seqnum":         1,
+  "tail_seqnum":         12
+}
+```
 
 ### Response fields (key selection)
 
@@ -82,6 +103,7 @@ The OpenAPI document names this shape `IndexResponse`.
 | `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line; `null` for a seekable zstd file |
 | `compression_format` | string \| null | For compressed inputs only |
 | `time_summary` | object \| null | The timestamps of the file's lines, from the index's [time section](../../concepts/line-indexes.md#the-time-section): `format` (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted` or `epoch`), `has_zone`, `first_ms` and `last_ms` (the first and the last timestamped line, `null` when no line carries one), `timestamped_lines`, `backward_steps` and `max_backward_ms`. Values are milliseconds since the Unix epoch: UTC instants when `has_zone` is true, the wall-clock time as written, read as if it were UTC, when it is false. `null` when no timestamp format is recognized in the first mebibyte of the text. The per-checkpoint `max_before` array and the `max` line of the stored index are not included; `rx index --json` gives them. Since contract 1.5 |
+| `journal` | object \| null | For a systemd journal, what the build found reading its text: `entries` (the entries the header counts), `shown` (the entries in the text), `without_message` (entries with no `MESSAGE` field, which journalctl does not show either), `left_out` (damaged entries left out of the text), `not_reached` (the entries after the place where the entry list breaks off), with `entries` = `shown` + `without_message` + `left_out` + `not_reached`; `first_damaged_entry` (the 1-based number, in the order of the entry list, of the first entry left out or not reached) and `damage_reason`, both `null` when nothing was damaged; and from the header `state` (`online`, `offline` or `archived`), `compact`, `seqnum_id` (32 lowercase hex digits) and `head_seqnum` and `tail_seqnum`. A damaged journal is indexed all the same: its text, and every line number, is a fixed function of its bytes. `null` for a file that is not a journal. A `POST /v1/index` task's result carries it too. Since contract 2.1 |
 | `cli_command` | string | Equivalent CLI command; see below |
 
 ### The equivalent CLI command

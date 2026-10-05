@@ -289,8 +289,10 @@ a running task gets that task's command. (The task's result, a
 
 Follow it at [`GET /v1/tasks/{task_id}`](tasks.md): operation
 `findings`, `queued` while it waits, `running` from its first read,
-with `bytes_read` and `bytes_total` (the file's bytes as stored on
-disk) and `progress`. Its result is the answer `GET /v1/findings` gives
+with `bytes_read` and `bytes_total` (how far into the file, as stored
+on disk, the scan has read, and how far it reads to the end of the text:
+the file's size, or for a systemd journal the end of its last object)
+and `progress`. Its result is the answer `GET /v1/findings` gives
 for the selection without filters: the summary and the first page of
 1,000 findings, without text. [`DELETE /v1/tasks/{task_id}`](tasks.md#delete-v1taskstask_id)
 cancels it: the scan stops and caches nothing.

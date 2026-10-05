@@ -293,6 +293,13 @@ func buildEntryMetadata(target paths.Pinned, name string, findingsOf treeFinding
 			name := kind.CompressionName()
 			entry.CompressionFormat = &name
 		}
+		// The reason every command refuses the file with, so a client
+		// can say why it does not open it. A file the listing cannot
+		// open has no Kind, and so no reason.
+		if !isText {
+			reason := kind.NotText
+			entry.NotTextReason = &reason
+		}
 	}
 	entry.IsCompressed = &isCompressed
 	entry.IsText = &isText

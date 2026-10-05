@@ -16,4 +16,9 @@ package webapi
 // is paused, a bump here is a row in ../tickets/PARITY-DEBT.md rather than
 // a change there. `rx-viewer` reads it from /health and refuses a major it
 // does not know.
-const ContractVersion = "2.0"
+//
+// 2.1 added, with no other change: the journal section of the index
+// answers (journal in GET /v1/index and in an index task's result), and
+// the reason a file of a tree listing is not text (not_text_reason in
+// GET /v1/tree and GET /v1/search-roots).
+const ContractVersion = "2.1"

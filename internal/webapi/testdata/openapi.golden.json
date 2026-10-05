@@ -1698,6 +1698,10 @@
             "format": "int64",
             "type": "integer"
           },
+          "journal": {
+            "$ref": "#/components/schemas/JournalInfo",
+            "description": "What the build found reading a systemd journal: the entries its text shows, those left out as damaged and those not reached, and some facts of its header. Null for a file that is not a journal."
+          },
           "line_count": {
             "format": "int64",
             "type": [
@@ -1757,6 +1761,7 @@
           "decompressed_size_bytes",
           "compression_ratio",
           "time_summary",
+          "journal",
           "cli_command"
         ],
         "type": "object"
@@ -1820,6 +1825,10 @@
           "index_path": {
             "description": "Where the index is stored in the cache.",
             "type": "string"
+          },
+          "journal": {
+            "$ref": "#/components/schemas/JournalInfo",
+            "description": "What the build found reading a systemd journal: the entries its text shows, those left out as damaged and those not reached, and some facts of its header. Null for a file that is not a journal."
           },
           "line_count": {
             "format": "int64",
@@ -1885,9 +1894,102 @@
           "decompressed_size_bytes",
           "compression_ratio",
           "time_summary",
+          "journal",
           "cli_command"
         ],
         "type": "object"
+      },
+      "JournalInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "compact": {
+            "description": "Whether the journal is in compact mode.",
+            "type": "boolean"
+          },
+          "damage_reason": {
+            "description": "Why that entry was left out or not reached; null when none is.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entries": {
+            "description": "The entries the journal's header counts.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_damaged_entry": {
+            "description": "The 1-based number, in the order of the entry list, of the first entry left out or not reached; null when none is.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "head_seqnum": {
+            "description": "The sequence number of the first entry, as the header gives it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "left_out": {
+            "description": "The damaged entries left out of the text: an entry any object of which cannot be read.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "not_reached": {
+            "description": "The entries after the place where the journal's entry list breaks off, which no read can reach.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "seqnum_id": {
+            "description": "The id of the counter that numbered the entries, as 32 lowercase hex digits; the journals of one journald share it.",
+            "type": "string"
+          },
+          "shown": {
+            "description": "The entries in the text, each one line, or more for a message of several lines.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "description": "The header's state: online while a writer has the journal open (or had it when it stopped without closing it), offline when closed, archived when rotated away.",
+            "enum": [
+              "online",
+              "offline",
+              "archived"
+            ],
+            "type": "string"
+          },
+          "tail_seqnum": {
+            "description": "The sequence number of the last entry, as the header gives it.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "without_message": {
+            "description": "The entries with no MESSAGE field, which journalctl does not show either.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries",
+          "shown",
+          "without_message",
+          "left_out",
+          "not_reached",
+          "first_damaged_entry",
+          "damage_reason",
+          "state",
+          "compact",
+          "seqnum_id",
+          "head_seqnum",
+          "tail_seqnum"
+        ],
+        "type": [
+          "object",
+          "null"
+        ]
       },
       "LineIndexEntry": {
         "description": "A line-index checkpoint: the 1-based line number and the byte offset where that line starts in the file's text. An entry of a seekable-zstd index has a third element, the 0-based index of the frame holding the line.",
@@ -2852,7 +2954,7 @@
         "additionalProperties": false,
         "properties": {
           "bytes_read": {
-            "description": "Bytes of the file a findings task has read so far, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null for a task of another operation (an index task over a directory too), and for a findings task over one file that has not started reading.",
+            "description": "How far into the file a findings task has read so far: the highest byte of the file as stored on disk it has read, not the sum of its reads; for a findings task over a directory, of the file it reads now (0 between files). Null for a task of another operation (an index task over a directory too), and for a findings task over one file that has not started reading.",
             "format": "int64",
             "type": [
               "integer",
@@ -2860,7 +2962,7 @@
             ]
           },
           "bytes_total": {
-            "description": "The size of the file a findings task reads, as stored on disk; for a findings task over a directory, of the file it reads now (0 between files). Null when bytes_read is.",
+            "description": "How far into the file a findings task reads to reach the end of its text: the end of the last object of a systemd journal (a live journal is preallocated, and the zeros after its objects are never read), and the size of the file as stored on disk for every other format; for a findings task over a directory, of the file it reads now (0 between files). Null when bytes_read is.",
             "format": "int64",
             "type": [
               "integer",
@@ -3358,6 +3460,13 @@
           "name": {
             "type": "string"
           },
+          "not_text_reason": {
+            "description": "Why the file is not text, in the words every command refuses it with, starting with 'not a text file': a NUL byte in the first 8 KiB of its text, UTF-16 text, or a systemd journal whose header rx cannot read. Null for a text file, a directory, and a file the listing could not open.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "path": {
             "type": "string"
           },
@@ -3386,6 +3495,7 @@
           "size_human",
           "modified_at",
           "is_text",
+          "not_text_reason",
           "is_compressed",
           "compression_format",
           "is_indexed",
