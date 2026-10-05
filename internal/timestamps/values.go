@@ -23,8 +23,10 @@ const (
 	maxValueMs = 253402300799999
 )
 
-// inValueRange reports whether ms lies in the range above.
-func inValueRange(ms int64) bool {
+// InValueRange reports whether ms lies in the range above: the range of
+// every value a parser returns, which a stored line index must keep to
+// as well.
+func InValueRange(ms int64) bool {
 	return ms >= minValueMs && ms <= maxValueMs
 }
 

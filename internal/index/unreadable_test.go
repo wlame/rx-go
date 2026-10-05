@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,29 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				ti["first_text"] = "2025-12-10 07:00:04.574"
 			})
 		}},
+		// A stored value is a moment in the years 1 to 9999; a search adds
+		// up to 18 hours to it, which must not leave the int64 range.
+		{"time section whose first value is after the year 9999", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["first"] = map[string]any{"ms": int64(math.MaxInt64), "line": 1, "offset": 0}
+			})
+		}},
+		{"time section whose last value is before the year 1", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+				setFirstAndLast(ti)
+				ti["first_text"] = "2025-12-10 07:00:04.574"
+				ti["last"] = map[string]any{"ms": int64(-62135596800001), "line": 200, "offset": 0}
+			})
+		}},
+		{"time section whose max_before is after the year 9999", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
+				values := make([]any, checkpoints)
+				values[checkpoints-1] = int64(253402300800000)
+				ti["max_before"] = values
+			})
+		}},
 		{"time section with a zone offset beyond 18 hours", func(t *testing.T, cachePath string) {
 			rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
 				ti["has_zone"] = true
@@ -324,14 +348,18 @@ func setZonedSpan(ti map[string]any, zoneOffsets any) {
 // A time section at the edges of what the checks accept still loads:
 // first on line 1, last on the file's last line, a zone 18 hours west,
 // a first text of the longest length, zone offset changes up to 18
-// hours either way and on the last timestamped line.
+// hours either way and on the last timestamped line, and values at the
+// first and last millisecond of the years 1 to 9999.
 func TestLoadFromPath_TimeSectionAtTheEdgesLoads(t *testing.T) {
 	_, cachePath := storedIndexFixture(t)
-	rewriteTimeIndex(t, cachePath, func(ti map[string]any, _ int) {
+	rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
 		ti["has_zone"] = true
 		ti["timestamped_lines"] = 200
-		ti["first"] = map[string]any{"ms": 1, "line": 1, "offset": 0}
-		ti["last"] = map[string]any{"ms": 2, "line": 200, "offset": 0}
+		ti["first"] = map[string]any{"ms": int64(-62135596800000), "line": 1, "offset": 0}
+		ti["last"] = map[string]any{"ms": int64(253402300799999), "line": 200, "offset": 0}
+		values := make([]any, checkpoints)
+		values[checkpoints-1] = int64(253402300799999)
+		ti["max_before"] = values
 		ti["first_zone_offset_minutes"] = -18 * 60
 		ti["first_text"] = strings.Repeat("9", 64)
 		ti["zone_offsets"] = []any{[]any{1, -18 * 60}, []any{100, 18 * 60}, []any{200, 0}}

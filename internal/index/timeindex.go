@@ -352,8 +352,8 @@ const maxZoneOffsetMinutes = 18 * 60
 // validTimeIndex reports why a stored time section cannot be used, or
 // nil when it can: its format must be one this build can parse, its
 // first and last lines must be lines of the file, its zone offset a
-// real one, and max_before must have one entry per checkpoint and never
-// decrease. A time search trusts all of these, so an index that breaks
+// real one, and max_before must have one entry per checkpoint, never
+// decrease and hold values in the years 1 to 9999. A time search trusts all of these, so an index that breaks
 // one is treated as damaged.
 func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	ti := idx.TimeIndex
@@ -390,6 +390,9 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	for i, v := range ti.MaxBefore {
 		if previous != nil && (v == nil || *v < *previous) {
 			return fmt.Errorf("time_index: max_before decreases at entry %d", i)
+		}
+		if v != nil && !timestamps.InValueRange(*v) {
+			return fmt.Errorf("time_index: max_before entry %d holds %d ms, outside the years 1 to 9999", i, *v)
 		}
 		if v != nil {
 			previous = v
@@ -487,7 +490,9 @@ func validFirstText(ti *rxtypes.TimeIndex) error {
 // last of them against lineCount, the index's count of lines: a
 // negative count is refused, first and last are present exactly when
 // the count is above zero, and both name lines between 1 and lineCount,
-// first no later than last.
+// first no later than last, with values in the years 1 to 9999 (a search
+// adds a zone offset of up to 18 hours to them, which must stay far from
+// the ends of int64).
 func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	if ti.TimestampedLines < 0 {
 		return fmt.Errorf("timestamped_lines is %d", ti.TimestampedLines)
@@ -506,6 +511,9 @@ func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	for name, point := range map[string]*rxtypes.TimePoint{"first": ti.First, "last": ti.Last} {
 		if point.Line < 1 || point.Line > lines {
 			return fmt.Errorf("%s names line %d of a file of %d lines", name, point.Line, lines)
+		}
+		if !timestamps.InValueRange(point.Ms) {
+			return fmt.Errorf("%s holds %d ms, outside the years 1 to 9999", name, point.Ms)
 		}
 	}
 	if ti.First.Line > ti.Last.Line {

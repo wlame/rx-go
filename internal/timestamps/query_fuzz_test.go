@@ -43,7 +43,7 @@ func FuzzParseQuery(f *testing.F) {
 				continue
 			}
 			for _, b := range []Bound{r.Start, r.End} {
-				if !b.Open && !inValueRange(b.Ms) {
+				if !b.Open && !InValueRange(b.Ms) {
 					t.Fatalf("Resolve(%q) = %+v: a bound outside the years 1 to 9999", value, r)
 				}
 			}
