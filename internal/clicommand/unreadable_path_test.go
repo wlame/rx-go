@@ -93,7 +93,7 @@ func TestTraceUnreadableFileInsideADirectoryIsSkipped(t *testing.T) {
 	if !strings.Contains(out, "Matches: 1") {
 		t.Errorf("expected the readable file's match, got:\n%s", out)
 	}
-	if !strings.Contains(out, "Files skipped: 1") {
-		t.Errorf("expected the unreadable file to be reported as skipped, got:\n%s", out)
+	if !strings.Contains(out, "Files skipped: 1\n  "+locked+": permission denied\n") {
+		t.Errorf("expected the unreadable file to be reported as skipped with its reason, got:\n%s", out)
 	}
 }

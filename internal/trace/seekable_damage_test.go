@@ -272,6 +272,12 @@ func TestTraceOfDamagedSeekableFileKeepsTheRestAndIsNotCached(t *testing.T) {
 		if !slices.Equal(resp.SkippedFiles, []string{path}) {
 			t.Errorf("%s: skipped_files = %v, want the damaged file", run, resp.SkippedFiles)
 		}
+		if len(resp.SkipReasons) != 1 || resp.SkipReasons[0].Path != path ||
+			!strings.HasPrefix(resp.SkipReasons[0].Reason, "not searched in full") ||
+			!strings.Contains(resp.SkipReasons[0].Reason, "frame 2") {
+			t.Errorf("%s: skip_reasons = %+v, want the damaged file not searched in full, naming frame 2",
+				run, resp.SkipReasons)
+		}
 		if len(resp.Matches) != len(want) {
 			t.Fatalf("%s: got %d matches, want %d", run, len(resp.Matches), len(want))
 		}
