@@ -98,6 +98,20 @@ func TestZoneNameSpelledAsInSources(t *testing.T) {
 	}
 }
 
+// time.LoadLocation answers `UTC` without reading a file, so the
+// spelling check reads no directory for it either: the default
+// RX_LOG_TZ costs no listing per request, and a database that spells
+// the file `utc` does not refuse it.
+func TestZoneNameSpelledAsInSources_UTCReadsNoDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "utc"), []byte("TZif"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if !spelledAsInZoneSources("UTC", []string{dir}) {
+		t.Errorf("UTC refused by a directory that spells it utc")
+	}
+}
+
 // Any value either names a zone whose name is the value, or is refused
 // with ErrInvalidZone; nothing panics, and nothing longer than the bound
 // is looked up.
