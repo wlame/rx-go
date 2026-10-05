@@ -183,6 +183,11 @@ func TestBuild_LargeFrameGetsInteriorCheckpoints(t *testing.T) {
 			t.Errorf("checkpoint %d: line %d, want %d", i, entry.LineNumber, wantLine)
 		}
 	}
+	// 30,000 lines that end with a newline: the position after the last
+	// newline is the end of the text, not the start of line 30,001.
+	if last := got.LineIndex[len(got.LineIndex)-1]; last.LineNumber > got.LineCount {
+		t.Errorf("last checkpoint %+v names a line past the last one (%d)", last, got.LineCount)
+	}
 }
 
 // A last line with no trailing newline is still a line.
