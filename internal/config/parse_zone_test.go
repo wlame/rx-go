@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -42,6 +44,9 @@ func TestParseZone_RefusesEverythingElse(t *testing.T) {
 	for _, value := range []string{
 		"", "Mars/Base", "+25:00", "+-1:00", "+18:01", "+5:30", "+05:60", "local", "Local",
 		"../../etc/passwd", "/etc/localtime", strings.Repeat("A", 65), "Europe/Berlin ",
+		// Only the spelling the zone database uses, on every OS: a
+		// case-insensitive file system finds these files too.
+		"utc", "europe/berlin", "EUROPE/BERLIN", "Europe//Berlin", "Europe/./Berlin",
 	} {
 		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
 			got, err := ParseZone(value)
@@ -50,6 +55,44 @@ func TestParseZone_RefusesEverythingElse(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "an IANA zone name or ±HH:MM") {
 				t.Errorf("error %q does not say what is accepted", err)
+			}
+		})
+	}
+}
+
+// The spelling check reads the zone database's directories: a name
+// whose every component is an entry there is accepted, one that is
+// there only in another letter case is refused, and one no directory
+// holds is left to the zone database compiled into the binary, which
+// matches names exactly.
+func TestZoneNameSpelledAsInSources(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "Europe"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for _, name := range []string{"UTC", filepath.Join("Europe", "Berlin")} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("TZif"), 0o600); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	missing := filepath.Join(t.TempDir(), "none")
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"UTC", true},
+		{"Europe/Berlin", true},
+		{"Asia/Tokyo", true},
+		{"utc", false},
+		{"europe/Berlin", false},
+		{"Europe/BERLIN", false},
+		{"Europe//Berlin", false},
+		{"./UTC", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := spelledAsInZoneSources(tc.name, []string{missing, dir}); got != tc.want {
+				t.Errorf("spelledAsInZoneSources(%q) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}

@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A zone name in `--file-tz`, `file_tz`, `RX_LOG_TZ` or `RX_QUERY_TZ`
+  is accepted only as the zone database spells it, letter case
+  included. On macOS, whose file system ignores case, `utc` and
+  `europe/berlin` used to be accepted while Linux refused them; a name
+  with an empty or `.` component (`Europe//Berlin`) is refused too. An
+  environment variable with such a value keeps its default, with the
+  usual `invalid_setting` warning.
 - A stored line index whose time section holds a value outside the
   years 1 to 9999 (`first.ms`, `last.ms` or a `max_before` entry) is
   treated as damaged, as any index rx could not have written: a search

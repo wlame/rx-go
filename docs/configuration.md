@@ -282,9 +282,12 @@ duration.
 Each zone variable accepts `UTC`, an IANA zone name (`Europe/Berlin`,
 `America/New_York`) or a fixed offset `±HH:MM` up to 18 hours
 (`+05:30`: one sign, then two digits in each field, so `+-1:00` is
-refused); `RX_QUERY_TZ` also accepts `local`. The zone names are
-built into the binary, so they work on a host without
-`/usr/share/zoneinfo`.
+refused); `RX_QUERY_TZ` also accepts `local`. A zone name is accepted
+only as the zone database spells it, letter case included (`utc` and
+`europe/berlin` are refused on every system, a case-insensitive macOS
+file system included). The zone names are built into the binary, so
+they work on a host without `/usr/share/zoneinfo`. `--file-tz` and
+`file_tz` follow the same rule, without `local`.
 
 | Variable | Default | Also accepts |
 |---|---|---|

@@ -44,6 +44,9 @@ func TestLogTZ_AcceptsAZoneAndFallsBackToUTC(t *testing.T) {
 		{"local", "UTC", 0},
 		{"Local", "UTC", 0},
 		{"../../etc/passwd", "UTC", 0},
+		// A zone name only in the case the zone database writes it.
+		{"utc", "UTC", 0},
+		{"europe/berlin", "UTC", 0},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("%q", tc.value), func(t *testing.T) {
