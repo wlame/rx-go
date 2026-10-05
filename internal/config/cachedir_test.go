@@ -118,3 +118,27 @@ func hasPrefix(path, prefix string) bool {
 	}
 	return path[:len(prefix)] == prefix
 }
+
+// A relative RX_CACHE_DIR or XDG_CACHE_HOME is taken against the
+// directory rx starts in and returned absolute, so one process uses one
+// cache and /health shows where it is.
+func TestGetCacheBase_RelativeValueIsMadeAbsolute(t *testing.T) {
+	for _, name := range []string{"RX_CACHE_DIR", "XDG_CACHE_HOME"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			t.Setenv("RX_CACHE_DIR", "")
+			t.Setenv("XDG_CACHE_HOME", "")
+			t.Setenv(name, filepath.Join("rel", "cache"))
+
+			got := GetCacheBase()
+			want, err := filepath.Abs(filepath.Join("rel", "cache", "rx"))
+			if err != nil {
+				t.Fatalf("Abs: %v", err)
+			}
+			if got != want || !filepath.IsAbs(got) {
+				t.Errorf("GetCacheBase() = %q, want %q", got, want)
+			}
+		})
+	}
+}

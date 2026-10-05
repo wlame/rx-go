@@ -22,6 +22,11 @@ Resolution order:
 2. `$XDG_CACHE_HOME/rx` — follows the freedesktop spec
 3. `~/.cache/rx` — ultimate fallback
 
+A relative `RX_CACHE_DIR` or `XDG_CACHE_HOME` is taken against the
+directory `rx` starts in and used as that absolute path for the whole
+run: `cd /srv && RX_CACHE_DIR=cache rx serve` keeps its cache in
+`/srv/cache/rx`, and `/health` reports that path.
+
 Verify at runtime:
 
 ```bash
