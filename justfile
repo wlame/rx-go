@@ -94,9 +94,11 @@ fmt-check:
     out=$(gofmt -s -l .)
     if [ -n "$out" ]; then echo "not gofmt-clean:"; echo "$out"; exit 1; fi
 
-# go vet every package
+# go vet every package, and the journal fixture generator, which ./...
+# leaves out because it lives under testdata/
 vet:
     go vet ./...
+    go vet ./internal/journal/testdata/gen
 
 # golangci-lint (config in .golangci.yml)
 lint:

@@ -175,7 +175,7 @@ func (f failingReaderAt) ReadAt(p []byte, off int64) (int, error) {
 
 func TestTextReader_EveryFixtureGivesJournalctlsTextAndCounts(t *testing.T) {
 	for _, f := range readFixtureManifest(t) {
-		if f.isChainPart() {
+		if f.IsChainPart() {
 			continue
 		}
 		t.Run(f.Name, func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestTextReader_EveryFixtureGivesJournalctlsTextAndCounts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := os.ReadFile(f.textPath())
+			want, err := os.ReadFile(f.TextPath())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -203,7 +203,7 @@ func TestTextReader_ReadsTheSameTextWhateverTheReadBufferSize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile(fixtureInfo{Set: "basic"}.textPath())
+	want, err := os.ReadFile(fixtureInfo{Set: "basic"}.TextPath())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestTextReader_EveryChainPartGivesItsCountsAndItsPartOfTheChainText(t *test
 	texts := map[string][]byte{}
 	totals := map[string]int{}
 	for _, f := range readFixtureManifest(t) {
-		if !f.isChainPart() {
+		if !f.IsChainPart() {
 			continue
 		}
 		t.Run(f.Name, func(t *testing.T) {
@@ -230,7 +230,7 @@ func TestTextReader_EveryChainPartGivesItsCountsAndItsPartOfTheChainText(t *test
 				t.Fatal(err)
 			}
 			if _, ok := texts[f.Set]; !ok {
-				if texts[f.Set], err = os.ReadFile(f.textPath()); err != nil {
+				if texts[f.Set], err = os.ReadFile(f.TextPath()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -238,7 +238,7 @@ func TestTextReader_EveryChainPartGivesItsCountsAndItsPartOfTheChainText(t *test
 			want := Report{Entries: f.Entries, Shown: f.Shown, WithoutMessage: f.WithoutMessage}
 			checkRead(t, text, report, text, want, "")
 			if len(text) == 0 || !bytes.Contains(texts[f.Set], text) {
-				t.Errorf("the part's %d-byte text is not a part of %s", len(text), f.textPath())
+				t.Errorf("the part's %d-byte text is not a part of %s", len(text), f.TextPath())
 			}
 			totals[f.Set] += len(text)
 		})

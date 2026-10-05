@@ -1,0 +1,4 @@
+# The texts journalctl printed for the journal fixtures are compared byte
+# for byte: no line-ending conversion, and their trailing spaces are part
+# of the text.
+internal/journal/testdata/**/*.txt -text whitespace=-trailing-space
