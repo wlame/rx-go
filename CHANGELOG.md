@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timestamps carry zones holds instants and records where the written
   offset changes (`zone_offsets`), so the query is shifted by each
   stretch's offset: the time search still starts at a checkpoint (about
-  one index step per stretch of one offset), and the time range comes
+  one index step per stretch of one offset, and no line read twice for
+  one query however many offset changes one step holds), and the time range comes
   from the index with no read, for a gzip, bzip2, xz or plain zstd file
   too. A file whose offset changes too often for 1,024 entries is searched
   from its first line under `--file-tz`, and its time range reads the

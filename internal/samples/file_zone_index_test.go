@@ -121,6 +121,7 @@ func TestFileZone_IndexShiftsTheQueryByEachSegmentsOffset(t *testing.T) {
 			writtenRun{40, day + 7*hour, 60_000, "-05:00"},
 			writtenRun{3, day + 7*hour + 40*60_000, 60_000, ""},
 			writtenRun{40, day + 7*hour + 43*60_000, 60_000, "-05:00"})},
+		{"an offset change on every line", writtenLines(alternatingRuns(200, day+7*hour)...)},
 	}
 	for _, fx := range fixtures {
 		for _, zoneName := range []string{"UTC", "Europe/Berlin", "+03:00", "America/New_York"} {
@@ -261,6 +262,84 @@ func TestBudget_FileZoneSearchesEachSegmentFromItsOwnCheckpoint(t *testing.T) {
 	}
 	if budget := oneStepBudget(step, 2); read > budget {
 		t.Errorf("read %d bytes of %d; budget %d for two segments", read, size, budget)
+	}
+}
+
+// alternatingRuns returns count one-line runs, one second apart from
+// wall on, whose written zone alternates between +01:00 and +02:00: an
+// offset change on every line.
+func alternatingRuns(count int, wall int64) []writtenRun {
+	runs := make([]writtenRun, count)
+	for i := range runs {
+		zone := "+01:00"
+		if i%2 == 1 {
+			zone = "+02:00"
+		}
+		runs[i] = writtenRun{1, wall + int64(i)*1000, 1000, zone}
+	}
+	return runs
+}
+
+// Many offset changes inside one index step make many segments that
+// share the step's checkpoint. A search under a file zone reads through
+// them in one pass instead of one pass per segment from that
+// checkpoint, so it reads each line at most once, however many segments
+// the step holds: in the last step (no checkpoint after it says a
+// segment can be skipped), and in a middle step where every other
+// segment can be skipped and the rest cannot. A bound past every line
+// reads only the last step. A bound inside the changes reads them all
+// once: the +01:00 lines store later instants than the +02:00 lines, so
+// max_before cannot rule out a +02:00 segment before the bound's line.
+// The answers are the brute-force reader's and the search's without an
+// index.
+func TestBudget_FileZoneReadsManyOffsetChangesInOneStepOnce(t *testing.T) {
+	const step = 64 * 1024
+	const changes = 1000
+	hour := int64(3600 * 1000)
+	head := writtenRun{1000, timeBase, 1000, "+00:00"}
+	changesFrom := timeBase + 1000*1000
+	lastChange := changesFrom + (changes-1)*1000
+	inLastStep := append([]writtenRun{head}, alternatingRuns(changes, changesFrom)...)
+	inMiddleStep := append(append([]writtenRun{head}, alternatingRuns(changes, changesFrom)...),
+		writtenRun{1000, lastChange + 2*hour, 1000, "+01:00"})
+	cases := []struct {
+		name string
+		runs []writtenRun
+		// query is the wall clock asked for, read in UTC; the budget is
+		// how much of the file the indexed search may read, as a function
+		// of its size.
+		query  func(lines []timedLine) int64
+		budget func(size int64) int64
+	}{
+		{"last step, a bound past every line", inLastStep,
+			func([]timedLine) int64 { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli() },
+			func(int64) int64 { return oneStepBudget(step, 1) }},
+		{"last step, a bound on one of its lines", inLastStep,
+			func(lines []timedLine) int64 { return lines[1900].ms + 500 },
+			func(size int64) int64 { return size + oneStepBudget(step, 0) }},
+		{"middle step, every other segment skipped", inMiddleStep,
+			func([]timedLine) int64 { return lastChange + hour/2 },
+			func(size int64) int64 { return size + oneStepBudget(step, 0) }},
+	}
+	utc := zoneNamed(t, "UTC")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path, lines, size := writtenLog(t, tc.runs...)
+			loader := loaderOf(t, path, step)
+			if idx, _ := loader(path); idx.TimeIndex == nil || len(idx.TimeIndex.ZoneOffsets) <= changes {
+				t.Fatalf("want zone_offsets with more than %d entries", changes)
+			}
+			wall := tc.query(lines)
+			query := rfc3339(wall)
+			cold, _ := timeQueryReads(t, path, query, utc, nil)
+			line, read := timeQueryReads(t, path, query, utc, loader)
+			if want := lineAtWall(lines, wall); line != want || cold != want {
+				t.Fatalf("line %d indexed, %d cold; want %d", line, cold, want)
+			}
+			if budget := tc.budget(size); read > budget {
+				t.Errorf("read %d bytes of a %d-byte file; budget %d", read, size, budget)
+			}
+		})
 	}
 }
 

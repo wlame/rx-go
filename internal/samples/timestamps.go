@@ -33,9 +33,9 @@ var ErrTooManyTimestamps = errors.New("too many timestamp values")
 
 // MaxTimestampValues is the most time queries one request may hold.
 // The searches for all of them share their passes (one pass from the
-// start without an index, a pass of at most one index step per
-// checkpoint with one), and their lines are read in one more pass, so
-// the bound limits the work per pass, not the number of passes.
+// start without an index; with one, passes that never read a line twice
+// for one query, see searchPlan), and their lines are read in one more
+// pass, so the bound limits the work per pass, not the number of passes.
 const MaxTimestampValues = 1000
 
 // IsUsageError reports whether err, from Resolve, is a mistake in the
@@ -679,6 +679,25 @@ func mergedPasses(passes map[searchPass][]int64) map[searchPass][]int64 {
 // (an offset that grows while the wall clock goes back), max_before
 // cannot place the later segment's line, and its pass reads from the
 // segment's first line, up to the segment's end at most.
+//
+// One pass serves a run of segments. A pass that stops at the end of
+// segment k reads on into segment k+1 instead whenever segment k+1's own
+// pass would start at a checkpoint at or before its first line, that is
+// inside text this pass reads anyway; the run ends at the first segment
+// whose pass would start at a checkpoint inside it. Reading a segment
+// the plan would have skipped finds nothing in it (no line there reaches
+// the bound), and such a segment holds no checkpoint, so it lies within
+// one index step. Without this, every segment of a step that holds many
+// offset changes would restart from the step's checkpoint, and a step
+// of n segments would be read about n times.
+//
+// INVARIANT: the passes of one bound never overlap, so a bound reads
+// each line of the text at most once (plus a read buffer per pass). A
+// run ends before a segment j holding a checkpoint at or after its
+// first line; the next pass starts at that checkpoint, or later at the
+// last checkpoint at or before a later segment's first line, which is
+// that checkpoint or a later one. Either way it starts at or after the
+// line where the run stopped.
 type searchPlan struct {
 	t     *fileTimes
 	bound int64
@@ -695,23 +714,41 @@ func (t *fileTimes) newSearchPlan(bound int64) *searchPlan {
 func (p *searchPlan) done() bool { return p.segment >= len(p.t.segments) }
 
 // next returns the pass of the next segment that may hold the bound's
-// line, and false when no segment left may.
+// line, run on through the segments after it that the same pass can
+// serve, and false when no segment left may hold the line.
 func (p *searchPlan) next() (searchPass, bool) {
 	t := p.t
 	for ; p.segment < len(t.segments); p.segment++ {
-		k := p.segment
-		target := minusOffset(p.bound, t.segments[k].offsetMs)
-		stop := int64(math.MaxInt64)
-		if k+1 < len(t.segments) {
-			stop = t.segments[k+1].firstLine
-		}
+		target, first, stop := p.segmentAt(p.segment)
 		if t.segmentBelow(target, stop) {
 			continue
 		}
-		p.segment++
-		return searchPass{start: t.segmentStart(target, t.segments[k].firstLine, stop), stop: stop}, true
+		start, _ := t.segmentStart(target, first, stop)
+		pass := searchPass{start: start, stop: stop}
+		// Run on while the next segment's own pass would start at or
+		// before its first line, inside the text this pass reads.
+		for p.segment++; p.segment < len(t.segments); p.segment++ {
+			target, first, stop := p.segmentAt(p.segment)
+			if _, inside := t.segmentStart(target, first, stop); inside {
+				break
+			}
+			pass.stop = stop
+		}
+		return pass, true
 	}
 	return searchPass{}, false
+}
+
+// segmentAt returns segment k's target (the bound minus the segment's
+// offset), its first line and the line after its last
+// (math.MaxInt64 for the last segment).
+func (p *searchPlan) segmentAt(k int) (target, first, stop int64) {
+	segments := p.t.segments
+	stop = math.MaxInt64
+	if k+1 < len(segments) {
+		stop = segments[k+1].firstLine
+	}
+	return minusOffset(p.bound, segments[k].offsetMs), segments[k].firstLine, stop
 }
 
 // minusOffset is bound minus offsetMs, held at the int64 range: a bound
@@ -744,9 +781,10 @@ func (t *fileTimes) segmentBelow(target, stop int64) bool {
 
 // segmentStart is the byte offset a pass for target in the segment of
 // lines [first, stop) starts from: the last checkpoint inside the
-// segment whose max_before is below target, or else the last checkpoint
-// at or before line first (0 without one).
-func (t *fileTimes) segmentStart(target, first, stop int64) int64 {
+// segment whose max_before is below target (inside is true), or else the
+// last checkpoint at or before line first (0 without one; inside is
+// false).
+func (t *fileTimes) segmentStart(target, first, stop int64) (start int64, inside bool) {
 	cps, maxBefore := t.checkpoints, t.section.MaxBefore
 	lo := sort.Search(len(cps), func(i int) bool { return cps[i].LineNumber >= first })
 	hi := sort.Search(len(cps), func(i int) bool { return cps[i].LineNumber >= stop })
@@ -755,13 +793,13 @@ func (t *fileTimes) segmentStart(target, first, stop int64) int64 {
 		return v != nil && *v >= target
 	})
 	if reached > lo {
-		return cps[reached-1].ByteOffset
+		return cps[reached-1].ByteOffset, true
 	}
 	at := sort.Search(len(cps), func(i int) bool { return cps[i].LineNumber > first }) - 1
 	if at < 0 {
-		return 0
+		return 0, false
 	}
-	return cps[at].ByteOffset
+	return cps[at].ByteOffset, false
 }
 
 // searchFrom runs one pass, from the line start at or before byte offset
