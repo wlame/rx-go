@@ -261,7 +261,10 @@ Data flow for `rx trace "pattern" big.log`:
    pass, every reader of the text stopped at the head, and the answer
    is the one without an index. `rx samples` answered that way builds
    no index; `GET /v1/samples` starts or joins the background build
-   without waiting for it and names its task in `index_build`.
+   without waiting for it and names its task in `index_build`. The
+   running build keeps how far the head reaches (`samples.HeadReach`,
+   measured by the first lookup that runs past the head), and a lookup
+   of a line or an offset past it reads nothing before it waits.
    An HTTP request never builds an index inside itself: `GET /v1/samples`
    starts or joins a background `index` task, one per file and file
    identity (`internal/webapi/samples_index.go`); a request with

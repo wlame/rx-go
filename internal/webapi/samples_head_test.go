@@ -1,13 +1,21 @@
 package webapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/tasks"
+	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/internal/testutil/samplesanswer"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -120,6 +128,85 @@ func TestSamples_PastTheHeadWaitsForTheBuild(t *testing.T) {
 	if lines := answered.Samples["300"]; len(lines) != 2 || lines[1] != "LINE 300 of the log" {
 		t.Fatalf("samples[300] = %q, want lines 299 and 300", lines)
 	}
+	if finished := f.awaitTask(t, pending.TaskID); finished.Status != string(tasks.StatusCompleted) {
+		t.Fatalf("task ended %q: %v", finished.Status, finished.Error)
+	}
+}
+
+// reachLogLineBytes is the length of every line of writeReachLog's
+// log, line break included: lines 1 to 1000 fit in a head of 1 MiB,
+// and line 1001 runs past it.
+const reachLogLineBytes = 1048
+
+// writeReachLog rewrites the fixture's gzip log as 2,000 lines of
+// reachLogLineBytes bytes, each reading "LINE <n>".
+func (f *samplesBuildFixture) writeReachLog(t *testing.T) {
+	t.Helper()
+	var text bytes.Buffer
+	for n := 1; n <= 2000; n++ {
+		line := fmt.Sprintf("LINE %d ", n)
+		text.WriteString(line + strings.Repeat(".", reachLogLineBytes-1-len(line)) + "\n")
+	}
+	if err := os.WriteFile(f.gzPath, compressedcopy.Encode(t, compressedcopy.Gzip, text.Bytes()), 0o600); err != nil {
+		t.Fatalf("write gzip: %v", err)
+	}
+}
+
+// reachOfLog returns the head reach the server keeps for the fixture's
+// gzip log as it is now, or nil.
+func (f *samplesBuildFixture) reachOfLog(t *testing.T) *samples.HeadReach {
+	t.Helper()
+	info, err := os.Stat(f.gzPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	return f.server.samplesIndex.reachOf(f.gzPath, index.IdentityFromInfo(f.gzPath, info))
+}
+
+// A lookup past the head records how far the head reaches for the
+// file's identity while its build runs, so a later lookup past the
+// reach goes to the build without reading the head again, and one
+// inside it is still answered from the head at once. A rewritten file
+// is a new identity, and the reach of the old one does not apply to it.
+func TestSamples_RemembersHowFarTheHeadReaches(t *testing.T) {
+	f := newSamplesBuildFixture(t, 20*time.Millisecond)
+	t.Setenv("RX_SAMPLES_HEAD_MB", "1")
+	f.writeReachLog(t)
+	async := http.Header{"Prefer": {"respond-async"}}
+
+	status, body := f.askLines(t, "1500", async)
+	pending := f.requirePending(t, status, body)
+	f.gate.awaitStart(t)
+	want := samples.HeadReach{Head: 1 << 20, Lines: 1000, End: 1000 * reachLogLineBytes}
+	if reach := f.reachOfLog(t); reach == nil || *reach != want {
+		t.Fatalf("reach %+v, want %+v", reach, want)
+	}
+
+	status, body = f.askLines(t, "1-1000", nil)
+	early := decodeSamples(t, status, body)
+	if early.IndexBuild == nil || early.IndexBuild.TaskID != pending.TaskID {
+		t.Fatalf("index_build = %+v, want task %s", early.IndexBuild, pending.TaskID)
+	}
+	if got := early.Samples["1-1000"]; len(got) != 1000 || !strings.HasPrefix(got[999], "LINE 1000 ") {
+		t.Fatalf("samples[1-1000] holds %d lines, want lines 1 to 1000", len(got))
+	}
+	status, body = f.askLines(t, "2000", async)
+	if again := f.requirePending(t, status, body); again.TaskID != pending.TaskID {
+		t.Fatalf("a lookup past the reach names task %s, want %s", again.TaskID, pending.TaskID)
+	}
+
+	// The rewritten log has 300 short lines, all in the head: line 1500
+	// is past its end, which the head answers.
+	f.writeLog(t, "NEW")
+	if reach := f.reachOfLog(t); reach != nil {
+		t.Fatalf("reach %+v for the rewritten file, want none", *reach)
+	}
+	status, body = f.askLines(t, "1500", async)
+	if answer := decodeSamples(t, status, body); answer.Lines["1500"] != -1 {
+		t.Fatalf("lines[1500] = %d for the rewritten file, want -1", answer.Lines["1500"])
+	}
+
+	f.gate.open()
 	if finished := f.awaitTask(t, pending.TaskID); finished.Status != string(tasks.StatusCompleted) {
 		t.Fatalf("task ended %q: %v", finished.Status, finished.Error)
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/prometheus"
 	"github.com/wlame/rx-go/internal/samples"
@@ -294,6 +295,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			resp       *rxtypes.SamplesResponse
 			indexBuild *rxtypes.SamplesIndexBuild
 			answered   bool
+			reach      *samples.HeadReach
 		)
 		wantsBuild := !noIndex && samples.ShouldBuildIndex(validated, kind, stat.Size())
 		if wantsBuild {
@@ -306,14 +308,21 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			// over the limits, a time named wrongly) is the answer too:
 			// building the index would not change it. ctx ends the head
 			// read when the client disconnects.
-			resp, answered, err = samples.ResolveFromHead(ctx, req, config.SamplesHeadBytes())
+			//
+			// The running build keeps how far the head reaches once a
+			// lookup has run past it, so a lookup the head is known not
+			// to hold, a client asking again and again for a line deep
+			// in the file while the build runs, reads nothing before it
+			// waits (samples.ResolveFromHeadWithReach).
+			known := s.samplesIndex.reachOf(validated, index.IdentityFromInfo(validated, stat))
+			resp, answered, reach, err = samples.ResolveFromHeadWithReach(ctx, req, config.SamplesHeadBytes(), known)
 			if answered && err == nil {
 				indexBuild = s.samplesIndex.start(validated, stat)
 			}
 		}
 		if wantsBuild && !answered {
 			deadline, stopDeadline := samplesDeadline(in.Prefer, s.cfg.SamplesIndexWait)
-			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, deadline)
+			pending, waitErr := s.samplesIndex.await(ctx, validated, stat, reach, deadline)
 			stopDeadline()
 			if waitErr != nil {
 				return nil, waitErr

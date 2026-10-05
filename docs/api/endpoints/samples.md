@@ -249,6 +249,14 @@ range open to the end (`T..`), a time of day without a date. A refusal
 the head can give (an answer over `RX_SAMPLES_MAX_LINES`, a time named
 wrongly) is answered at once as a `400`, and starts no build.
 
+The first request that reads the head and finds its lines past it tells
+the server how far the head reaches: its last whole line, and the byte
+just after it. The running build keeps that for this version of the
+file, so a later request for a line or an offset past it takes the path
+below without reading the head again, and a request inside it is still
+answered from the head. A time is placed only by reading, so a time
+past the head reads the head on every request.
+
 `index_build` is `null` when the answer did not come from the head: the
 file has an index, needs none (a plain file below `RX_LARGE_FILE_MB`),
 `RX_NO_INDEX` is set, the cache cannot store an index, or the request

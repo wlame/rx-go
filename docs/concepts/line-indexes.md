@@ -337,8 +337,13 @@ Any other lookup builds the index first, as before: a position counted
 back from the end (`--lines=-1`) needs the line count of the whole
 file; a time range open to the end (`T..`) reads to the end; a time of
 day without a date (`14:33`) needs the file's last timestamp. A lookup
-that reaches past the head reads the head and then builds. With
-`RX_SAMPLES_HEAD_MB=0` every lookup builds first.
+that reaches past the head reads the head and then builds. `rx serve`
+reads it for that once per version of the file: while the build runs,
+it keeps how far the head reaches (its last whole line), and a later
+lookup of a line or an offset past that waits for the build without
+reading the head. A time is placed only by reading, so a time past the
+head reads the head each time. With `RX_SAMPLES_HEAD_MB=0` every lookup
+builds first.
 
 ### Latency on the first query
 
