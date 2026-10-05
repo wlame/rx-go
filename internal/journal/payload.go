@@ -81,14 +81,18 @@ func (f *journalFile) dataPayloadOffset() uint64 {
 const namePrefixBytes = 64 + 1
 
 // nameStoredLimit is the most stored bytes of a compressed value the
-// name search reads: 129 KiB. That holds a zstd block of 128 KiB with the
-// frame's and the block's headers and the checksum, and so the start of
-// the text of any zstd value a compressor writes; it is more than an xz
-// stream needs for its first 4 KiB of text (a block header of at most
-// 1 KiB and one LZMA2 chunk of at most 64 KiB); and lz4's first
-// sequences hold the first bytes of its text within a few bytes more
-// than those. A value whose name lies further on in its stored bytes is
-// damage.
+// name search reads: 129 KiB. A value whose name lies further on in its
+// stored bytes is damage. The limit holds a zstd block of 128 KiB with
+// the frame's and the block's headers and the checksum, and so the start
+// of the text of any zstd value a compressor writes; it is more than an
+// xz stream needs for its first 4 KiB of text (a block header of at most
+// 1 KiB and one LZMA2 chunk of at most 64 KiB). For lz4 it holds the
+// name of a value whose first run of literals is under about 32 MiB: a
+// run of L literal bytes is announced by about L/255 length bytes before
+// its first byte, so a value that starts with a longer run, of bytes lz4
+// finds no match in, keeps its name further on than the limit and is
+// damage here, though systemd, which reads the length bytes however many
+// there are, gives its name.
 const nameStoredLimit = 129 << 10
 
 // readData reads the DATA object at offset and returns its payload when
