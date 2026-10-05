@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wlame/rx-go/internal/analyzer"
@@ -180,8 +181,19 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// from one rewritten with the same size and mtime; a fingerprint
 	// that cannot be read is left out, and validation falls back to the
 	// other fields.
+	//
+	// The index records the file by its absolute path, the path its
+	// cache file name is hashed from (GetCachePath), so source_path
+	// names the file whatever directory the index is read from. Pin
+	// made the same path absolute a moment ago, so this fails only if
+	// the current directory was removed since.
+	absPath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", sourcePath, err)
+	}
 	source := openedSource{
 		path:     sourcePath,
+		absPath:  absPath,
 		file:     f,
 		info:     info,
 		identity: IdentityFromOpenFile(f, info),
@@ -203,11 +215,14 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	return buildText(source, started, step, opts)
 }
 
-// openedSource is the file an index build reads: the caller's path, the
-// handle the pin opened, the pin's stat and the identity taken from
+// openedSource is the file an index build reads: the caller's path and
+// its absolute form, the handle the pin opened, the pin's stat and the identity taken from
 // them. Every read of the build goes through file.
 type openedSource struct {
-	path     string
+	path string
+	// absPath is path made absolute: what the index records as
+	// source_path.
+	absPath  string
 	file     *os.File
 	info     os.FileInfo
 	identity SourceIdentity
@@ -270,7 +285,7 @@ func buildText(
 	permissions, owner := FileOwnership(info)
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:          Version,
-		SourcePath:       sourcePath,
+		SourcePath:       src.absPath,
 		CreatedAt:        time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds: time.Since(started).Seconds(),
 		FileType:         rxtypes.FileTypeText,
@@ -755,7 +770,7 @@ func buildSeekable(
 	permissions, owner := FileOwnership(info)
 	idx := &rxtypes.UnifiedFileIndex{
 		Version:           Version,
-		SourcePath:        sourcePath,
+		SourcePath:        src.absPath,
 		CreatedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 		BuildTimeSeconds:  time.Since(started).Seconds(),
 		FileType:          rxtypes.FileTypeSeekableZstd,
