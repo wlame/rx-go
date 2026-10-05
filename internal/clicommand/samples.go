@@ -219,7 +219,9 @@ func runSamples(out io.Writer, p samplesParams) error {
 		return exitWithError(os.Stderr, ExitUsageError, "%s: %s", err.Error(), p.path)
 	}
 	if err != nil {
-		return exitWithError(os.Stderr, ExitGenericError, "%s", err.Error())
+		// A file the process may not read fails as it does in every
+		// command: "permission denied: <path>", exit code 4.
+		return openFailure(p.path, err)
 	}
 
 	if !p.noIndex && samples.ShouldBuildIndex(p.path, kind, info.Size()) {

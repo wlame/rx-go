@@ -3,6 +3,7 @@ package webapi
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"reflect"
 	"sort"
@@ -111,6 +112,23 @@ func ErrInvalidRegex(detail string) huma.StatusError {
 // ErrForbidden returns a 403 apiError with the given detail.
 func ErrForbidden(detail string) huma.StatusError {
 	return &apiError{Status: http.StatusForbidden, Detail: detail}
+}
+
+// ErrFileAccess is the answer to a file the request names and the
+// server cannot open: 403 "Permission denied: <path>" for one the
+// process may not read, the words and the meaning of the CLI's exit
+// code 4 on every route, 404 for one that no longer exists, and 403
+// with the error's text for anything else (the path leads to another
+// file than the one checked, a stat that fails).
+func ErrFileAccess(path string, err error) huma.StatusError {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		return ErrForbidden("Permission denied: " + path)
+	case errors.Is(err, fs.ErrNotExist):
+		return ErrNotFound("File not found: " + path)
+	default:
+		return ErrForbidden(err.Error())
+	}
 }
 
 // ErrTaskConflict returns the 409 for a path whose task is already

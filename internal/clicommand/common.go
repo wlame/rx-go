@@ -157,13 +157,33 @@ func exitCodeForPathError(err error) int {
 	}
 }
 
+// accessFailureText is how a command words a failure to open or read a
+// file: "permission denied" for a file the process may not read, the
+// words every command prints for it, and the error's own text
+// otherwise.
+func accessFailureText(err error) string {
+	if errors.Is(err, fs.ErrPermission) {
+		return "permission denied"
+	}
+	return err.Error()
+}
+
+// openFailure is the error a command returns for a file the user named
+// that it cannot open: "permission denied: <path>" and the access-denied
+// exit code for one the process may not read, the same in `rx trace`,
+// `rx samples` and `rx index`, and the code exitCodeForPathError gives
+// any other failure.
+func openFailure(path string, err error) *ExitError {
+	return exitWithError(os.Stderr, exitCodeForPathError(err), "%s: %s", accessFailureText(err), path)
+}
+
 // failureSummaries is the closing error line of a multi-path command
 // whose every failure had the same exit code. A code missing here, and
 // a run whose failures had different codes, get the command's generic
 // line instead.
 var failureSummaries = map[int]string{
 	ExitFileNotFound: "one or more files do not exist",
-	ExitAccessDenied: "one or more files were outside the search roots",
+	ExitAccessDenied: "one or more files were outside the search roots or could not be read",
 }
 
 // multiPathFailure is the error a command that processes several paths

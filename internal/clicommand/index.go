@@ -296,7 +296,14 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	// Expand paths: stat each. Directories are walked per --recursive.
 	// Matches Python's _handle_info_or_delete traversal pattern reused
 	// for the build flow.
-	filesToIndex := []string{}
+	// named says whether the user named the file, rather than a walk
+	// finding it: a named file that cannot be read fails the command,
+	// a walked one is skipped with the reason, as `rx trace` does.
+	type indexTarget struct {
+		path  string
+		named bool
+	}
+	filesToIndex := []indexTarget{}
 	for _, path := range p.paths {
 		info, err := os.Stat(path)
 		if err != nil {
@@ -312,9 +319,6 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 			// target would be allowed; a refused one is a skip with
 			// the walk's reason, so no index is ever stored for it.
 			entries, derr := paths.WalkDir(path, p.recursive)
-			if derr == nil {
-				derr = firstUnreadableDir(entries)
-			}
 			if derr != nil {
 				result.Errors = append(result.Errors, indexErrorItem{
 					Path:     path,
@@ -324,15 +328,35 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 				continue
 			}
 			for _, entry := range entries {
-				if entry.Refused != "" {
+				switch {
+				case entry.ReadErr != nil:
+					// A subdirectory the walk cannot list is skipped
+					// with the reason and the rest of the tree is
+					// indexed, as a trace of the tree searches it.
+					result.skip(entry.Path, accessFailureText(entry.ReadErr))
+				case entry.Refused != "":
 					result.skip(entry.Path, entry.Refused)
-					continue
+				default:
+					filesToIndex = append(filesToIndex, indexTarget{path: entry.Path})
 				}
-				filesToIndex = append(filesToIndex, entry.Path)
 			}
 			continue
 		}
-		filesToIndex = append(filesToIndex, path)
+		filesToIndex = append(filesToIndex, indexTarget{path: path, named: true})
+	}
+
+	// unreadable records a file that cannot be pinned or opened: an
+	// error for a file the user named, a skip for one a walk found.
+	unreadable := func(target indexTarget, err error) {
+		if !target.named {
+			result.skip(target.path, accessFailureText(err))
+			return
+		}
+		result.Errors = append(result.Errors, indexErrorItem{
+			Path:     target.path,
+			Error:    accessFailureText(err),
+			exitCode: exitCodeForPathError(err),
+		})
 	}
 
 	// Threshold resolution (MB → bytes). --analyze bypasses the threshold
@@ -366,16 +390,13 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	// error (or nil) without probing again.
 	checkStorable := sync.OnceValue(index.CheckStorable)
 
-	for _, path := range filesToIndex {
+	for _, target := range filesToIndex {
+		path := target.path
 		// The file is pinned (checked and tied to the file it leads to
 		// now) and every look at it below goes through the pin.
 		src, err := paths.Pin(path)
 		if err != nil {
-			result.Errors = append(result.Errors, indexErrorItem{
-				Path:     path,
-				Error:    err.Error(),
-				exitCode: exitCodeForPathError(err),
-			})
+			unreadable(target, err)
 			continue
 		}
 		info := src.Info()
@@ -391,11 +412,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		// binary file too.
 		kind, err := filekind.OfPinned(src)
 		if err != nil {
-			result.Errors = append(result.Errors, indexErrorItem{
-				Path:     path,
-				Error:    err.Error(),
-				exitCode: exitCodeForPathError(err),
-			})
+			unreadable(target, err)
 			continue
 		}
 		if !kind.IsText() {
@@ -572,19 +589,6 @@ func nilableInt64(p *int64) any {
 		return nil
 	}
 	return *p
-}
-
-// firstUnreadableDir returns the error of the first subdirectory a walk
-// could not list, or nil. `rx index` on a directory fails as a whole
-// when part of the tree cannot be read, rather than index the rest and
-// report success.
-func firstUnreadableDir(entries []paths.WalkEntry) error {
-	for _, entry := range entries {
-		if entry.ReadErr != nil {
-			return entry.ReadErr
-		}
-	}
-	return nil
 }
 
 // writeIndexBuildHuman — plain-text summary for --json=false mode.

@@ -136,6 +136,21 @@ type traceOutput struct {
 	Body rxtypes.TraceResponse
 }
 
+// openNamedFile opens the file at path through its pin and closes it,
+// to learn whether the search could read it. The error is the pin's or
+// the open's.
+func openNamedFile(path string) error {
+	src, err := paths.Pin(path)
+	if err != nil {
+		return err
+	}
+	f, err := src.Open()
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 // registerTraceHandlers mounts GET /v1/trace.
 //
 // Matches rx-python/src/rx/web.py:355-607. Flow:
@@ -215,13 +230,25 @@ func registerTraceHandlers(s *Server, api huma.API) {
 			)
 		}
 
-		// Existence check.
+		// Existence and readability check. The engine lists a file it
+		// cannot open as skipped, which is right for one inside a
+		// directory being searched. A file the request names is
+		// different: answering "0 matches" for a file nobody could read
+		// answers a question that was never asked, so it is refused as
+		// the CLI refuses it (exit 4), opened through its pin.
 		for _, p := range validatedPaths {
-			if _, err := os.Stat(p); err != nil {
+			info, err := os.Stat(p)
+			if err != nil {
 				if os.IsNotExist(err) {
 					return nil, ErrNotFound(fmt.Sprintf("Path not found: %s", p))
 				}
 				return nil, ErrForbidden(err.Error())
+			}
+			if info.IsDir() {
+				continue
+			}
+			if err := openNamedFile(p); err != nil {
+				return nil, ErrFileAccess(p, err)
 			}
 		}
 

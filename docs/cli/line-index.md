@@ -61,8 +61,15 @@ there is no sandbox. See [Security](../concepts/security.md).
 
 Every path given is processed, and each failure is reported in the
 output. The command then exits 3 when every failure was a file that does
-not exist, 4 when every failure was a path outside the roots, and 1 when
-the failures were of different kinds.
+not exist, 4 when every failure was a path outside the roots or a file
+the process may not read (`permission denied`, the words and the code
+`rx trace` and `rx samples` give it), and 1 when the failures were of
+different kinds.
+
+A file or subdirectory that a walk of a directory meets and may not
+read is not a failure: it is listed under `skipped` with the reason
+`permission denied`, and the rest of the tree is indexed, as
+`rx trace` searches the rest of it.
 
 ## Output
 
@@ -221,8 +228,8 @@ The response envelope:
 }
 ```
 
-Below-threshold files and files that are not text land in `skipped`
-(not `errors`) — rx-go treats this as a normal outcome, not a failure.
+Below-threshold files, files that are not text, and files or
+subdirectories a walk may not read land in `skipped` (not `errors`) — rx-go treats this as a normal outcome, not a failure.
 `skip_reasons` gives the reason for each, in the same order, in the
 words `POST /v1/index` answers its `400` with.
 
