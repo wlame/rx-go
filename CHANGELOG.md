@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stretch's offset: the time search still starts at a checkpoint (about
   one index step per stretch of one offset), and the time range comes
   from the index with no read, for a gzip, bzip2, xz or plain zstd file
-  too. A file whose offset changes more than 1,024 times is searched
+  too. A file whose offset changes too often for 1,024 entries is searched
   from its first line under `--file-tz`, and its time range reads the
   last timestamped line again at the offset the index stores (source
   `none` for a stream-compressed file). An epoch value counts as its
@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the zone offset the lines write changes, as `[line, minutes]` pairs
   from the first timestamped line on (`[[first, 0]]` for a file whose
   timestamps carry no zone; a line that writes no zone counts as 0;
-  `null` past 1,024 changes). `rx index --json` shows it. A stored
+  `null` when 1,024 entries cannot hold them). `rx index --json` shows it. A stored
   index whose list is out of order, names a line outside the
   timestamped lines, repeats the offset in force or holds an offset
   beyond 18 hours is treated as damaged. Every index stored by an

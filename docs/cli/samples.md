@@ -202,7 +202,7 @@ For a file whose timestamps carry no zone, the index serves the search
 as without the flag. For one whose timestamps carry zones the index
 holds instants and records where the written offset changes, so the
 query is shifted by each stretch's offset and the search still starts
-at a checkpoint; only a file whose offset changes more than 1,024 times
+at a checkpoint; only a file whose offset changes too often for 1,024 entries
 is searched from its first line (the answer is the same, the read
 longer). See [A file zone](../concepts/timestamps.md#a-file-zone).
 
