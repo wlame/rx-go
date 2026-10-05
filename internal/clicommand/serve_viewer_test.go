@@ -115,3 +115,28 @@ func TestRunServe_UpdateViewerWithSkipFrontendIsAUsageError(t *testing.T) {
 		t.Fatalf("runServe error = %v, want exit code %d", err, ExitUsageError)
 	}
 }
+
+// --update-viewer has nothing to update when RX_FRONTEND_PATH names the
+// viewer: rx serves that directory as it is, so the flag is refused
+// rather than silently doing nothing.
+func TestRunServe_UpdateViewerWithLocalPathIsAUsageError(t *testing.T) {
+	t.Cleanup(resetServeGlobals)
+	t.Setenv("RX_FRONTEND_PATH", t.TempDir())
+	params := serveParams{
+		host:         "127.0.0.1",
+		port:         freePort(t),
+		searchRoots:  []string{t.TempDir()},
+		appVersion:   "test",
+		updateViewer: true,
+	}
+
+	err := runServe(&bytes.Buffer{}, params)
+
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != ExitUsageError {
+		t.Fatalf("runServe error = %v, want exit code %d", err, ExitUsageError)
+	}
+	if !strings.Contains(exitErr.Error(), "RX_FRONTEND_PATH") {
+		t.Errorf("message %q does not name RX_FRONTEND_PATH", exitErr.Error())
+	}
+}

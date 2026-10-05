@@ -8,6 +8,11 @@
 //
 // Which viewer `rx serve` serves:
 //
+//   - RX_FRONTEND_PATH set → the directory it names, as it is. The
+//     operator manages that directory (a local build of rx-viewer, say):
+//     rx asks GitHub nothing for it, downloads nothing into it, writes
+//     nothing in it and does not create it. RX_FRONTEND_URL and
+//     RX_FRONTEND_VERSION are ignored beside it, with a warning.
 //   - RX_FRONTEND_URL set → download from that URL on every start.
 //   - RX_FRONTEND_VERSION set → pin to that version; use the cache when it
 //     holds that version, else download it. No range check.
@@ -18,7 +23,8 @@
 //     cached viewer outside the range counts as no cache at all.
 //     `rx serve --update-viewer` runs the check at once (Manager.Update).
 //
-// Directory resolution: RX_FRONTEND_PATH > config.GetFrontendCacheDir().
+// Directory: RX_FRONTEND_PATH when set, else the managed cache,
+// config.GetFrontendCacheDir() (moved with RX_CACHE_DIR).
 //
 // Security: tarball entries are path-sanitized before extraction.
 // Any entry whose resolved path would escape the destination
@@ -138,6 +144,12 @@ type Manager struct {
 	envURL     string
 	envVersion string
 
+	// servesLocalPath is set when CacheDir came from RX_FRONTEND_PATH:
+	// the directory belongs to the operator, so Ensure and Update serve
+	// it as it is and never reach Download, recordCheck or WriteMetadata.
+	// A CacheDir passed in Config is the managed cache, as in tests.
+	servesLocalPath bool
+
 	HTTPClient *http.Client
 	Logger     *slog.Logger
 
@@ -179,6 +191,7 @@ func NewManager(cfg Config) *Manager {
 	if m.CacheDir == "" {
 		if v := os.Getenv("RX_FRONTEND_PATH"); v != "" {
 			m.CacheDir = expandHome(v)
+			m.servesLocalPath = true
 		} else {
 			m.CacheDir = config.GetFrontendCacheDir()
 		}
@@ -224,6 +237,12 @@ func checkRedirectTarget(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("refused redirect to %s: %s", req.URL.Redacted(), reason)
 	}
 	return nil
+}
+
+// ServesLocalPath reports whether the viewer directory came from
+// RX_FRONTEND_PATH, which rx serves as it is and never updates.
+func (m *Manager) ServesLocalPath() bool {
+	return m.servesLocalPath
 }
 
 // expandHome replaces a leading "~" with the user's home dir. Matches

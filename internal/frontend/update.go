@@ -3,6 +3,7 @@ package frontend
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +43,9 @@ const (
 	ServedInstalled ServedReason = "installed"
 	// ServedOverride: RX_FRONTEND_URL or RX_FRONTEND_VERSION chose it.
 	ServedOverride ServedReason = "override"
+	// ServedLocalPath: the build in the RX_FRONTEND_PATH directory,
+	// served as it is, with no check and no range.
+	ServedLocalPath ServedReason = "local"
 	// ServedNone: no viewer is served; / redirects to /docs.
 	ServedNone ServedReason = "none"
 )
@@ -56,6 +60,9 @@ type Served struct {
 	Reason ServedReason
 	// Replaced is the cached version an update replaced ("" otherwise).
 	Replaced string
+	// Dir is the RX_FRONTEND_PATH directory a ServedLocalPath viewer is
+	// served from ("" otherwise).
+	Dir string
 }
 
 // servedFromUnrecorded is the description key of an update that
@@ -73,6 +80,7 @@ var servedDescriptions = map[ServedReason]string{
 	servedFromUnrecorded: "{version} (replaced a cached viewer of unrecorded version)",
 	ServedInstalled:      "{version} (installed)",
 	ServedOverride:       "{version} (set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)",
+	ServedLocalPath:      "{version} from {dir} (RX_FRONTEND_PATH, served as it is)",
 	ServedNone:           "none (/ redirects to /docs)",
 }
 
@@ -90,6 +98,7 @@ func (s Served) Describe() string {
 	return strings.NewReplacer(
 		"{version}", versionLabel(s.Version),
 		"{replaced}", versionLabel(s.Replaced),
+		"{dir}", s.Dir,
 	).Replace(text)
 }
 
@@ -128,6 +137,9 @@ func (m *Manager) Update(ctx context.Context) (Served, error) {
 // Cached describes the viewer on disk without asking the network, for
 // `rx serve --skip-frontend`.
 func (m *Manager) Cached() Served {
+	if m.servesLocalPath {
+		return m.localServed()
+	}
 	if !m.IsAvailable() {
 		return Served{Reason: ServedNone}
 	}
@@ -137,6 +149,12 @@ func (m *Manager) Cached() Served {
 // ensure is the common body of Ensure and Update. isDue decides whether a
 // cached viewer inside the range is checked against GitHub now.
 func (m *Manager) ensure(ctx context.Context, isDue func(*CacheMetadata, time.Time) bool) (Served, error) {
+	// SECURITY: RX_FRONTEND_PATH wins over everything below, so no
+	// path from here can download into, write in or create a directory
+	// the operator manages.
+	if m.servesLocalPath {
+		return m.ensureLocal()
+	}
 	if m.envURL != "" {
 		return m.ensureFromURL(ctx)
 	}
@@ -144,6 +162,65 @@ func (m *Manager) ensure(ctx context.Context, isDue func(*CacheMetadata, time.Ti
 		return m.ensurePinned(ctx)
 	}
 	return m.ensureFromReleases(ctx, isDue)
+}
+
+// ensureLocal serves the RX_FRONTEND_PATH directory as it is. It only
+// reads: a directory without a build serves no viewer, and an
+// RX_FRONTEND_URL or RX_FRONTEND_VERSION beside it is ignored. Either
+// is returned as the error, so `rx serve` prints it as one warning.
+func (m *Manager) ensureLocal() (Served, error) {
+	served := m.localServed()
+	var problems []string
+	if ignored := m.ignoredDownloadOverrides(); ignored != "" {
+		problems = append(problems, ignored+" RX_FRONTEND_PATH names a viewer build rx serves as it is")
+	}
+	if served.Reason == ServedNone {
+		problems = append(problems, fmt.Sprintf(
+			"RX_FRONTEND_PATH %s holds no viewer build (index.html and assets/); rx downloads nothing into it", m.CacheDir))
+	}
+	if len(problems) == 0 {
+		return served, nil
+	}
+	return served, errors.New(strings.Join(problems, "; "))
+}
+
+// ignoredDownloadOverrides names the download variables set beside
+// RX_FRONTEND_PATH, as the start of a sentence ("RX_FRONTEND_URL is
+// ignored:"), or "" when neither is set.
+func (m *Manager) ignoredDownloadOverrides() string {
+	var set []string
+	if m.envURL != "" {
+		set = append(set, "RX_FRONTEND_URL")
+	}
+	if m.envVersion != "" {
+		set = append(set, "RX_FRONTEND_VERSION")
+	}
+	switch len(set) {
+	case 0:
+		return ""
+	case 1:
+		return set[0] + " is ignored:"
+	default:
+		return strings.Join(set, " and ") + " are ignored:"
+	}
+}
+
+// localServed describes the RX_FRONTEND_PATH directory: its build, or
+// none when index.html or assets/ is missing.
+func (m *Manager) localServed() Served {
+	if !m.bundleOnDisk() {
+		return Served{Reason: ServedNone}
+	}
+	return Served{Version: m.localVersion(), Reason: ServedLocalPath, Dir: m.CacheDir}
+}
+
+// localVersion is the version a local build stamps in its version.json,
+// else the one a copied cache records in .metadata.json, else "".
+func (m *Manager) localVersion() string {
+	if v, err := readDistVersion(m.CacheDir); err == nil && v.Version != "" {
+		return v.Version
+	}
+	return m.cachedVersion()
 }
 
 // ensureFromURL downloads RX_FRONTEND_URL, on every start.

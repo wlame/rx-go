@@ -33,7 +33,7 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 | `--port` | `int` | `7777` | TCP port to bind |
 | `--search-root` | `string[]` | current directory | Restrict file access to this directory (repeatable) |
 | `--skip-frontend` | `bool` | `false` | Don't attempt to download or check the `rx-viewer` SPA; serve what is cached |
-| `--update-viewer` | `bool` | `false` | Check GitHub for a newer `rx-viewer` release inside the supported range now, instead of once a day. Exits 2 with `--skip-frontend` |
+| `--update-viewer` | `bool` | `false` | Check GitHub for a newer `rx-viewer` release inside the supported range now, instead of once a day. Exits 2 with `--skip-frontend`, and when `RX_FRONTEND_PATH` is set |
 
 ### Default behavior
 
@@ -112,15 +112,31 @@ Asks GitHub for a newer `rx-viewer` release inside the supported range at
 this start, whatever the last check says, and installs it before the
 server binds.
 
-### Custom SPA cache location
+### Serve a viewer build you manage
 
 ```bash
-RX_FRONTEND_PATH=/opt/rx-frontend rx serve
+RX_FRONTEND_PATH=~/src/rx-viewer/dist rx serve
 ```
 
-The SPA is extracted to `/opt/rx-frontend/` instead of the default
-`~/.cache/rx/frontend/`. Useful when serving from a read-only home
-directory or when sharing the SPA across multiple instances.
+Serves the viewer in that directory as it is — a local build of
+`rx-viewer`, or a copy you keep on a host without GitHub access. The
+directory belongs to you: `rx` asks GitHub nothing for it, downloads
+nothing into it, writes no `.metadata.json` in it and does not create it.
+There is no range check either. The banner names it:
+
+```text
+Viewer: v0.6.0-6-g03013b5 from /home/you/src/rx-viewer/dist (RX_FRONTEND_PATH, served as it is)
+```
+
+The version is the one the build's `version.json` stamps (else the one a
+copied cache's `.metadata.json` records). A directory without
+`index.html` and `assets/`, or one that does not exist, serves no viewer
+(`/` redirects to `/docs`) and prints one warning. `RX_FRONTEND_URL` and
+`RX_FRONTEND_VERSION` are ignored beside it, with a warning, and
+`--update-viewer` exits 2: there is nothing to update.
+
+To move the cache `rx` manages itself, set `RX_CACHE_DIR`; the viewer
+then lives in `$RX_CACHE_DIR/rx/frontend/`.
 
 ### Webhook-emitting server
 
@@ -308,6 +324,8 @@ an `index.html` whose assets are already gone.
 release list, and both leave `--update-viewer` without effect. The
 banner says `(set by RX_FRONTEND_URL or RX_FRONTEND_VERSION)`.
 `--skip-frontend` serves whatever is cached and asks nothing.
+`RX_FRONTEND_PATH` serves its directory as it is and wins over all of
+them (see [Serve a viewer build you manage](#serve-a-viewer-build-you-manage)).
 
 !!! note "`/metrics` includes endpoint labels, not path values"
     The Prometheus metrics label requests by **route pattern**
