@@ -1,6 +1,7 @@
 package index
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -65,9 +66,11 @@ type timeIndexer struct {
 	hasMax bool
 	maxMs  int64
 
-	lines         int64
-	first, last   rxtypes.TimePoint
-	firstOffset   int
+	lines       int64
+	first, last rxtypes.TimePoint
+	firstOffset int
+	// firstText is the first timestamp as its line writes it.
+	firstText     string
 	backwardSteps int64
 	maxBackwardMs int64
 
@@ -138,6 +141,9 @@ func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 	if t.lines == 1 {
 		t.first = point
 		t.firstOffset = stamp.OffsetMinutes
+		// The one allocation of the time section per build: the first
+		// timestamped line is read a second time for its text.
+		t.firstText, _ = t.parser.Text(stripLineEnd(line))
 	}
 	t.last = point
 	if !t.hasMax {
@@ -177,8 +183,8 @@ func (t *timeIndexer) result(checkpoints []rxtypes.LineIndexEntry) (*rxtypes.Tim
 		MaxBefore:        maxBefore,
 	}
 	if t.lines > 0 {
-		first, last := t.first, t.last
-		out.First, out.Last = &first, &last
+		first, last, text := t.first, t.last, t.firstText
+		out.First, out.Last, out.FirstText = &first, &last, &text
 		if format.HasZone {
 			offset := t.firstOffset
 			out.FirstZoneOffsetMinutes = &offset
@@ -292,6 +298,9 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	if err := validTimeSpan(ti, idx.LineCount); err != nil {
 		return fmt.Errorf("time_index: %w", err)
 	}
+	if err := validFirstText(ti); err != nil {
+		return fmt.Errorf("time_index: %w", err)
+	}
 	if offset := ti.FirstZoneOffsetMinutes; offset != nil &&
 		(*offset < -maxZoneOffsetMinutes || *offset > maxZoneOffsetMinutes) {
 		return fmt.Errorf("time_index: first_zone_offset_minutes %d is beyond 18 hours", *offset)
@@ -307,6 +316,29 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 		}
 		if v != nil {
 			previous = v
+		}
+	}
+	return nil
+}
+
+// validFirstText checks first_text: present exactly when first is,
+// and what timestamps.Parser.Text gives, at most MaxTextBytes bytes of
+// printable ASCII. A client prints it as it is, so a damaged index must
+// not hand it control bytes.
+func validFirstText(ti *rxtypes.TimeIndex) error {
+	if (ti.FirstText != nil) != (ti.First != nil) {
+		return errors.New("first_text does not match first")
+	}
+	if ti.FirstText == nil {
+		return nil
+	}
+	text := *ti.FirstText
+	if len(text) > timestamps.MaxTextBytes {
+		return fmt.Errorf("first_text is %d bytes, more than %d", len(text), timestamps.MaxTextBytes)
+	}
+	for i := 0; i < len(text); i++ {
+		if text[i] < 0x20 || text[i] >= 0x7f {
+			return fmt.Errorf("first_text holds byte %#x, which is not printable ASCII", text[i])
 		}
 	}
 	return nil
