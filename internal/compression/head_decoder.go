@@ -64,15 +64,21 @@ func NewHeadDecoder(windowLimit uint64) (*HeadDecoder, error) {
 	return &HeadDecoder{zd: zd}, nil
 }
 
-// Reset starts decoding the stream src, from its first frame. It reads
-// the first frame's header, so a frame whose window is above the limit
-// is refused here, with an error wrapping ErrWindowTooLarge.
-func (h *HeadDecoder) Reset(src io.Reader) error {
+// Reset makes src the stream the decoder reads, from its first frame.
+// It reads none of src: the first Read reads the first frame's header,
+// and that Read is where a frame whose window is above the limit is
+// refused, with an error wrapping ErrWindowTooLarge, before the window
+// is reserved.
+func (h *HeadDecoder) Reset(src io.Reader) {
 	// The decoder decodes a *bytes.Buffer or another source that hands
 	// out its bytes whole in one call, without the window limit's
 	// stream checks. A wrapper that is only an io.Reader keeps every
 	// source on the streaming path.
-	return windowError(h.zd.Reset(streamOnly{src}))
+	//
+	// A decoder of concurrency 1 only records a stream it is reset to.
+	// The one error its Reset gives is for a decoder already closed,
+	// and Read gives that error too, so it is not returned twice.
+	_ = h.zd.Reset(streamOnly{src})
 }
 
 // Read copies decoded text into p. It returns io.EOF at the end of the

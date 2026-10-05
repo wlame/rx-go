@@ -299,10 +299,7 @@ func openText(r io.ReaderAt, size int64, kind Kind, windowLimit uint64) (io.Read
 		if err != nil {
 			return nil, err
 		}
-		if err := dec.Reset(file); err != nil {
-			_ = dec.Close()
-			return nil, fmt.Errorf("decompress: %w", err)
-		}
+		dec.Reset(file)
 		return dec, nil
 	case kind.Format == compression.FormatXz:
 		// An xz block's dictionary is reserved before the block is
