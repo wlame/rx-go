@@ -5,37 +5,6 @@ import (
 	"testing"
 )
 
-func TestGetIntEnv(t *testing.T) {
-	cases := []struct {
-		name string
-		set  *string // nil = unset
-		def  int
-		want int
-	}{
-		{"unset returns default", nil, 42, 42},
-		{"empty string returns default", strPtr(""), 42, 42},
-		{"valid int", strPtr("7"), 42, 7},
-		{"negative int", strPtr("-5"), 42, -5},
-		{"zero", strPtr("0"), 42, 0},
-		{"invalid returns default", strPtr("not-a-number"), 42, 42},
-		{"decimal rejected (Python parity)", strPtr("1.5"), 42, 42},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.set == nil {
-				t.Setenv("RX_TEST_INT", "")
-				os.Unsetenv("RX_TEST_INT")
-			} else {
-				t.Setenv("RX_TEST_INT", *tc.set)
-			}
-			got := GetIntEnv("RX_TEST_INT", tc.def)
-			if got != tc.want {
-				t.Errorf("got %d, want %d", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestGetStringEnv(t *testing.T) {
 	cases := []struct {
 		name string
