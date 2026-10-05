@@ -14,10 +14,12 @@ import (
 // what a plain zstd decoder gives for an intact file, but it reads each
 // frame where the table places it, checks it with DecodeFrame, and
 // stops at a damaged frame with an error that wraps ErrDamagedFrame and
-// names the frame, after the text of the frames before it.
+// names the frame, after the text of the frames before it. A frame too
+// large to hold stops it with compression.ErrWindowTooLarge instead.
 //
-// Memory holds one frame's text at a time. Close returns the pooled
-// decoder; it does not close r.
+// Memory holds one frame's text at a time, at most
+// compression.WindowLimit. Close returns the pooled decoder; it does
+// not close r.
 type TextReader struct {
 	r    io.ReaderAt
 	tbl  *SeekTable

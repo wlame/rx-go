@@ -253,8 +253,10 @@ The response envelope:
 }
 ```
 
-Below-threshold files, files that are not text, and files or
-subdirectories a walk may not read land in `skipped` (not `errors`) — rx-go treats this as a normal outcome, not a failure.
+Below-threshold files, files that are not text, files rx refuses to
+decompress (`decompressing it needs more than 128 MiB at once: …`, see
+[Compression](../concepts/compression.md#how-rx-decides-what-a-file-is)),
+and files or subdirectories a walk may not read land in `skipped` (not `errors`) — rx-go treats this as a normal outcome, not a failure.
 `skip_reasons` gives the reason for each, in the same order, in the
 words `POST /v1/index` answers its `400` with.
 

@@ -182,6 +182,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An xz file cut short where a block or its index should start was read
   as complete, its text up to the cut answered as all of it; it is now
   a stream that ends early.
+- `rx trace`, `rx samples` and index builds no longer hold whatever a
+  small zstd file declares. A seek table can give one frame up to 4 GiB
+  of text, which each of them decoded whole (a 14 KB file with one
+  129 MiB frame cost a trace 138 MiB, a samples lookup 148 MiB and an
+  index build 217 MiB), and a plain zstd stream could declare a 512 MiB
+  window or a single-segment frame of 64 GiB. Every zstd decoder now
+  refuses a frame whose window, or single-segment size, is above
+  128 MiB before reserving it, the limit `zstd -d` applies without
+  `--long=N`. A file refused this way, or for an xz dictionary above
+  128 MiB, is answered by none of its parts: `rx trace` and `rx index`
+  skip it with `decompressing it needs more than 128 MiB at once: …` in
+  `skip_reasons` (it was a stream that "ends early" with the matches
+  before the refusal kept, or an index error), `rx samples` exits 1 and
+  `GET /v1/samples` answers 400 with the same words. A seekable file
+  whose seek table gives a frame more than 128 MiB is read as the
+  plain zstd stream it also is, a window at a time, with the same
+  answers (the 129 MiB frame above now costs 18 to 29 MiB); a trace
+  logs `seek_table_unused` for it.
 - An index build no longer copies the first lines of a file to decide
   its line ending; it counts the endings where it reads them. A file
   whose first line is 10 MiB long cost 10 MiB more. The answer is the

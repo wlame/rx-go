@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/wlame/rx-go/internal/compression"
 )
 
 // ErrNotSeekable is returned when a probed file lacks the seekable-zstd
@@ -20,6 +22,17 @@ var ErrNotSeekable = errors.New("not a seekable zstd file (footer magic missing)
 // describes nothing reliably. Such a file is still a zstd stream, and
 // rx reads it as plain zstd.
 var ErrSeekTableMismatch = errors.New("seek table does not describe the file")
+
+// ErrFrameTooLargeToHold reports a seek table that describes its file
+// but gives a frame more than compression.WindowLimit of text or of
+// compressed bytes. rx decodes a seekable file's frames whole, so it
+// does not use such a table: the file is still a zstd stream, and rx
+// reads it as plain zstd, through a decoder that holds one window at a
+// time instead of the frame. The answer is the same; only the frame by
+// frame access is lost. A crafted file of a few kilobytes can give a
+// frame 4 GiB of text, so the table is refused before any frame is
+// decoded.
+var ErrFrameTooLargeToHold = errors.New("a seekable zstd frame is larger than rx decodes whole")
 
 // zstdFrameMagic starts every zstd frame (RFC 8878, section 3.1.1).
 const zstdFrameMagic uint32 = 0xFD2FB528
@@ -78,7 +91,8 @@ var footerLayouts = [...]footerLayout{
 // io.ErrUnexpectedEOF for a file shorter than a footer. A table that
 // does not describe the file is ErrSeekTableMismatch, from the
 // preferred layout that found its magic: a parsed table is never
-// returned unchecked.
+// returned unchecked. A table that describes the file but gives a
+// frame more than rx decodes whole is ErrFrameTooLargeToHold.
 func ReadSeekTable(r io.ReaderAt, fileSize int64) (*SeekTable, error) {
 	if fileSize < FooterSize {
 		return nil, io.ErrUnexpectedEOF
@@ -94,6 +108,9 @@ func ReadSeekTable(r io.ReaderAt, fileSize int64) (*SeekTable, error) {
 		}
 		tbl, err := readTableIn(r, fileSize, footer, layout)
 		if err == nil {
+			if tooLarge := checkFramesCanBeHeld(tbl); tooLarge != nil {
+				return nil, tooLarge
+			}
 			return tbl, nil
 		}
 		if firstErr == nil {
@@ -360,4 +377,23 @@ func WriteSeekTable(w io.Writer, frames []FrameInfo) error {
 		return fmt.Errorf("write footer: %w", err)
 	}
 	return nil
+}
+
+// checkFramesCanBeHeld returns an error wrapping ErrFrameTooLargeToHold
+// for the first frame of tbl too large to decode whole (frameTooLarge).
+func checkFramesCanBeHeld(tbl *SeekTable) error {
+	for _, frame := range tbl.Frames {
+		if frameTooLarge(frame) {
+			return fmt.Errorf("%w: frame %d holds %d bytes of text in %d bytes, more than the %d allowed",
+				ErrFrameTooLargeToHold, frame.Index, frame.DecompressedSize, frame.CompressedSize, compression.WindowLimit)
+		}
+	}
+	return nil
+}
+
+// frameTooLarge reports whether frame holds more text, or more
+// compressed bytes, than compression.WindowLimit: more than a reader
+// that decodes the frame whole may hold.
+func frameTooLarge(frame FrameInfo) bool {
+	return frame.DecompressedSize > compression.WindowLimit || frame.CompressedSize > compression.WindowLimit
 }

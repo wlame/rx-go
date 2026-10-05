@@ -1228,14 +1228,16 @@ func feedThroughLineBreaks(
 	src batchSource,
 	next, breaks int,
 ) error {
-	// Concurrency 1 makes the stream decoder synchronous: it decodes a
-	// block when Read asks for bytes, rather than decoding ahead in
-	// goroutines of its own, so stopping early leaves no work behind.
-	zd, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+	// A HeadDecoder decodes on this goroutine: it decodes a block when
+	// Read asks for bytes, rather than decoding ahead in goroutines of
+	// its own, so stopping early leaves no work behind. It holds one
+	// window of at most compression.WindowLimit and refuses a frame
+	// that declares more before reserving it.
+	zd, err := compression.NewHeadDecoder(compression.WindowLimit)
 	if err != nil {
 		return fmt.Errorf("create zstd stream decoder: %w", err)
 	}
-	defer zd.Close()
+	defer func() { _ = zd.Close() }()
 
 	buf := make([]byte, lineEndReadSize)
 	for fi := next; fi < src.tbl.NumFrames && breaks > 0; fi++ {
@@ -1247,12 +1249,10 @@ func feedThroughLineBreaks(
 			compressed: &readErrorRecorder{r: io.NewSectionReader(src.f, frame.CompressedOffset, frame.CompressedSize)},
 			frame:      frame,
 		}
-		err = text.reset()
-		if err == nil {
-			// No line break of this frame comes before its first byte.
-			feeder.beginRun(frame, frame.DecompressedOffset, 0)
-			breaks, err = feedThroughLineBreak(ctx, feeder, text, buf, breaks)
-		}
+		text.reset()
+		// No line break of this frame comes before its first byte.
+		feeder.beginRun(frame, frame.DecompressedOffset, 0)
+		breaks, err = feedThroughLineBreak(ctx, feeder, text, buf, breaks)
 		if errors.Is(err, seekable.ErrDamagedFrame) {
 			feeder.cut()
 			return &damagedFrameError{frame: fi, err: err}
@@ -1269,14 +1269,15 @@ func feedThroughLineBreaks(
 // decoder wraps seekable.ErrDamagedFrame, unless reading the frame's
 // compressed bytes failed, and then it is that read's error.
 type frameStream struct {
-	zd         *zstd.Decoder
+	zd         *compression.HeadDecoder
 	compressed *readErrorRecorder
 	frame      seekable.FrameInfo
 }
 
-// reset points the decoder at the frame's compressed bytes.
-func (s *frameStream) reset() error {
-	return s.classify(s.zd.Reset(s.compressed))
+// reset points the decoder at the frame's compressed bytes. The first
+// Read reads the frame's header.
+func (s *frameStream) reset() {
+	s.zd.Reset(s.compressed)
 }
 
 // Read reads the frame's text. Go note: having this method makes a
@@ -1296,6 +1297,11 @@ func (s *frameStream) classify(err error) error {
 		return nil
 	case s.compressed.err != nil:
 		return fmt.Errorf("read frame at %d: %w", s.frame.CompressedOffset, s.compressed.err)
+	case errors.Is(err, compression.ErrTooLargeToDecode):
+		// Too large to read is not damage: a search around a damaged
+		// frame keeps the other frames' matches, and a file refused for
+		// its size must not be answered by its other frames.
+		return fmt.Errorf("frame %d: %w", s.frame.Index, err)
 	default:
 		return fmt.Errorf("%w: frame %d: %w", seekable.ErrDamagedFrame, s.frame.Index, err)
 	}

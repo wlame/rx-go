@@ -18,3 +18,9 @@ const WindowLimit = 128 << 20
 // because it declares more than a decoder's limit: ErrWindowTooLarge
 // for zstd, ErrDictionaryTooLarge for xz.
 var ErrTooLargeToDecode = errors.New("decompressing it needs more memory than rx allows")
+
+// TooLargeToDecodeReason is the reason a command gives for a file it
+// does not read because decoding it needs more than WindowLimit: the
+// wording of a trace's skip_reasons, an index build's skip_reasons and
+// a refused samples request alike.
+const TooLargeToDecodeReason = "decompressing it needs more than 128 MiB at once: a zstd frame's window or an xz block's dictionary is above the limit rx allows"

@@ -75,6 +75,21 @@ first block names more as text without probing it. Every command probes
 and reads an xz file with at most a 128 MiB dictionary and refuses a
 block that names more.
 
+Every command holds at most 128 MiB of a compressed file's history at a
+time: a zstd frame's window (what `zstd -d` accepts without
+`--long=N`; `zstd --long` writes exactly 128 MiB), the content size of
+a single-segment zstd frame, which is its window, a seekable zstd frame
+it decodes whole, and an xz block's dictionary. A file that needs more
+is refused before the memory is reserved, whichever frame or block asks
+for it, and nothing of it is answered: `rx trace` and `rx index` skip it
+with `decompressing it needs more than 128 MiB at once: …` in
+`skip_reasons`, `rx samples` exits 1 and `GET /v1/samples` answers 400
+with the same words. A seekable zstd file whose seek table gives a
+frame more than 128 MiB is not refused: rx does not use its table and
+reads it as the plain zstd stream it also is, a window at a time. The
+answers are the same; the frame-parallel search and the frame-by-frame
+access are lost, and a trace logs `seek_table_unused`.
+
 ## Why compressed files lose random access
 
 A compressed stream is a state machine. Decompressing byte N typically
@@ -205,7 +220,9 @@ which small frames cut into many pieces.
 
 For log files queried by line number, 1-4 MiB frames are usually
 right. For archive storage queried sequentially, larger frames save
-space.
+space. rx decodes a frame whole, so it holds at most 128 MiB of a
+frame: a file whose seek table gives a frame more than that is read as
+the plain zstd stream it also is (see below).
 
 ### Compression level
 

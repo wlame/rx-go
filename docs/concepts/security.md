@@ -649,6 +649,18 @@ happens at all.
   its dictionary is reserved: at most 16 MiB to decide what a file is,
   128 MiB to read it; see
   [Compression](compression.md#how-rx-decides-what-a-file-is)
+- Exhausting the server's memory with a search, a samples request or an
+  index build over a small zstd file that declares a window of
+  gigabytes, a single-segment frame of up to 64 GiB, or a seek table
+  that gives one frame 4 GiB of text — blocked by holding at most
+  128 MiB per decoder: a larger window is refused before it is
+  reserved and the file is skipped or refused with the reason, and a
+  seekable file whose table gives a frame more than that is read as a
+  plain stream, a window at a time. A request holds one such decoder,
+  except a search of a seekable file, which holds one per worker
+  (`RX_WORKERS`, else the number of CPUs up to `RX_MAX_SUBPROCESSES`),
+  and a samples request, which keeps up to three decoded frames; see
+  [Compression](compression.md#how-rx-decides-what-a-file-is)
 - Exhausting the server's memory or its disk with one
   `GET /v1/samples` (a thousand line ranges open to the end of the
   file held 34 million lines; a thousand windows near the end read a
