@@ -163,19 +163,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and holds one window of at most 16 MiB: a 28 KB file whose one frame
   declares 256 MiB used to cost 256 MiB in every command and in each
   `GET /v1/tree` that listed it, and a single-segment frame could declare
-  up to 64 GiB. A zstd file whose first frame declares a window above
-  16 MiB (`zstd --long` writes 128 MiB) is now taken for text without
-  being probed; the command that reads it decompresses it as before.
+  up to 64 GiB. `GET /v1/tree` takes a zstd file whose first frame
+  declares a window above 16 MiB (`zstd --long` writes 128 MiB) for text
+  without probing it. Every command that goes on to read the file
+  (trace, samples, index, compress) probes it with the window it reads
+  with, at most 128 MiB, so a binary file stored that way is still
+  skipped or refused as binary rather than searched with `rg --text`.
 - An xz file no longer costs the dictionary its block headers declare
   before rx has checked it. An xz block header names the dictionary its
   decoder reserves, up to 4 GiB, so a 64-byte file whose header named
   2 GiB cost 2 GiB in every command and in each `GET /v1/tree` that
   listed it. rx now reads the xz container itself and checks each block
-  header, of every block, before the dictionary is reserved: deciding
-  what a file is decodes blocks that declare at most 16 MiB and takes a
+  header, of every block, before the dictionary is reserved.
+  `GET /v1/tree` decodes blocks that declare at most 16 MiB and takes a
   file whose first block declares more for text without probing it
-  (`xz -9` declares 64 MiB); every command reads xz with at most a
-  128 MiB dictionary and refuses a block that declares more.
+  (`xz -9` declares 64 MiB); every command probes and reads xz with at
+  most a 128 MiB dictionary and refuses a block that declares more.
 - An xz file cut short where a block or its index should start was read
   as complete, its text up to the cut answered as all of it; it is now
   a stream that ends early.

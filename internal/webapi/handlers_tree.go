@@ -259,7 +259,10 @@ func buildEntryMetadata(target paths.Pinned, name string) rxtypes.TreeEntry {
 	// What the file is, by the rule every command applies (filekind),
 	// read through the pin: compressed or not by its bytes, and text or
 	// not by the first 8 KiB of its text. A file the listing cannot open
-	// is reported as neither compressed nor text.
+	// is reported as neither compressed nor text. A listing probes with
+	// at most a 16 MiB window (filekind.Of), so a file whose first zstd
+	// frame or xz block needs more is reported as text without being
+	// probed; a command that reads it probes it fully.
 	isCompressed, isText := false, false
 	if kind, err := filekind.OfPinned(target); err == nil {
 		isCompressed, isText = kind.IsCompressed(), kind.IsText()
