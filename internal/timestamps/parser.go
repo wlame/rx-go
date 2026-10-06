@@ -7,9 +7,13 @@ import (
 
 // Stamp is the timestamp written on one line.
 type Stamp struct {
-	// Ms is milliseconds since the Unix epoch. When Zoned is true it is
-	// the UTC instant; when false it is the wall-clock reading as if it
-	// were UTC (the file frame).
+	// Ms is milliseconds since the Unix epoch, in the file's frame. In a
+	// file whose Format has zones it is the UTC instant (a line without
+	// a zone is read as UTC). In a file whose Format has none it is the
+	// wall-clock reading as if it were UTC, for a line that carries a
+	// zone too: that line keeps the clock it shows, so every value of
+	// one file is in one frame. A query that carries a zone is the UTC
+	// instant whatever the file (see ParseQuery).
 	Ms int64
 	// Zoned is true when the line carried a zone the package converts
 	// (`Z`, a numeric offset, `UTC`, `GMT`), or was an epoch value.
@@ -138,7 +142,8 @@ func (f *family) canStartAfter(w []byte, i int) bool {
 	return !isAlnum(prev)
 }
 
-// at reads one timestamp that starts at w[i] and turns it into a Stamp.
+// at reads one timestamp of a line that starts at w[i] and turns it
+// into a Stamp in the file's frame.
 func (p *Parser) at(w []byte, i int) (Stamp, bool) {
 	if i >= len(w) || !p.fam.startsWith[w[i]] {
 		return Stamp{}, false
@@ -147,11 +152,28 @@ func (p *Parser) at(w []byte, i int) (Stamp, bool) {
 	if !ok || end > maxEnd {
 		return Stamp{}, false
 	}
-	return p.finish(r)
+	s, ok := p.finish(r)
+	if !ok {
+		return Stamp{}, false
+	}
+	return p.inFileFrame(s), true
+}
+
+// inFileFrame puts a line's stamp in the file's frame. A file whose
+// timestamps carry no zone is in wall-clock time, so a line in it that
+// does carry one keeps the wall clock it shows rather than becoming an
+// instant hours away from its neighbors: the instant plus the offset
+// written with it. Every other stamp is already in the file's frame.
+func (p *Parser) inFileFrame(s Stamp) Stamp {
+	if s.Zoned && !p.format.HasZone {
+		s.Ms += int64(s.OffsetMinutes) * msPerMinute
+	}
+	return s
 }
 
 // whole reads s as one timestamp of the file's family that fills all of
-// s. Queries use it to accept a value copied from a log line.
+// s. Queries use it to accept a value copied from a log line. A value
+// with a zone stays the UTC instant it names: inFileFrame is for lines.
 func (p *Parser) whole(s []byte) (Stamp, bool) {
 	if len(s) == 0 || len(s) > maxEnd || !p.fam.startsWith[s[0]] {
 		return Stamp{}, false
