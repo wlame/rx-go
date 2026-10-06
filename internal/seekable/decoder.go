@@ -1,15 +1,12 @@
 package seekable
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"sync"
 
 	"github.com/klauspost/compress/zstd"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/wlame/rx-go/internal/compression"
 )
@@ -66,8 +63,8 @@ func DecodeFrame(zd *zstd.Decoder, compressed []byte, frame FrameInfo) ([]byte, 
 
 // Decoder decompresses frames from seekable zstd files.
 //
-// Reusable across calls: create once, call DecompressFrame / DecompressFrames
-// many times. Safe for concurrent use — each decompressed frame uses a
+// Reusable across calls: create once, call DecompressFrameAt many
+// times. Safe for concurrent use — each decompressed frame uses a
 // decoder pulled from the package-level pool in internal/compression,
 // which amortizes the ~2 MB decoding-table allocation across all
 // callers in the process (seekable readers, webapi handlers, etc.).
@@ -89,8 +86,14 @@ func NewDecoder() *Decoder {
 // bytes. idx is 0-based.
 //
 // Opens path fresh each call so the function is safe to call from
-// goroutines that aren't sharing file descriptors. For hot paths that
-// decompress many frames from one file, use DecompressFrames instead.
+// goroutines that aren't sharing file descriptors. A caller that
+// decompresses many frames from one file opens it once and calls
+// DecompressFrameAt.
+//
+// SECURITY: a caller decodes one frame per call and holds what it
+// keeps, so the memory a set of frames costs is the caller's choice.
+// The package deliberately has no call that decodes a set of frames at
+// once: it would hold the whole set, up to 128 MiB per frame.
 func (d *Decoder) DecompressFrame(path string, idx int, tbl *SeekTable) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -110,62 +113,6 @@ func (d *Decoder) DecompressFrameAt(r io.ReaderAt, idx int, tbl *SeekTable) ([]b
 	return d.decompressFrameFromReaderAt(r, tbl.Frames[idx])
 }
 
-// DecompressFrames decodes a set of frames in parallel and returns a
-// map from frame index to decompressed bytes. Parallelism is capped at
-// runtime.NumCPU() by default (via errgroup default; caller can cap via
-// context with a cancel).
-//
-// Reads are lock-free: os.File's ReadAt is safe for concurrent use on
-// Linux/macOS (it uses pread(2) under the hood).
-func (d *Decoder) DecompressFrames(ctx context.Context, path string, frameIndices []int, tbl *SeekTable) (map[int][]byte, error) {
-	if len(frameIndices) == 0 {
-		return map[int][]byte{}, nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %q: %w", path, err)
-	}
-	defer func() { _ = f.Close() }() // read-only: close-error is informational
-	return d.DecompressFramesAt(ctx, f, frameIndices, tbl)
-}
-
-// DecompressFramesAt is DecompressFrames for a file the caller has
-// already opened. r must be safe for concurrent ReadAt calls, as an
-// *os.File is.
-func (d *Decoder) DecompressFramesAt(ctx context.Context, f io.ReaderAt, frameIndices []int, tbl *SeekTable) (map[int][]byte, error) {
-	// Validate indices up front — cheaper than failing mid-goroutine.
-	for _, idx := range frameIndices {
-		if idx < 0 || idx >= tbl.NumFrames {
-			return nil, fmt.Errorf("%w: idx=%d numFrames=%d", ErrFrameIndexOutOfRange, idx, tbl.NumFrames)
-		}
-	}
-
-	result := make(map[int][]byte, len(frameIndices))
-	var mu sync.Mutex
-
-	g, gctx := errgroup.WithContext(ctx)
-	for _, idx := range frameIndices {
-		idx := idx
-		g.Go(func() error {
-			if err := gctx.Err(); err != nil {
-				return err
-			}
-			out, err := d.decompressFrameFromReaderAt(f, tbl.Frames[idx])
-			if err != nil {
-				return fmt.Errorf("frame %d: %w", idx, err)
-			}
-			mu.Lock()
-			result[idx] = out
-			mu.Unlock()
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
 // decompressFrameFromReaderAt reads frame bytes then feeds them to the
 // zstd decoder. Uses the package-level pool from internal/compression
 // to amortize decoder construction cost (the zstd decoder allocates
@@ -182,67 +129,4 @@ func (d *Decoder) decompressFrameFromReaderAt(r io.ReaderAt, frame FrameInfo) ([
 	zd := compression.AcquireDecoder()
 	defer compression.ReleaseDecoder(zd)
 	return DecodeFrame(zd, buf, frame)
-}
-
-// DecompressRange returns decompressed bytes [startOffset, startOffset+length)
-// from the underlying file, decompressing only the frames that overlap
-// the range. Convenience for implementing random access on the logical
-// (decompressed) stream.
-func (d *Decoder) DecompressRange(ctx context.Context, path string, tbl *SeekTable, startOffset, length int64) ([]byte, error) {
-	if length <= 0 {
-		return []byte{}, nil
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %q: %w", path, err)
-	}
-	defer func() { _ = f.Close() }() // read-only: close-error is informational
-	return d.DecompressRangeAt(ctx, f, tbl, startOffset, length)
-}
-
-// DecompressRangeAt is DecompressRange for a file the caller has
-// already opened. r must be safe for concurrent ReadAt calls, as an
-// *os.File is.
-func (d *Decoder) DecompressRangeAt(ctx context.Context, r io.ReaderAt, tbl *SeekTable, startOffset, length int64) ([]byte, error) {
-	if length <= 0 {
-		return []byte{}, nil
-	}
-	endOffset := startOffset + length
-	var need []int
-	for _, f := range tbl.Frames {
-		if f.DecompressedOffset < endOffset && f.DecompressedEnd() > startOffset {
-			need = append(need, f.Index)
-		}
-	}
-	if len(need) == 0 {
-		return []byte{}, nil
-	}
-	frames, err := d.DecompressFramesAt(ctx, r, need, tbl)
-	if err != nil {
-		return nil, err
-	}
-	// Assemble in order.
-	result := make([]byte, 0, length)
-	for _, idx := range need {
-		frame := tbl.Frames[idx]
-		fdata := frames[idx]
-		fStart := int64(0)
-		if startOffset > frame.DecompressedOffset {
-			fStart = startOffset - frame.DecompressedOffset
-		}
-		fEnd := int64(len(fdata))
-		if endOffset < frame.DecompressedEnd() {
-			fEnd = endOffset - frame.DecompressedOffset
-		}
-		if fStart < fEnd && fStart < int64(len(fdata)) {
-			if fEnd > int64(len(fdata)) {
-				fEnd = int64(len(fdata))
-			}
-			result = append(result, fdata[fStart:fEnd]...)
-		}
-	}
-	if int64(len(result)) > length {
-		result = result[:length]
-	}
-	return result, nil
 }

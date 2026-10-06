@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -17,154 +18,111 @@ import (
 
 // TestDecoder_ThreeFrameRoundTrip is the regression test for the
 // pooled (sync.Pool) per-frame decompression path. It encodes a
-// deterministic payload into exactly a multi-frame seekable-zstd file
-// (we aim for ≥3 frames by keeping the FrameSize small and the payload
-// large), then:
+// deterministic payload into a seekable-zstd file of at least three
+// frames (a small FrameSize and a large payload), decodes every frame
+// on its own through DecompressFrameAt, and checks each frame against
+// its slice of the payload and the concatenation against the whole.
 //
-//  1. Decodes every frame individually via DecompressFrame and asserts
-//     the concatenation equals the original payload.
-//  2. Decodes the same frames in parallel via DecompressFrames and
-//     asserts the same byte-exact output.
-//
-// If the migration introduces any decoder-state leakage between frames
-// (e.g. forgetting that DecodeAll is stateless, or reusing a streaming
-// decoder incorrectly), this test will fail with a byte-level mismatch
-// on one or more frames.
+// If decoder state leaked between frames (forgetting that DecodeAll is
+// stateless, or reusing a streaming decoder incorrectly), a frame would
+// come out different and the test would name it.
 func TestDecoder_ThreeFrameRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Build a large enough payload so a small FrameSize produces ≥3
-	// frames after newline-alignment.
 	payload := buildTestPayload(3000)
-
-	enc := NewEncoder(EncoderConfig{
+	f, parsed := encodeToFile(t, payload, EncoderConfig{
 		FrameSize: 4 * 1024, // small enough to force multiple frames
 		Level:     3,
 		Workers:   1,
 	})
-	var out bytes.Buffer
-	tbl, err := enc.Encode(context.Background(), bytes.NewReader(payload), int64(len(payload)), &out)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	if tbl.NumFrames < 3 {
-		t.Fatalf("expected at least 3 frames, got %d — adjust FrameSize or payload size", tbl.NumFrames)
+	if parsed.NumFrames < 3 {
+		t.Fatalf("expected at least 3 frames, got %d — adjust FrameSize or payload size", parsed.NumFrames)
 	}
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "threeframe.zst")
-	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	parsed, err := ReadSeekTable(bytes.NewReader(out.Bytes()), int64(out.Len()))
-	if err != nil {
-		t.Fatalf("ReadSeekTable: %v", err)
-	}
-
-	// Sequential decode: frame-by-frame.
 	dec := NewDecoder()
-	var reconstructedSeq bytes.Buffer
-	for i := 0; i < parsed.NumFrames; i++ {
-		data, err := dec.DecompressFrame(path, i, parsed)
-		if err != nil {
-			t.Fatalf("DecompressFrame[%d]: %v", i, err)
-		}
-		reconstructedSeq.Write(data)
-	}
-	if !bytes.Equal(reconstructedSeq.Bytes(), payload) {
-		t.Errorf("sequential reassembly mismatch: got %d bytes, want %d", reconstructedSeq.Len(), len(payload))
-	}
-
-	// Parallel decode: same frames at once.
-	indices := make([]int, parsed.NumFrames)
-	for i := range indices {
-		indices[i] = i
-	}
-	framesMap, err := dec.DecompressFrames(context.Background(), path, indices, parsed)
-	if err != nil {
-		t.Fatalf("DecompressFrames: %v", err)
-	}
-	if len(framesMap) != parsed.NumFrames {
-		t.Fatalf("parallel decode returned %d frames, want %d", len(framesMap), parsed.NumFrames)
-	}
-	var reconstructedPar bytes.Buffer
-	for i := 0; i < parsed.NumFrames; i++ {
-		reconstructedPar.Write(framesMap[i])
-	}
-	if !bytes.Equal(reconstructedPar.Bytes(), payload) {
-		t.Errorf("parallel reassembly mismatch: got %d bytes, want %d", reconstructedPar.Len(), len(payload))
-	}
-
-	// Per-frame byte-exactness: each frame's decoded bytes must match
-	// the slice of the original payload at [DecompressedOffset, end).
+	var reconstructed bytes.Buffer
 	for i, frame := range parsed.Frames {
-		got := framesMap[i]
+		got, err := dec.DecompressFrameAt(f, i, parsed)
+		if err != nil {
+			t.Fatalf("DecompressFrameAt[%d]: %v", i, err)
+		}
 		start := frame.DecompressedOffset
 		end := start + int64(len(got))
 		if end > int64(len(payload)) {
-			t.Fatalf("frame %d decoded bytes overrun payload: end=%d payloadLen=%d",
-				i, end, len(payload))
+			t.Fatalf("frame %d decoded bytes overrun payload: end=%d payloadLen=%d", i, end, len(payload))
 		}
-		want := payload[start:end]
-		if !bytes.Equal(got, want) {
-			t.Errorf("frame %d: bytes differ at [%d, %d) — migration may have broken byte-exact semantics",
-				i, start, end)
+		if !bytes.Equal(got, payload[start:end]) {
+			t.Errorf("frame %d: bytes differ at [%d, %d)", i, start, end)
 		}
+		reconstructed.Write(got)
 	}
-
-	// Log for visibility in -v runs — helps future readers see frame
-	// counts without rerunning the test.
-	t.Logf("round-tripped %d frames totaling %d bytes", parsed.NumFrames, len(payload))
+	if !bytes.Equal(reconstructed.Bytes(), payload) {
+		t.Errorf("reassembly mismatch: got %d bytes, want %d", reconstructed.Len(), len(payload))
+	}
 }
 
-// TestDecoder_ManyFramesConcurrent exercises the per-frame path under
-// concurrent load. If the pool migration reuses decoders correctly
-// (stateless DecodeAll), this passes. If it ever accidentally shares
-// streaming state across goroutines, -race or a byte mismatch will
-// surface it.
+// TestDecoder_ManyFramesConcurrent decodes every frame of one file from
+// its own goroutine, five times over, through one shared *os.File. The
+// pooled decoders are handed from goroutine to goroutine; if one ever
+// kept streaming state between uses, -race or a byte mismatch would
+// show it.
+//
+// Go note: os.File.ReadAt reads at an explicit position (pread), so the
+// goroutines can share the file without moving each other's position.
+// sync.WaitGroup waits until every goroutine of a round has finished;
+// each goroutine writes only its own element of decoded, so the slice
+// needs no lock.
 func TestDecoder_ManyFramesConcurrent(t *testing.T) {
 	t.Parallel()
 
 	payload := buildTestPayload(8000)
-	enc := NewEncoder(EncoderConfig{
+	f, tbl := encodeToFile(t, payload, EncoderConfig{
 		FrameSize: 2 * 1024,
 		Workers:   2,
 	})
-	var out bytes.Buffer
-	tbl, err := enc.Encode(context.Background(), bytes.NewReader(payload), int64(len(payload)), &out)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "concurrent.zst")
-	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	indices := make([]int, tbl.NumFrames)
-	for i := range indices {
-		indices[i] = i
-	}
 
 	dec := NewDecoder()
-	// Run the parallel decode 5 times back-to-back so pool reuse is
-	// exercised across repeated Acquire/Release cycles.
 	for attempt := 0; attempt < 5; attempt++ {
-		framesMap, err := dec.DecompressFrames(context.Background(), path, indices, tbl)
-		if err != nil {
-			t.Fatalf("attempt %d: DecompressFrames: %v", attempt, err)
+		decoded := make([][]byte, tbl.NumFrames)
+		errs := make([]error, tbl.NumFrames)
+		var wg sync.WaitGroup
+		for i := range tbl.NumFrames {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				decoded[i], errs[i] = dec.DecompressFrameAt(f, i, tbl)
+			}()
 		}
-		var reconstructed bytes.Buffer
-		for i := 0; i < tbl.NumFrames; i++ {
-			reconstructed.Write(framesMap[i])
+		wg.Wait()
+		if err := errors.Join(errs...); err != nil {
+			t.Fatalf("attempt %d: DecompressFrameAt: %v", attempt, err)
 		}
-		if !bytes.Equal(reconstructed.Bytes(), payload) {
+		if !bytes.Equal(bytes.Join(decoded, nil), payload) {
 			t.Errorf("attempt %d: reassembly mismatch", attempt)
 		}
 	}
-	t.Logf("ran %d concurrent decode rounds across %d frames", 5, tbl.NumFrames)
+}
+
+// encodeToFile encodes payload as a seekable-zstd file under t.TempDir()
+// and returns the open file, closed when the test ends, with its seek
+// table.
+func encodeToFile(t *testing.T, payload []byte, cfg EncoderConfig) (*os.File, *SeekTable) {
+	t.Helper()
+	var out bytes.Buffer
+	tbl, err := NewEncoder(cfg).Encode(context.Background(), bytes.NewReader(payload), int64(len(payload)), &out)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "frames.zst")
+	if err := os.WriteFile(path, out.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path) //nolint:gosec // path is under t.TempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = f.Close() })
+	return f, tbl
 }
 
 // DecodeFrame refuses a frame whose bytes do not decompress, and one
