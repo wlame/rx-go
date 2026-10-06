@@ -526,8 +526,8 @@ type walkStats struct {
 //  3. For --analyze: collect lengths of non-empty lines (stripped of
 //     trailing CR/LF) and track the longest line + its position.
 //
-// The line-ending sample is the first 64 KB of raw bytes (including
-// terminators) — we feed it to detectLineEnding after the walk.
+// The line ending is decided from the first lines of the text, whole,
+// terminators included, until they reach 64 KiB (lineEndingTally).
 //
 // coord is the analyzer coordinator for this walk, or nil when
 // analysis is disabled. When non-nil, each line (stripped of its
@@ -564,11 +564,10 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 	// ReadSlice (nextLine), joining the pieces of a line longer than the
 	// buffer.
 	var (
-		currentOffset    int64
-		currentLine      int64 // 0-based until first iteration
-		nextCheckpoint   = step
-		lineEndingSample = make([]byte, 0, 65536)
-		sampleComplete   bool
+		currentOffset  int64
+		currentLine    int64 // 0-based until first iteration
+		nextCheckpoint = step
+		lineEndings    lineEndingTally
 		// checkpointDue is set when the next line read starts a
 		// checkpoint. It starts true: the first line, if there is one,
 		// is the checkpoint [1, 0].
@@ -581,9 +580,9 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 	for {
 		// INVARIANT: line is valid only until the next nextLine call (it
 		// points into br's buffer or into joined). Everything below that
-		// keeps bytes of it copies them: the line-ending sample appends
-		// them, and the analyzer's window copies each line into its own
-		// slots. The statistics and the time section keep numbers only.
+		// keeps bytes of it copies them: the analyzer's window copies
+		// each line into its own slots. The line-ending tally, the
+		// statistics and the time section keep numbers only.
 		line, err := nextLine(br, &joined)
 		if err != nil {
 			return nil, fmt.Errorf("read: %w", err)
@@ -609,28 +608,7 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 			checkpointDue = false
 		}
 
-		// Append to line-ending sample until we've collected 64 KB.
-		//
-		// Python parity (rx-python/src/rx/unified_index.py): Python's
-		// loop does `line_ending_sample += line` (whole-line append)
-		// and only checks the size threshold AFTER the append. This
-		// means Python's sample can OVERSHOOT by up to one line's
-		// worth of bytes — i.e. if the sample is at 65534 bytes and
-		// the next line is 9 bytes, the sample becomes 65543 bytes
-		// before the "we've got enough" check fires.
-		//
-		// A previous Go version truncated the last line at byte
-		// granularity (`take = min(lineLen, remaining)`), which could
-		// drop trailing CR/LF bytes that Python would have captured.
-		// That broke line-ending detection for files whose ending-style
-		// transition happened right around the 64 KB boundary. The whole
-		// line is appended now and the overshoot accepted.
-		if !sampleComplete {
-			lineEndingSample = append(lineEndingSample, line...)
-			if len(lineEndingSample) >= 65536 {
-				sampleComplete = true
-			}
-		}
+		lineEndings.observe(line)
 
 		// Stats observation. Python parity (rx-python/src/rx/unified_index.py):
 		// every line is inspected, whitespace-only lines are counted as
@@ -685,7 +663,7 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *time
 	stats.LineStats = acc.finish()
 	stats.EmptyLineCount = int64(stats.LineStats.EmptyCount)
 
-	stats.LineEnding = detectLineEnding(lineEndingSample)
+	stats.LineEnding = lineEndings.style()
 	return stats, nil
 }
 
@@ -723,37 +701,65 @@ func nextLine(br *bufio.Reader, joined *[]byte) ([]byte, error) {
 // Line-ending detection — mirrors rx-python/src/rx/unified_index.py
 // ==========================================================================
 
-// detectLineEnding classifies sample bytes as LF / CRLF / CR / mixed.
-// Same logic as Python:
+// lineEndingSampleBytes is how much of the text the line ending is
+// decided from: whole lines, until they reach 64 KiB.
+const lineEndingSampleBytes = 65536
+
+// lineEndingTally counts the line endings of the first lines of a text,
+// whole lines with their terminators, until they reach
+// lineEndingSampleBytes; the line that crosses it counts whole.
+//
+// Python parity (rx-python/src/rx/unified_index.py): Python appends each
+// whole line to a byte sample, checks the size only after the append,
+// and then counts:
 //   - crlf = count("\r\n")
 //   - cr   = count("\r") - crlf
 //   - lf   = count("\n") - crlf
-//   - 0 endings → "LF" default; 1 distinct ending → that one; else "mixed".
-func detectLineEnding(sample []byte) string {
-	crlf := bytes.Count(sample, []byte("\r\n"))
-	cr := bytes.Count(sample, []byte("\r")) - crlf
-	lf := bytes.Count(sample, []byte("\n")) - crlf
+//
+// The tally keeps those three counts instead of the bytes. The sums are
+// the same: lines end at '\n', so a "\r\n" never spans two of them,
+// and every count of the concatenation is the sum of the counts of its
+// lines. Keeping counts means a long first line is counted where the
+// walk reads it rather than copied: a sample holding a 10 MiB line would
+// cost 10 MiB more. Cutting the crossing line at the 64 KiB mark would
+// lose its terminator instead: a CRLF log whose first line is longer
+// than that would read as having no line ending at all.
+type lineEndingTally struct {
+	crlf, cr, lf int
+	sampled      int // bytes of the lines counted so far
+}
 
-	type kind struct {
+// observe counts the endings in line, one line of the text with its
+// terminator, unless the lines counted already reach
+// lineEndingSampleBytes.
+func (t *lineEndingTally) observe(line []byte) {
+	if t.sampled >= lineEndingSampleBytes {
+		return
+	}
+	crlf := bytes.Count(line, []byte("\r\n"))
+	t.crlf += crlf
+	t.cr += bytes.Count(line, []byte("\r")) - crlf
+	t.lf += bytes.Count(line, []byte("\n")) - crlf
+	t.sampled += len(line)
+}
+
+// style classifies the counted endings as Python does: "LF" when there
+// are none, the one style present when there is one, "mixed" otherwise.
+func (t *lineEndingTally) style() string {
+	present := make([]string, 0, 3)
+	for _, ending := range []struct {
 		name  string
 		count int
+	}{{"CRLF", t.crlf}, {"LF", t.lf}, {"CR", t.cr}} {
+		if ending.count > 0 {
+			present = append(present, ending.name)
+		}
 	}
-	var endings []kind
-	if crlf > 0 {
-		endings = append(endings, kind{"CRLF", crlf})
-	}
-	if lf > 0 {
-		endings = append(endings, kind{"LF", lf})
-	}
-	if cr > 0 {
-		endings = append(endings, kind{"CR", cr})
-	}
-
-	switch len(endings) {
+	switch len(present) {
 	case 0:
 		return "LF"
 	case 1:
-		return endings[0].name
+		return present[0]
 	default:
 		return "mixed"
 	}
