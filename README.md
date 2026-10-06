@@ -130,6 +130,7 @@ for the full catalog and wire contract.
 | GET    | `/health`        | Server + `rg` availability          |
 | GET    | `/v1/trace`      | Search files for patterns           |
 | GET    | `/v1/samples`    | Context around offsets / lines      |
+| GET    | `/v1/time-range` | First and last timestamp of a file  |
 | GET    | `/v1/index`      | Retrieve cached file index          |
 | POST   | `/v1/index`      | Start background indexing task      |
 | POST   | `/v1/compress`   | Start background compression task   |

@@ -165,6 +165,7 @@ nav:
       - trace: cli/trace.md
       - index: cli/line-index.md
       - samples: cli/samples.md
+      - time-range: cli/time-range.md
       - compress: cli/compress.md
       - serve: cli/serve.md
   - HTTP API:
@@ -176,6 +177,7 @@ nav:
           - api/endpoints/health.md
           - api/endpoints/trace.md
           - api/endpoints/samples.md
+          - api/endpoints/time-range.md
           - api/endpoints/line-index.md
           - api/endpoints/tasks.md
           - api/endpoints/compress.md

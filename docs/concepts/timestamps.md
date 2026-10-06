@@ -140,6 +140,20 @@ Two settings say how a query meets the file
 timestamp without one is read in: `RX_LOG_TZ` for a file whose
 timestamps carry no zone, `UTC` for one whose timestamps do.
 
+## The time range of a file
+
+[`rx time-range`](../cli/time-range.md) and
+[`GET /v1/time-range`](../api/endpoints/time-range.md) give a file's
+format, its first and last timestamp as UTC instants, the zone its
+lines show times in (`display_zone`) and its first timestamp as
+written (`example`), for a timeline across several files. The first
+and last are those of the first and the last line with a timestamp of
+its own, read in `RX_LOG_TZ` like `line_timestamps`, so a query for
+either finds that line. A line index holds them; without one a plain or
+seekable zstd file is read at its head and at most 16 MiB back from its
+end, and a gzip, bzip2, xz or plain zstd file gives no range over HTTP
+until its index is built (`rx time-range` builds it).
+
 ## How a line is found
 
 Without a line index, rx reads the file from its first line, reading

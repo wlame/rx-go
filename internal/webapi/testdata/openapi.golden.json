@@ -1312,6 +1312,92 @@
         ],
         "type": "object"
       },
+      "TimeRangeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "cli_command": {
+            "description": "The rx command that gives this answer.",
+            "type": "string"
+          },
+          "day_first": {
+            "description": "For the slash format, whether the day comes before the month; null for every other format.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "display_zone": {
+            "description": "The zone to show this file's times in so that they read as its lines do: RX_LOG_TZ (UTC, an IANA name or ±HH:MM) for a file whose timestamps carry no zone; the offset of the first timestamp (±HH:MM) for one whose timestamps do; null when that offset is unknown.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "example": {
+            "description": "The first timestamp as its line writes it, such as 2025-12-10 07:00:04.574: printable ASCII, any other byte written as \\xHH, at most 64 bytes; null when no line has a timestamp.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_ms": {
+            "description": "The timestamp of the first line that has one, as a UTC instant in ms; null when unknown.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "format": {
+            "description": "The timestamp format of the lines: iso, clf, ctime, syslog, slash, dotted or epoch; null when none is recognized in the first mebibyte of the text, and then has_zone, day_first, display_zone, example, first_ms and last_ms are null too.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_zone": {
+            "description": "Whether most timestamps carry a zone.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "last_ms": {
+            "description": "The timestamp of the last line that has one, as a UTC instant in ms; null when unknown: source none, or no timestamped line within the last 16 MiB of the text.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "description": "The file, as the request named it.",
+            "type": "string"
+          },
+          "source": {
+            "description": "How the range was found: index (the file's line index, nothing of the file read), scan (the head of the text and a read back from its end, at most 16 MiB), none (a gzip, bzip2, xz or plain zstd file without an index: first_ms and last_ms are null).",
+            "enum": [
+              "index",
+              "scan",
+              "none"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "format",
+          "has_zone",
+          "day_first",
+          "display_zone",
+          "example",
+          "first_ms",
+          "last_ms",
+          "source",
+          "cli_command"
+        ],
+        "type": "object"
+      },
       "TimeSummary": {
         "additionalProperties": false,
         "properties": {
@@ -2380,6 +2466,127 @@
         "summary": "Get status of a background task",
         "tags": [
           "Operations"
+        ]
+      }
+    },
+    "/v1/time-range": {
+      "get": {
+        "description": "The time range of one file for a timeline: its format, its first and last timestamp as UTC instants, the zone its lines show times in and its first timestamp as written. From the file's line index when there is one; otherwise from the head of its text and at most 16 MiB back from its end, or not at all for a stream-compressed file (source none).",
+        "operationId": "time_range",
+        "parameters": [
+          {
+            "description": "The file whose time range to give",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "The file whose time range to give",
+              "examples": [
+                "/var/log/app.log"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeRangeResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Get the timestamp format and the first and last timestamp of a file",
+        "tags": [
+          "Context"
         ]
       }
     },
