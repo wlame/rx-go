@@ -15,6 +15,13 @@ parameter: the matching flags, the context window (`context`,
 `no_index` and `no_recursive`. An answer is the one `rx trace --json`
 gives with the same flags, and its `cli_command` carries them.
 
+A systemd journal in `path`, or in a directory searched, is searched as
+its text (the line `journalctl --utc -q -o short-iso-precise` prints
+for each entry), and `file_chunks` is 1 for it, as for a gzip file. A
+damaged journal read to the end of its text is listed once in
+`skipped_files`; see [Journal
+files](../../concepts/journal-files.md#damage-and-its-report).
+
 ## Request
 
 ```text

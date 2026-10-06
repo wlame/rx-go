@@ -35,6 +35,11 @@ files in the tens of gigabytes.
   time and numbered as one text, so a line number, a time or a search
   answers as it would for the parts joined into one file, compressed
   parts and a growing active file included.
+- **systemd journals as text.** `system.journal` and its archives are
+  read by `rx` itself, with no `journalctl`, on every system `rx` runs
+  on: each entry becomes the line `journalctl --utc -q -o
+  short-iso-precise` prints, and every command works on that text. See
+  [Journal files](concepts/journal-files.md).
 - **Findings without writing a regex.** `rx --signatures` scans a file
   for tracebacks, crashes, secrets, SQL, bursts of lines and more with
   70 built-in [signatures](concepts/signatures.md) and your own from

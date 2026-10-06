@@ -3,8 +3,9 @@
 High-performance CLI and REST API for regex search, indexing, sampling,
 signature scans and seekable compression of very large log files. Wraps
 [ripgrep](https://github.com/BurntSushi/ripgrep) and adds parallel
-chunked search, native decompression (gzip, xz, bz2, zstd), frame-level
-parallel zstd, line-offset indexes, result caching, and an HTTP API
+chunked search, native decompression (gzip, xz, bz2, zstd), systemd
+journal files read as text, frame-level parallel zstd, line-offset
+indexes, result caching, and an HTTP API
 with an embedded SPA — all in a single static binary (~14 MB, no runtime
 deps beyond `rg`).
 

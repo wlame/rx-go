@@ -1,10 +1,10 @@
 package main
 
 // The rx logs examples of the docs run here, against a generated host
-// whose /var/log and /srv/app/logs hold rotated logs of the kinds the
-// pages show. Every `rx logs` command in a shell fence of the README or
-// a page under docs/ must exit 0 there, and may name no path outside
-// those two directories, absolute or relative (toHost). The commands of
+// whose /var/log, /srv/app/logs and /srv/journals hold rotated logs of
+// the kinds the pages show. Every `rx logs` command in a shell fence of
+// the README or a page under docs/ must exit 0 there, and may name no
+// path outside those three directories, absolute or relative (toHost). The commands of
 // one fence run in order on one cache of their own, so a fence can
 // index a chain and then read it. Where a fence ends with an rx logs
 // command and a ```text fence follows it, that text is what the last
@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wlame/rx-go/internal/testutil/journalfixture"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -285,7 +286,9 @@ func day(month time.Month, d int) time.Time {
 // out-of-memory lines), auth.log (dated names), kern.log, dpkg.log (part
 // 3 missing, the active file empty) and dmesg (no timestamps: invalid),
 // the binary wtmp, wtmp.1 and lastlog, and notes.txt. /srv/app/logs
-// holds a logback chain, app.log.
+// holds a logback chain, app.log. /srv/journals holds a chain of
+// rotated systemd journals: system.journal and two archives of one
+// counter, the invented fixture journals of internal/journal/testdata.
 func logsDocHost(t *testing.T) logsDocDirs {
 	t.Helper()
 	varLog, appLogs := t.TempDir(), t.TempDir()
@@ -382,7 +385,10 @@ func logsDocHost(t *testing.T) logsDocDirs {
 		{"app-2026-10-02.0.log.gz", gzipped(t, app(day(time.October, 2), 600)), day(time.October, 2).Add(15 * time.Hour)},
 		{"app.log", app(day(time.October, 3), 120), day(time.October, 3).Add(3 * time.Hour)},
 	})
-	return logsDocDirs{"/var/log": varLog, "/srv/app/logs": appLogs}
+	// ChainDir decompresses the fixture chain's parts into a directory of
+	// the test's own, under the names journald gives them.
+	journals := journalfixture.ChainDir(t, "chain-one-counter")
+	return logsDocDirs{"/var/log": varLog, "/srv/app/logs": appLogs, "/srv/journals": journals}
 }
 
 // The parts of a line normalize replaces: values that differ from run

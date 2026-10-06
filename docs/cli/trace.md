@@ -373,6 +373,15 @@ A NUL byte further on is one
 more byte of its line, as in `rg --text`: the line keeps its number,
 its offset and its whole text, NUL included (`\u0000` in JSON).
 
+A systemd journal (a file that starts with `LPKSHHRH`, whatever its
+name) is searched as its text: the line `journalctl --utc -q -o
+short-iso-precise` prints for each entry, with line numbers and offsets
+in that text, the way a gzip file is searched. A directory search
+includes journals. An entry rx cannot read is left out of the text and
+the others are searched (see
+[`not searched in full`](#skipped-files-and-their-reasons) below and
+[Journal files](../concepts/journal-files.md)).
+
 A UTF-8 byte-order mark is three bytes of the file, as in
 `rg --encoding=none`: offsets count it, line 1's `line_text` starts with
 it (U+FEFF, kept as its three bytes in JSON), as `rx samples` shows
@@ -391,7 +400,7 @@ human output lists each under `Files skipped:`. The reasons:
 
 | Reason | Means |
 |---|---|
-| `not a text file: …` | the first 8 KiB of the text hold a NUL byte (`… UTF-16 text …` when the text starts with a UTF-16 byte-order mark) |
+| `not a text file: …` | the first 8 KiB of the text hold a NUL byte (`… UTF-16 text …` when the text starts with a UTF-16 byte-order mark), or the header of a systemd journal is one rx cannot use (`… a systemd journal rx cannot read: <why>`) |
 | `permission denied` | a file, or a subdirectory of a directory being searched, the process may not read; the rest of the tree is still searched |
 | `symlink leads outside all search roots`, `symlink leads into a hidden entry; …`, `cannot resolve symlink: …`, `symlink loop: …`, … | a link the walk does not follow (see above) |
 | `not a regular file` | a named pipe, a socket or a device, which rx never opens |
@@ -455,9 +464,10 @@ soon as the cap is reached:
   errgroup context is canceled. In-flight ripgrep subprocesses receive
   SIGKILL via `exec.CommandContext`; queued chunks are skipped before
   they spawn rg.
-- **Compressed files** (`.gz`, `.bz2`, `.xz`, `.zst`): the same
-  semantics apply to the single-stream decompressor — once the cap is
-  hit, the io.Copy feeder to rg is canceled and rg exits.
+- **Compressed files** (`.gz`, `.bz2`, `.xz`, `.zst`) **and systemd
+  journals**: the same semantics apply to the single-stream
+  decompressor, or to the journal's text — once the cap is hit, the
+  io.Copy feeder to rg is canceled and rg exits.
 - **Seekable zstd** (`.zst` with a seek index): frame batches that
   haven't started are skipped; in-flight batches are canceled.
 
@@ -646,9 +656,10 @@ decompressed; without one the match keeps
     set or running the command on the host holding the files.
 
 !!! warning "Compressed file paths"
-    `rx trace` reads `.gz`, `.bz2`, `.xz` and plain `.zst` files in
-    single-worker mode — a compressed stream has no byte ranges to
-    split. A seekable `.zst`, written by [`rx compress`](compress.md)
+    `rx trace` reads `.gz`, `.bz2`, `.xz` and plain `.zst` files, and
+    systemd journals, in single-worker mode — a compressed stream has no
+    byte ranges to split, and a journal's text is read from its first
+    entry. A seekable `.zst`, written by [`rx compress`](compress.md)
     or by another seekable encoder, is scanned frame-parallel, each
     line whole even where a frame boundary cuts it. Offsets are positions in the decompressed
     text either way. See [concepts/compression](../concepts/compression.md).

@@ -385,6 +385,19 @@ Measured with the files in the page cache:
     `not a text file`, and `POST /v1/index` answers `400` with
     "not a text file: …: <path>". No index is built for it.
 
+!!! note "A systemd journal is indexed through its text"
+    A journal (a file that starts with `LPKSHHRH`) is indexed like a
+    gzip file: the line numbers and byte offsets describe the text
+    `journalctl --utc -q -o short-iso-precise` would print, `file_type`
+    is `compressed`, and the index ends with the
+    [journal section](#the-journal-section). A damaged journal is
+    indexed all the same. journald changes a live journal after every
+    write, so the index of an active `system.journal` is out of date
+    after each one and the next command builds it again from the first
+    entry (see
+    [Journal files](../concepts/journal-files.md#live-journals)). The
+    index of a rotated archive stays valid.
+
 ## See also
 
 - [concepts/line-indexes](../concepts/line-indexes.md) — what indexes are and when to build one

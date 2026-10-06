@@ -35,8 +35,9 @@ and on compressed files (gzip, bzip2, xz, zstd, seekable zstd).
 - **Plain file without an index:** reads from byte 0 to the last wanted
   line, then stops — 12 ms for lines 1-1000, 90 ms for line 700000 of
   the same log.
-- **gzip, bzip2, xz, plain zstd:** decompresses from the first byte up
-  to the last wanted line, then stops. A line counted from the end takes
+- **gzip, bzip2, xz, plain zstd, systemd journal:** decompresses (a
+  journal: renders its text) from the first byte up to the last wanted
+  line, then stops. A line counted from the end takes
   the line count from the index; without one it costs a full pass to
   count the lines first.
 - **Seekable zstd with an index:** decompresses only the frames that
@@ -328,7 +329,7 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 | `before_context`, `after_context` | int | The context the request asked for (or the default 3), echoed; see [context defaults](#context-defaults) |
 | `samples` | `{key: lines[] \| null}` | Retrieved content, keyed identically to `offsets` / `lines`; `null` for a position the file does not have |
 | `is_compressed` | bool | Whether the file was compressed |
-| `compression_format` | `string \| null` | `"gzip"`, `"bzip2"`, `"xz"`, `"zstd"`, `"seekable_zstd"`, or `null` |
+| `compression_format` | `string \| null` | `"gzip"`, `"bzip2"`, `"xz"`, `"zstd"`, `"seekable_zstd"`, `"journal"` (a systemd journal: the lines are its text, see [Journal files](../../concepts/journal-files.md)), or `null` |
 | `cli_command` | string | Equivalent CLI invocation |
 | `timestamps` | `{query: lineNumber}` | Time mode: key is the query, value is the line it found (a range's first line); `-1` when no line is at the time, or the range holds none. `{}` in the other modes |
 | `time_format` | `{format, has_zone, assumed_zone} \| null` | The file's timestamp format, in every mode: the family (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted`, `epoch`), whether most timestamps carry a zone, and the zone a timestamp without one is read in (`RX_LOG_TZ` for a zone-less file, `UTC` otherwise). `null` when no format is recognized in the first mebibyte of the text. Costs no read with an index, at most a mebibyte without |

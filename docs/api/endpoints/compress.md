@@ -36,8 +36,9 @@ out compresses the way the CLI does without that flag.
 
 The task writes the input's text, exactly as
 [`rx compress`](../../cli/compress.md#compressed-input) does: a gzip,
-bzip2, xz or plain zstd input is decompressed on the fly, so the output
-traces like the decompressed file, and `decompressed_size` in the
+bzip2, xz or plain zstd input is decompressed on the fly, and a
+systemd journal is rendered as its text, so the output traces like the
+decompressed file (a journal `system.journal` gets `system.journal.zst`), and `decompressed_size` in the
 result is the size of that text. An input whose text is not text (a
 compressed tar archive, a binary file, UTF-16), a seekable zstd input without `"force": true`, and an
 output path that is the input file are refused with `400` before a

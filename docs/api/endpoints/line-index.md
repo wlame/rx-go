@@ -110,7 +110,7 @@ entry 3 is damaged and whose entry list breaks off after entry 4):
 
 `cli_command` is `rx index PATH --info --json`: the command that reads
 the same stored index without building one. It prints the whole stored
-index (`UnifiedFileIndex`, 40 members), of which this answer is a
+index (`UnifiedFileIndex`, 41 members), of which this answer is a
 projection:
 
 - `path` and `size_bytes` are `source_path` and `source_size_bytes`

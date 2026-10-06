@@ -34,6 +34,11 @@ performance trade-offs, operational behavior, and how to extend the tool.
   seekable-zstd write format, and the trade-offs between frame size
   and ratio.
 
+- **[Journal files](journal-files.md)**  
+  systemd journals read as text: how rx recognizes one, the line it
+  prints for each entry, what it does with a damaged or live journal,
+  and how rotated journals form a chain.
+
 - **[Signatures](signatures.md)**  
   Named definitions of what is worth noticing in a log (tracebacks,
   secrets, runs of blank lines): kinds, the YAML file format, the
@@ -58,8 +63,10 @@ If you're new to `rx`, read in this order:
 5. [Compression](compression.md) — what works on compressed data and
    what doesn't
 6. [Log chains](log-chains.md) — when your logs rotate
-7. [Security](security.md) — before you expose `rx serve` to anything
-8. [Signatures](signatures.md) — when you want rx to find tracebacks,
+7. [Journal files](journal-files.md) — when your logs are systemd
+   journals
+8. [Security](security.md) — before you expose `rx serve` to anything
+9. [Signatures](signatures.md) — when you want rx to find tracebacks,
    secrets and other places worth a look by itself
 
 ## See also

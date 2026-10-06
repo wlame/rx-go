@@ -376,7 +376,8 @@ rx samples /var/log/audit-2026-03.log.gz --lines=5000 --context=2
 rx samples /var/log/audit-2026-03.log.gz --offsets=403366791
 ```
 
-Both modes work on `.gz`, `.bz2`, `.xz` and `.zst` files. Offsets are
+Both modes work on `.gz`, `.bz2`, `.xz` and `.zst` files, and on
+systemd journals (see [below](#systemd-journal)). Offsets are
 positions in the decompressed text, in the request and in the answer:
 the `lines` map reports where each line starts in that text, and
 `--offsets=B` answers with the line holding byte B of it, the same
@@ -392,6 +393,25 @@ nearest checkpoint. A seekable `.zst` with an index decompresses only
 the frames around the wanted lines or offsets. For random access on
 compressed data, use [`rx compress`](compress.md) to re-encode as
 seekable zstd.
+
+### Systemd journal
+
+A systemd journal is read as its text, one line or more per entry, the
+line `journalctl --utc -q -o short-iso-precise` prints, and it is
+addressed like a gzip file: `--lines`, `--offsets` and `--timestamps`
+count lines, bytes and times in that text, and the read starts at the
+journal's first entry (or at the nearest checkpoint of its index). The
+header of the answer says `Compressed: journal`, and `--json` has
+`"is_compressed": true` and `"compression_format": "journal"`:
+
+```bash
+rx samples system.journal --lines=100 --context=1
+```
+
+A journal is recognized by its first bytes, whatever its name. What the
+text holds, and what happens to a damaged or a live journal, is on
+[Journal files](../concepts/journal-files.md). A journal rx cannot read
+at all is refused like any file that is not text.
 
 ## How it works
 

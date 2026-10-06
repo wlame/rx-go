@@ -116,7 +116,7 @@ from a full entry too, and then returns the first matches in file order
 (a capped scan returns whichever chunks finished first). Miss → run the scan. Only a complete scan without
 `--max-results` is written: of a plain file of `RX_LARGE_FILE_MB` or
 more, or of a seekable zstd file of 1 MB or more. Gzip, bzip2, xz and
-plain zstd files are never cached. A scan whose answer cuts a line
+plain zstd files and systemd journals are never cached. A scan whose answer cuts a line
 (`RX_MAX_LINE_TEXT_BYTES`) or leaves submatches out
 (`RX_MAX_SUBMATCHES_PER_LINE`) is not written either, so a dense
 pattern on very long lines is scanned every time. Nor is a scan of a

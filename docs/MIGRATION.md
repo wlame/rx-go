@@ -9,6 +9,30 @@ interpreter, no process-pool startup cost, no per-decompressor
 subprocesses) and to ship as a single static binary with no runtime
 dependencies beyond `ripgrep`.
 
+## Contract 2.1
+
+The rx-go release that reads systemd journal files speaks HTTP wire
+contract 2.1 and writes line index format 12. Contract 2.1 only adds, so
+a client written for 2.0 keeps working. What it adds:
+
+- `journal` in the index answers (`GET /v1/index`, the result of a
+  `POST /v1/index` task, `rx index --json`): the counts and the state of
+  a systemd journal, `null` for every other file. See
+  [Journal files](concepts/journal-files.md#damage-and-its-report).
+- `not_text_reason` in the entries of `GET /v1/tree` and
+  `GET /v1/search-roots`: why a file that is not text is refused.
+- `entries_overlap`, a new value of the `code` of a chain's reasons.
+- `journal`, a new value of `compression_format`.
+
+**Every stored line index is built once more.** An index of format 11 is
+treated as absent, and the next command that needs one builds a format
+12 index in its place.
+
+**The viewer window widens.** `rx serve` installs viewer releases from
+0.8.0 up to, but not including, 0.10.0. Viewer 0.8.x keeps working with
+contract 2.1; viewer 0.9.x is the first to show journal files and the
+warning for a damaged one.
+
 ## Contract 2.0
 
 rx-go 0.8.0 speaks HTTP wire contract 2.0 and writes line index format

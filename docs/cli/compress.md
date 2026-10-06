@@ -38,6 +38,24 @@ the extension (see [Compression](../concepts/compression.md#how-rx-decides-what-
 streamed through the encoder, never held in memory whole, and
 `decompressed_size` reports its size.
 
+A systemd journal is read the same way: the output holds the text
+`journalctl --utc -q -o short-iso-precise` prints for it, and a trace
+of the `.zst` finds the matches, line numbers and offsets of a trace of
+the journal. Its name carries no compression suffix, so `.zst` is
+appended to the whole name:
+
+```bash
+rx compress demo.journal
+```
+
+```text
+wrote demo.journal.zst (3619 bytes → 773 bytes, 4.68x) in 1 frames
+```
+
+The 3,619 bytes are the size of the text, not of the journal file; see
+[Journal files](../concepts/journal-files.md). Entries rx cannot read
+are not in the text, so they are not in the output.
+
 The default output name is the input's name with its compression
 suffix (`.gz`, `.gzip`, `.bz2`, `.bzip2`, `.xz`, `.zst`, `.zstd`, in any
 case) replaced by `.zst`, since the output holds the text:

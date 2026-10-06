@@ -91,7 +91,9 @@ the position, with a range sorting by its left-hand value
 | `internal/logchain/` | Log chains (rotated logs read as one text): the name-template table (`Templates`), a directory listing grouped into chains (`Group`, `Resolve`), a chain described (`Describe`: time order, checks, state, fingerprint, global starts; a memory cache), samples across parts (`Samples`) and the chain search (`Search`). Every read of a part goes through the per-file code (`samples`, `index`, `trace`) and the part's pin |
 | `internal/index/` | Line-offset index builder, stats (Welford + reservoir), on-disk store |
 | `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; magic-byte format signatures; pooled decoders |
-| `internal/filekind/` | The one classifier every command and route uses: format by magic bytes, seekable by seek table, text or not (with the reason) |
+| `internal/filekind/` | The one classifier every command and route uses: format by magic bytes, seekable by seek table, text or not (with the reason; a systemd journal is text when its header can be read, with no entry rendered) |
+| `internal/filetext/` | The one opener of a file's text in any format (`Open(r io.ReaderAt, size, format)`): the file itself, a gzip, bzip2, xz or zstd stream, or a systemd journal's rendered text. It never closes the file; `JournalReport()` gives a journal's damage counts once the text is read to its end. Every place that reads a file's text from its first byte goes through it |
+| `internal/journal/` | The systemd journal reader and renderer: `ReadHeader` (the header checks, `ErrUnreadable`), `NewTextReader` (the text of a journal entry by entry, with a `Report` of the entries left out or not reached), `AppendText` (one entry's line, as `journalctl --utc -q -o short-iso-precise` of systemd 257 prints it). `testdata/` holds invented journals with `journalctl`'s text beside each, and `gen/` writes them |
 | `internal/seekableindex/` | Frame → line-range index for a seekable `.zst`; the format rx-python defined |
 | `internal/signatures/` | The signature catalogue: the model, the YAML loader (built-ins embedded from `builtin/`, user files from `RX_SIGNATURES_PATH`), keyword clauses and selection (`Load`, `Resolve`); `rx signatures` |
 | `internal/sigscan/` | The signature scan: matchers, the keyword automaton, measures and the one parallel Go pass over a file's text (`Scan`), redaction of secrets and of redacting block bodies |
@@ -104,8 +106,10 @@ the position, with a range sorting by its left-hand value
 | `internal/output/` | Shared human-readable formatting |
 | `internal/testparity/` | Harness that runs `../rx-python` and diffs output |
 | `internal/testutil/counting/` | Byte-counting readers for bounded-read tests: `OpenCounting` (a file), `NewReader`, `NewReaderAt` |
+| `internal/testutil/journalfixture/` | The journal fixtures of `internal/journal/testdata` for any package's tests: a journal by name, a chain directory, a set's text, the counts manifest, each decompressed into `t.TempDir()` |
+| `internal/testutil/journalfile/` | A test-only writer of journal files (entries, state, counter id, sequence numbers, times), for damaged journals, copies of a part and chains the fixtures do not hold |
 | `pkg/rxtypes/` | Wire types. OpenAPI source of truth |
-| `docs/` | 47 MkDocs pages, built strict in CI, deployed to GitHub Pages |
+| `docs/` | 49 MkDocs pages, built strict in CI, deployed to GitHub Pages |
 
 ## Build, run, test
 
@@ -122,6 +126,7 @@ just test-race                                   # race detector (about 200 s on
 just test-repeat ./internal/trace/               # 10x, to hunt a flaky test
 just bench                                       # benchmarks (not a CI gate)
 just cover                                       # tests + the coverage floor
+just journal-fixtures                            # rewrite the journal fixtures (needs Docker; never part of ci)
 just parity trace error app.log                  # diff --json against rx-python
 
 just ci                                          # exactly what GitHub CI runs
@@ -428,6 +433,29 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
    names no chain), 4 access denied, 5 interrupted, 6 the log chain is
    invalid, 7 the log chain's files changed since `--fingerprint=`.
    Scripts branch on them, so a change is breaking.
+11. **A journal's text is fixed by the rules file, and a rule change
+   invalidates every cache.** The text of a systemd journal is, entry by
+   entry, what `journalctl --file=F --no-pager --utc -q -o
+   short-iso-precise` of systemd 257 prints. The authority for every byte
+   of it is the rules file of the journal work
+   (`2026-10-13-journalctl-short-rules.md`, kept with the owner's
+   analysis notes, outside this repo), which gives each rule with its
+   systemd source lines and the invented case that confirmed it; the
+   renderer (`internal/journal/render*.go`) implements all of them, and
+   `internal/journal/testdata/render_cases.json.zst` holds those cases
+   with `journalctl`'s own output as its test table. Line numbers and byte
+   offsets of every answer about a journal refer to this text, so a change
+   to a rendering rule moves them in every stored cache: bump
+   `index.Version`, `findings.CacheVersion` and `trace.TraceCacheVersion`
+   together, in the same change, with their ledger rows. The text of a
+   damaged journal is still a fixed function of its bytes (a damaged
+   entry is left out, a broken entry list ends the text), and an
+   undamaged journal answers every request as its text saved as a plain
+   file does (`internal/clicommand/journal_same_answer_test.go`).
+   `just journal-fixtures` writes the fixtures with Docker (the image
+   `rx-journal-oracle:257`, systemd 257); `just ci` only reads the
+   committed ones and needs no Docker. Fixtures and oracles are invented
+   content: a real journal never enters the repo.
 
 ## Coding standards
 

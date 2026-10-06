@@ -31,7 +31,7 @@ GET /v1/time-range?path=/var/log/app.log
 |---|---|---|
 | Any file whose [line index](../../concepts/line-indexes.md#the-time-section) still describes it | The index only; nothing of the file | `index` |
 | Plain or seekable zstd, no index | The first mebibyte of the text (format, first timestamp, `example`) and a read back from the end, a mebibyte at a time, at most 16 MiB of text (last timestamp); for a seekable file, at most 32 MiB of frames decoded | `scan` |
-| gzip, bzip2, xz or plain zstd, no index | The first mebibyte of the text (format, `example`) | `none` |
+| gzip, bzip2, xz, plain zstd or a systemd journal, no index | The first mebibyte of the text (format, `example`) | `none` |
 
 A request never builds an index, never writes to the cache and never
 decompresses a whole file. A seekable zstd file decodes a frame whole

@@ -214,6 +214,7 @@ nav:
       - Log chains: concepts/log-chains.md
       - Byte offsets vs line numbers: concepts/byte-offsets-vs-line-numbers.md
       - Compression: concepts/compression.md
+      - Journal files: concepts/journal-files.md
       - Signatures: concepts/signatures.md
       - Security: concepts/security.md
   - Reference:

@@ -485,6 +485,43 @@ partial writes leak through. The in-flight temp file is deleted.
 
 Test coverage includes malicious-tarball fixtures.
 
+## Reading a systemd journal
+
+A [systemd journal](journal-files.md) is a binary file whose offsets,
+sizes and compressed values are whatever its writer put there, and a
+journal copied from another machine is input rx cannot trust. A journal
+inside a search root is reached through the same checks as any other
+file (the sandbox, the hidden-entry rule, the device and inode pin), and
+rx only reads it. What the reader guarantees:
+
+- **Every number from the file is checked before it is used.** An offset
+  or a size must lie inside the file and inside the part of it the header
+  says holds objects, and no buffer is sized from a number that has not
+  passed that check. A pointer that goes back or stays where it is ends
+  the walk, so a list that points to itself ends.
+- **Damage costs entries, never the process.** A damaged entry is left
+  out, a broken entry list ends the text, and the reader goes on to
+  report what it left out. It does not panic on any input: the reader,
+  the text renderer and the lz4 decoder have fuzz tests (`go test
+  -fuzz`), and their seed inputs run in every test run.
+- **Memory is bounded per value and per entry.** A value is decoded to at
+  most 128 MiB, the shown values of one entry to 128 MiB together, and
+  one entry's text to 256 MiB; an entry past a bound is damaged. A field
+  the text does not show is read only as far as its name, so a core dump
+  of any size stored in a journal costs the length of its name. An xz
+  value whose stream declares a dictionary above 16 MiB is damage
+  (journald writes 8 MiB).
+- **The cost of the text is the cost of the file.** A value larger than
+  the reader's cache (32 MiB) is decoded again for every entry that lists
+  it, so a crafted journal can make rx produce much text from a small
+  file. The work is proportional to the text produced, as for a small
+  gzip file that expands to a large one; `--max-results` and the limits
+  of [`GET /v1/samples`](../api/endpoints/samples.md#answer-over-the-line-or-byte-limit)
+  bound what an answer returns.
+
+rx does not verify the seals of a sealed journal, so the text of a
+journal is only as trustworthy as the file it came from.
+
 ## Viewer bundle integrity
 
 The bundle is unpacked into the cache and served to a browser from the rx
@@ -706,6 +743,11 @@ happens at all.
   frame that would take the sum past 32 MiB, twice the 16 MiB of text
   the read examines; the answer then has `last_ms: null`; see
   [`GET /v1/time-range`](../api/endpoints/time-range.md#what-a-request-reads)
+- Exhausting the server's memory with a crafted systemd journal (a
+  value that declares gigabytes, offsets that point outside the file or
+  back to themselves) — blocked by checking every offset and size before
+  use and by bounding what a value, an entry and its text may hold; see
+  [Reading a systemd journal](#reading-a-systemd-journal)
 - Zip-slip / tar-slip in the SPA cache — blocked by extractor
   validation
 - Showing a secret a log holds through its findings, when asked to —
