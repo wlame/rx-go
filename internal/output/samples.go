@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -77,6 +78,8 @@ func FormatSamplesCLI(resp *rxtypes.SamplesResponse, colorize bool, regex string
 		writeOffsetSection(&b, resp, colorize, regex)
 	case len(resp.Lines) > 0:
 		writeLineSection(&b, resp, colorize, regex)
+	case len(resp.Timestamps) > 0:
+		writeTimestampSection(&b, resp, colorize, regex)
 	}
 
 	// Python joins with '\n' which, after the final empty line from the
@@ -131,6 +134,58 @@ func writeLineSection(b *bytes.Buffer, resp *rxtypes.SamplesResponse, colorize b
 		writeContextLines(b, contextLines, colorize, regex)
 		b.WriteByte('\n')
 	}
+}
+
+// writeTimestampSection handles a timestamps-mode answer: one block per
+// time query, headed with the line it found and the query,
+//
+//	=== /path/file.log:<line> @ <query> ===
+//
+// with the range's lines (`<first>-<last>`) for a range query and -1
+// for a query no line answers. Blocks go in line order, the queries
+// with no line last: a reader follows the file down.
+func writeTimestampSection(b *bytes.Buffer, resp *rxtypes.SamplesResponse, colorize bool, regex string) {
+	for _, query := range SortedTimeQueries(resp.Timestamps) {
+		line := resp.Timestamps[query]
+		sample := resp.Samples[query]
+		position := fmt.Sprintf("%d", line)
+		if strings.Contains(query, "..") && len(sample) > 1 {
+			position = fmt.Sprintf("%d-%d", line, line+int64(len(sample))-1)
+		}
+		path := Printable(resp.Path)
+		if colorize {
+			fmt.Fprintf(b, "=== %s%s%s%s:%s%s%s%s @ %s ===\n",
+				ColorBrightCyan, path, ColorReset,
+				ColorGrey, ColorReset,
+				ColorBrightYellow, position, ColorReset, Printable(query))
+		} else {
+			fmt.Fprintf(b, "=== %s:%s @ %s ===\n", path, position, Printable(query))
+		}
+		writeContextLines(b, sample, colorize, regex)
+		b.WriteByte('\n')
+	}
+}
+
+// SortedTimeQueries returns the time queries of a timestamps-mode
+// answer in the order a person reads them: by the line each found,
+// those that found none (-1) last, and by the query's text where two
+// found the same line.
+func SortedTimeQueries(found map[string]int64) []string {
+	queries := make([]string, 0, len(found))
+	for query := range found {
+		queries = append(queries, query)
+	}
+	sort.Slice(queries, func(i, j int) bool {
+		a, b := found[queries[i]], found[queries[j]]
+		if (a < 0) != (b < 0) {
+			return b < 0
+		}
+		if a != b {
+			return a < b
+		}
+		return queries[i] < queries[j]
+	})
+	return queries
 }
 
 // buildHeader produces one of:

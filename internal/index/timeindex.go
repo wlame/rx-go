@@ -40,6 +40,18 @@ func DetectTimeFormat(r io.ReaderAt, size int64, kind filekind.Kind) (timestamps
 	return format, ok, nil
 }
 
+// LineStamp returns the own timestamp of one line of a file's text, as
+// every reader of a time index must read it: line is the line as read,
+// its line break included or not, and the parser sees it without its
+// trailing \r and \n bytes. An index build and a search without an
+// index both read a line's timestamp through this function, so they
+// agree on it by construction.
+//
+// It allocates nothing (see timestamps.Parser.Own).
+func LineStamp(p *timestamps.Parser, line []byte) (timestamps.Stamp, bool) {
+	return p.Own(stripLineEnd(line))
+}
+
 // timeIndexer collects the time section of an index while a walk reads
 // the file's text. The walk calls markBefore when it is about to read a
 // line that a checkpoint names, and observe for every line, in order.
@@ -117,7 +129,7 @@ func (t *timeIndexer) observe(line []byte, number, start, end int64) {
 	if t.frames != nil {
 		t.frames.markLine(t, number, start, end)
 	}
-	stamp, ok := t.parser.Own(line)
+	stamp, ok := LineStamp(t.parser, line)
 	if !ok {
 		return
 	}

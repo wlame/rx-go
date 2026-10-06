@@ -46,8 +46,8 @@ func StoredIndex(path string) (*rxtypes.UnifiedFileIndex, error) {
 	return idx, nil
 }
 
-// Request is the input to Resolve. Exactly one of Offsets or Lines
-// must be non-empty. Context / BeforeContext / AfterContext are
+// Request is the input to Resolve. Exactly one of Offsets, Lines or
+// Timestamps must be non-empty. Context / BeforeContext / AfterContext are
 // caller-resolved (Resolve does not apply defaults).
 type Request struct {
 	// Path is the file as the caller named it; the response reports it
@@ -57,9 +57,14 @@ type Request struct {
 	// Every read of the file goes through it, so a path that leads to
 	// another file by then is refused rather than read. When it is the
 	// zero value, Resolve pins Path itself before the first read.
-	Source        paths.Pinned
-	Offsets       []OffsetOrRange
-	Lines         []OffsetOrRange
+	Source  paths.Pinned
+	Offsets []OffsetOrRange
+	Lines   []OffsetOrRange
+	// Timestamps are time queries, each answered with the line at that
+	// time (or the lines of a range) through the lines machinery; see
+	// resolveTimestamps. Each value is one query: a value is never split
+	// on commas, which are part of some timestamp formats.
+	Timestamps    []string
 	BeforeContext int
 	AfterContext  int
 	// Kind is what Source is (filekind.Of), when the caller decided it
@@ -71,13 +76,28 @@ type Request struct {
 	IndexLoader IndexLoader
 }
 
-// Mode reports which dispatch path Resolve will take. Returns OffsetsMode
-// when Offsets is non-empty, LinesMode otherwise.
+// Mode reports which dispatch path Resolve will take: OffsetsMode when
+// Offsets is non-empty, TimestampsMode when Timestamps is, LinesMode
+// otherwise.
 func (r Request) Mode() Mode {
-	if len(r.Offsets) > 0 {
+	switch {
+	case len(r.Offsets) > 0:
 		return OffsetsMode
+	case len(r.Timestamps) > 0:
+		return TimestampsMode
 	}
 	return LinesMode
+}
+
+// modeCount is how many of the three kinds of position r holds.
+func (r Request) modeCount() int {
+	count := 0
+	for _, n := range []int{len(r.Offsets), len(r.Lines), len(r.Timestamps)} {
+		if n > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 // Mode is the enum of request dispatch paths.
@@ -87,6 +107,7 @@ type Mode int
 const (
 	LinesMode Mode = iota
 	OffsetsMode
+	TimestampsMode
 )
 
 // Resolve executes the request and returns a populated SamplesResponse.
@@ -110,9 +131,24 @@ const (
 //	Range:    key = "start-end", sample = lines start..end, lines[key]
 //	          = -1 (sentinel; Python parity).
 //
+// Timestamps mode (time → line), see resolveTimestamps:
+//
+//	Single:   key = the query, sample = ±context lines around the first
+//	          line whose own timestamp is at or after the time,
+//	          timestamps[key] = that line's number.
+//	Range:    key = the query, sample = the lines of the range,
+//	          timestamps[key] = its first line.
+//
 // Negative single values are resolved against file size (byte mode) or
 // total line count (lines mode). Ranges must have both ends >= 0.
+//
+// Every answer carries time_format, the file's timestamp format: from
+// the index when there is one, else from the head of the text (at most
+// a mebibyte).
 func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
+	if req.modeCount() > 1 {
+		return nil, ErrInvalidRequest
+	}
 	if req.Source.IsZero() {
 		src, err := paths.Pin(req.Path)
 		if err != nil {
@@ -120,7 +156,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		}
 		req.Source = src
 	}
-	req.IndexLoader = onlyIndexesOf(req.Source, req.IndexLoader)
+	req.IndexLoader = loadOnce(onlyIndexesOf(req.Source, req.IndexLoader))
 	kind, err := Classify(req)
 	if err != nil {
 		return nil, err
@@ -132,6 +168,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		BeforeContext: req.BeforeContext,
 		AfterContext:  req.AfterContext,
 		Samples:       map[string][]string{},
+		Timestamps:    map[string]int64{},
 	}
 	if kind.IsCompressed() {
 		resp.IsCompressed = true
@@ -144,18 +181,32 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	// compressed file, and the text source decides how that text is
 	// reached. Doing this here rather than in a caller is what keeps
 	// `rx samples` and GET /v1/samples answering the same way.
-	if req.Mode() == OffsetsMode {
-		if err := resolveOffsets(req, resp, textSourceFor(req, kind)); err != nil {
-			return nil, err
-		}
-		return resp, nil
+	times, err := timesForMode(req, kind)
+	if err != nil {
+		return nil, err
 	}
+	resp.TimeFormat = times.describe()
 
+	switch req.Mode() {
+	case OffsetsMode:
+		err = resolveOffsets(req, resp, textSourceFor(req, kind))
+	case TimestampsMode:
+		err = resolveTimestamps(req, kind, times, resp)
+	default:
+		err = resolveLineWindows(req, kind, resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+// resolveLineWindows answers req.Lines, the lines-mode request, for a
+// file of the given kind. Timestamps mode hands it the lines it found,
+// so a time query reads its line and context exactly as --lines does.
+func resolveLineWindows(req Request, kind filekind.Kind, resp *rxtypes.SamplesResponse) error {
 	if !kind.IsCompressed() {
-		if err := resolveLines(req, resp); err != nil {
-			return nil, err
-		}
-		return resp, nil
+		return resolveLines(req, resp)
 	}
 
 	// A seekable .zst with a frame index can decompress just the frames
@@ -166,21 +217,12 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	// from one.
 	if kind.IsSeekable() {
 		err := resolveSeekableLines(req, resp)
-		if err == nil {
-			return resp, nil
-		}
 		if !errors.Is(err, errNoFrameIndex) {
-			return nil, err
+			return err
 		}
-		if err := resolveCompressedLines(req, compression.FormatSeekableZstd, nil, resp); err != nil {
-			return nil, err
-		}
-		return resp, nil
+		return resolveCompressedLines(req, compression.FormatSeekableZstd, nil, resp)
 	}
-	if err := resolveCompressedLines(req, kind.Format, loadIndexOrNone(req), resp); err != nil {
-		return nil, err
-	}
-	return resp, nil
+	return resolveCompressedLines(req, kind.Format, loadIndexOrNone(req), resp)
 }
 
 // Classify decides what req.Source is (filekind.OfPinned), or returns
@@ -218,6 +260,30 @@ func onlyIndexesOf(src paths.Pinned, load IndexLoader) IndexLoader {
 			return idx, err
 		}
 		return nil, nil
+	}
+}
+
+// loadOnce wraps load so that it is called at most once: every later
+// call returns the first call's answer. One Resolve consults the index
+// from several places (the text source, the time format, the lines
+// machinery), and StoredIndex reads and parses the index file on each
+// call. The wrapper serves one path, the request's; a nil loader stays
+// nil.
+func loadOnce(load IndexLoader) IndexLoader {
+	if load == nil {
+		return nil
+	}
+	var (
+		called bool
+		idx    *rxtypes.UnifiedFileIndex
+		err    error
+	)
+	return func(path string) (*rxtypes.UnifiedFileIndex, error) {
+		if !called {
+			called = true
+			idx, err = load(path)
+		}
+		return idx, err
 	}
 }
 
@@ -883,6 +949,6 @@ func stripNewline(s string) string {
 // for this.
 func FormatInt64(n int64) string { return strconv.FormatInt(n, 10) }
 
-// ErrInvalidRequest is returned when a Request has neither Offsets nor
-// Lines set, or has both set at once.
-var ErrInvalidRequest = fmt.Errorf("samples.Resolve: exactly one of Offsets / Lines must be set")
+// ErrInvalidRequest is returned when a Request holds more than one of
+// Offsets, Lines and Timestamps.
+var ErrInvalidRequest = fmt.Errorf("samples.Resolve: at most one of Offsets, Lines and Timestamps may be set")
