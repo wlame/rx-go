@@ -70,7 +70,7 @@ jobs:
       # once Pages is enabled.
       - name: configure-pages
         if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
         with:
           enablement: true
 
