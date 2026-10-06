@@ -39,9 +39,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `bytes_total` is that end). rx reads journals itself, with no
   `journalctl`, on every system rx runs on; the lz4 values are decoded
   with the new dependency pierrec/lz4/v4 4.1.33 (BSD-3-Clause license).
+- rx says when a systemd journal is damaged. The line index of a
+  journal records a `journal` section: the entries the header counts,
+  those the text shows, those without a message, those left out as
+  damaged and those not reached after the place where the entry list
+  breaks off, the first damaged entry with the reason, and the header's
+  state (`online`, `offline`, `archived`), compact mode, `seqnum_id` and
+  first and last sequence numbers. A damaged journal is indexed all the
+  same. `rx index --info` prints the section; `rx index --json`,
+  `--info --json`, `GET /v1/index` and the result of a `POST /v1/index`
+  task carry it as `journal`, which is `null` for every other file.
+  `rx trace` lists a damaged journal it read to the end of its text in
+  `skipped_files` once, as `not searched in full: a damaged journal; N
+  entries left out, M not reached; the other entries are searched`,
+  keeps its matches with their line numbers, and logs a
+  `journal_damaged` warning.
+- `GET /v1/tree` (and `GET /v1/search-roots`) gives each file that is
+  not text a `not_text_reason`: the words every command refuses it with
+  (`not a text file: a NUL byte in its first 8 KiB`, `… UTF-16 text …`,
+  `… a systemd journal rx cannot read: <why>`); `null` for a text file
+  and a directory.
 
 ### Changed
 
+- HTTP wire contract 2.1, an addition to 2.0: `journal` in the index
+  answers and `not_text_reason` in the tree. A client of 2.0 keeps
+  working.
+- Line index format 12, for the journal section: every index stored by
+  an earlier version is treated as absent and built again once.
 - Dependencies updated: huma 2.39.1, chi 5.3.1, klauspost/compress
   1.19.1, the Prometheus client 1.24.1 and its model 0.6.3,
   ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0 (and pierrec/lz4/v4

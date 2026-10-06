@@ -9,13 +9,13 @@ checkpoint, whatever the file size.
 ## The file format
 
 An index is stored as a JSON document with the full `UnifiedFileIndex`
-schema, format version 11. The critical field is `line_index`. The
+schema, format version 12. The critical field is `line_index`. The
 start of the index `rx samples` built for a 465 MB log (most of the
 other members trimmed; `rx index --info --json` prints all of them):
 
 ```json
 {
-  "version": 11,
+  "version": 12,
   "source_path": "/var/log/app.log-2025121008",
   "source_modified_at": "2025-12-11T09:14:22.418305",
   "source_size_bytes": 487603212,
@@ -153,6 +153,20 @@ seekable copies of one file.
 `rx index --info` prints the format, the first and last timestamps, the
 count and the backward steps; `--json` and `--info --json` give the
 whole section (see [`rx index`](../cli/line-index.md)).
+
+## The journal section
+
+The index of a systemd journal records `journal`: what the build found
+reading the journal's text. Its counts are the entries the header
+counts, those the text shows, those without a message, those left out
+as damaged and those not reached after the place where the entry list
+breaks off, with the first of the damaged entries and the reason; from
+the header, its state, compact mode, counter id and first and last
+sequence numbers. A damaged journal is indexed all the same: its text,
+and so every line number, is a fixed function of its bytes. `journal`
+is `null` for every other file. `rx index --info` prints the section,
+and `GET /v1/index` gives it (see
+[`rx index`](../cli/line-index.md#the-journal-section)).
 
 ## Line-length statistics
 

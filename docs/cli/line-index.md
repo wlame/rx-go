@@ -165,6 +165,41 @@ build records:
   second earlier than the latest one before them, with the largest step
   when there is one: `backward_steps: 3 (largest 2500 ms)`.
 
+### The journal section
+
+The index of a systemd journal ends with what the build found reading
+its text. A damaged journal is indexed all the same, since its text is
+a fixed function of its bytes; the section says what that text lacks:
+
+```text
+  journal:
+    state: archived
+    entries: 12
+    shown: 3
+    without_message: 0
+    left_out: 1
+    not_reached: 8
+    first_damaged_entry: 3 (the ENTRY object at offset 1160 has size 0)
+```
+
+- `state` is the header's: `online` (a writer has the journal open, or
+  had it when it stopped without closing it), `offline` or `archived`.
+- `entries` is the number of entries the header counts, which is
+  `shown` (the entries in the text) plus `without_message` (entries
+  with no `MESSAGE` field, which `journalctl` does not show either) plus
+  `left_out` (damaged entries left out of the text) plus `not_reached`
+  (the entries after the place where the entry list breaks off).
+- `first_damaged_entry` is the first entry left out or not reached, by
+  its 1-based number in the order of the entry list, with the reason;
+  `none` for a journal read whole.
+
+`--info --json` and `--json` give the same section as the `journal`
+object, with the header's `compact` mode, `seqnum_id` and `head_seqnum`
+and `tail_seqnum` besides; it is `null` for a file that is not a
+journal. `rx trace` lists a damaged journal it searched to the end of
+its text as `not searched in full` (see
+[skipped files](trace.md#skipped-files-and-their-reasons)).
+
 ### Force a rebuild
 
 ```bash
