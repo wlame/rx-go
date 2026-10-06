@@ -366,7 +366,7 @@ For test environments:
 
 The first query against a file pays the cold build cost:
 
-- `rx index` on a 465 MB log in the page cache: 142 ms to build, 11 ms
+- `rx index` on a 465 MB log in the page cache: 120 ms to build, 11 ms
   when a valid index exists
 - `rx trace` of a rare pattern: 65 ms scanning, 15 ms from the cache
   (see the trace cache section for a dense pattern, where the cache is

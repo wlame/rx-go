@@ -28,7 +28,7 @@ files in the tens of gigabytes.
   patterns.
 - **Line-offset indexes with on-disk caching.** Once built, an index maps
   line numbers to byte offsets via sparse checkpoints. Building one for
-  a 6.3 GB log took 2.2 s with the file in the page cache; after that,
+  a 6.3 GB log took 2.7 s with the file in the page cache; after that,
   line 40,000,000 comes back in 20 ms instead of 2.5 s.
 - **Seekable zstd output.** `rx compress` writes zstd streams as
   independent frames with an appended seek table, trading ~4-5% of

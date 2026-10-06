@@ -196,13 +196,19 @@ The builder:
 
 ### Cost
 
-- **Cold build**: one sequential pass; 142 ms for the 465 MB log in the
+- **Cold build**: one sequential pass; 120 ms for the 465 MB log in the
   page cache, slower when the file must come from disk
+- **Time section**: reading each line's timestamp costs about 35 ns a
+  line. The walk reads each line where its read buffer holds it rather
+  than copying it, which saves about as much on lines of a few hundred
+  bytes: the 465 MB log (1.4 million lines) built in 133 ms before the
+  time section was added and in 120 ms with it; the 6.3 GB log (42.5
+  million lines of about 150 bytes) in 2.3 s and 2.7 s
 - **Warm read**: 11 ms for `rx index --info` on that log, process start
   included
 - **Memory**: the builder keeps only the sparse checkpoints, not one
-  entry per line; peak RSS was 22 MB for the 465 MB log and 23 MB for a
-  6.3 GB log (42.5 million lines, built in 2.2 s)
+  entry per line; peak RSS was 16 MB for the 465 MB log and 17 MB for a
+  6.3 GB log (42.5 million lines, built in 2.7 s)
 
 ### `rx samples` builds one for you
 
