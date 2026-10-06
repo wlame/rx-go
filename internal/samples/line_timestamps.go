@@ -31,37 +31,60 @@ import (
 type collected struct {
 	*rxtypes.SamplesResponse
 	starts map[string][]int64
-	// budget counts the lines the answer holds against the request's
-	// MaxLines; every path that files a line takes it from here first.
+	// budget counts the lines the answer holds, and their bytes,
+	// against the request's MaxLines and MaxBytes; every path that
+	// files a line takes it from here first.
 	budget *lineBudget
 }
 
 // newCollected wraps resp, whose maps are already made, for the paths
-// that read lines into it, holding at most maxLines lines (0: no
-// limit).
-func newCollected(resp *rxtypes.SamplesResponse, maxLines int) *collected {
-	return &collected{SamplesResponse: resp, starts: map[string][]int64{}, budget: &lineBudget{limit: maxLines}}
+// that read lines into it, holding at most req's MaxLines lines and
+// MaxBytes bytes of text (0: no limit).
+func newCollected(resp *rxtypes.SamplesResponse, req Request) *collected {
+	budget := &lineBudget{lineLimit: req.MaxLines, byteLimit: req.MaxBytes}
+	return &collected{SamplesResponse: resp, starts: map[string][]int64{}, budget: budget}
 }
 
 // ErrTooManyLines is returned by Resolve when the answer would hold
 // more lines than Request.MaxLines.
 var ErrTooManyLines = errors.New("too many lines for one samples answer")
 
-// lineBudget counts the lines an answer holds against a limit; a limit
-// of 0 is none.
+// ErrTooManyBytes is returned by Resolve when the answer would hold
+// more bytes of line text than Request.MaxBytes.
+var ErrTooManyBytes = errors.New("too many bytes for one samples answer")
+
+// lineBudget counts the lines an answer holds, and the bytes of their
+// text, against two limits; a limit of 0 is none.
 type lineBudget struct {
-	limit, held int
+	lineLimit, lines int
+	byteLimit, bytes int64
 }
 
-// take counts one more line, and fails when it would pass the limit.
-// It is called before the line is held, so a refused answer has held
-// at most the limit.
-func (b *lineBudget) take() error {
-	b.held++
-	if b.limit > 0 && b.held > b.limit {
-		return fmt.Errorf("%w: the answer reached %d lines, more than the %d allowed", ErrTooManyLines, b.held, b.limit)
+// take counts one more line of textBytes bytes, and fails when it would
+// pass either limit. It is called before the line is held, so a refused
+// answer has held at most the limits.
+func (b *lineBudget) take(textBytes int64) error {
+	b.lines++
+	b.bytes += textBytes
+	if b.lineLimit > 0 && b.lines > b.lineLimit {
+		return fmt.Errorf("%w: the answer reached %d lines, more than the %d allowed", ErrTooManyLines, b.lines, b.lineLimit)
+	}
+	if b.byteLimit > 0 && b.bytes > b.byteLimit {
+		return fmt.Errorf("%w: the answer reached %d bytes of line text, more than the %d allowed", ErrTooManyBytes, b.bytes, b.byteLimit)
 	}
 	return nil
+}
+
+// keepPerLine is how much of one line a pass needs to hold to file it:
+// the byte limit and a line break of up to two bytes (\r\n), or 0, all
+// of it, without a byte limit. A longer line's text alone passes the
+// limit, so it can only be refused, and holding more of it would only
+// cost memory.
+func (b *lineBudget) keepPerLine() int64 {
+	if b.byteLimit <= 0 {
+		return 0
+	}
+	return b.byteLimit + 2
 }
 
 // stampedLine is a line with a timestamp of its own: where it starts in

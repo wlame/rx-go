@@ -249,18 +249,18 @@ func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLine
 			continue
 		}
 
-		raw, ended, err := lines.read()
+		raw, length, ended, err := lines.readUpTo(budget.keepPerLine())
 		if err != nil {
 			return err
 		}
-		if len(raw) == 0 {
+		if length == 0 {
 			return nil
 		}
 		for next < len(wants) && wants[next].from <= lineNum {
 			active = append(active, wants[next])
 			next++
 		}
-		if err := collectLine(active, raw, lineNum, pos, budget); err != nil {
+		if err := collectLine(active, raw, length, lineNum, pos, budget); err != nil {
 			return err
 		}
 		// Keep the windows that hold lines after this one. Filtering
@@ -273,7 +273,7 @@ func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLine
 			}
 		}
 		active = kept
-		pos, lineNum = pos+int64(len(raw)), lineNum+1
+		pos, lineNum = pos+length, lineNum+1
 		if ended {
 			return nil
 		}
@@ -282,12 +282,15 @@ func readWantedLines(ctx context.Context, source lineSource, wants []*wantedLine
 }
 
 // collectLine files one line, number lineNum starting at pos, in every
-// active window that holds it, taking each from budget first. Its text
-// is made once and shared: a Go string never changes, so windows that
-// overlap hold one copy.
-func collectLine(active []*wantedLines, raw []byte, lineNum, pos int64, budget *lineBudget) error {
+// active window that holds it, taking each from budget first. raw is
+// the line as read, length bytes long, or cut shorter when the budget
+// could not hold it (lineReader.readUpTo); then taking it fails before
+// the cut text is used. Its text is made once and shared: a Go string
+// never changes, so windows that overlap hold one copy.
+func collectLine(active []*wantedLines, raw []byte, length, lineNum, pos int64, budget *lineBudget) error {
 	var text string
 	made := false
+	textBytes := textLength(raw, length)
 	for _, w := range active {
 		if lineNum == w.target {
 			w.targetOffset = pos
@@ -295,7 +298,7 @@ func collectLine(active []*wantedLines, raw []byte, lineNum, pos int64, budget *
 		if lineNum < w.first || lineNum > w.last {
 			continue
 		}
-		if err := budget.take(); err != nil {
+		if err := budget.take(textBytes); err != nil {
 			return err
 		}
 		if !made {
@@ -307,8 +310,18 @@ func collectLine(active []*wantedLines, raw []byte, lineNum, pos int64, budget *
 	return nil
 }
 
-// trimOneLineBreak drops a trailing \n and one \r before it, as
-// stripNewline does for a string.
+// textLength is the length of a line's text without its line break: of
+// raw when raw holds the whole line, else length, the whole line's,
+// which is past any limit raw was cut to.
+func textLength(raw []byte, length int64) int64 {
+	if int64(len(raw)) < length {
+		return length
+	}
+	return int64(len(trimOneLineBreak(raw)))
+}
+
+// trimOneLineBreak drops a trailing \n and one \r before it: a sample
+// line is the line without its line break, \n or \r\n.
 func trimOneLineBreak(b []byte) []byte {
 	if n := len(b); n > 0 && b[n-1] == '\n' {
 		b = b[:n-1]
@@ -332,29 +345,43 @@ func newLineReader(r io.Reader, size int) *lineReader {
 	return &lineReader{br: bufio.NewReaderSize(r, size)}
 }
 
-// read returns the next line with its line break, and whether the text
-// ends with it. The bytes are valid until the next call. An empty line
+// readUpTo returns the next line with its line break, its length, and
+// whether the text ends with it. It holds at most keep bytes of the
+// line (0: all of it): a longer line comes back cut to keep bytes, its
+// rest passed over without being held, and its whole length tells the
+// caller so. The bytes are valid until the next call. A length of 0
 // with ended true means the text had no more lines: a text that ends
 // with a line break gives a final empty read, and that is not a line.
-func (l *lineReader) read() (line []byte, ended bool, err error) {
+func (l *lineReader) readUpTo(keep int64) (line []byte, length int64, ended bool, err error) {
 	chunk, err := l.br.ReadSlice('\n')
+	length = int64(len(chunk))
 	if errors.Is(err, bufio.ErrBufferFull) {
 		// ReadSlice hands out its buffer, which the next call reuses,
-		// so a line longer than the buffer is gathered in l.long.
+		// so a line longer than the buffer is gathered in l.long, up
+		// to keep bytes of it.
 		l.long = append(l.long[:0], chunk...)
 		for errors.Is(err, bufio.ErrBufferFull) {
 			chunk, err = l.br.ReadSlice('\n')
-			l.long = append(l.long, chunk...)
+			length += int64(len(chunk))
+			if room := keep - int64(len(l.long)); keep == 0 || room > 0 {
+				if keep != 0 && int64(len(chunk)) > room {
+					chunk = chunk[:room]
+				}
+				l.long = append(l.long, chunk...)
+			}
 		}
 		chunk = l.long
 	}
+	if keep != 0 && int64(len(chunk)) > keep {
+		chunk = chunk[:keep]
+	}
 	switch {
 	case err == nil:
-		return chunk, false, nil
+		return chunk, length, false, nil
 	case errors.Is(err, io.EOF):
-		return chunk, true, nil
+		return chunk, length, true, nil
 	default:
-		return nil, false, err
+		return nil, 0, false, err
 	}
 }
 

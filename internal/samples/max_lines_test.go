@@ -1,7 +1,10 @@
 package samples
 
 import (
+	"bytes"
 	"errors"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -85,5 +88,83 @@ func TestBudget_MaxLinesStopsTheReadAtTheLimit(t *testing.T) {
 	// lines up to the limit, each with a read buffer.
 	if read, budget := counter.Load(), int64(timestamps.SampleBytes)+2*maxLines*150+128*1024; read > budget {
 		t.Errorf("read %d bytes of %d; budget %d", read, size, budget)
+	}
+}
+
+// longLinesLog writes a log of n timestamped lines of about width bytes,
+// then one line of long bytes and one short last line, and returns its
+// path and text.
+func longLinesLog(t *testing.T, n, width, long int) (string, []byte) {
+	t.Helper()
+	var b strings.Builder
+	for i := range n {
+		b.WriteString(iso(timeBase+int64(i)*1000) + " " + strings.Repeat("x", width) + "\n")
+	}
+	b.WriteString(iso(timeBase+int64(n)*1000) + " " + strings.Repeat("y", long) + "\n")
+	b.WriteString(iso(timeBase+int64(n+1)*1000) + " last\n")
+	path := filepath.Join(t.TempDir(), "long.log")
+	writeFile(t, path, []byte(b.String()))
+	return path, []byte(b.String())
+}
+
+// An answer of more bytes of line text than Request.MaxBytes is refused
+// with ErrTooManyBytes, in every mode, and one within it is answered.
+func TestResolve_MaxBytesRefusesALargerAnswer(t *testing.T) {
+	const maxBytes = 1 << 20
+	path, text := longLinesLog(t, 30, 100_000, 10)
+	end := func(n int64) *int64 { return &n }
+	cases := []struct {
+		name    string
+		req     Request
+		refused bool
+	}{
+		{"ten lines of 100 KB", Request{Lines: []OffsetOrRange{{Start: 1, End: end(10)}}}, false},
+		{"eleven lines of 100 KB", Request{Lines: []OffsetOrRange{{Start: 1, End: end(11)}}}, true},
+		{"a byte range over the file", Request{Offsets: []OffsetOrRange{{Start: 0, End: end(int64(len(text)) - 1)}}}, true},
+		{"an open time range", Request{Timestamps: []string{iso(timeBase) + ".."}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.req
+			req.Path, req.IndexLoader, req.MaxBytes = path, NoIndex, maxBytes
+			_, err := Resolve(t.Context(), req)
+			if tc.refused != errors.Is(err, ErrTooManyBytes) || (!tc.refused && err != nil) {
+				t.Fatalf("err %v; want refused %v", err, tc.refused)
+			}
+		})
+	}
+}
+
+// A line longer than MaxBytes is never held whole: asked for, it is
+// refused after at most the limit's worth of it is in memory; passed on
+// the way to another line, it is not kept at all.
+func TestResolve_MaxBytesDoesNotHoldALongLine(t *testing.T) {
+	const maxBytes, long = 1 << 20, 32 << 20
+	path, text := longLinesLog(t, 3, 100, long)
+	lastLine := int64(bytes.LastIndex(text[:len(text)-1], []byte("\n")) + 1)
+	cases := []struct {
+		name    string
+		req     Request
+		refused bool
+	}{
+		{"the long line", Request{Lines: []OffsetOrRange{{Start: 4}}}, true},
+		{"the line after it, by line", Request{Lines: []OffsetOrRange{{Start: 5}}}, false},
+		{"the line after it, by offset", Request{Offsets: []OffsetOrRange{{Start: lastLine}}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.req
+			req.Path, req.IndexLoader, req.MaxBytes = path, NoIndex, maxBytes
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, err := Resolve(t.Context(), req)
+			runtime.ReadMemStats(&after)
+			if tc.refused != errors.Is(err, ErrTooManyBytes) || (!tc.refused && err != nil) {
+				t.Fatalf("err %v; want refused %v", err, tc.refused)
+			}
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > long/4 {
+				t.Errorf("allocated %d bytes around a %d-byte line; the limit is %d", allocated, long, maxBytes)
+			}
+		})
 	}
 }

@@ -90,6 +90,27 @@ func samplesResponses(api huma.API) map[string]*huma.Response {
 	return responses
 }
 
+// answerLimitSettings names the setting behind each limit a samples
+// answer can pass.
+var answerLimitSettings = []struct {
+	err     error
+	setting string
+}{
+	{samples.ErrTooManyLines, config.SamplesMaxLinesSetting.Name},
+	{samples.ErrTooManyBytes, config.SamplesMaxBytesSetting.Name},
+}
+
+// answerLimitSetting returns the setting whose limit err reports
+// passed, or "" when err is not one of them.
+func answerLimitSetting(err error) string {
+	for _, limit := range answerLimitSettings {
+		if errors.Is(err, limit.err) {
+			return limit.setting
+		}
+	}
+	return ""
+}
+
 // nilIfNegative returns *int pointing to n when n>=0; returns nil when
 // n is the -1 "not provided" sentinel.
 func nilIfNegative(n int) *int {
@@ -271,10 +292,11 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			// the file would otherwise make the server hold every line
 			// of it a thousand times.
 			MaxLines: config.SamplesMaxLines(),
+			MaxBytes: config.SamplesMaxBytes(),
 		})
-		if errors.Is(err, samples.ErrTooManyLines) {
+		if setting := answerLimitSetting(err); setting != "" {
 			return nil, ErrBadRequest(fmt.Sprintf(
-				"%s; RX_SAMPLES_MAX_LINES sets the limit: ask for fewer positions, shorter ranges or less context", err.Error()))
+				"%s; %s sets the limit: ask for fewer positions, shorter ranges or less context", err.Error(), setting))
 		}
 		if samples.IsUsageError(err) {
 			// A time the request names wrongly, or a time query on a
