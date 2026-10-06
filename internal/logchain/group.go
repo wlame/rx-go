@@ -148,6 +148,20 @@ func (c Candidate) HasActive() bool {
 	return len(c.Parts) > 0 && c.Parts[len(c.Parts)-1].IsActive
 }
 
+// IsJournal reports whether c is a journal chain: rotated systemd
+// journals, a frozen part of which has a name of the journal row
+// (`system@….journal`). Such a chain is ordered by its parts' headers,
+// not by the timestamps of their text, and each of its parts must be a
+// journal (see Describe).
+func (c Candidate) IsJournal() bool {
+	for _, p := range c.Parts {
+		if p.Template == journalTemplateID {
+			return true
+		}
+	}
+	return false
+}
+
 // Classify decides what an entry holds: its compression format and
 // whether its text is text, by the rule every command applies
 // (filekind). An error means the entry cannot be read.
@@ -167,7 +181,9 @@ func ClassifyPinned(e Entry) (filekind.Kind, error) {
 //
 // A file belongs to a chain when its name matches a row of Templates
 // (the chain name comes from the row), or when it is named exactly like
-// a chain name some other file gives: that file is the active part.
+// a chain name some other file gives: that file is the active part. A
+// file named like a journal chain is its active part even when its
+// name also matches another row (`user-1000.journal`, see groupNamed).
 // Left out are directories, hidden entries (unless hidden entries are
 // on), names ending in `.tmp`, files whose text check says they are not
 // text (classify), and the parts of a template that needs the active
@@ -184,9 +200,9 @@ func ClassifyPinned(e Entry) (filekind.Kind, error) {
 // found (see Candidate.TooManyParts). The candidates come back sorted
 // by name, case-insensitive, as /v1/tree sorts files.
 //
-// The work is bounded by the number of entries: one regexp match per
-// name (four at most), one classify per entry at most, and a sort per
-// chain.
+// The work is bounded by the number of entries: at most one regexp
+// match per row for each name, one classify per entry at most, and a
+// sort per chain.
 func Group(dir string, entries []Entry, classify Classify) []Candidate {
 	return groupNamed(dir, entries, classify, "")
 }
@@ -199,22 +215,28 @@ type member struct {
 
 // groupNamed is Group, restricted to the chain named only when only is
 // not empty: the other groups are neither classified nor returned.
+//
+// A file named like a journal chain (a chain some name of the journal
+// row gives) is that chain's active part, whatever other row its name
+// also matches: journald's user journal `user-1000.journal` has the
+// shape of a numbered part before an extension, but it is the active
+// file of `user-1000@….journal`, never the 1000th rotation of
+// `user.journal`.
 func groupNamed(dir string, entries []Entry, classify Classify, only string) []Candidate {
+	matched := matchEntries(entries)
+	journalChains := journalChainNames(matched)
 	byChain := map[string][]member{}
 	bare := map[string]Entry{}
-	for _, e := range entries {
-		if !isCandidateFile(e) {
+	for _, m := range matched {
+		_, namesJournalChain := journalChains[m.entry.Name]
+		if !m.ok || namesJournalChain {
+			bare[m.entry.Name] = m.entry
 			continue
 		}
-		m, ok := matchName(e.Name)
-		if !ok {
-			bare[e.Name] = e
+		if only != "" && m.match.chain != only {
 			continue
 		}
-		if only != "" && m.chain != only {
-			continue
-		}
-		byChain[m.chain] = append(byChain[m.chain], member{entry: e, match: m})
+		byChain[m.match.chain] = append(byChain[m.match.chain], m.member)
 	}
 
 	out := make([]Candidate, 0, len(byChain))
@@ -230,6 +252,40 @@ func groupNamed(dir string, entries []Entry, classify Classify, only string) []C
 		return cmp.Or(cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)), cmp.Compare(a.Name, b.Name))
 	})
 	return out
+}
+
+// matchedEntry is an entry that may be a part, with what the template
+// table says about its name; ok is false when no row matches it.
+type matchedEntry struct {
+	member
+	ok bool
+}
+
+// matchEntries matches the name of every entry that may be a part
+// (isCandidateFile) against the template table, once each, in the
+// listing's order.
+func matchEntries(entries []Entry) []matchedEntry {
+	matched := make([]matchedEntry, 0, len(entries))
+	for _, e := range entries {
+		if !isCandidateFile(e) {
+			continue
+		}
+		m, ok := matchName(e.Name)
+		matched = append(matched, matchedEntry{member: member{entry: e, match: m}, ok: ok})
+	}
+	return matched
+}
+
+// journalChainNames are the chain names the names of the journal row
+// give, as a set.
+func journalChainNames(matched []matchedEntry) map[string]struct{} {
+	names := map[string]struct{}{}
+	for _, m := range matched {
+		if m.ok && m.match.template.ID == journalTemplateID {
+			names[m.match.chain] = struct{}{}
+		}
+	}
+	return names
 }
 
 // isCandidateFile reports whether an entry may be a part at all: a file
@@ -336,7 +392,11 @@ func textCheck(e Entry, classify Classify) (format compression.Format, isPart bo
 
 // formatPreference ranks the encodings of one generation: the first
 // that exists is the one rx reads (plain, seekable zstd, zstd, gzip,
-// bzip2, xz). The format is the detected one, never the extension's.
+// bzip2, xz, a systemd journal). The format is the detected one, never
+// the extension's. The journal row's names have no compression suffix,
+// so one of its generations has one encoding; a journal ranks last for
+// a generation of another row (`app.log.1` a journal beside
+// `app.log.1.gz`).
 var formatPreference = map[compression.Format]int{
 	compression.FormatNone:         0,
 	compression.FormatSeekableZstd: 1,
@@ -344,6 +404,7 @@ var formatPreference = map[compression.Format]int{
 	compression.FormatGzip:         3,
 	compression.FormatBz2:          4,
 	compression.FormatXz:           5,
+	compression.FormatJournal:      6,
 }
 
 // formatRank is a format's place in formatPreference; a format not in

@@ -113,6 +113,37 @@ func TestGroup_EachTemplateFindsItsChainInProvisionalOrder(t *testing.T) {
 			label: "numbers outside the years are rotation numbers", files: []string{"x.1969", "x.2101", "x"},
 			chain: "x", parts: []string{"x.2101", "x.1969", "x"}, template: "numbered", key: "2101",
 		},
+		{
+			// The head time (the third hex field) orders the archives,
+			// not their names: the archive of counter ffff… started
+			// first.
+			label: "journal archives by their head time",
+			files: []string{
+				"system.journal",
+				"system@00000000000000000000000000000001-0000000000000001-00065db7fc111b8d.journal",
+				"system@ffffffffffffffffffffffffffffffff-0000000000000009-00065db7fbffd8e8.journal",
+			},
+			chain: "system.journal",
+			parts: []string{
+				"system@ffffffffffffffffffffffffffffffff-0000000000000009-00065db7fbffd8e8.journal",
+				"system@00000000000000000000000000000001-0000000000000001-00065db7fc111b8d.journal",
+				"system.journal",
+			},
+			template: "journal", key: "00065db7fbffd8e8",
+		},
+		{
+			label: "journal archives, no active file",
+			files: []string{
+				"user-1000@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000006-00065db7fc111b8d.journal",
+				"user-1000@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal",
+			},
+			chain: "user-1000.journal",
+			parts: []string{
+				"user-1000@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal",
+				"user-1000@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000006-00065db7fc111b8d.journal",
+			},
+			template: "journal", key: "00065db7fbffd8e8",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -168,6 +199,22 @@ func TestGroup_LookAlikesFormNoChain(t *testing.T) {
 			map[string][]string{"app.log": {"app.log.1", "app.log"}}},
 		{"hidden names", []string{".syslog", ".syslog.1", ".syslog.2"}, map[string][]string{}},
 		{"unrelated names", []string{"README", "notes.txt", "lastlog", "fontconfig.log"}, map[string][]string{}},
+		// journald names a journal it disposed of NAME@<16 hex>-<16 hex>.journal~.
+		{"a disposed journal stays a single file", []string{"system.journal", "system@00065db7fbffd8e8-6b3c1b6d0b0a5c9e.journal~"},
+			map[string][]string{}},
+		{"a disposed journal beside a chain", []string{
+			"system.journal",
+			"system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal",
+			"system@00065db7fbffd8e8-6b3c1b6d0b0a5c9e.journal~",
+		}, map[string][]string{"system.journal": {
+			"system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal", "system.journal",
+		}}},
+		{"a compressed journal archive is no part", []string{
+			"system.journal", "system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal.gz",
+		}, map[string][]string{}},
+		{"one journal archive alone", []string{
+			"system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal",
+		}, map[string][]string{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -337,6 +384,14 @@ func TestMatchName_Keys(t *testing.T) {
 		{"report.2101", "report", KeyNumber, 2101, 0, "numbered"},
 		{"report.02024", "report", KeyNumber, 2024, 0, "numbered"},
 		{"report.999", "report", KeyNumber, 999, 0, "numbered"},
+		// A journal archive's key is the head time its name writes in
+		// hex microseconds.
+		{"system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal", "system.journal",
+			KeyJournalTime, 0, 0x00065db7fbffd8e8 / 1000, "journal"},
+		{"user-1000@8ce9c43343844cf4b33c5e842d348d5c-00000000000000ff-ffffffffffffffff.journal", "user-1000.journal",
+			KeyJournalTime, 0, 0xffffffffffffffff / 1000, "journal"},
+		{"a@b@8ce9c43343844cf4b33c5e842d348d5c-00000000000000ff-0000000000000000.journal", "a@b.journal",
+			KeyJournalTime, 0, 0, "journal"},
 	}
 	for _, tc := range cases {
 		m, ok := matchName(tc.name)
@@ -349,7 +404,13 @@ func TestMatchName_Keys(t *testing.T) {
 				tc.name, m.chain, m.template.ID, m.key, tc.chain, tc.template, tc.kind, tc.number, tc.dateMs)
 		}
 	}
-	for _, name := range []string{"syslog", "app.log", "README", "x.123456", "x.log.gz", "-20261001", "app.log.1.tmp"} {
+	for _, name := range []string{
+		"syslog", "app.log", "README", "x.123456", "x.log.gz", "-20261001", "app.log.1.tmp",
+		"system.journal", "system@00065db7fbffd8e8-6b3c1b6d0b0a5c9e.journal~",
+		"system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal.gz",
+		"system@B6423D6D2CA543B08B82CD46FAFCA6E4-0000000000000001-00065DB7FBFFD8E8.journal",
+		"@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal",
+	} {
 		if m, ok := matchName(name); ok && !strings.HasSuffix(name, ".tmp") {
 			t.Fatalf("%s matched %q as chain %q", name, m.template.ID, m.chain)
 		}
@@ -373,7 +434,7 @@ func TestTemplates_TableIsWellFormed(t *testing.T) {
 		}
 		direction[tpl.KeyKind] = tpl.NewestLow
 	}
-	for _, want := range []string{"numbered", "dated", "numbered-ext", "dated-ext"} {
+	for _, want := range []string{"numbered", "dated", "numbered-ext", "dated-ext", "journal"} {
 		if !ids[want] {
 			t.Fatalf("template %q missing", want)
 		}
@@ -388,6 +449,7 @@ func FuzzMatchName(f *testing.F) {
 		"0.log.20261001-120000", "access_log.1774915200", "app.1.log.gz", "app-2026-10-01.3.log.gz",
 		"app-2026-10-01T12-00-00.000.log.gz", "postgresql-2026-10-01_000000.log", "my app (1).log.2.gz",
 		"журнал.log.1", "x.99999", "x.2026-13-45_99", "x.9999999999", ".1", "-20261001",
+		"system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal",
 	} {
 		f.Add(seed)
 	}

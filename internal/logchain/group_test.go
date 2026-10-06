@@ -241,6 +241,39 @@ func TestGroup_NumbersBeforeTheExtensionNeedATextActiveFile(t *testing.T) {
 	}
 }
 
+// journald's user journal user-1000.journal also has the shape of a
+// numbered part before an extension (the 1000th rotation of
+// user.journal). A file named like a journal chain is that chain's
+// active part all the same, in a listing of the directory and when the
+// chain is found by its name, and no part of user.journal, which is
+// then no chain. system.journal and user-1000.journal are two chains.
+func TestGroup_AUserJournalIsTheActivePartOfItsChain(t *testing.T) {
+	const (
+		systemArchive = "system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal"
+		userArchive   = "user-1000@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000002-00065db7fbffd8e9.journal"
+	)
+	entries := fakeEntries("system.journal", systemArchive, "user-1000.journal", userArchive, "user.journal")
+	want := map[string][]string{
+		"system.journal":    {systemArchive, "system.journal"},
+		"user-1000.journal": {userArchive, "user-1000.journal"},
+	}
+	got := Group(testDir, entries, allText)
+	if byName := chainsByName(got); len(byName) != len(want) ||
+		!slices.Equal(byName["system.journal"], want["system.journal"]) ||
+		!slices.Equal(byName["user-1000.journal"], want["user-1000.journal"]) {
+		t.Fatalf("chains %v, want %v", byName, want)
+	}
+	for _, c := range got {
+		if !c.HasActive() {
+			t.Fatalf("%s has no active part: %v", c.Name, partNames(c))
+		}
+	}
+	only := groupNamed(testDir, entries, allText, "user-1000.journal")
+	if len(only) != 1 || !slices.Equal(partNames(only[0]), want["user-1000.journal"]) || !only[0].HasActive() {
+		t.Fatalf("the chain found by its name: %v", chainsByName(only))
+	}
+}
+
 // A /var/log with rotated, empty and binary files, files of one
 // generation only and subdirectories: exactly the rotated logs are
 // chains, and every other file is in none.

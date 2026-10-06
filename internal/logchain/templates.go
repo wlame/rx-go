@@ -2,6 +2,7 @@ package logchain
 
 import (
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -19,18 +20,23 @@ const (
 	// written where a rotation number goes (`report.2023`, see
 	// yearKey).
 	KeyDate
+	// KeyJournalTime is the head time in a journal archive's name, hex
+	// microseconds: `system@<id>-<seqnum>-00065db7fbffd8e8.journal`.
+	KeyJournalTime
 )
 
 // Key is the number or date a rotated part's name carries.
 //
 // It decides the provisional order of a chain (see Group) and which
 // numbers are missing. It never decides an answer about the parts'
-// text: their timestamps set the real order.
+// text: their timestamps set the real order, and for a journal chain
+// their headers do.
 type Key struct {
 	// Kind is what the key is; KeyNone for the active part.
 	Kind KeyKind
 	// Text is the key as the name writes it: "3", "20260401-1775001601",
-	// "2026-10-01.3".
+	// "2026-10-01.3", and for a journal archive its head time in hex,
+	// "00065db7fbffd8e8".
 	Text string
 	// Number is the rotation number of a numbered part, and the number
 	// written after the date of a dated part (an epoch suffix, logback's
@@ -38,8 +44,9 @@ type Key struct {
 	Number int64
 	// DateMs is the date of a dated part in milliseconds since the Unix
 	// epoch, the name's wall clock read as UTC (an epoch is its own
-	// instant); 0 for other parts. It only orders the parts of one
-	// chain, so the zone it is read in does not matter.
+	// instant), and the head time of a journal archive in milliseconds;
+	// 0 for other parts. It only orders the parts of one chain, so the
+	// zone it is read in does not matter.
 	DateMs int64
 }
 
@@ -52,12 +59,14 @@ type Key struct {
 // (it may still be the active part of a chain, by being named exactly
 // like one).
 type Template struct {
-	// ID names the row: "numbered", "dated", "dated-ext", "numbered-ext".
+	// ID names the row: "numbered", "dated", "dated-ext", "numbered-ext",
+	// "journal".
 	ID string
 	// Pattern matches a whole part name. It is compiled once, when the
 	// package is initialized. Its named groups are `n` (a number),
 	// `date`, `comp` (the compression suffix, ignored for membership)
-	// and either `name` or `stem` and `ext`.
+	// and either `name` or `stem` and `ext`; the journal row's are
+	// `name`, `id`, `seqnum` and `time` (journalPattern).
 	Pattern *regexp.Regexp
 	// Name builds the chain name from Pattern's submatches, as
 	// regexp.FindStringSubmatch returns them.
@@ -123,13 +132,31 @@ var (
 	// `app-2.log`).
 	numberedExtPattern = regexp.MustCompile(`^(?P<stem>` + anyName + `)` + separator + `(?P<n>\d{1,5})` +
 		`\.(?P<ext>` + extensionPattern + `)` + compressionSuffix + `$`)
+	// journalPattern: `{name}@{id}-{seqnum}-{time}.journal`, the name
+	// systemd-journald gives a journal it archived
+	// (`system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal`):
+	// its counter's id (32 hex digits), the sequence number of its first
+	// entry and that entry's time in microseconds since the epoch (16 hex
+	// digits each), all in the lowercase journald writes. No compression
+	// suffix: a gzip copy of a journal is a gzip file whose text is the
+	// journal's bytes, which is not text. A name journald gives a journal
+	// it disposed of (`….journal~`) does not match.
+	journalPattern = regexp.MustCompile(`^(?P<name>(?s:.+))@(?P<id>[0-9a-f]{32})-(?P<seqnum>[0-9a-f]{16})` +
+		`-(?P<time>[0-9a-f]{16})\.journal$`)
 )
+
+// journalTemplateID is the ID of the journal row. A chain whose frozen
+// parts include one of its names is a journal chain (Candidate.IsJournal).
+const journalTemplateID = "journal"
 
 // Templates is the name-template table, tried in this order.
 //
 // dated-ext comes before numbered-ext: `app-2026-10-01.3.log` also has
 // the numbered-ext shape (stem `app-2026-10-01`, number 3), and the
-// date is what names it.
+// date is what names it. No other row matches a name of the journal
+// row, so its place does not matter. Its parts count without the active
+// file: archives copied from a server, without system.journal, are a
+// chain.
 var Templates = []Template{
 	{ID: "numbered", Pattern: numberedPattern, Name: groupText(numberedPattern, "name"),
 		KeyKind: KeyNumber, NewestLow: true},
@@ -139,6 +166,8 @@ var Templates = []Template{
 		KeyKind: KeyDate},
 	{ID: "numbered-ext", Pattern: numberedExtPattern, Name: stemDotExt(numberedExtPattern),
 		KeyKind: KeyNumber, NewestLow: true, NeedsActive: true},
+	{ID: journalTemplateID, Pattern: journalPattern, Name: groupWithSuffix(journalPattern, "name", ".journal"),
+		KeyKind: KeyJournalTime},
 }
 
 // groupText returns a Name function that takes the chain name from one
@@ -149,6 +178,14 @@ var Templates = []Template{
 func groupText(re *regexp.Regexp, group string) func(m []string) string {
 	i := re.SubexpIndex(group)
 	return func(m []string) string { return m[i] }
+}
+
+// groupWithSuffix returns a Name function that takes the chain name
+// from one named group of re with suffix added: the archive
+// `system@….journal` is a part of `system.journal`.
+func groupWithSuffix(re *regexp.Regexp, group, suffix string) func(m []string) string {
+	i := re.SubexpIndex(group)
+	return func(m []string) string { return m[i] + suffix }
 }
 
 // stemDotExt returns a Name function that builds the chain name from
@@ -202,7 +239,9 @@ func matchName(name string) (nameMatch, bool) {
 			return nameMatch{}, false
 		}
 		match := nameMatch{template: tpl, chain: chain, generation: name}
-		if comp := tpl.Pattern.SubexpIndex("comp"); loc[2*comp] >= 0 {
+		// SubexpIndex is -1 for a row without a compression suffix (the
+		// journal row): its whole name is the generation.
+		if comp := tpl.Pattern.SubexpIndex("comp"); comp >= 0 && loc[2*comp] >= 0 {
 			match.generation = name[:loc[2*comp]]
 		}
 		match.key, match.beforeNumber, match.afterNumber = keyOf(tpl, name, loc, match.generation)
@@ -236,6 +275,10 @@ func keyOf(tpl *Template, name string, loc []int, generation string) (key Key, b
 		}
 		return loc[2*i], loc[2*i+1]
 	}
+	if tpl.KeyKind == KeyJournalTime {
+		timeStart, timeEnd := span("time")
+		return journalTimeKey(name[timeStart:timeEnd]), "", ""
+	}
 	numStart, numEnd := span("n")
 	key.Kind = tpl.KeyKind
 	if numStart >= 0 {
@@ -256,6 +299,18 @@ func keyOf(tpl *Template, name string, loc []int, generation string) (key Key, b
 	}
 	key.Text = name[dateStart:keyEnd]
 	return key, "", ""
+}
+
+// journalTimeKey is the key of a journal archive whose name writes its
+// head time as hexTime: 16 hex digits of microseconds since the epoch,
+// which journalPattern guarantees. A later time is newer.
+func journalTimeKey(hexTime string) Key {
+	// 16 hex digits are at most 2^64-1, so ParseUint cannot fail here.
+	micros, _ := strconv.ParseUint(hexTime, 16, 64)
+	const microsPerMilli = 1000
+	// The milliseconds are below 2^64/1000, about 1.8e16, so they fit
+	// an int64.
+	return Key{Kind: KeyJournalTime, Text: hexTime, DateMs: int64(micros / microsPerMilli)} // #nosec G115 -- below 2^55
 }
 
 // The numbers yearKey reads as years: four digits, from 1970 to 2100.

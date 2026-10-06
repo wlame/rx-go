@@ -61,6 +61,7 @@ name wins.
 | `dated` | `{name}{sep}{DATE}`, optionally followed by `{sep}{digits}` | `{name}` | date | latest date | no |
 | `dated-ext` | `{stem}{sep}{DATE}`, optionally followed by `{sep}{N}`, then `.{ext}` | `{stem}.{ext}` | date | latest date | no |
 | `numbered-ext` | `{stem}{sep}{N}.{ext}`, N of 1 to 5 digits | `{stem}.{ext}` | number | lowest number | yes |
+| `journal` | `{name}@{id}-{seqnum}-{time}.journal` | `{name}.journal` | head time | latest head time | no |
 
 - `sep` is `.`, `-` or `_`.
 - `ext` is a letter followed by up to seven letters or digits.
@@ -78,6 +79,13 @@ name wins.
   both shapes, and its date names it.
 - `numbered-ext` parts count only when the active file `{stem}.{ext}`
   exists, so `node-1.log` and `node-2.log` alone are no chain.
+- `journal` is the name systemd-journald gives a journal it archived:
+  `id` is the counter that numbered its entries (32 hex digits),
+  `seqnum` the sequence number of its first entry and `time` that
+  entry's time in microseconds since the epoch (16 hex digits each), in
+  lowercase. The key is `time`. It takes no compression suffix (a gzip
+  copy of a journal is not text), and journald's name for a journal it
+  disposed of, `{name}@{time}-{random}.journal~`, matches no template.
 
 Some names and what the templates make of them:
 
@@ -96,7 +104,10 @@ Some names and what the templates make of them:
 | `postgresql-2026-10-01_000000.log` | `dated-ext` | `postgresql.log` | `2026-10-01_000000` | date |
 | `app.1.log.gz` | `numbered-ext` | `app.log` | `1` | number |
 | `app-2.log` | `numbered-ext` | `app.log` | `2` | number |
+| `system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal` | `journal` | `system.journal` | `00065db7fbffd8e8` | head time |
+| `user-1000@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000007-00065db7fc111b8d.journal` | `journal` | `user-1000.journal` | `00065db7fc111b8d` | head time |
 | `syslog.123456` | none | | | |
+| `system@00065db7fbffd8e8-6b3c1b6d0b0a5c9e.journal~` | none | | | |
 
 A number of four digits from 1970 to 2100 where `N` goes
 (`report.2023`, `app.2024.log`) is a year: such a file is a yearly part,
@@ -108,7 +119,10 @@ parts before it.
 1. Files are grouped by directory and chain name. Parts of one chain
    may match different templates (`syslog.1` and
    `syslog-20261001.gz`).
-2. The file named exactly like the chain is its active part.
+2. The file named exactly like the chain is its active part. A file
+   named like a journal chain is its active part even when its name has
+   another template's shape: `user-1000.journal` is the active file of
+   `user-1000@….journal`, not a part of `user.journal`.
 3. A chain needs two parts; the active file counts when it exists. One
    file alone is no chain.
 4. One generation in several encodings (`app.log-2025121008`, its `.gz`

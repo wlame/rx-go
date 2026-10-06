@@ -25,8 +25,8 @@ var (
 
 // The words the page writes for a template's key kind and direction.
 var (
-	keyKindWords   = map[string]KeyKind{"number": KeyNumber, "date": KeyDate}
-	newestLowWords = map[string]bool{"lowest number": true, "latest date": false}
+	keyKindWords   = map[string]KeyKind{"number": KeyNumber, "date": KeyDate, "head time": KeyJournalTime}
+	newestLowWords = map[string]bool{"lowest number": true, "latest date": false, "latest head time": false}
 	yesNoWords     = map[string]bool{"yes": true, "no": false}
 )
 
@@ -115,7 +115,7 @@ func TestConceptPage_TemplateTableIsTheTemplates(t *testing.T) {
 		if needsActive, ok := yesNoWords[row[5]]; !ok || needsActive != tpl.NeedsActive {
 			t.Errorf("%s: the page says %q to needing the active file, the code says %v", tpl.ID, row[5], tpl.NeedsActive)
 		}
-		groups := map[string]string{"{name}": "name", "{stem}.{ext}": "stem"}
+		groups := map[string]string{"{name}": "name", "{stem}.{ext}": "stem", "{name}.journal": "name"}
 		group, ok := groups[row[2]]
 		if !ok || tpl.Pattern.SubexpIndex(group) < 0 {
 			t.Errorf("%s: the page builds the chain name as %q, which the pattern's groups do not give", tpl.ID, row[2])
@@ -147,7 +147,9 @@ func TestConceptPage_ExampleNamesMatchAsTheTableSays(t *testing.T) {
 			t.Errorf("%s: matched by %s as chain %q with key %q, the page says %s, %q, %q",
 				name, match.template.ID, match.chain, match.key.Text, template, chain, key)
 		}
-		kindWord, _, _ := strings.Cut(kind, " ")
+		// The kind's words, without a remark in brackets: "date (a
+		// year)" is the kind "date", "head time" the kind "head time".
+		kindWord, _, _ := strings.Cut(kind, " (")
 		if want, known := keyKindWords[kindWord]; !known || match.key.Kind != want {
 			t.Errorf("%s: key kind %v, the page says %q", name, match.key.Kind, kind)
 		}
