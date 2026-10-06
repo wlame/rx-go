@@ -332,6 +332,13 @@
             },
             "type": "object"
           },
+          "features": {
+            "description": "The names of the features this build serves, sorted. A client checks whether a name is listed before it uses the feature; the API documentation lists the names.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "go_packages": {
             "additionalProperties": {
               "type": "string"
@@ -376,6 +383,7 @@
           "ripgrep_available",
           "app_version",
           "contract_version",
+          "features",
           "go_version",
           "os_info",
           "system_resources",
