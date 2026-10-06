@@ -277,7 +277,8 @@ duration.
 
 Each zone variable accepts `UTC`, an IANA zone name (`Europe/Berlin`,
 `America/New_York`) or a fixed offset `±HH:MM` up to 18 hours
-(`+05:30`); `RX_QUERY_TZ` also accepts `local`. The zone names are
+(`+05:30`: one sign, then two digits in each field, so `+-1:00` is
+refused); `RX_QUERY_TZ` also accepts `local`. The zone names are
 built into the binary, so they work on a host without
 `/usr/share/zoneinfo`.
 

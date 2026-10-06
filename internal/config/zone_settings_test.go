@@ -33,6 +33,13 @@ func TestLogTZ_AcceptsAZoneAndFallsBackToUTC(t *testing.T) {
 		{"+18:01", "UTC", 0},
 		{"+5:30", "UTC", 0},
 		{"+05:60", "UTC", 0},
+		// A sign inside a field is not a digit: each field is two digits.
+		{"+-1:00", "UTC", 0},
+		{"--1:00", "UTC", 0},
+		{"+00:-5", "UTC", 0},
+		{"+00:+5", "UTC", 0},
+		{"+1:5x", "UTC", 0},
+		{"+0x:00", "UTC", 0},
 		{"Mars/Olympus", "UTC", 0},
 		{"local", "UTC", 0},
 		{"Local", "UTC", 0},

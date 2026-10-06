@@ -128,9 +128,12 @@ func (s ZoneSetting) parse(raw string) (Zone, error) {
 // from UTC.
 func parseFixedOffset(raw string) (Zone, error) {
 	bad := fmt.Errorf("not an offset of the form ±HH:MM up to 18 hours")
-	if len(raw) != len("+00:00") || raw[3] != ':' {
+	if len(raw) != len("+00:00") || raw[3] != ':' || !twoDigits(raw[1:3]) || !twoDigits(raw[4:6]) {
 		return Zone{}, bad
 	}
+	// Both fields are two digits now, so Atoi cannot fail; checking the
+	// digits first matters because Atoi reads a sign of its own, and
+	// "+-1:00" would otherwise be an hour west of UTC.
 	hours, errH := strconv.Atoi(raw[1:3])
 	minutes, errM := strconv.Atoi(raw[4:6])
 	if errH != nil || errM != nil || hours > maxFixedOffsetHours || minutes > 59 ||
@@ -143,6 +146,14 @@ func parseFixedOffset(raw string) (Zone, error) {
 	}
 	return Zone{Location: time.FixedZone(raw, seconds), Name: raw}, nil
 }
+
+// twoDigits reports whether field is two ASCII digits.
+func twoDigits(field string) bool {
+	return len(field) == 2 && isDigit(field[0]) && isDigit(field[1])
+}
+
+// isDigit reports whether c is an ASCII digit.
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 // warnInvalidZone logs one invalid_setting warning for s holding raw,
 // unless this process has already logged it.
