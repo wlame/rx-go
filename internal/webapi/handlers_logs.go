@@ -49,7 +49,8 @@ func registerLogsHandlers(s *Server, api huma.API) {
 			"(by the number or date in the names, oldest first), the numbers missing between them, their total " +
 			"size, compression formats, and whether every part but the active file has a line index. " +
 			"A file of one generation in several encodings is one part. Directories, hidden entries, .tmp " +
-			"files and files that are not text are no parts. Errors as GET /v1/tree for the same path.",
+			"files and files that are not text are no parts, except in a journal chain (rotated systemd journals), " +
+			"which keeps them as parts that cannot be read as journals. Errors as GET /v1/tree for the same path.",
 		Tags:      []string{"Logs"},
 		Responses: errorResponses(api, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity),
 	}, func(_ context.Context, in *logChainsInput) (*logChainsOutput, error) {

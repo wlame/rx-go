@@ -120,9 +120,10 @@ type Candidate struct {
 	DirInfo os.FileInfo
 	// NamedParts is how many parts the names of the chain's files give:
 	// one per generation, the active file included, counted before any
-	// file is read. Files that turn out not to be text make it larger
-	// than len(Parts). For a chain of more than MaxParts parts it is the
-	// count its description gives.
+	// file is read. In a chain of text logs, files that turn out not to
+	// be text make it larger than len(Parts); a journal chain keeps them
+	// as parts (Part.NotText). For a chain of more than MaxParts parts it
+	// is the count its description gives.
 	NamedParts int
 }
 
@@ -195,7 +196,9 @@ func ClassifyPinned(e Entry) (filekind.Kind, error) {
 // on), names ending in `.tmp`, files whose text check says they are not
 // text (classify; a journal chain keeps them as parts, with the reason
 // in Part.NotText, see journalChainKeeps), and the parts of a template
-// that needs the active file when that file is absent or not text. A
+// that needs the active file when that file is absent or, in a chain of
+// text logs, not text (a journal chain keeps an active file that is not
+// text, and those parts with it). A
 // file the text check cannot read stays a part, with the error
 // (Part.ReadError): the chain it belongs to cannot be read as one text,
 // and its description says why. One generation in several encodings is
@@ -412,8 +415,8 @@ func textCheck(e Entry, classify Classify) textResult {
 	return textResult{format: kind.Format, notText: kind.NotText}
 }
 
-// keepsMember says whether a chain keeps, as a part, an entry the text
-// check found to be checked.
+// keepsMember says whether a chain keeps an entry as a part, given what
+// the text check found about it (checked).
 type keepsMember func(checked textResult) bool
 
 // textChainKeeps is the rule of a chain of text logs: it keeps its text
@@ -487,8 +490,8 @@ func (e encoding) cannotBeRead() int { return boolCount(e.readErr != nil || e.no
 // them a generation at a time in the order the generations first appear
 // (the directory listing's, by name), and stops once it holds limit
 // parts: the generations after that are neither classified nor kept. A
-// generation whose every member keeps declines (in a chain of text
-// logs, none of them is text) makes no part.
+// generation makes no part when keeps declines every one of its members
+// (in a chain of text logs: when none of them is text).
 func chooseParts(members []member, classify Classify, keeps keepsMember, limit int) []Part {
 	byGeneration := map[string][]member{}
 	var order []string

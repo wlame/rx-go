@@ -44,8 +44,11 @@ answer shows:
 - Left out of every chain: directories, hidden entries (unless the
   server runs with `--hidden`), names ending in `.tmp`, and files that
   are not text by the rule every route applies (a NUL byte in the first
-  8 KiB of the text, so `wtmp` and `wtmp.1` are no chain). An empty file
-  is text, so a chain of empty files is a chain.
+  8 KiB of the text, so `wtmp` and `wtmp.1` are no chain), except in a
+  journal chain (rotated systemd journals), which keeps them as parts
+  that cannot be read as journals: `GET /v1/logs/chain` answers it
+  invalid, with the reason `unreadable`. An empty file is text, so a
+  chain of empty files is a chain.
 - A file whose name makes it a part but which cannot be opened (its
   permissions, an I/O error) stays a part and is named in `unreadable`:
   the chain cannot be read as one text until it can, and
