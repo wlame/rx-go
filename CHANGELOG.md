@@ -48,7 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Line index format 8. An index stored by an earlier rx is treated as
   absent and rebuilt once, the first time a command needs it. A stored
   index whose time section cannot be trusted (a `max_before` that does
-  not match the checkpoints or decreases, or an unknown format) is
+  not match the checkpoints or decreases, an unknown format, a negative
+  count of timestamped lines, a first or last timestamped line missing
+  or outside the file's lines, or a zone offset beyond 18 hours) is
   treated as damaged: absent, with an `index_unreadable` warning.
 - An index build reads each line where its read buffer holds it instead
   of copying it, which pays for reading the timestamps on lines of a few
