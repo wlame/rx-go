@@ -185,36 +185,49 @@ func linesEndedInFrame(lineBreaks int64, isLastFrame, textEndsAtLineStart bool) 
 // The offsets are positions in the decompressed stream, which is what
 // every other line index in rx addresses.
 //
+// SECURITY: the walk allocates nothing per line. It finds each line
+// break with bytes.IndexByte, which only returns a position, and keeps
+// a line start only when it gets a checkpoint, so the memory it uses
+// is the checkpoints it returns: at most one per CheckpointLineInterval
+// lines, which is len(data)/CheckpointLineInterval entries for a frame
+// of empty lines. Splitting the frame into one slice per line instead
+// held 24 bytes for every line, about 3 GiB for a 128 MiB frame of
+// line breaks, which a 4 KB compressed frame can hold.
+//
 // INVARIANT: a checkpoint names a line that starts inside this frame.
-// When the frame ends with a newline, bytes.Split yields one more,
-// empty element that starts at the frame's end; that position is the
-// next frame's start (which has its own checkpoint) or, in the last
-// frame, the end of the text, where no line starts. It never gets a
-// checkpoint.
+// A line break that is the frame's last byte starts no line here: the
+// position after it is the next frame's start (which has its own
+// checkpoint) or, in the last frame, the end of the text, where no
+// line starts. It never gets a checkpoint.
 func interiorCheckpoints(
 	data []byte,
 	frame seekable.FrameInfo,
 	firstLine int64,
 ) []rxtypes.LineIndexEntry {
 	var out []rxtypes.LineIndexEntry
-	byteOffset := int64(0)
-	lineNumber := firstLine
 	frameIndex := frame.Index
+	lineNumber := firstLine
+	lineStart := 0 // the position in data of the first byte of line lineNumber
 
-	for _, line := range bytes.Split(data, []byte{'\n'}) {
-		if byteOffset >= int64(len(data)) {
+	for {
+		// bytes.IndexByte searches a sub-slice of data in place; the
+		// sub-slice shares data's memory, so no bytes are copied.
+		breakAt := bytes.IndexByte(data[lineStart:], '\n')
+		if breakAt < 0 {
 			break
 		}
-		if lineNumber > firstLine && (lineNumber-firstLine)%CheckpointLineInterval == 0 {
+		lineStart += breakAt + 1
+		lineNumber++
+		if lineStart >= len(data) {
+			break
+		}
+		if (lineNumber-firstLine)%CheckpointLineInterval == 0 {
 			out = append(out, rxtypes.LineIndexEntry{
 				LineNumber: lineNumber,
-				ByteOffset: frame.DecompressedOffset + byteOffset,
+				ByteOffset: frame.DecompressedOffset + int64(lineStart),
 				FrameIndex: &frameIndex,
 			})
 		}
-		// +1 for the newline bytes.Split consumed.
-		byteOffset += int64(len(line)) + 1
-		lineNumber++
 	}
 	return out
 }
