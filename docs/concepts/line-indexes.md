@@ -99,6 +99,23 @@ dates with slashes or dots, and epoch seconds or milliseconds. Each
 line's own timestamp is read with that one format; a line without one
 (a traceback, a continuation line) has none.
 
+Log lines often carry text that someone outside writes (a request path,
+a user name, a message with a newline in it), so the choice is made in a
+way a few such lines cannot steer:
+
+- A timestamp at the start of a line (`anchored`) is strong evidence:
+  three such lines make a log, whatever their share. They outrank a
+  timestamp further into the line, as in JSON lines, only when they are
+  at least 1% of the non-blank lines of the first mebibyte; below that
+  they decide the format only when no reading further in matches half
+  of the lines.
+- A slash date such as `10/06/2026` is read month first unless at least
+  three lines read only day first (`13/01/2026`) and they outnumber the
+  lines that read only month first (`01/13/2026`).
+- In a file whose timestamp is further into the line, the first
+  timestamp in the line's first 120 bytes counts, so text written before
+  the log's own time field can set it.
+
 Every value is milliseconds since the Unix epoch, in the file's frame.
 In a file whose timestamps carry a zone (`Z`, `+02:00`, `UTC`, `GMT`),
 a value is the UTC instant, and a line without a zone is read as UTC.
