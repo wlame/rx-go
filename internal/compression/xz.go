@@ -252,8 +252,7 @@ func (x *xzReader) openBlock(sizeByte byte) error {
 		compressed:       countingReader{r: x.src},
 		check:            newXzCheck(x.checkID),
 	}
-	// DecodeDictCap never returns less than lzma.MinDictCap, which is
-	// the least Reader2Config accepts.
+	dictionary = dictionaryForBlock(dictionary, fields.uncompressedSize)
 	text, err := lzma.Reader2Config{DictCap: int(dictionary)}.NewReader2(&block.compressed)
 	if err != nil {
 		return fmt.Errorf("xz: block: %w", err)
@@ -261,6 +260,35 @@ func (x *xzReader) openBlock(sizeByte byte) error {
 	block.text = text
 	x.block = block
 	return nil
+}
+
+// dictionaryForBlock is the dictionary to reserve for a block whose
+// header names declared bytes, already checked against the limit, and
+// may declare the size of the block's text.
+//
+// SECURITY: a header can name a dictionary far larger than the block it
+// heads, and the decoder reserves the whole of it before reading the
+// block. A file of thousands of tiny blocks that each name 128 MiB
+// would reserve 128 MiB per block. Every xz block starts its LZMA2 data
+// with a dictionary reset (the decoder refuses data that does not), so
+// no match reaches further back than the block's own text, and a
+// dictionary as long as that text decodes it exactly as the declared
+// one would. When the header declares the text size, the dictionary is
+// cut to it, but never below lzma.MinDictCap (4 KiB), the least the
+// decoder accepts; a block whose text runs past its declared size is
+// refused by xzBlock.Read. A header that leaves the size out gets the
+// dictionary it names: nothing before the data says how long the text
+// is.
+func dictionaryForBlock(declared int64, textSize optionalSize) int64 {
+	if !textSize.present {
+		return declared
+	}
+	// textSize.value can be up to 2^63-1; comparing it as a uint64
+	// before converting keeps the result within declared.
+	if textSize.value >= uint64(declared) { //nolint:gosec // declared is between lzma.MinDictCap and the limit
+		return declared
+	}
+	return max(int64(textSize.value), lzma.MinDictCap) //nolint:gosec // below declared, so it fits
 }
 
 // xzBlockFields are the fields of a block header the reader uses.

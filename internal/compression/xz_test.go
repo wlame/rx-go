@@ -204,6 +204,41 @@ func TestNewXzReader_AcceptsADictionaryOfExactlyTheLimit(t *testing.T) {
 	}
 }
 
+// A block whose header declares its text size decodes with a dictionary
+// of that size, at least 4 KiB, rather than the one the header names:
+// every xz block starts with an empty dictionary, so no match in it
+// reaches further back than its own text. Seventeen small blocks that
+// each name 128 MiB cost about their text, not 2 GiB, and decode as the
+// xz package decodes them.
+func TestNewXzReader_SizesTheDictionaryToTheTextTheBlockDeclares(t *testing.T) {
+	var texts [][]byte
+	for i := range 16 {
+		texts = append(texts, numberedText(i*40)) // the first block is empty
+	}
+	texts = append(texts, numberedText(2_000)) // over 64 KiB: two chunks
+	body := xzfile.SizedStoredBlocks(t, texts, 30)
+	want := bytes.Join(texts, nil)
+
+	var got []byte
+	var err error
+	allocated := allocatedBy(func() { got, err = readAllXz(body, WindowLimit) })
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("decoded %d bytes, %v; want the %d bytes of the blocks", len(got), err, len(want))
+	}
+	const budget = 8 << 20
+	if allocated > budget {
+		t.Errorf("allocated %d MiB; budget %d MiB", allocated>>20, budget>>20)
+	}
+
+	theirs, err := xz.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("the xz package refuses the file: %v", err)
+	}
+	if theirText, err := io.ReadAll(theirs); err != nil || !bytes.Equal(theirText, want) {
+		t.Errorf("the xz package decoded %d bytes, %v; want the %d bytes of the blocks", len(theirText), err, len(want))
+	}
+}
+
 // Every byte of an xz file is checked by something: a CRC32, the block's
 // check, the index or the format. Changing any one byte, or cutting the
 // file short anywhere, gives an error or the same text, never different
@@ -256,6 +291,7 @@ func FuzzNewXzReader(f *testing.F) {
 	f.Add(xzfile.Encode(f, text, xz.WriterConfig{}))
 	f.Add(xzfile.Encode(f, text, xz.WriterConfig{BlockSize: 2 << 10, CheckSum: xz.SHA256}))
 	f.Add(xzfile.Encode(f, nil, xz.WriterConfig{NoCheckSum: true}))
+	f.Add(xzfile.SizedStoredBlocks(f, [][]byte{nil, []byte("a\n"), text}, 16))
 	f.Fuzz(func(t *testing.T, body []byte) {
 		r, err := NewXzReader(bytes.NewReader(body), 1<<20)
 		if err != nil {
