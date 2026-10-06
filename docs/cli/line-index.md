@@ -291,6 +291,14 @@ rx index /var/log/app.log-2025121008 --json \
     | jq '.indexed[0].time_index | {format, timestamped_lines, first, last, max, backward_steps}'
 ```
 
+`indexed[].journal` is the [journal section](#the-journal-section) of a
+systemd journal's index, or `null` for any other file:
+
+```bash
+rx index /var/log/journal/system.journal --threshold=0 --json \
+    | jq '.indexed[0].journal | {left_out, not_reached, first_damaged_entry, damage_reason}'
+```
+
 ## How it works
 
 ### Index structure
@@ -303,6 +311,8 @@ The on-disk format is a JSON file containing:
 - The time section, `time_index`: the timestamp format of the lines,
   the first and last timestamps, and the latest timestamp before each
   checkpoint (`null` when no format is recognized)
+- The journal section, `journal`, of a systemd journal: what a read of
+  its text found (`null` for any other file)
 - The line counts and line-length statistics of the text (not for a
   seekable `.zst`)
 
