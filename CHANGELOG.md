@@ -128,6 +128,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `line_timestamps` read back that fails (a damaged frame of a
+  seekable zstd file before a sample, which the sample's own lines do
+  not need) no longer fails the whole samples answer: that sample's
+  lines without a timestamp of their own are `null`, and the failure is
+  logged as `line_timestamps_read_back_failed`.
 - `samples` reads every line window of a request in one pass over the
   text, in order of position, instead of one pass per window: by line
   (`--lines`, `?lines=`) and by time. Without an index, 1,000 lines near
