@@ -8,12 +8,16 @@ archived data.
 
 | Format | Extension | Random access | Works with `--offsets` | Works with `--lines` | Parallel trace |
 |---|---|:-:|:-:|:-:|:-:|
-| gzip | `.gz` | no | no | yes (slow for high lines) | no |
-| bzip2 | `.bz2` | no | no | yes (slow) | no |
-| xz | `.xz` | no | no | yes (slow) | no |
-| zstd (plain) | `.zst` | no | no | yes (slow) | no |
-| systemd journal | `.journal`, or any | no | no | yes (slow) | no |
-| **seekable zstd** | `.zst` | **yes** | **no** (see below) | **yes (fast)** | **yes, by frame** |
+| gzip | `.gz` | no | yes (slow for high offsets) | yes (slow for high lines) | no |
+| bzip2 | `.bz2` | no | yes (slow) | yes (slow) | no |
+| xz | `.xz` | no | yes (slow) | yes (slow) | no |
+| zstd (plain) | `.zst` | no | yes (slow) | yes (slow) | no |
+| systemd journal | `.journal`, or any | no | yes (slow) | yes (slow) | no |
+| **seekable zstd** | `.zst` | **yes** | **yes (fast)** | **yes (fast)** | **yes, by frame** |
+
+"Slow" means the read starts at the first byte of the text and goes on
+to the wanted line or offset; "fast" means it starts at the frame that
+holds it. Offsets are positions in the decompressed text in every row.
 
 ## How rx decides what a file is
 

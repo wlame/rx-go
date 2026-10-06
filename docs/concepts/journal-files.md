@@ -160,15 +160,23 @@ either, for another reason (see [below](#damage-and-its-report)).
 ### Where the text differs from journalctl's
 
 The text is `journalctl`'s for every journal `journalctl` can print,
-with four differences that `rx` chose:
+with six differences that `rx` chose:
 
 - An entry whose text would be larger than 256 MiB is left out as
   damaged.
+- An entry whose shown values come to more than 128 MiB together is left
+  out as damaged.
+- An xz value whose stream declares a dictionary above 16 MiB is damage.
+  journald writes its xz values with a 1 MiB dictionary.
 - A field the text does not show is read only as far as its name. The
   text shows seven fields (`MESSAGE`, `_HOSTNAME`, `SYSLOG_IDENTIFIER`,
   `_COMM`, `_PID`, `SYSLOG_PID` and `_SOURCE_REALTIME_TIMESTAMP`), so
-  damage in the value of any other field is not noticed, and a core dump
-  of any size stored in the journal costs the length of its name.
+  damage in the rest of the value of any other field is not noticed, and
+  a core dump of any size stored in the journal costs the length of its
+  name. The size bounds of the first two points apply to the values the
+  text shows; a field the text does not show is never damage for its
+  size. The xz dictionary bound is the one exception: it holds for every
+  field.
 - Finding a field's name may need the start of its compressed value. A
   name that needs more than 129 KiB of the stored bytes is damage. Only
   an lz4 value whose text starts with an incompressible run of more than
@@ -185,8 +193,11 @@ damaged, is read as far as it can be, and `rx` says what it left out.
 outside the part the header says holds objects, that is misaligned, of
 the wrong type or of a size that does not fit; an offset that goes back
 or stays where it was; a value that does not decompress or decodes to
-more than 128 MiB; an entry with no valid time; an entry whose text
-would be larger than 256 MiB.
+more than 128 MiB; a zstd or lz4 value that declares more text than its
+stored bytes can hold; an xz value whose stream declares a dictionary
+above 16 MiB; an entry with no valid time; an entry whose shown values
+come to more than 128 MiB together; an entry whose text would be larger
+than 256 MiB.
 
 **What is left out.** An entry with a damaged object (the entry itself
 or any of its fields) is left out whole, because the damaged field could
@@ -288,10 +299,10 @@ short, and the tooltip holds all of it.
 
 journald writes the active `system.journal` in place. It reserves the
 file in 8 MiB steps, so most of a live journal after its last objects is
-zeros that `rx` never reads; the progress of an index build or a
-findings scan (`progress`, `bytes_read` and `bytes_total` of its task)
-counts to the end of the journal's last object, not to the end of the
-file.
+zeros that `rx` never reads. The progress of an index build
+(`progress` of its task) and of a findings scan (`bytes_read` and
+`bytes_total` of its task) counts to the end of the journal's last
+object, not to the end of the file.
 
 `rx` reads the entries the header counts at the moment it opens the file.
 An entry journald adds meanwhile belongs to the next read.

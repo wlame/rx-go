@@ -504,13 +504,17 @@ rx only reads it. What the reader guarantees:
   report what it left out. It does not panic on any input: the reader,
   the text renderer and the lz4 decoder have fuzz tests (`go test
   -fuzz`), and their seed inputs run in every test run.
-- **Memory is bounded per value and per entry.** A value is decoded to at
-  most 128 MiB, the shown values of one entry to 128 MiB together, and
-  one entry's text to 256 MiB; an entry past a bound is damaged. A field
-  the text does not show is read only as far as its name, so a core dump
-  of any size stored in a journal costs the length of its name. An xz
-  value whose stream declares a dictionary above 16 MiB is damage
-  (journald writes 8 MiB).
+- **Memory is bounded per value and per entry.** A value of a field the
+  text shows is decoded to at most 128 MiB, the shown values of one entry
+  to 128 MiB together, and one entry's text to 256 MiB; an entry past a
+  bound is damaged. A zstd or lz4 value that declares more text than its
+  stored bytes can hold is refused before its buffer is made, so a few
+  stored bytes cannot make the reader allocate 128 MiB. A field the text
+  does not show is read only as far as its name, so a core dump of any
+  size stored in a journal costs the length of its name. An xz value
+  whose stream declares a dictionary above 16 MiB is damage, in a field
+  the text shows or not, since the decoder makes the whole dictionary a
+  block declares before it reads the block (journald writes 1 MiB).
 - **The cost of the text is the cost of the file.** A value larger than
   the reader's cache (32 MiB) is decoded again for every entry that lists
   it, so a crafted journal can make rx produce much text from a small

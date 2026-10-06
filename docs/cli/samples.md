@@ -21,8 +21,8 @@ addresses, it prints the targeted lines along with configurable context
 above and below each one. The command has three address modes:
 
 - **Byte offset** (`--offsets`): each value is a byte position; the line
-  containing that byte is the target. Works on any uncompressed file;
-  refused for a compressed one.
+  containing that byte is the target. Works on any file. For a compressed
+  file or a journal the offset is a position in the decompressed text.
 - **Line number** (`--lines`): each value is a 1-based line number. When
   a cached line index exists, the read starts at the nearest checkpoint;
   otherwise it starts at byte 0.
