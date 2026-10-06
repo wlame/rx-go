@@ -162,15 +162,15 @@ func requireRecentLastCheck(t *testing.T, m *Manager) {
 
 // Versions inside and around the range, derived from compat.go so these
 // tests keep their meaning when the range moves. The comments give the
-// values for the range 0.8.0 <= v < 0.9.0, which is one minor wide, so
-// the versions inside it differ in their patch.
+// values for the range 0.8.0 <= v < 0.10.0, whose newest minor line is
+// 0.9 and whose oldest release is 0.8.0.
 var (
 	upperBound, _     = parseSemver(MaxViewerVersionExclusive)
-	firstPastRange    = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor)   // 0.9.0
-	patchPastRange    = fmt.Sprintf("%d.%d.1", upperBound.major, upperBound.minor)   // 0.9.1
-	pinnedPastRange   = fmt.Sprintf("%d.%d.5", upperBound.major, upperBound.minor)   // 0.9.5
-	newestInsideRange = fmt.Sprintf("%d.%d.9", upperBound.major, upperBound.minor-1) // 0.8.9
-	olderInsideRange  = fmt.Sprintf("%d.%d.4", upperBound.major, upperBound.minor-1) // 0.8.4
+	firstPastRange    = fmt.Sprintf("%d.%d.0", upperBound.major, upperBound.minor)   // 0.10.0
+	patchPastRange    = fmt.Sprintf("%d.%d.1", upperBound.major, upperBound.minor)   // 0.10.1
+	pinnedPastRange   = fmt.Sprintf("%d.%d.5", upperBound.major, upperBound.minor)   // 0.10.5
+	newestInsideRange = fmt.Sprintf("%d.%d.9", upperBound.major, upperBound.minor-1) // 0.9.9
+	olderInsideRange  = fmt.Sprintf("%d.%d.4", upperBound.major, upperBound.minor-1) // 0.9.4
 	// cachedInsideRange is the oldest release the range takes: a cached
 	// viewer that a newer release inside the range replaces.
 	cachedInsideRange = MinViewerVersion // 0.8.0

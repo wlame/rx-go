@@ -92,6 +92,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `entries_overlap`. A client of 2.0 keeps working.
 - Line index format 12, for the journal section: every index stored by
   an earlier version is treated as absent and built again once.
+- `rx serve` installs viewer releases from 0.8.0 up to, but not
+  including, 0.10.0 (the limit was 0.9.0). Contract 2.1 only adds
+  members, so viewer 0.8.x keeps working, and viewer 0.9.x is the first
+  to show journal files.
 - Dependencies updated: huma 2.39.1, chi 5.3.1, klauspost/compress
   1.19.1, the Prometheus client 1.24.1 and its model 0.6.3,
   ulikunitz/xz 0.5.17 and golang.org/x/sync 0.22.0 (and pierrec/lz4/v4

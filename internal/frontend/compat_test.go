@@ -16,7 +16,9 @@ import (
 //
 // Contract 2.0 removed what viewers before 0.8.0 read (the index
 // analysis, GET /v1/detectors), and viewer 0.8.0 is the first that
-// speaks contract 2, so the window starts there.
+// speaks contract 2, so the window starts there. Contract 2.1 only adds
+// members, so viewer 0.8.x keeps working beside the 0.9.x viewer that
+// reads them, and the window ends below 0.10.0.
 func TestViewerVersionCompatible(t *testing.T) {
 	cases := []struct {
 		version string
@@ -27,11 +29,17 @@ func TestViewerVersionCompatible(t *testing.T) {
 		{"0.8.1", true},
 		{"0.8.5", true},
 		{"0.8.10-rc1", true}, // a pre-release of a supported patch
-		{"0.7.1", false},     // speaks contract 1 only
+		{"0.9.0", true},      // the viewer that reads contract 2.1
+		{"v0.9.0", true},
+		{"0.9.5", true},
+		{"0.9.12", true}, // numbers compare as numbers, not as text
+		{"0.7.1", false}, // speaks contract 1 only
 		{"0.7.9", false},
 		{"0.2.0", false},
 		{"0.1.9", false},
-		{"0.9.0", false}, // past the window: a 0.x minor may break
+		{"0.10.0", false}, // past the window: a 0.x minor may break
+		{"0.10.3", false},
+		{"0.11.0", false},
 		{"1.0.0", false},
 		{"2.4.1", false},
 		{"", true}, // unknown version: do not block on a bad parse

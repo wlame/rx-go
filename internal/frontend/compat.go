@@ -16,8 +16,8 @@ import (
 // rx-python declares the same two constants and keeps its own window
 // while it is paused.
 // The viewer is a 0.x product, where a minor bump is allowed to break
-// compatibility, so the window is one minor line wide rather than one
-// major.
+// compatibility, so the window names minor lines one at a time rather
+// than a whole major.
 //
 // Widen this when a viewer release is cut: the window names the
 // releases this backend has been checked against, so a viewer published
@@ -26,10 +26,14 @@ import (
 //
 // The window starts at 0.8.0, the first viewer that speaks contract 2:
 // contract 2.0 removed what earlier viewers read (the index analysis,
-// GET /v1/detectors), and they know only contract major 1.
+// GET /v1/detectors), and they know only contract major 1. It ends below
+// 0.10.0: contract 2.1 only adds members (the journal object of an
+// index, the reason a file is not text, the chain reason
+// entries_overlap), so viewer 0.8.x keeps working and viewer 0.9.x is
+// the one that shows them.
 const (
 	MinViewerVersion          = "0.8.0"
-	MaxViewerVersionExclusive = "0.9.0"
+	MaxViewerVersionExclusive = "0.10.0"
 )
 
 // viewerVersionCompatible reports whether a viewer release may be
@@ -55,7 +59,7 @@ func semverInRange(v semver) bool {
 	return compareSemver(v, minV) >= 0 && compareSemver(v, maxV) < 0
 }
 
-// supportedRange renders the range for messages: "0.8.0 <= v < 0.9.0".
+// supportedRange renders the range for messages: "0.8.0 <= v < 0.10.0".
 func supportedRange() string {
 	return MinViewerVersion + " <= v < " + MaxViewerVersionExclusive
 }
