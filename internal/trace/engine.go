@@ -526,11 +526,16 @@ func (e *Engine) RunResolved(
 				if errors.Is(cerr, ErrInvalidPattern) {
 					return nil, cerr
 				}
-				// A stream that ended early still yielded real matches,
-				// so the file is named as incomplete but its matches are
-				// kept. Any other error means nothing was read.
+				// A stream that ended early, and a damaged journal read
+				// to its end, still yielded real matches, so the file is
+				// named as not searched in full but its matches are
+				// kept (keepsMatches). Any other error means nothing was
+				// read. A journal whose read also failed for another
+				// reason is named as incomplete, not as damaged:
+				// ProcessCompressed reports the damage only of a text
+				// read to its end.
 				skips.addErr(b.path, cerr)
-				if !errors.Is(cerr, ErrIncompleteStream) {
+				if !keepsMatches(cerr) {
 					continue
 				}
 			}

@@ -2,6 +2,7 @@ package trace
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/wlame/rx-go/internal/compression"
@@ -67,22 +68,43 @@ func (s *skipList) reasons() []rxtypes.SkippedFile {
 	return append([]rxtypes.SkippedFile{}, s.items...)
 }
 
-// The reasons a search gives for a file it reads only in part. Both
-// start with notSearchedInFull, so a caller can tell such a file, whose
+// The reasons a search gives for a file it reads only in part. Each
+// starts with notSearchedInFull, so a caller can tell such a file, whose
 // matches are kept, from one passed over whole.
 const (
 	notSearchedInFull      = "not searched in full"
 	reasonIncompleteStream = notSearchedInFull + ": the compressed stream ends early; the matches before its end are kept"
 	// reasonDamagedFrames is followed by the numbers of the frames.
 	reasonDamagedFrames = notSearchedInFull + ": the lines of damaged frames are left out; the matches of every other line are kept"
+	// reasonDamagedJournal is a format: its two verbs take the entries
+	// the journal reader left out and the entries it did not reach.
+	reasonDamagedJournal = notSearchedInFull + ": a damaged journal; %d entries left out, %d not reached; the other entries are searched"
 )
+
+// partialReadErrors are the errors of a file read only in part whose
+// matches are still real and kept: the file is named in skip_reasons,
+// and its matches stay in the answer.
+var partialReadErrors = []error{ErrIncompleteStream, ErrDamagedJournal}
+
+// keepsMatches reports whether err, the error of a file's scan, leaves
+// the matches the scan returned beside it real (partialReadErrors).
+func keepsMatches(err error) bool {
+	for _, partial := range partialReadErrors {
+		if errors.Is(err, partial) {
+			return true
+		}
+	}
+	return false
+}
 
 // skipReasons words the errors a search meets for a file it skips, by
 // the sentinel each wraps (errors.Is), first match wins. Every wording
 // is fixed text: an error's own text names paths (for a link, its
 // target, which can be outside every search root) and other internals,
 // so it never reaches an answer. A damaged seekable file's reason adds
-// the frame numbers, which are positions in the file the caller named.
+// the frame numbers, which are positions in the file the caller named,
+// and a damaged journal's the counts of its entries left out and not
+// reached.
 var skipReasons = []struct {
 	err    error
 	reason string
@@ -90,6 +112,7 @@ var skipReasons = []struct {
 	{compression.ErrTooLargeToDecode, compression.TooLargeToDecodeReason},
 	{ErrIncompleteStream, reasonIncompleteStream},
 	{seekable.ErrDamagedFrame, reasonDamagedFrames},
+	{ErrDamagedJournal, reasonDamagedJournal},
 	{errLineMatchesNoPattern, "a matched line matches none of the patterns alone, so which pattern it belongs to cannot be told"},
 }
 
@@ -107,6 +130,10 @@ func SkipReason(err error) string {
 		var damaged *damagedFramesError
 		if errors.As(err, &damaged) {
 			return known.reason + " (frames " + damaged.frames + ")"
+		}
+		var journalDamage *damagedJournalError
+		if errors.As(err, &journalDamage) {
+			return fmt.Sprintf(known.reason, journalDamage.leftOut, journalDamage.notReached)
 		}
 		return known.reason
 	}

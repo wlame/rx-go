@@ -31,6 +31,52 @@ var ErrUnsupportedCompression = errors.New("unsupported compression format")
 // and the fact that the file was not searched to the end.
 var ErrIncompleteStream = errors.New("compressed stream ended early")
 
+// ErrDamagedJournal reports that a systemd journal was read to the end
+// of its text, and that the text lacks entries: damaged ones the reader
+// left out, or ones after the place where the journal's entry list
+// breaks off. ProcessCompressed returns it together with the matches of
+// the entries it read, which are real and numbered exactly, so a caller
+// keeps them and names the journal as not searched in full.
+var ErrDamagedJournal = errors.New("damaged journal")
+
+// damagedJournalError is the error ProcessCompressed returns for a
+// damaged journal: the journal's path and the reader's counts of the
+// entries left out and not reached. It wraps ErrDamagedJournal.
+type damagedJournalError struct {
+	path       string
+	leftOut    int64
+	notReached int64
+}
+
+func (e *damagedJournalError) Error() string {
+	return fmt.Sprintf("%s: a damaged journal: %d entries left out, %d not reached",
+		e.path, e.leftOut, e.notReached)
+}
+
+// Unwrap lets errors.Is(err, ErrDamagedJournal) match.
+func (e *damagedJournalError) Unwrap() error { return ErrDamagedJournal }
+
+// journalDamage returns the error that names the journal at path as
+// damaged, when text is a journal's text read to its end whose reader
+// left entries out or did not reach them, and logs a journal_damaged
+// warning with both counts. It returns nil for a text that is not a
+// journal's and for a journal read whole.
+//
+// The reader's report is complete only once its Read returned io.EOF:
+// the caller asks only after the copy of the text met it.
+func journalDamage(path string, text *filetext.Text) error {
+	report, ok := text.JournalReport()
+	if !ok || !report.Damaged() {
+		return nil
+	}
+	slog.Default().Warn("journal_damaged",
+		"path", path,
+		"left_out", report.LeftOut,
+		"not_reached", report.NotReached,
+	)
+	return &damagedJournalError{path: path, leftOut: report.LeftOut, notReached: report.NotReached}
+}
+
 // ProcessCompressed runs the full scan pipeline for a non-seekable
 // compressed file: read file → pure-Go decompressor pipe → rg --json.
 //
@@ -58,6 +104,11 @@ var ErrIncompleteStream = errors.New("compressed stream ended early")
 //
 // source is the file pinned when the trace checked it; it is read only
 // if it is still that file.
+//
+// Two errors come back with the matches read, which the caller keeps:
+// ErrIncompleteStream for a stream that ends early, and
+// ErrDamagedJournal for a systemd journal read to the end of its text
+// whose reader left entries out or did not reach them.
 func ProcessCompressed(
 	ctx context.Context,
 	source sandbox.Pinned,
@@ -268,6 +319,19 @@ func ProcessCompressed(
 	}
 	if streamErr != nil && !errors.Is(streamErr, context.Canceled) {
 		return nil, nil, elapsed, streamErr
+	}
+	// A nil copyErr means io.Copy met the text's io.EOF: the whole text
+	// was read, so a journal reader's report is complete. A copy a cap
+	// cut short (copyErr is a broken pipe) read only part of the text,
+	// and its report describes that part only, so it names nothing; a
+	// copy that failed for another reason is incomplete above, which
+	// says more.
+	//
+	// Go note: the receive from copyDone above happens after the copy
+	// goroutine's send, which follows its last read of dec, so reading
+	// dec's report here does not race with that goroutine.
+	if copyErr == nil {
+		incomplete = journalDamage(source.Path(), dec)
 	}
 
 	// The matches read before the stream broke are real, so they are

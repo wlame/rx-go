@@ -205,7 +205,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `files` | `{id: path}` | File ID → absolute path map |
 | `matches` | array | Sorted by file in the order of `path` (`f1`, `f2`, …, `f10`; a directory's files in walk order), then by `offset`, then by pattern in the order given (`p1`, `p2`, …, `p10`). Under `max_results`, the first of the matches found in this order. See below |
 | `scanned_files` | `string[]` | The files found by walking a directory named in `path`; empty when every path is a file. `files` lists every file searched either way |
-| `skipped_files` | `string[]` | Paths passed over (not text, unreadable, a link the walk refuses, a subdirectory it cannot list) or not searched in full (a truncated stream, a damaged seekable frame: their matches are kept) |
+| `skipped_files` | `string[]` | Paths passed over (not text, unreadable, a link the walk refuses, a subdirectory it cannot list) or not searched in full (a truncated stream, a damaged seekable frame, a damaged systemd journal: their matches are kept) |
 | `skip_reasons` | `{path, reason}[]` | Why each path of `skipped_files` is there, in the same order; the reasons are listed in [`rx trace`](../../cli/trace.md#skipped-files-and-their-reasons). Contract 1.4 |
 | `max_results` | `int \| null` | The cap that was applied, or null |
 | `file_chunks` | `{fileId: N}` | How many chunks each file was split into (frames, for a seekable-zstd file); an answer from the trace cache reports the count of the scan that wrote it, whatever the chunk settings are now. It describes how the answer was produced and is not compared when an index or the cache answers |
