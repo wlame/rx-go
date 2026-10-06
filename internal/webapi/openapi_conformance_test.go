@@ -304,6 +304,13 @@ func conformanceFixtures(t *testing.T) string {
 	write("seven.log", []byte("LINE 1\nLINE 2\nLINE 3\nLINE 4\nLINE 5\nLINE 6\nLINE 7\n"))
 	write("empty.log", nil)
 	write("sub/other.log", []byte("LINE 1 nested ERROR\n"))
+	// Timestamped lines, so an index answer carries a time_summary
+	// object rather than null.
+	var timed bytes.Buffer
+	for n := 1; n <= 300; n++ {
+		fmt.Fprintf(&timed, "2025-12-10 07:%02d:%02d.%03d INFO request %d served\n", n/60, n%60, n%1000, n)
+	}
+	write("timed.log", timed.Bytes())
 	if err := os.MkdirAll(filepath.Join(root, "emptydir"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -396,6 +403,9 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	indexed := post("index with analysis", "/v1/index", map[string]any{"path": at("app.log"), "analyze": true}, http.StatusOK)
 	run.finishTask("finished index task", indexed)
 	get("index after it is built", "/v1/index", q("path", at("app.log")), http.StatusOK)
+	timedIndex := post("index a timestamped file", "/v1/index", map[string]any{"path": at("timed.log"), "threshold": 0}, http.StatusOK)
+	run.finishTask("finished index task of a timestamped file", timedIndex)
+	get("index of a timestamped file", "/v1/index", q("path", at("timed.log")), http.StatusOK)
 	post("index a file below the threshold", "/v1/index", map[string]any{"path": at("sub/other.log")}, http.StatusBadRequest)
 	post("index a missing file", "/v1/index", map[string]any{"path": at("nope.log")}, http.StatusNotFound)
 	post("index a file outside the root", "/v1/index", map[string]any{"path": "/etc/hosts", "analyze": true}, http.StatusForbidden)

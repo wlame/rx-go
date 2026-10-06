@@ -281,7 +281,29 @@ type IndexResponse struct {
 	AnomalySummary map[string]int        `json:"anomaly_summary" nullable:"true"`
 	Anomalies      *[]AnomalyRangeResult `json:"anomalies"`
 
+	TimeSummary *TimeSummary `json:"time_summary" doc:"The timestamps of the file's lines; null when no timestamp format is recognized."`
+
 	CLICommand string `json:"cli_command" doc:"The rx command that gives this answer."`
+}
+
+// TimeSummary is the client's view of an index's time section: the
+// format of the timestamps at the start of the file's lines, their
+// range and how often they step back. It leaves out max_before, which
+// only a search by time needs.
+//
+// Values are milliseconds since the Unix epoch in the file's frame:
+// UTC instants when HasZone is true, the wall-clock time as written
+// (read as if it were UTC) when it is false. Nullable for the reason
+// LineLengthStats gives.
+type TimeSummary struct {
+	_                struct{} `nullable:"true"`
+	Format           string   `json:"format" enum:"iso,clf,ctime,syslog,slash,dotted,epoch" doc:"The timestamp format of the lines."`
+	HasZone          bool     `json:"has_zone" doc:"Whether most timestamps carry a zone, so the values are UTC instants; false means wall-clock time read as UTC."`
+	FirstMs          *int64   `json:"first_ms" doc:"The timestamp of the first line that carries one, in ms; null when no line carries one."`
+	LastMs           *int64   `json:"last_ms" doc:"The timestamp of the last line that carries one, in ms; null when no line carries one."`
+	TimestampedLines int64    `json:"timestamped_lines" doc:"How many lines carry a timestamp."`
+	BackwardSteps    int64    `json:"backward_steps" doc:"How many lines carry a timestamp more than one second earlier than the latest one before them."`
+	MaxBackwardMs    int64    `json:"max_backward_ms" doc:"The largest such step back, in ms; 0 when there is none."`
 }
 
 // IndexTaskResult is the result of a completed POST /v1/index task: the
