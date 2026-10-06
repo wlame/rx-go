@@ -40,6 +40,36 @@ func storedIndexFixture(t *testing.T) (source, cachePath string) {
 	return source, cachePath
 }
 
+// rewriteTimeIndex gives the stored index at cachePath a time section,
+// changed by edit, which also learns how many checkpoints the index
+// has. The rest of the index stays valid.
+func rewriteTimeIndex(t *testing.T, cachePath string, edit func(ti map[string]any, checkpoints int)) {
+	t.Helper()
+	body, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse index: %v", err)
+	}
+	checkpoints := len(doc["line_index"].([]any))
+	ti := map[string]any{
+		"format": "iso", "anchored": true, "day_first": nil, "has_zone": false,
+		"year_from_mtime": false, "timestamped_lines": 0, "first": nil, "last": nil,
+		"first_zone_offset_minutes": nil, "backward_steps": 0, "max_backward_ms": 0,
+		"max_before": make([]any, checkpoints),
+	}
+	edit(ti, checkpoints)
+	doc["time_index"] = ti
+	if body, err = json.Marshal(doc); err != nil {
+		t.Fatalf("marshal index: %v", err)
+	}
+	if err := os.WriteFile(cachePath, body, 0o600); err != nil {
+		t.Fatalf("write index: %v", err)
+	}
+}
+
 // An index file that cannot be read or parsed — cut short by a power
 // loss or a full disk, or left unreadable by its permissions — is not
 // an index. It is reported as absent, the way a missing one is, so a
@@ -67,6 +97,28 @@ func TestLoadFromPath_DamagedIndexIsAbsentAndLogged(t *testing.T) {
 				t.Fatalf("chmod: %v", err)
 			}
 			t.Cleanup(func() { _ = os.Chmod(cachePath, 0o600) })
+		}},
+		// A time section a search cannot trust: max_before must have one
+		// entry per checkpoint, never decrease, and name a known format.
+		{"time section misaligned with the checkpoints", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
+				ti["max_before"] = make([]any, checkpoints+1)
+			})
+		}},
+		{"time section whose maximum decreases", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
+				values := make([]any, checkpoints)
+				for i := range values {
+					values[i] = 1_000_000 - i
+				}
+				ti["max_before"] = values
+			})
+		}},
+		{"time section of an unknown format", func(t *testing.T, cachePath string) {
+			rewriteTimeIndex(t, cachePath, func(ti map[string]any, checkpoints int) {
+				ti["format"] = "stardate"
+				ti["max_before"] = make([]any, checkpoints)
+			})
 		}},
 	}
 	for _, tc := range damages {

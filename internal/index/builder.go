@@ -249,6 +249,10 @@ func buildText(
 	opts BuildOptions,
 ) (*rxtypes.UnifiedFileIndex, error) {
 	sourcePath, info, identity := src.path, src.info, src.identity
+	times, err := timeIndexerFor(src)
+	if err != nil {
+		return nil, err
+	}
 	// The progress counts the file's own bytes, before any
 	// decompression, so its total is the size the stat saw.
 	if opts.Progress != nil {
@@ -287,7 +291,7 @@ func buildText(
 	if opts.beforeWalk != nil {
 		opts.beforeWalk()
 	}
-	stats, err := walkLines(source, step, coord)
+	stats, err := walkLines(source, step, coord, times)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +333,9 @@ func buildText(
 	if coord != nil {
 		applyAnalysis(idx, coord, stats, opts)
 	}
+	if err := applyTimeIndex(idx, times, stats.LineIndex); err != nil {
+		return nil, fmt.Errorf("%s: %w", sourcePath, err)
+	}
 
 	// gated helper — CLI mode skips observation.
 	prometheus.ObserveIndexBuildDuration(time.Since(started))
@@ -350,6 +357,44 @@ func newCoordinator(opts BuildOptions) *analyzer.Coordinator {
 		return nil
 	}
 	return analyzer.NewCoordinator(analysisWindowLines(opts), opts.Detectors)
+}
+
+// timeIndexerFor detects the timestamp format of src from the head of
+// its text, read through the handle the pin opened, and returns the
+// indexer a walk of the text feeds. It returns nil, with no error, when
+// the file has no format rx recognizes: the index then records
+// time_index as null.
+//
+// The head is read before the walk rather than buffered by it, so that
+// the build and a lookup without an index take the format from the one
+// function, DetectTimeFormat, over the same bytes. The cost is a second
+// read of at most a mebibyte of text.
+func timeIndexerFor(src openedSource) (*timeIndexer, error) {
+	format, ok, err := DetectTimeFormat(src.file, src.info.Size(), src.kind)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", src.path, err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	// The mtime the index records as the file's identity, so a rebuild
+	// of the same file reads a year-less timestamp in the same year.
+	return newTimeIndexer(format, src.identity.ModifiedNs)
+}
+
+// applyTimeIndex records the time section times collected in idx, with
+// one max_before entry per checkpoint. A nil times leaves time_index
+// null.
+func applyTimeIndex(idx *rxtypes.UnifiedFileIndex, times *timeIndexer, checkpoints []rxtypes.LineIndexEntry) error {
+	if times == nil {
+		return nil
+	}
+	section, err := times.result(checkpoints)
+	if err != nil {
+		return err
+	}
+	idx.TimeIndex = section
+	return nil
 }
 
 // applyLineStats copies the line counts, the line-length statistics and
@@ -489,7 +534,13 @@ type walkStats struct {
 // absolute byte-offset range. Finalize is the caller's responsibility
 // (Build invokes it after walkLines returns so the FlushContext can be
 // populated from the finalized line-stats snapshot).
-func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats, error) {
+//
+// times is the time-section collector, or nil for a file with no
+// timestamp format. When set, it is told about each checkpoint before
+// the line the checkpoint names is observed (markBefore), then sees
+// every line (observe), so a checkpoint's max_before covers exactly
+// the lines numbered below it.
+func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator, times *timeIndexer) (*walkStats, error) {
 	stats := &walkStats{
 		// Non-nil, so an index without checkpoints (an empty file)
 		// serializes as [] rather than null.
@@ -565,6 +616,9 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 				LineNumber: currentLine,
 				ByteOffset: currentOffset,
 			})
+			if times != nil {
+				times.markBefore(currentLine)
+			}
 			checkpointDue = false
 		}
 
@@ -618,6 +672,9 @@ func walkLines(r io.Reader, step int64, coord *analyzer.Coordinator) (*walkStats
 		// negligible.
 		if coord != nil {
 			coord.ProcessLine(currentLine, currentOffset, currentOffset+lineLenBytes, stripped)
+		}
+		if times != nil {
+			times.observe(stripped, currentLine, currentOffset, currentOffset+lineLenBytes)
 		}
 
 		currentOffset += lineLenBytes
@@ -746,6 +803,10 @@ func buildSeekable(
 	opts BuildOptions,
 ) (*rxtypes.UnifiedFileIndex, error) {
 	sourcePath, info, identity := src.path, src.info, src.identity
+	times, err := timeIndexerFor(src)
+	if err != nil {
+		return nil, err
+	}
 	// The seek table sits at the end of the file, so it is read at the
 	// file's current size, as the open handle reports it.
 	current, err := src.file.Stat()
@@ -767,10 +828,16 @@ func buildSeekable(
 	if opts.beforeWalk != nil {
 		opts.beforeWalk()
 	}
-	if coord == nil {
+	// The text is walked line by line only when something reads its
+	// lines: the analysis, or the time section. Otherwise the frame
+	// scan alone builds the index, as it always has.
+	if coord == nil && times == nil {
 		frames, err = seekableindex.BuildAndCopyText(src.file, size, opts.Progress.countWrites(io.Discard))
 	} else {
-		frames, stats, err = buildFramesAndWalkText(src.file, size, step, coord, opts.Progress)
+		if err = useSeekTable(times, src.file, size); err != nil {
+			return nil, fmt.Errorf("%s: %w", sourcePath, err)
+		}
+		frames, stats, err = buildFramesAndWalkText(src.file, size, step, coord, times, opts.Progress)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", sourcePath, err)
@@ -811,7 +878,28 @@ func buildSeekable(
 		applyLineStats(idx, stats)
 		applyAnalysis(idx, coord, stats, opts)
 	}
+	// max_before follows the frame-numbered checkpoints, whose lines
+	// the walk marked from the seek table (frameMarks).
+	if err := applyTimeIndex(idx, times, frames.LineIndex); err != nil {
+		return nil, fmt.Errorf("%s: %w", sourcePath, err)
+	}
 	return idx, nil
+}
+
+// useSeekTable gives times the frames of the seek table of r, size
+// bytes long, so its walk marks the lines a seekable checkpoint can
+// name. The table is read at the size the frame scan reads it at, so
+// both see the same frames. Nothing is read when times is nil.
+func useSeekTable(times *timeIndexer, r io.ReaderAt, size int64) error {
+	if times == nil {
+		return nil
+	}
+	table, err := seekable.ReadSeekTable(r, size)
+	if err != nil {
+		return fmt.Errorf("read seek table: %w", err)
+	}
+	times.useFrames(table.Frames)
+	return nil
 }
 
 // startSeekableProgress sets the total of a seekable file's build: the
@@ -832,7 +920,8 @@ func startSeekableProgress(progress *Progress, r io.ReaderAt, size int64) error 
 
 // buildFramesAndWalkText makes one decompression pass over a seekable
 // file that both builds its frame table and walks its text through
-// walkLines, which feeds every line to coord.
+// walkLines, which feeds every line to coord and to times (either may
+// be nil, not both).
 //
 // Two goroutines share the pass through an io.Pipe. The one started
 // here decodes the frames in order and writes each frame's text into
@@ -856,6 +945,7 @@ func buildFramesAndWalkText(
 	size int64,
 	step int64,
 	coord *analyzer.Coordinator,
+	times *timeIndexer,
 	progress *Progress,
 ) (*seekableindex.Result, *walkStats, error) {
 	textReader, textWriter := io.Pipe()
@@ -877,7 +967,7 @@ func buildFramesAndWalkText(
 		decoded <- framesResult{frames: frames, err: err}
 	}()
 
-	stats, walkErr := walkLines(textReader, step, coord)
+	stats, walkErr := walkLines(textReader, step, coord, times)
 	// Unblocks a decoder still writing if the walk stopped early; after
 	// a complete walk the decoder has already finished and this is a
 	// no-op.

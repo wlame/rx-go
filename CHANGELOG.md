@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Every line index records the timestamps of the file's lines in a time
+  section, `time_index`: the detected format (ISO 8601 and its everyday
+  relatives, the access-log, `ctime` and syslog forms, slash and dotted
+  dates, epoch values), the first and the last timestamped line, how
+  many lines carry a timestamp, how many step back by more than a second
+  (`backward_steps`, `max_backward_ms`), and for each checkpoint the
+  latest timestamp before it (`max_before`). The format is decided from
+  the first mebibyte of the text; `time_index` is `null` when none is
+  recognized. Plain, compressed and seekable zstd files are covered, by
+  the same pass that builds the line index, with or without `--analyze`.
+  Values are milliseconds in the file's frame: UTC instants for a file
+  whose timestamps carry zones, the wall-clock time as written for one
+  whose timestamps do not (a line with a zone in such a file keeps the
+  wall clock it shows); a syslog timestamp takes its year from the
+  file's mtime. `rx index --info` prints the format and how its zone is
+  read, the first and last timestamps, the count of timestamped lines
+  and the backward steps; `rx index --json` gives `time_index` for each
+  indexed file, and `--info --json` gives it with the rest of the index.
+
+### Changed
+
+- Line index format 8. An index stored by an earlier rx is treated as
+  absent and rebuilt once, the first time a command needs it. A stored
+  index whose time section cannot be trusted (a `max_before` that does
+  not match the checkpoints or decreases, or an unknown format) is
+  treated as damaged: absent, with an `index_unreadable` warning.
+
 ### Fixed
 
 - `rx serve` installs viewer 0.5.0: the range of viewer releases it

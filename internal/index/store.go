@@ -58,12 +58,19 @@ import (
 // moved by an hour inside the hour a daylight-saving change repeats
 // went unseen.
 //
+// Version 8: every index records a time section (time_index): the
+// timestamp format of the file's lines, the first and last timestamped
+// line, how often the timestamps step back, and for each checkpoint the
+// latest timestamp before it (max_before), which a search by time uses
+// to skip to the right checkpoint. It is null for a file with no
+// timestamp format. rx-python writes no such field.
+//
 // An index stamped with any other version is refused by LoadFromPath.
 // That refusal is the point of the constant: before it existed, a
 // version 2 index was read with version 3 rules and answered one line
 // off. rx-python's UNIFIED_INDEX_VERSION is still 4, so each backend
 // treats the other's indexes as absent and builds its own.
-const Version = 7
+const Version = 8
 
 // Python's isoformat() produces "2006-01-02T15:04:05.123456" in local
 // time (NOT UTC). rx-python reads file mtime via datetime.fromtimestamp
@@ -246,6 +253,12 @@ func LoadFromPath(cachePath string) (*rxtypes.UnifiedFileIndex, error) {
 	if idx.Version != Version {
 		return nil, fmt.Errorf("%w: %s has index version %d, want %d",
 			ErrIndexNotFound, cachePath, idx.Version, Version)
+	}
+	// A time section a search cannot trust (damaged, or edited by hand)
+	// makes the whole index damaged: a search by time would skip to a
+	// checkpoint on its word.
+	if err := validTimeIndex(&idx); err != nil {
+		return nil, unreadableIndex(cachePath, fmt.Errorf("%s: %w", cachePath, err))
 	}
 	return &idx, nil
 }
