@@ -218,12 +218,21 @@ func (p *Parser) finish(r fields) (Stamp, bool) {
 		}
 		ms = civilMs(r.year, r.month, r.day) + clockMs(r)
 	}
-	if !r.zoned {
-		return Stamp{Ms: ms}, true
+	s := Stamp{Ms: ms}
+	if r.zoned {
+		s = Stamp{
+			Ms:            ms - int64(r.offsetMinutes)*msPerMinute,
+			Zoned:         true,
+			OffsetMinutes: r.offsetMinutes,
+		}
 	}
-	return Stamp{
-		Ms:            ms - int64(r.offsetMinutes)*msPerMinute,
-		Zoned:         true,
-		OffsetMinutes: r.offsetMinutes,
-	}, true
+	// SECURITY: a line's text decides these values, so a crafted line
+	// could name year 0 or year 10000. Both the wall clock as written
+	// (ms, the value a zone-less file keeps, see inFileFrame) and the
+	// instant the zone names (s.Ms, the value a zoned file keeps) must
+	// lie in the years 1 to 9999, or the line has no timestamp.
+	if !inValueRange(ms) || !inValueRange(s.Ms) {
+		return Stamp{}, false
+	}
+	return s, true
 }

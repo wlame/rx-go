@@ -277,6 +277,32 @@ func TestOwn_Window(t *testing.T) {
 	}
 }
 
+// TestOwn_YearRange: a timestamp counts only when it lies in the years 1
+// to 9999 both as the instant its zone names and as the value the file
+// stores, so every value can be rendered as an RFC 3339 time.
+func TestOwn_YearRange(t *testing.T) {
+	runOwnCases(t, []ownCase{
+		{"first millisecond of year 1", isoAnchored, "0001-01-01 00:00:00.000 x", wall(utcMs(1, 1, 1, 0, 0, 0, 0)), true},
+		{"last millisecond of year 9999", isoAnchored, "9999-12-31 23:59:59.999 x", wall(utcMs(9999, 12, 31, 23, 59, 59, 999)), true},
+		{"year 0", isoAnchored, "0000-01-01 00:00:00 x", Stamp{}, false},
+		{"a zone pushes the instant into year 10000", isoZoned, "9999-12-31 23:59:59.999-23:59 x", Stamp{}, false},
+		{"a zone pushes the instant into year 0", isoZoned, "0001-01-01 00:00:00+23:59 x", Stamp{}, false},
+		{"year 0 as written, year 1 as an instant", isoAnchored, "0000-12-31T23:00:00-05:00 x", Stamp{}, false},
+		{"year 9999 as written, year 10000 as an instant", isoAnchored, "9999-12-31T23:59:59.999-23:59 x", Stamp{}, false},
+	}, mtime2025)
+}
+
+// TestValueRange_MatchesTimeDate pins the value range to the standard
+// library's calendar.
+func TestValueRange_MatchesTimeDate(t *testing.T) {
+	if want := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(); minValueMs != want {
+		t.Errorf("minValueMs = %d; want %d", int64(minValueMs), want)
+	}
+	if want := time.Date(9999, 12, 31, 23, 59, 59, 999e6, time.UTC).UnixMilli(); maxValueMs != want {
+		t.Errorf("maxValueMs = %d; want %d", int64(maxValueMs), want)
+	}
+}
+
 func TestNewParser_RejectsInvalidFormat(t *testing.T) {
 	for _, f := range []Format{
 		{Family: "rfc2822"},
