@@ -102,6 +102,25 @@ A chain is valid when:
 
 Empty parts add no lines and take no part in the checks.
 
+A journal chain (rotated systemd journals: `system.journal` and its
+`system@….journal` archives) is checked by its parts' headers, so
+its checks need no index:
+
+- two neighboring parts that one counter numbers hold no entry in
+  common (`entries_overlap`, naming both: the earlier part's last
+  sequence number is not below the later part's first, as when a copy
+  of a part is left beside it);
+- the active journal, when it has entries, comes last
+  (`active_not_last`);
+- every part can be read as a journal (`unreadable`; for a part whose
+  bytes are not a journal, or whose header rx cannot read, the
+  `message` reads `NAME cannot be read as a journal: …`);
+- it has at most 10,000 parts (`too_many_parts`).
+
+The time overlap check (`overlap`) does not apply to it, and it has no
+missing parts. See
+[Rotated journals](../../concepts/log-chains.md#rotated-journals).
+
 | State | When |
 |---|---|
 | `pending` | Some frozen part has no current line index, or the active file's first timestamp is not known yet (a compressed active file without an index). Each part can be read on its own; the global line numbers and the chain's times wait |
@@ -114,6 +133,11 @@ The parts are sorted by their first timestamp, ties keeping the
 provisional order of their names; an empty part keeps its place. Before
 the chain is ready (and for a part not read yet) the order is the
 provisional one, by the number or date in the names.
+
+A journal chain is in the order of its parts' headers in every state,
+pending included: the parts one counter numbers by the sequence number
+of their first entry, the counters by the time of their first part's
+first entry; a journal without entries keeps its provisional place.
 
 A part's `global_start` is the global line number of its first line: 1
 plus the lines of the parts before it. Line `L` of a part is global line
@@ -222,8 +246,8 @@ lists the chain again and answers `409` with the current description.
 |---|---|---|
 | `name`, `path` | string | The part's file name and path |
 | `is_active` | bool | Whether it is the active file |
-| `key` | string \| null | The number or date in its name as written; null for the active file |
-| `compression_format` | string \| null | `gzip`, `bz2`, `xz` or `zstd`; null for a plain file |
+| `key` | string \| null | The number or date in its name as written (a journal archive's head time in hex); null for the active file |
+| `compression_format` | string \| null | `gzip`, `bz2`, `xz`, `zstd` or `journal`; null for a plain file |
 | `size`, `modified_at` | | From the listing |
 | `is_indexed` | bool | Whether a current line index of the part is stored |
 | `line_count` | int64 \| null | Its lines; null when not known |

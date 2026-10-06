@@ -275,7 +275,7 @@
         "additionalProperties": false,
         "properties": {
           "compression_format": {
-            "description": "How the part is compressed, by its bytes: gzip, bz2, xz or zstd (seekable zstd included); null for a plain file.",
+            "description": "How the part is compressed, by its bytes: gzip, bz2, xz or zstd (seekable zstd included), or journal for a systemd journal; null for a plain file.",
             "type": [
               "string",
               "null"
@@ -327,7 +327,7 @@
             "type": "boolean"
           },
           "key": {
-            "description": "The number or date in the part's name as the name writes it (3, 20260401-1775001601, 2026-10-01.3); null for the active file.",
+            "description": "The number or date in the part's name as the name writes it (3, 20260401-1775001601, 2026-10-01.3; for a journal archive its head time in hex, 00065db7fbffd8e8); null for the active file.",
             "type": [
               "string",
               "null"
@@ -473,13 +473,14 @@
         "additionalProperties": false,
         "properties": {
           "code": {
-            "description": "The check that failed. no_timestamps: a part has lines and no timestamp rx recognizes. overlap: a part's highest timestamp is after the next part's first by more than RX_CHAIN_OVERLAP_SECONDS. active_not_last: the active file starts before a frozen part. unreadable: a part cannot be read. too_many_parts: the chain has more than 10,000 parts.",
+            "description": "The check that failed. no_timestamps: a part has lines and no timestamp rx recognizes. overlap: a part's highest timestamp is after the next part's first by more than RX_CHAIN_OVERLAP_SECONDS (not checked in a journal chain). active_not_last: the active file starts before a frozen part. unreadable: a part cannot be read, or a part of a journal chain cannot be read as a journal. too_many_parts: the chain has more than 10,000 parts. entries_overlap: two neighboring parts of a journal chain that one counter numbers hold entries in common: the earlier one's last sequence number is not below the later one's first, as when a copy of a part is left beside it.",
             "enum": [
               "no_timestamps",
               "overlap",
               "active_not_last",
               "unreadable",
-              "too_many_parts"
+              "too_many_parts",
+              "entries_overlap"
             ],
             "type": "string"
           },
@@ -496,7 +497,7 @@
             ]
           },
           "parts": {
-            "description": "The names of the parts the check names, in the chain's order: the part for no_timestamps and unreadable, the two neighbors for overlap, the active file and the parts after it for active_not_last; empty for too_many_parts.",
+            "description": "The names of the parts the check names, in the chain's order: the part for no_timestamps and unreadable, the two neighbors for overlap and entries_overlap, the active file and the parts after it for active_not_last; empty for too_many_parts.",
             "items": {
               "type": "string"
             },
@@ -638,7 +639,7 @@
             "type": "string"
           },
           "parts": {
-            "description": "The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads. Empty for a chain of more than 10,000 parts, which is invalid with the reason too_many_parts.",
+            "description": "The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). A journal chain (rotated systemd journals) has its parts in the order of their headers in every state: by the sequence number of their first entry within one counter, the counters by the time of their first part's first entry. One file in several encodings is one part, the encoding rx reads. Empty for a chain of more than 10,000 parts, which is invalid with the reason too_many_parts.",
             "items": {
               "$ref": "#/components/schemas/ChainPart"
             },

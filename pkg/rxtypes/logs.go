@@ -85,7 +85,9 @@ const (
 // GET /v1/logs/chain and of each chain `rx logs show --json` prints.
 //
 // Its parts are in the chain's order: by their first timestamps once
-// every part is known, in the provisional order of their names before.
+// every part is known, in the provisional order of their names before;
+// the parts of a journal chain (rotated systemd journals) by their
+// headers in every state.
 // Times are UTC instants in milliseconds since the Unix epoch, read
 // the way GET /v1/time-range reads one file (file_tz included), so the
 // parts of a chain share one axis.
@@ -95,7 +97,7 @@ type ChainResponse struct {
 	State           string             `json:"state" enum:"pending,ready,invalid" doc:"pending: some frozen part has no current line index, or the active file's first timestamp is not known yet; each part can be read on its own, and global line numbers and times wait. ready: every part is known and every check passed; the chain reads as one text. invalid: a check failed, and reasons says which."`
 	Reasons         []ChainReason      `json:"reasons" nullable:"false" doc:"Why the chain is invalid, one entry per failed check; empty unless state is invalid."`
 	Fingerprint     string             `json:"fingerprint" doc:"16 hex digits that change when the chain's files change: a frozen part renamed, compressed, deleted, added or written to, or the active file replaced. The active file growing does not change it. Send it back as fingerprint to learn, by a 409, that the files changed."`
-	Parts           []ChainPart        `json:"parts" nullable:"false" doc:"The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads. Empty for a chain of more than 10,000 parts, which is invalid with the reason too_many_parts."`
+	Parts           []ChainPart        `json:"parts" nullable:"false" doc:"The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). A journal chain (rotated systemd journals) has its parts in the order of their headers in every state: by the sequence number of their first entry within one counter, the counters by the time of their first part's first entry. One file in several encodings is one part, the encoding rx reads. Empty for a chain of more than 10,000 parts, which is invalid with the reason too_many_parts."`
 	Missing         []string           `json:"missing" nullable:"false" doc:"The names absent numbered parts would have, as GET /v1/logs/chains gives them: at most 100, lowest first."`
 	MissingCount    int                `json:"missing_count" doc:"How many numbered parts are missing, as GET /v1/logs/chains counts them."`
 	Gaps            []ChainGap         `json:"gaps" nullable:"false" doc:"The stretches of time no part covers, in order, in a ready chain of four parts with lines or more: where the time from a part's highest timestamp to the next part's first is more than 1.5 times the median distance between the first timestamps of neighboring parts. Empty otherwise."`
@@ -116,8 +118,8 @@ type ChainPart struct {
 	Name              string             `json:"name" doc:"The part's file name in the chain's directory."`
 	Path              string             `json:"path" doc:"The part's path: the chain's directory joined with name. The single-file routes take it."`
 	IsActive          bool               `json:"is_active" doc:"Whether this is the active file, the one named like the chain, which may grow."`
-	Key               *string            `json:"key" doc:"The number or date in the part's name as the name writes it (3, 20260401-1775001601, 2026-10-01.3); null for the active file."`
-	CompressionFormat *string            `json:"compression_format" doc:"How the part is compressed, by its bytes: gzip, bz2, xz or zstd (seekable zstd included); null for a plain file."`
+	Key               *string            `json:"key" doc:"The number or date in the part's name as the name writes it (3, 20260401-1775001601, 2026-10-01.3; for a journal archive its head time in hex, 00065db7fbffd8e8); null for the active file."`
+	CompressionFormat *string            `json:"compression_format" doc:"How the part is compressed, by its bytes: gzip, bz2, xz or zstd (seekable zstd included), or journal for a systemd journal; null for a plain file."`
 	Size              int64              `json:"size" doc:"The part's size in bytes as stored, from the listing."`
 	ModifiedAt        string             `json:"modified_at" format:"date-time" doc:"The part's modification time, RFC 3339 in UTC with six fractional digits, from the listing."`
 	IsIndexed         bool               `json:"is_indexed" doc:"Whether a current line index of the part is stored."`
@@ -176,8 +178,8 @@ type ChainPiece struct {
 // ChainReason is one reason a chain is invalid: an element of
 // ChainResponse.Reasons.
 type ChainReason struct {
-	Code      string   `json:"code" enum:"no_timestamps,overlap,active_not_last,unreadable,too_many_parts" doc:"The check that failed. no_timestamps: a part has lines and no timestamp rx recognizes. overlap: a part's highest timestamp is after the next part's first by more than RX_CHAIN_OVERLAP_SECONDS. active_not_last: the active file starts before a frozen part. unreadable: a part cannot be read. too_many_parts: the chain has more than 10,000 parts."`
-	Parts     []string `json:"parts" nullable:"false" doc:"The names of the parts the check names, in the chain's order: the part for no_timestamps and unreadable, the two neighbors for overlap, the active file and the parts after it for active_not_last; empty for too_many_parts."`
+	Code      string   `json:"code" enum:"no_timestamps,overlap,active_not_last,unreadable,too_many_parts,entries_overlap" doc:"The check that failed. no_timestamps: a part has lines and no timestamp rx recognizes. overlap: a part's highest timestamp is after the next part's first by more than RX_CHAIN_OVERLAP_SECONDS (not checked in a journal chain). active_not_last: the active file starts before a frozen part. unreadable: a part cannot be read, or a part of a journal chain cannot be read as a journal. too_many_parts: the chain has more than 10,000 parts. entries_overlap: two neighboring parts of a journal chain that one counter numbers hold entries in common: the earlier one's last sequence number is not below the later one's first, as when a copy of a part is left beside it."`
+	Parts     []string `json:"parts" nullable:"false" doc:"The names of the parts the check names, in the chain's order: the part for no_timestamps and unreadable, the two neighbors for overlap and entries_overlap, the active file and the parts after it for active_not_last; empty for too_many_parts."`
 	Message   string   `json:"message" doc:"The reason in words."`
 	OverlapMs *int64   `json:"overlap_ms" doc:"For overlap, how far in ms the first part's highest timestamp is after the second's first timestamp; null for the other codes."`
 }

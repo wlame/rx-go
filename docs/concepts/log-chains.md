@@ -172,6 +172,9 @@ sorted by their first timestamp, ties keeping the provisional order. An
 empty part keeps its provisional place. Before the chain is ready, the
 provisional order is used.
 
+A chain of rotated systemd journals is ordered by its parts' headers
+instead, from the start: see [Rotated journals](#rotated-journals).
+
 ## Checks, states and `idx`
 
 A chain is valid when:
@@ -188,16 +191,20 @@ Empty parts add no lines and take no part in the checks. All times are
 compared as UTC instants, each part read the way one file is read (see
 [Times of a chain](#times-of-a-chain)).
 
+A journal chain is checked by its parts' headers (`entries_overlap` in
+place of `overlap`): see [Rotated journals](#rotated-journals).
+
 To check these and to number the lines, rx needs each frozen part's line
 count, first timestamp and highest timestamp. A frozen part's
 [line index](line-indexes.md) gives all three without reading the part.
 The active part needs no index: nothing is numbered after it, and its
 first timestamp comes from a read of its head (a gzip, bzip2, xz or
-plain zstd active file gives it only through its index).
+plain zstd active file, or an active journal, gives it only through its
+index).
 
 | State | When | What works |
 |---|---|---|
-| `pending` | A frozen part with lines has no current line index, or a gzip, bzip2, xz or plain zstd active file has none | Each part can be read on its own; no global line numbers, no time queries |
+| `pending` | A frozen part with lines has no current line index, or a gzip, bzip2, xz or plain zstd active file, or an active journal, has none | Each part can be read on its own; no global line numbers, no time queries |
 | `ready` | Every frozen part is known and every check passed | Everything |
 | `invalid` | A check failed; `reasons` say which, naming the parts | `rx logs show` prints it and exits 6; `rx logs samples` and `GET /v1/logs/samples` refuse it (exit 6, `422`); a search still searches its parts, as files of the chain without global numbers |
 
@@ -402,6 +409,68 @@ any frozen part's stat or index file makes it unused.
   part, does not change the fingerprint; the active file is then read
   as a truncated single file is. With `copytruncate` a new `.1`
   appears, so the fingerprint changes.
+
+## Rotated journals
+
+systemd-journald writes its log into binary journal files, which rx
+reads as text. It writes the active journal `system.journal` (and one
+per user, `user-1000.journal`) and, when it rotates, renames it to an
+archive, `system@{id}-{seqnum}-{time}.journal`, and starts a new one.
+These files form a **journal chain**: a chain with a part the `journal`
+template names. Archives copied from a server without their active
+journal form a chain too, and `user-1000.journal` is the active file of
+its own chain, not a part of `user.journal`. A journal chain differs
+from other chains in its order and its checks; its text, its
+numbering, its times, its samples and its search follow the rules of
+every chain.
+
+**Order.** The text of a journal shows each entry's time as the program
+that logged it gave it, and that time may go back (a clock set back, a
+program that sends its own time). So a journal chain is not ordered by
+the timestamps of its text, but by its parts' headers (the first 208
+bytes of each file), as systemd orders journal files:
+
+1. journald numbers the entries of all its journals with one counter,
+   whose id each header holds (`seqnum_id`). The parts of one counter
+   are ordered by the sequence number of their first entry.
+2. The parts of each counter stay together, and the counters are
+   ordered by the time of the first entry of their first part. A new
+   counter starts when journald starts without its earlier state.
+3. A journal without entries, an empty file and a part that is not a
+   journal keep their provisional place.
+
+The order needs no line index: a pending journal chain lists its parts
+in this order already. The line counts still come from the parts' line
+indexes, as for gzip parts, so a journal chain is pending until each
+frozen part has one, and until the active journal has one too (its
+first timestamp comes only from its index, as a gzip active file's
+does).
+
+For the parts of one counter, the chain's text is what `journalctl`
+prints over all of them (`journalctl --file=P1 --file=P2 …`, with the
+options rx renders one journal with). For the parts of two counters it
+is not: `journalctl` interleaves their entries by time, while rx gives
+the entries of each counter in one block, in the order above.
+
+**Checks.** A journal chain is valid when:
+
+| Check | Reason when it fails |
+|---|---|
+| Two neighboring parts of one counter hold no entry in common: the earlier part's last sequence number is below the later part's first. A copy of a part left beside it fails this | `entries_overlap`, naming both parts |
+| The active journal, when it has entries, comes last | `active_not_last` |
+| Every part can be read as a journal | `unreadable`; for a part whose bytes are not a journal (a text file named `system.journal`, or named like an archive), or whose header rx cannot read, the message reads `NAME cannot be read as a journal: …` |
+| It has at most 10,000 parts | `too_many_parts` |
+
+The time overlap check (`overlap`) does not apply: times that go back
+are normal in a journal. `no_timestamps` does not happen: every line of
+a journal's text starts with its time. No part is missing: the numbers
+between two archives belong to journald's other journals, and journald
+deletes old archives itself.
+
+A journal journald disposed of because it found it damaged
+(`system@{time}-{random}.journal~`) matches no template and stays a
+single file. A damaged journal rx can read stays in its chain: its text
+leaves the damaged entries out, and its line index counts them.
 
 ## Limits
 
