@@ -29,7 +29,7 @@ func TestResolve_ReadsAFileByItsBytesNotItsName(t *testing.T) {
 			{Path: path, Lines: []OffsetOrRange{{Start: 2}}},
 			{Path: path, Offsets: []OffsetOrRange{{Start: 13}}},
 		} {
-			resp, err := Resolve(req)
+			resp, err := Resolve(t.Context(), req)
 			if err != nil {
 				t.Fatalf("%s: Resolve: %v", name, err)
 			}
@@ -57,7 +57,7 @@ func TestResolve_RefusesAFileThatIsNotText(t *testing.T) {
 		if err := os.WriteFile(path, body, 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
-		_, err := Resolve(Request{Path: path, Lines: []OffsetOrRange{{Start: 1}}})
+		_, err := Resolve(t.Context(), Request{Path: path, Lines: []OffsetOrRange{{Start: 1}}})
 		if !errors.Is(err, filekind.ErrNotText) {
 			t.Errorf("%s: got %v, want a refusal wrapping ErrNotText", name, err)
 		}

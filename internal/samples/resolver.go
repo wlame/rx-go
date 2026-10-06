@@ -3,13 +3,13 @@ package samples
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strconv"
 
-	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -74,6 +74,23 @@ type Request struct {
 	// large-file shortcuts are needed. Set to NoIndex for the linear
 	// scan fallback.
 	IndexLoader IndexLoader
+
+	// ctx is the context Resolve was called with. Every pass over the
+	// file reads through it (withContext), so a canceled request stops
+	// reading at the next buffer it fills. It is a field rather than a
+	// parameter of each helper because the helpers already take the
+	// request.
+	ctx context.Context
+}
+
+// context returns the context of the Resolve call, or a context that is
+// never canceled for a request built without one (a test that calls a
+// helper directly).
+func (r Request) context() context.Context {
+	if r.ctx == nil {
+		return context.Background()
+	}
+	return r.ctx
 }
 
 // Mode reports which dispatch path Resolve will take: OffsetsMode when
@@ -146,7 +163,12 @@ const (
 // the index when there is one, else from the head of the text (at most
 // a mebibyte), and line_timestamps, the effective timestamp of every
 // sample line (see fileTimes.lineTimestamps).
-func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
+//
+// ctx bounds the work: when it is canceled (the HTTP client went
+// away), the pass that is reading stops at its next read and Resolve
+// returns ctx's error.
+func Resolve(ctx context.Context, req Request) (*rxtypes.SamplesResponse, error) {
+	req.ctx = ctx
 	if req.modeCount() > 1 {
 		return nil, ErrInvalidRequest
 	}
@@ -204,30 +226,6 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		return nil, err
 	}
 	return resp, nil
-}
-
-// resolveLineWindows answers req.Lines, the lines-mode request, for a
-// file of the given kind. Timestamps mode hands it the lines it found,
-// so a time query reads its line and context exactly as --lines does.
-func resolveLineWindows(req Request, kind filekind.Kind, resp *collected) error {
-	if !kind.IsCompressed() {
-		return resolveLines(req, resp)
-	}
-
-	// A seekable .zst with a frame index can decompress just the frames
-	// holding the wanted lines. Without an index it streams like any
-	// other archive: the answer is the same, only slower, which is what
-	// an index is for. Its index's checkpoints sit at frame starts,
-	// which are not always line starts, so the stream does not start
-	// from one.
-	if kind.IsSeekable() {
-		err := resolveSeekableLines(req, resp)
-		if !errors.Is(err, errNoFrameIndex) {
-			return err
-		}
-		return resolveCompressedLines(req, compression.FormatSeekableZstd, nil, resp)
-	}
-	return resolveCompressedLines(req, kind.Format, loadIndexOrNone(req), resp)
 }
 
 // Classify decides what req.Source is (filekind.OfPinned), or returns
@@ -374,8 +372,12 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 	defer func() { _ = cursor.close() }()
 
 	before := newLineRing(req.BeforeContext)
-	r := bufio.NewReaderSize(cursor, readBufferFor(windows[len(windows)-1].start-cursor.offset))
+	r := bufio.NewReaderSize(withContext(req.context(), cursor), readBufferFor(windows[len(windows)-1].start-cursor.offset))
 	pos, lineNum, next := cursor.offset, cursor.line, 0
+	// active holds the started windows that still want lines, so a line
+	// costs one step per window it belongs to rather than one per
+	// window of the request.
+	var active []*window
 	for {
 		raw, readErr := r.ReadString('\n')
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
@@ -399,16 +401,14 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 				}
 				w.after = req.AfterContext
 			}
+			active = append(active, w)
 			next++
 		}
 
-		for _, w := range windows {
-			if !w.started || w.done {
-				continue
-			}
-			if lineNum < w.line {
-				continue
-			}
+		// Filtering into active[:0] reuses the slice's array: each kept
+		// window is written at or before the place it is read from.
+		kept := active[:0]
+		for _, w := range active {
 			w.collect = append(w.collect, text)
 			w.starts = append(w.starts, pos)
 			switch {
@@ -425,14 +425,18 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 			case req.AfterContext == 0:
 				w.done = true
 			}
+			if !w.done {
+				kept = append(kept, w)
+			}
 		}
+		active = kept
 
 		before.push(ringLine{text: text, start: pos})
 		pos, lineNum = end, lineNum+1
 		if readErr != nil {
 			break
 		}
-		if next >= len(windows) && allWindowsDone(windows) {
+		if next >= len(windows) && len(active) == 0 {
 			break
 		}
 	}
@@ -452,16 +456,6 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 		resp.starts[w.key] = w.starts
 	}
 	return nil
-}
-
-// allWindowsDone reports whether every started window has all its lines.
-func allWindowsDone(windows []*window) bool {
-	for _, w := range windows {
-		if w.started && !w.done {
-			return false
-		}
-	}
-	return true
 }
 
 // readBufferFor sizes the read buffer to the span a pass will cover.
@@ -543,139 +537,6 @@ func (r *lineRing) lines() []ringLine {
 }
 
 // ============================================================================
-// Lines mode
-// ============================================================================
-
-// resolveLines dispatches line-number single values and ranges.
-// When req.IndexLoader returns a valid index and the requested line is
-// beyond the first checkpoint, we seek directly to the nearest checkpoint
-// at-or-before the target — avoids scanning the file from byte 0.
-func resolveLines(req Request, resp *collected) error {
-	// Lazy-load index; only needed if at least one query would benefit
-	// (single lines with context, or any range).
-	var idx *rxtypes.UnifiedFileIndex
-	idxLoaded := false
-	loadIdx := func() (*rxtypes.UnifiedFileIndex, error) {
-		if idxLoaded {
-			return idx, nil
-		}
-		idxLoaded = true
-		if req.IndexLoader == nil {
-			return nil, nil
-		}
-		got, err := req.IndexLoader(req.Path)
-		if err != nil {
-			return nil, err
-		}
-		idx = got
-		return idx, nil
-	}
-
-	// Resolve negative singles against total line count (index hit or
-	// linear count fallback).
-	needTotal := false
-	for _, v := range req.Lines {
-		if !v.IsRange() && v.Start < 0 {
-			needTotal = true
-			break
-		}
-	}
-	var totalLines int64
-	if needTotal {
-		ix, err := loadIdx()
-		if err != nil {
-			return err
-		}
-		if ix != nil && ix.LineCount != nil && *ix.LineCount > 0 {
-			totalLines = *ix.LineCount
-		} else {
-			n, err := countLines(req.Source)
-			if err != nil {
-				return err
-			}
-			totalLines = n
-		}
-	}
-
-	// Resolve each request.
-	for _, v := range req.Lines {
-		if v.IsRange() {
-			// Range.
-			ix, err := loadIdx()
-			if err != nil {
-				return err
-			}
-			lines, starts, err := readLineRangeWithIndex(
-				req.Source, v.Start, *v.End, ix,
-			)
-			if err != nil {
-				return err
-			}
-			key := v.Key()
-			resp.Samples[key] = lines
-			resp.starts[key] = starts
-			resp.Lines[key] = -1 // Python parity: ranges skip the expensive offset compute
-			continue
-		}
-
-		// Single line. Resolve negative, then compute context window
-		// AND the requested-line's byte offset.
-		target := v.Start
-		if target < 0 {
-			target = totalLines + target + 1
-			if target < 1 {
-				target = 1
-			}
-		}
-		// Line 0 is not a line: they are numbered from 1. Asking for it
-		// used to return the window that clamping produced, which
-		// answered a question nobody asked.
-		if target < 1 {
-			key := strconv.FormatInt(target, 10)
-			resp.Lines[key] = -1
-			resp.Samples[key] = nil
-			continue
-		}
-		startLine := target - int64(req.BeforeContext)
-		if startLine < 1 {
-			startLine = 1
-		}
-		endLine := target + int64(req.AfterContext)
-		ix, err := loadIdx()
-		if err != nil {
-			return err
-		}
-		lines, starts, targetOffset, err := readLinesWithTarget(
-			req.Source, startLine, endLine, target, ix,
-		)
-		if err != nil {
-			return err
-		}
-		// Python parity: negative inputs are converted to their
-		// resolved positive value for the key (samples.py line 600:
-		// `line_to_offset[str(start)] = byte_offset_val` where `start`
-		// has already been reassigned to the positive value).
-		key := strconv.FormatInt(target, 10)
-		// A line the file does not have — past the last one, or line 0
-		// of an empty file — is asked-but-unknown, which the line
-		// numbering contract spells -1 with a null sample. Reporting
-		// offset 0 for line 1 of an empty file claimed a line that is
-		// not there.
-		if len(lines) == 0 {
-			resp.Lines[key] = -1
-			resp.Samples[key] = nil
-			continue
-		}
-		resp.Samples[key] = lines
-		resp.starts[key] = starts
-		// resp.Lines[key] holds the offset of line `target` — the line
-		// the caller asked about, not the context window's first line.
-		resp.Lines[key] = targetOffset
-	}
-	return nil
-}
-
-// ============================================================================
 // Low-level file helpers (seeking, line counting)
 // ============================================================================
 
@@ -701,124 +562,6 @@ type readSeekCloser interface {
 // Pinned.Open refuses a path that no longer leads to the checked file.
 var openFileForSamples = func(src paths.Pinned) (readSeekCloser, error) {
 	return src.Open()
-}
-
-// readLinesWithTarget reads lines [startLine, endLine] (1-based,
-// inclusive) and returns them, the byte offset each of them starts at,
-// PLUS the byte offset of `targetLine`.
-//
-// When idx is non-nil and has a checkpoint at-or-before startLine, we
-// seek to that checkpoint first instead of scanning from byte 0. This
-// is the "index-aware seek" path: line-offset queries get O(1)
-// seek-to-chunk when the unified index is cached.
-//
-// # Bounded-read contract
-//
-// This function MUST stop reading as soon as it has produced its
-// result. In particular the loop terminates once currentLine > endLine,
-// EXCEPT when the caller still needs the byte offset of a targetLine
-// we haven't passed yet. The range-only path (readLineRangeWithIndex)
-// passes targetLine = -1 to signal "no offset needed"; the target
-// sentinel check below MUST treat that as "nothing to wait for". See
-// the original condition `targetOffset >= 0` kept the loop
-// running to EOF on every range request because a -1 targetLine
-// never matches currentLine, so targetOffset stayed -1 forever and
-// the break was unreachable. This caused a 225× slowdown on large
-// files (1.3 GB file, lines=1-1000 range: 2.8 ms Python vs 636 ms Go
-// before fix; ~30-60 ms after fix).
-func readLinesWithTarget(
-	src paths.Pinned, startLine, endLine, targetLine int64,
-	idx *rxtypes.UnifiedFileIndex,
-) (lines []string, starts []int64, targetOffset int64, err error) {
-	if startLine < 1 {
-		startLine = 1
-	}
-	if endLine < startLine {
-		return []string{}, []int64{}, -1, nil
-	}
-
-	// Decide seek origin: closest checkpoint <= startLine, or 0.
-	seekOffset, seekLine := chooseSeekOrigin(idx, startLine)
-
-	f, err := openFileForSamples(src)
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	defer func() { _ = f.Close() }()
-
-	if seekOffset > 0 {
-		if _, err := f.Seek(seekOffset, io.SeekStart); err != nil {
-			return nil, nil, 0, err
-		}
-	}
-
-	br := bufio.NewReader(f)
-	currentLine := seekLine
-	offset := seekOffset
-	targetOffset = -1
-	// needTarget is TRUE when the caller requested a specific line's
-	// byte offset (single-line mode); FALSE when they only need the
-	// range content (passed targetLine < 0). This boolean is the
-	// the break condition below must not wait for
-	// a target that will never be found when none was requested.
-	needTarget := targetLine >= 0
-
-	for {
-		// Record offsets BEFORE reading each line — `offset` holds the
-		// byte position where the next ReadString('\n') will start,
-		// which IS the start of currentLine.
-		if needTarget && currentLine == targetLine {
-			targetOffset = offset
-		}
-		line, readErr := br.ReadString('\n')
-		// A file that ends with a newline gives one final zero-length
-		// read. That is the end of the file, not an empty last line:
-		// appending it invented a line the file does not have, which is
-		// what the compressed paths and rx-python have always known.
-		if len(line) > 0 && currentLine >= startLine && currentLine <= endLine {
-			lines = append(lines, stripNewline(line))
-			starts = append(starts, offset)
-		}
-		offset += int64(len(line))
-		if readErr != nil {
-			if readErr == io.EOF {
-				break
-			}
-			return nil, nil, 0, readErr
-		}
-		currentLine++
-		// Break as soon as we're past the requested range AND, if a
-		// targetLine was requested, we've already captured its offset.
-		// When needTarget is false (range-only path), the second clause
-		// is automatically satisfied and we break immediately once past
-		// endLine. Without that break a range request read the whole
-		// file to produce a slice of it.
-		pastRange := currentLine > endLine
-		haveTargetOrDontNeedIt := !needTarget || targetOffset >= 0
-		if pastRange && haveTargetOrDontNeedIt {
-			break
-		}
-	}
-	return lines, starts, targetOffset, nil
-}
-
-// readLineRangeWithIndex is the range-path sibling of
-// readLinesWithTarget. Returns only the lines in [startLine, endLine]
-// and where each starts; the byte offset of a target line is not needed
-// for range queries (Python returns -1).
-func readLineRangeWithIndex(
-	src paths.Pinned, startLine, endLine int64,
-	idx *rxtypes.UnifiedFileIndex,
-) ([]string, []int64, error) {
-	lines, starts, _, err := readLinesWithTarget(src, startLine, endLine, -1, idx)
-	return lines, starts, err
-}
-
-// readLineRange is the index-free sibling the bounded-read tests use.
-// Returns the lines and the offset of startLine (classic signature).
-func readLineRange(src paths.Pinned, startLine, endLine int64) ([]string, int64, error) {
-	lines, _, off, err := readLinesWithTarget(src, startLine, endLine, startLine, nil)
-	return lines, off, err
 }
 
 // chooseSeekOrigin walks idx.LineIndex in reverse and returns the
@@ -916,13 +659,13 @@ func lineNumbersForOffsets(
 
 // countLines returns the number of '\n' bytes + 1 if the final chunk
 // has unterminated content. Matches Python's `sum(1 for _ in open(p, 'rb'))`.
-func countLines(src paths.Pinned) (int64, error) {
+func countLines(ctx context.Context, src paths.Pinned) (int64, error) {
 	f, err := src.Open()
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = f.Close() }()
-	br := bufio.NewReader(f)
+	br := bufio.NewReader(withContext(ctx, f))
 	var (
 		total       int64
 		tailHasData bool

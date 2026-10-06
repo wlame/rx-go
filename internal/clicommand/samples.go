@@ -1,6 +1,7 @@
 package clicommand
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -263,7 +264,9 @@ func runSamples(out io.Writer, p samplesParams) error {
 		AfterContext:  after,
 		IndexLoader:   loader,
 	}
-	resp, err := samples.Resolve(req)
+	// The CLI runs as the user's own process and reads to the end of
+	// what it was asked; nothing cancels it but the process ending.
+	resp, err := samples.Resolve(context.Background(), req)
 	if samples.IsUsageError(err) {
 		// A time the request names wrongly, or a time query on a file
 		// without timestamps: the request, not the file, is at fault.

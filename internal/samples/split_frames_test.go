@@ -90,7 +90,7 @@ func TestLinesOnASeekableFileWithSplitFramesAnswerAsThePlainFile(t *testing.T) {
 	request := func(path string, loader IndexLoader) Request {
 		return Request{Path: path, Lines: spec, BeforeContext: 2, AfterContext: 2, IndexLoader: loader}
 	}
-	plain, err := Resolve(request(plainPath, NoIndex))
+	plain, err := Resolve(t.Context(), request(plainPath, NoIndex))
 	if err != nil {
 		t.Fatalf("resolve plain: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestLinesOnASeekableFileWithSplitFramesAnswerAsThePlainFile(t *testing.T) {
 	for layout, path := range copies {
 		for how, loader := range loadersFor(t, path) {
 			t.Run(layout+"/"+how, func(t *testing.T) {
-				got, err := Resolve(request(path, loader))
+				got, err := Resolve(t.Context(), request(path, loader))
 				if err != nil {
 					t.Fatalf("resolve: %v", err)
 				}
@@ -138,7 +138,7 @@ func TestOffsetsOnASeekableFileWithSplitFramesAnswerAsThePlainFile(t *testing.T)
 	request := func(path string, loader IndexLoader) Request {
 		return Request{Path: path, Offsets: spec, BeforeContext: 2, AfterContext: 2, IndexLoader: loader}
 	}
-	plain, err := Resolve(request(plainPath, NoIndex))
+	plain, err := Resolve(t.Context(), request(plainPath, NoIndex))
 	if err != nil {
 		t.Fatalf("resolve plain: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestOffsetsOnASeekableFileWithSplitFramesAnswerAsThePlainFile(t *testing.T)
 	for layout, path := range copies {
 		for how, loader := range loadersFor(t, path) {
 			t.Run(layout+"/"+how, func(t *testing.T) {
-				got, err := Resolve(request(path, loader))
+				got, err := Resolve(t.Context(), request(path, loader))
 				if err != nil {
 					t.Fatalf("resolve: %v", err)
 				}

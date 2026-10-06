@@ -169,7 +169,7 @@ func askEveryCopy(t *testing.T, text []byte, ask func(t testing.TB, path string)
 func resolveOrFail(t testing.TB, req Request) *rxtypes.SamplesResponse {
 	t.Helper()
 	req.IndexLoader = StoredIndex
-	resp, err := Resolve(req)
+	resp, err := Resolve(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestLineTimestamps_SampleTextReadsAsTheRawLine(t *testing.T) {
 	}
 	for i, raw := range awkwardLines(rand.New(rand.NewPCG(13, 17))) {
 		want, wantOK := index.LineStamp(parser, raw)
-		for _, text := range []string{stripNewline(string(raw)), trimNewline(string(raw))} {
+		for _, text := range []string{stripNewline(string(raw)), string(trimOneLineBreak(raw))} {
 			if got, ok := index.LineStamp(parser, []byte(text)); got != want || ok != wantOK {
 				t.Fatalf("line %d: sample text reads %+v %v, the raw line %+v %v", i+1, got, ok, want, wantOK)
 			}
