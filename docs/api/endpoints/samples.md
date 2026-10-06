@@ -258,7 +258,7 @@ client-side and iterate accordingly.
 |---:|---|
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
-| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) or more bytes of line text than `RX_SAMPLES_MAX_BYTES` (256 MiB by default) allows |
+| `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; the file needs more than 128 MiB at once to decompress; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) or more bytes of line text than `RX_SAMPLES_MAX_BYTES` (256 MiB by default) allows |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |
@@ -385,6 +385,19 @@ Status: `400`.
 
 Status: `400`. A file whose text holds a NUL byte in its first 8 KiB
 (decompressed for a compressed file) has no lines; see
+[Compression](../../concepts/compression.md#how-rx-decides-what-a-file-is).
+
+### File needs more than 128 MiB at once to decompress
+
+```json
+{ "detail": "decompressing it needs more than 128 MiB at once: a zstd frame's window or an xz block's dictionary is above the limit rx allows: /var/log/archive.log.zst" }
+```
+
+Status: `400`. A zstd frame that declares a window above 128 MiB
+(`zstd --long=28` and up, or a single-segment frame of more than
+128 MiB of text), or an xz block that declares a dictionary above
+128 MiB, anywhere in the file, is refused before the memory is
+reserved; `rx samples` exits 1 with the same words. See
 [Compression](../../concepts/compression.md#how-rx-decides-what-a-file-is).
 
 ## Performance notes
