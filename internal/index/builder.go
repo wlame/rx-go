@@ -197,7 +197,7 @@ func Build(sourcePath string, opts BuildOptions) (*rxtypes.UnifiedFileIndex, err
 	// (filekind), from the handle the pin opened. A file that is not
 	// text gets no index, whoever asks for one, so none is ever stored
 	// for a .tar.gz or a binary file.
-	kind := filekind.Of(f, info.Size())
+	kind := filekind.OfForReading(f, info.Size())
 	if !kind.IsText() {
 		return nil, fmt.Errorf("%w: %s (%s)", filekind.ErrNotText, sourcePath, kind.NotText)
 	}

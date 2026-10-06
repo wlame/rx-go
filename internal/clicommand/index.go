@@ -419,7 +419,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 		// (filekind). A file whose text is not text, such as a .tar.gz
 		// or a binary file, has no lines to index; rx-python skips a
 		// binary file too.
-		kind, err := filekind.OfPinned(src)
+		kind, err := filekind.OfPinnedForReading(src)
 		if err != nil {
 			unreadable(target, err)
 			continue

@@ -160,7 +160,7 @@ func createIndexTask(s *Server, req rxtypes.IndexRequest) (out *postIndexOutput,
 	if src.Info().IsDir() {
 		return nil, ErrBadRequest(fmt.Sprintf("Path is a directory, not a file: %s", req.Path))
 	}
-	kind, err := filekind.OfPinned(src)
+	kind, err := filekind.OfPinnedForReading(src)
 	if err != nil {
 		// A file the server may not read is a 403 on every route.
 		return nil, ErrFileAccess(req.Path, err)
