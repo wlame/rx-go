@@ -21,7 +21,8 @@
 //     active file's path.
 //   - key: the number or date in a part's name. It gives the
 //     provisional order, oldest first, and finds missing numbers. The
-//     real order comes from the parts' timestamps, later.
+//     real order comes from the parts' timestamps, later; for a
+//     journal chain (rotated systemd journals) from the parts' headers.
 //
 // In Go code of other packages "chain" alone also means an HTTP
 // middleware chain; this package's name says which one is meant.

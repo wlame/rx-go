@@ -42,7 +42,8 @@ type Description struct {
 	Candidate Candidate
 	// Response is the answer of GET /v1/logs/chain and of
 	// `rx logs show --json`. Its Parts are in the chain's order: by time
-	// when the chain is ready (or invalid), provisional before.
+	// when the chain is ready (or invalid), provisional before; a journal
+	// chain's by its parts' headers in every state (journalOrder).
 	Response *rxtypes.ChainResponse
 	// Order maps the chain's order to the candidate's: Response.Parts[i]
 	// describes Candidate.Parts[Order[i]].
@@ -79,8 +80,9 @@ const wireTimestampLayout = "2006-01-02T15:04:05.000000Z"
 
 // Describe reads what a chain needs to be read as one text and returns
 // its description: the parts' line counts and times, their order by
-// time, the checks, the state, the fingerprint, each part's global
-// start, the time gaps and the missing parts.
+// time (a journal chain's by its parts' headers), the checks, the
+// state, the fingerprint, each part's global start, the time gaps and
+// the missing parts.
 //
 // What it reads (every read through the part's pin, Part.File):
 //
@@ -94,6 +96,10 @@ const wireTimestampLayout = "2006-01-02T15:04:05.000000Z"
 //     from its end (samples.TimeRange), or nothing when a current index
 //     gives them; its line count from that index, or with opts.Scan
 //     from an index built in memory.
+//   - each part of a journal chain (Candidate.IsJournal): its header,
+//     the first 208 bytes of the file (withJournalHeader), which orders
+//     the chain without an index. A frozen part's header is kept in the
+//     memory cache with its other data.
 //
 // The frozen parts' data of a chain whose frozen parts all have a
 // current index (or are empty) is kept in memory (see
@@ -149,18 +155,21 @@ func (d *Description) assemble(facts []partFacts, toleranceMs int64) {
 	}
 	known := everyPartKnown(c, facts)
 	invalid := len(resp.Reasons) > 0
+	ordering := orderingOf(c)
 	// Once every part is known the parts are ordered by time. An invalid
 	// chain is ordered by time as far as the parts read allow, so its
 	// reasons read in the order they name. A pending chain keeps the
-	// provisional order: a part not read yet could belong anywhere.
+	// provisional order: a part not read yet could belong anywhere. A
+	// journal chain is ordered and checked by its parts' headers, which
+	// are read in every state.
 	switch {
-	case known || invalid:
-		d.Order = timeOrder(c, facts)
+	case known || invalid || !ordering.needsEveryPart:
+		d.Order = ordering.order(c, facts)
 	default:
 		d.Order = provisionalOrder(len(c.Parts))
 	}
-	if known {
-		resp.Reasons = append(resp.Reasons, orderReasons(c, facts, d.Order, toleranceMs)...)
+	if known || !ordering.needsEveryPart {
+		resp.Reasons = append(resp.Reasons, ordering.reasons(c, facts, d.Order, toleranceMs)...)
 	}
 	resp.Parts = partEntries(c, d.Order, facts)
 	switch {
@@ -201,8 +210,8 @@ func waitsFor(part Part, f partFacts) bool {
 
 // Parts returns the chain's parts in its order, the order of
 // Response.Parts: by time once the chain is ready (or invalid), the
-// provisional order before. A chain of more than MaxParts parts has
-// none.
+// provisional order before; a journal chain's by its parts' headers in
+// every state. A chain of more than MaxParts parts has none.
 func (d *Description) Parts() []Part {
 	parts := make([]Part, 0, len(d.Order))
 	for _, i := range d.Order {

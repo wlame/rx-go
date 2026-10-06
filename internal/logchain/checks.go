@@ -1,6 +1,7 @@
 package logchain
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
 	"math"
@@ -54,14 +55,82 @@ func timeOrder(c Candidate, facts []partFacts) []int {
 	return order
 }
 
+// journalOrder is the order of a journal chain by its parts' headers,
+// as systemd orders journal files: the parts one counter (seqnum_id)
+// numbers by the sequence number of their first entry, and the
+// counters' groups by the time of the first entry of each group's first
+// part. A tie keeps the provisional order. These parts take the places
+// they have in the provisional order, as timeOrder fills its slots;
+// every other part (an empty file, a journal without entries, a part
+// that is not a journal or was not read) keeps its own place.
+//
+// It needs no line index: the headers come from every describe. The
+// shown times of the parts' text play no part: they may go back (a
+// program's own clock, _SOURCE_REALTIME_TIMESTAMP), and the headers
+// still say which entries journald wrote first.
+func journalOrder(c Candidate, facts []partFacts) []int {
+	order := provisionalOrder(len(c.Parts))
+	placed := partsWithEntries(order, facts)
+	byHeader := slices.Clone(placed)
+	// Each counter's parts together, by their first sequence number.
+	// SortStableFunc keeps two parts with one first entry (a copy of a
+	// part) in the provisional order.
+	slices.SortStableFunc(byHeader, func(a, b int) int {
+		ha, hb := facts[a].header, facts[b].header
+		return cmp.Or(bytes.Compare(ha.SeqnumID[:], hb.SeqnumID[:]), cmp.Compare(ha.HeadSeqnum, hb.HeadSeqnum))
+	})
+	// Then the counters' groups by the head time of their first part,
+	// a tie by that part's provisional place.
+	groups := splitByCounter(byHeader, facts)
+	slices.SortStableFunc(groups, func(a, b []int) int {
+		return cmp.Or(cmp.Compare(facts[a[0]].header.HeadRealtime, facts[b[0]].header.HeadRealtime), cmp.Compare(a[0], b[0]))
+	})
+	sorted := slices.Concat(groups...)
+	for k, slot := range placed {
+		order[slot] = sorted[k]
+	}
+	return order
+}
+
+// partsWithEntries are the parts of order (candidate indexes) whose
+// journal header was read and counts entries, in that order.
+func partsWithEntries(order []int, facts []partFacts) []int {
+	var parts []int
+	for _, i := range order {
+		if h := facts[i].header; h != nil && h.NEntries > 0 {
+			parts = append(parts, i)
+		}
+	}
+	return parts
+}
+
+// splitByCounter cuts parts, sorted so that each counter's parts are
+// together, into one group per counter, in that order.
+func splitByCounter(parts []int, facts []partFacts) [][]int {
+	var groups [][]int
+	for k, i := range parts {
+		if k == 0 || facts[i].header.SeqnumID != facts[parts[k-1]].header.SeqnumID {
+			groups = append(groups, nil)
+		}
+		groups[len(groups)-1] = append(groups[len(groups)-1], i)
+	}
+	return groups
+}
+
 // partReasons are the reasons one part makes a chain invalid on its
-// own: it cannot be read, or it holds lines and no timestamp.
+// own: it cannot be read, a part of a journal chain cannot be read as a
+// journal, or it holds lines and no timestamp.
 func partReasons(part Part, f partFacts) []rxtypes.ChainReason {
 	switch {
 	case f.unreadable != "":
 		return []rxtypes.ChainReason{{
 			Code: rxtypes.ChainReasonUnreadable, Parts: []string{part.Name},
 			Message: fmt.Sprintf("%s cannot be read: %s", part.Name, f.unreadable),
+		}}
+	case f.notJournal != "":
+		return []rxtypes.ChainReason{{
+			Code: rxtypes.ChainReasonUnreadable, Parts: []string{part.Name},
+			Message: fmt.Sprintf("%s cannot be read as a journal: %s", part.Name, f.notJournal),
 		}}
 	case f.noTimestamps:
 		return []rxtypes.ChainReason{{
@@ -91,13 +160,56 @@ func orderReasons(c Candidate, facts []partFacts, order []int, toleranceMs int64
 			reasons = append(reasons, reason)
 		}
 	}
-	for k, i := range timed {
-		if !c.Parts[i].IsActive || k == len(timed)-1 {
+	return append(reasons, activeNotLastReasons(c, timed)...)
+}
+
+// journalOrderReasons are the reasons the parts of a journal chain, in
+// its order, make it invalid together: two neighbors of one counter
+// hold entries in common, or the active part does not come last. Only
+// the parts with entries take part; the time overlap check of other
+// chains does not apply (toleranceMs is not used), since a journal's
+// shown times may go back while its entries stay in order.
+func journalOrderReasons(c Candidate, facts []partFacts, order []int, _ int64) []rxtypes.ChainReason {
+	placed := partsWithEntries(order, facts)
+	var reasons []rxtypes.ChainReason
+	for k := 0; k+1 < len(placed); k++ {
+		if reason, ok := entriesOverlapReason(c.Parts[placed[k]], facts[placed[k]], c.Parts[placed[k+1]], facts[placed[k+1]]); ok {
+			reasons = append(reasons, reason)
+		}
+	}
+	return append(reasons, activeNotLastReasons(c, placed)...)
+}
+
+// entriesOverlapReason reports whether the part a, followed by b in a
+// journal chain, holds entries b holds too: both are numbered by one
+// counter, and a's last sequence number is not below b's first. A copy
+// of a part left beside it does this. Parts of two counters are never
+// compared: their numbers count apart.
+func entriesOverlapReason(a Part, fa partFacts, b Part, fb partFacts) (rxtypes.ChainReason, bool) {
+	ha, hb := fa.header, fb.header
+	if ha.SeqnumID != hb.SeqnumID || ha.TailSeqnum < hb.HeadSeqnum {
+		return rxtypes.ChainReason{}, false
+	}
+	return rxtypes.ChainReason{
+		Code: rxtypes.ChainReasonEntriesOverlap, Parts: []string{a.Name, b.Name},
+		Message: fmt.Sprintf("%s ends with entry %d of its counter, which is not before entry %d, the first of %s: "+
+			"the two parts hold the same entries, as a copy of a part does", a.Name, ha.TailSeqnum, hb.HeadSeqnum, b.Name),
+	}, true
+}
+
+// activeNotLastReasons is the reason active_not_last when the active
+// part is among placed (candidate indexes in the chain's order) and not
+// the last of them: it names the active part and every part of placed
+// after it.
+func activeNotLastReasons(c Candidate, placed []int) []rxtypes.ChainReason {
+	var reasons []rxtypes.ChainReason
+	for k, i := range placed {
+		if !c.Parts[i].IsActive || k == len(placed)-1 {
 			continue
 		}
-		later := make([]string, 0, len(timed)-k)
+		later := make([]string, 0, len(placed)-k)
 		later = append(later, c.Parts[i].Name)
-		for _, j := range timed[k+1:] {
+		for _, j := range placed[k+1:] {
 			later = append(later, c.Parts[j].Name)
 		}
 		reasons = append(reasons, rxtypes.ChainReason{
@@ -107,6 +219,35 @@ func orderReasons(c Candidate, facts []partFacts, order []int, toleranceMs int64
 		})
 	}
 	return reasons
+}
+
+// chainOrdering is how one kind of chain is ordered and checked once
+// its parts' facts are read (Description.assemble).
+type chainOrdering struct {
+	// order is the chain's order, as Description.Order holds it.
+	order func(c Candidate, facts []partFacts) []int
+	// reasons are the checks that compare the parts in that order.
+	reasons func(c Candidate, facts []partFacts, order []int, toleranceMs int64) []rxtypes.ChainReason
+	// needsEveryPart says that the order and the checks need facts only
+	// a line index gives (each part's times): until every part is known,
+	// a chain no check has failed keeps the provisional order and is not
+	// compared.
+	needsEveryPart bool
+}
+
+// The orderings: a chain by the timestamps of its parts' text, a
+// journal chain by its parts' headers, which every describe reads.
+var (
+	timeOrdering    = chainOrdering{order: timeOrder, reasons: orderReasons, needsEveryPart: true}
+	journalOrdering = chainOrdering{order: journalOrder, reasons: journalOrderReasons}
+)
+
+// orderingOf is the ordering of the chain c.
+func orderingOf(c Candidate) chainOrdering {
+	if c.IsJournal() {
+		return journalOrdering
+	}
+	return timeOrdering
 }
 
 // overlapReason reports whether the part a, followed in time by b,

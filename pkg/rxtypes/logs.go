@@ -74,6 +74,11 @@ const (
 	// ChainReasonTooManyParts: the chain has more parts than are read as
 	// one text (10,000).
 	ChainReasonTooManyParts = "too_many_parts"
+	// ChainReasonEntriesOverlap: two neighboring parts of a journal chain
+	// that one counter numbers hold entries in common: the earlier one's
+	// last sequence number is not below the later one's first. A copy of
+	// a part left beside it makes this.
+	ChainReasonEntriesOverlap = "entries_overlap"
 )
 
 // ChainResponse is the description of one log chain: the body of

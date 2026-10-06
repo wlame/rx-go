@@ -3,11 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/wlame/rx-go/internal/clicommand"
+	"github.com/wlame/rx-go/internal/testutil/journalfixture"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -94,6 +97,34 @@ func TestLogsSamples_Times(t *testing.T) {
 	}
 	if pieces := resp.Samples["2026-10-01 00:00:08..2026-10-01 02:00:00"]; len(pieces) != 3 || len(pieces[2].Lines) != 1 {
 		t.Fatalf("the range's pieces %+v", pieces)
+	}
+}
+
+// The rotated journals systemd-journald wrote (system.journal and its
+// archives), read with rx logs samples: the chain's lines are what
+// journalctl prints over every part, numbered as that text numbers
+// them.
+func TestLogsSamples_RotatedJournalsReadAsJournalctlPrintsThem(t *testing.T) {
+	dir := journalfixture.ChainDir(t, "chain-one-counter")
+	all, err := os.ReadFile(filepath.Join(journalfixture.Root(t), "chain-one-counter", "all.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Split(strings.TrimSuffix(string(all), "\n"), "\n")
+	key := fmt.Sprintf("1-%d", len(want))
+	code, resp, stderr := logsSamplesJSON(t, dir, "system.journal", "--lines="+key)
+	if code != clicommand.ExitSuccess || resp.State != rxtypes.ChainStateReady {
+		t.Fatalf("exit %d, state %q: %s", code, resp.State, stderr)
+	}
+	var got []string
+	for _, piece := range resp.Samples[key] {
+		if piece.FirstGlobalLine != int64(len(got)+1) {
+			t.Fatalf("the piece of %s starts at global line %d after %d lines", piece.Part, piece.FirstGlobalLine, len(got))
+		}
+		got = append(got, piece.Lines...)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("lines\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 

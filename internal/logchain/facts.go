@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/journal"
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/timestamps"
@@ -58,6 +61,15 @@ type partFacts struct {
 	// read, and what the index recorded of the part; nil for the active
 	// part, and for a frozen part whose index file could not be stated.
 	stamp *indexStamp
+	// header is the journal header of a part of a journal chain, which
+	// orders the chain (journalOrder); nil for a part of any other chain,
+	// an empty file, and a part whose header was not read (unreadable,
+	// or notJournal).
+	header *journal.Header
+	// notJournal says why a part of a journal chain cannot be read as a
+	// journal: its bytes do not start with the journal signature, or its
+	// header is one rx cannot read. Empty otherwise.
+	notJournal string
 }
 
 // indexStamp lets a cache hit learn, without reading an index again,
@@ -170,13 +182,19 @@ var (
 	}
 	// readTimeRange reads the active part's time range.
 	readTimeRange = samples.TimeRange
+	// readHeaderAt reads a journal part's header from the part opened
+	// through its pin.
+	readHeaderAt = journal.ReadHeader
 )
 
 // readFacts reads the facts of every part of c, in the candidate's
 // order: the frozen parts' from the memory cache when the listing read
 // every frozen part, the cache holds them and their stamps still hold;
-// the active part's always.
+// the active part's always. Each part of a journal chain read here also
+// has its header read (withJournalHeader); a frozen part's header is
+// kept in the cache with its other facts.
 func readFacts(ctx context.Context, c Candidate, opts Options) ([]partFacts, error) {
+	isJournal := c.IsJournal()
 	key := cacheKey(c, opts.FileZone)
 	var facts []partFacts
 	cached := false
@@ -215,10 +233,15 @@ func readFacts(ctx context.Context, c Candidate, opts Options) ([]partFacts, err
 			continue
 		default:
 			facts[i], err = frozenFacts(part, opts)
-			keep = keep && cacheable(part, facts[i])
+		}
+		if err == nil && isJournal {
+			facts[i], err = withJournalHeader(ctx, part, facts[i])
 		}
 		if err != nil {
 			return nil, err
+		}
+		if !part.IsActive {
+			keep = keep && cacheable(part, facts[i])
 		}
 	}
 	if !cached && keep {
@@ -318,6 +341,59 @@ func activeFacts(ctx context.Context, part Part, opts Options) (partFacts, error
 	// chain waits for its index, as it waits for a frozen part's.
 	facts.timesKnown = tr.FirstMs != nil
 	return facts, nil
+}
+
+// notJournalSignature is why a part of a journal chain whose first
+// bytes the listing found no journal signature in cannot be read as a
+// journal.
+const notJournalSignature = "the file does not start with " + journal.Signature + ", the signature of a systemd journal"
+
+// withJournalHeader adds to f, the facts of a part of a journal chain,
+// what the part's header says: the header (f.header), or why the part
+// cannot be read as a journal (f.notJournal). It reads the header once
+// through the part's pin: journal.ReadHeader reads the first 208 bytes
+// of the file. A part f already calls unreadable is not read again; an
+// empty file (0 bytes) has no header and needs none, since it adds no
+// line; and a part whose first bytes the listing found no journal
+// signature in (Part.Format) is not opened.
+//
+// The error is failedRead's: ErrPartChanged when the part's name leads
+// to another file or to none by now (a rotation renamed it), or the
+// context's. Every other failure to read the header is the reason
+// unreadable, in the fixed words failedRead gives it.
+//
+// SECURITY: f.notJournal holds only the text of journal.ErrUnreadable,
+// which names sizes and flags, never a path; a read error, whose text
+// names the path, goes through failedRead.
+func withJournalHeader(ctx context.Context, part Part, f partFacts) (partFacts, error) {
+	if f.unreadable != "" || part.Info.Size() == 0 {
+		return f, nil
+	}
+	if part.Format != compression.FormatJournal {
+		f.notJournal = notJournalSignature
+		return f, nil
+	}
+	file, err := openPart(part.File)
+	if err != nil {
+		return failedRead(ctx, part, err)
+	}
+	// Go note: defer runs the Close when withJournalHeader returns, on
+	// every path below; the header read needs the file only until then.
+	defer func() { _ = file.Close() }()
+	// *os.File is an io.ReaderAt: ReadHeader reads by position, from
+	// byte 0, without moving the file's own read position.
+	header, err := readHeaderAt(file, part.Info.Size())
+	switch {
+	case err == nil:
+		f.header = &header
+	case errors.Is(err, journal.ErrUnreadable):
+		// The error reads "a systemd journal rx cannot read: <why>"; the
+		// reason keeps the why.
+		f.notJournal = strings.TrimPrefix(err.Error(), journal.ErrUnreadable.Error()+": ")
+	default:
+		return failedRead(ctx, part, err)
+	}
+	return f, nil
 }
 
 // storedIndex is the part's current stored line index, or nil. An index
