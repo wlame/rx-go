@@ -114,7 +114,9 @@ its checks need no index:
   (`active_not_last`);
 - every part can be read as a journal (`unreadable`; for a part whose
   bytes are not a journal, or whose header rx cannot read, the
-  `message` reads `NAME cannot be read as a journal: …`);
+  `message` reads `NAME cannot be read as a journal: …`; such a part
+  stays in the chain even when it is not text, where a chain of text
+  logs leaves the file out);
 - it has at most 10,000 parts (`too_many_parts`).
 
 The time overlap check (`overlap`) does not apply to it, and it has no

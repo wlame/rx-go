@@ -119,10 +119,14 @@ parts before it.
 1. Files are grouped by directory and chain name. Parts of one chain
    may match different templates (`syslog.1` and
    `syslog-20261001.gz`).
-2. The file named exactly like the chain is its active part. A file
-   named like a journal chain is its active part even when its name has
-   another template's shape: `user-1000.journal` is the active file of
-   `user-1000@….journal`, not a part of `user.journal`.
+2. The file named exactly like the chain is its active part. When
+   archives of a journal chain are in the directory
+   (`user-1000@….journal`), the file named like that chain is its
+   active part even when its name has another template's shape:
+   `user-1000.journal` is then the active file of its archives, not a
+   part of `user.journal`. Without such archives it is matched as any
+   name is (`user-1000.journal`, like `app-1.journal`, is a
+   `numbered-ext` part of `user.journal`).
 3. A chain needs two parts; the active file counts when it exists. One
    file alone is no chain.
 4. One generation in several encodings (`app.log-2025121008`, its `.gz`
@@ -136,7 +140,9 @@ parts before it.
    `--hidden`), names that end in `.tmp`, and files that are not text by
    the rule every command applies (a NUL byte in the first 8 KiB of the
    text), so `wtmp` and `wtmp.1` are no chain. An empty file is text: a
-   chain of empty files is a chain, and it is ready with 0 lines.
+   chain of empty files is a chain, and it is ready with 0 lines. A
+   journal chain keeps its files that are not text as parts, and is
+   invalid for them (see [Rotated journals](#rotated-journals)).
 6. A file whose name makes it a part but which cannot be opened (its
    permissions, an I/O error) stays a part, named in `unreadable`; the
    chain is invalid until it can be read.
@@ -418,11 +424,11 @@ per user, `user-1000.journal`) and, when it rotates, renames it to an
 archive, `system@{id}-{seqnum}-{time}.journal`, and starts a new one.
 These files form a **journal chain**: a chain with a part the `journal`
 template names. Archives copied from a server without their active
-journal form a chain too, and `user-1000.journal` is the active file of
-its own chain, not a part of `user.journal`. A journal chain differs
-from other chains in its order and its checks; its text, its
-numbering, its times, its samples and its search follow the rules of
-every chain.
+journal form a chain too, and beside its archives `user-1000.journal`
+is the active file of its own chain, not a part of `user.journal`. A
+journal chain differs from other chains in which files it keeps, its
+order and its checks; its text, its numbering, its times, its samples
+and its search follow the rules of every chain.
 
 **Order.** The text of a journal shows each entry's time as the program
 that logged it gave it, and that time may go back (a clock set back, a
@@ -458,7 +464,7 @@ the entries of each counter in one block, in the order above.
 |---|---|
 | Two neighboring parts of one counter hold no entry in common: the earlier part's last sequence number is below the later part's first. A copy of a part left beside it fails this | `entries_overlap`, naming both parts |
 | The active journal, when it has entries, comes last | `active_not_last` |
-| Every part can be read as a journal | `unreadable`; for a part whose bytes are not a journal (a text file named `system.journal`, or named like an archive), or whose header rx cannot read, the message reads `NAME cannot be read as a journal: …` |
+| Every part can be read as a journal | `unreadable`; for a part whose bytes are not a journal (a text or binary file named `system.journal`, or named like an archive), or whose header rx cannot read (an incompatible flag rx does not know), the message reads `NAME cannot be read as a journal: …` |
 | It has at most 10,000 parts | `too_many_parts` |
 
 The time overlap check (`overlap`) does not apply: times that go back
@@ -471,6 +477,13 @@ A journal journald disposed of because it found it damaged
 (`system@{time}-{random}.journal~`) matches no template and stays a
 single file. A damaged journal rx can read stays in its chain: its text
 leaves the damaged entries out, and its line index counts them.
+
+A member of a journal chain that is not text stays in the chain too,
+where a chain of text logs leaves such a file out: a binary file named
+`system.journal`, or an archive whose header rx cannot read (an
+incompatible flag of a newer systemd). Leaving it out would leave a
+chain that looks whole while its entries are lost; it makes the chain
+invalid instead, with `unreadable`.
 
 ## Limits
 

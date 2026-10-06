@@ -63,19 +63,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `system@{id}-{seqnum}-{time}.journal` archives, by a new name template
   `journal` whose key is the head time an archive's name writes.
   Archives without their active journal are a chain too, a
-  `….journal~` file stays a single file, and `user-1000.journal` is the
-  active file of its own chain, no longer a numbered part of
-  `user.journal`. A journal chain is ordered by its parts' headers, as
-  systemd orders journal files, not by the times its text shows, which
-  may go back: the parts of one counter by the sequence number of their
-  first entry, the counters by the time of their first part's first
-  entry. The order needs no line index, so `GET /v1/logs/chain` lists a
-  pending journal chain's parts in it already. Its checks: the new
-  reason `entries_overlap` (two neighboring parts of one counter hold
-  entries in common, as a copy of a part left beside it does),
+  `….journal~` file stays a single file, and when
+  `user-1000@….journal` archives are in the directory,
+  `user-1000.journal` is the active file of their chain, no longer a
+  numbered part of `user.journal` (without them it stays one). A
+  journal chain is ordered by its parts' headers, as systemd orders
+  journal files, not by the times its text shows, which may go back:
+  the parts of one counter by the sequence number of their first entry,
+  the counters by the time of their first part's first entry. The order
+  needs no line index, so `GET /v1/logs/chain` lists a pending journal
+  chain's parts in it already. Its checks: the new reason
+  `entries_overlap` (two neighboring parts of one counter hold entries
+  in common, as a copy of a part left beside it does),
   `active_not_last`, and `unreadable` for a part whose bytes are not a
-  journal (`NAME cannot be read as a journal: …`); the time overlap
-  check does not apply, and no part is missing. For the parts of one
+  journal or whose header rx cannot read
+  (`NAME cannot be read as a journal: …`). Such a part stays in the
+  chain even when it is not text (a binary `system.journal`, an archive
+  with an incompatible flag rx does not know), where a chain of text
+  logs leaves a file that is not text out. The time overlap check does
+  not apply, and no part is missing. For the parts of one
   counter the chain's text is what `journalctl` prints over all of
   them.
 
