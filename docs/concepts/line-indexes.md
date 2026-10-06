@@ -44,7 +44,8 @@ other members trimmed; `rx index --info --json` prints all of them):
     "first_zone_offset_minutes": null,
     "backward_steps": 0,
     "max_backward_ms": 0,
-    "max_before": [null, 1765350019707, 1765350027397, 1765350030944]
+    "max_before": [null, 1765350019707, 1765350027397, 1765350030944],
+    "first_text": "2025-12-10 07:00:04.574"
   }
 }
 ```
@@ -138,6 +139,7 @@ values do not depend on the environment of the process that built it.
 | `first`, `last` | The first and the last timestamped line: `{ms, line, offset}`, its value, its line number and the byte where it starts; `null` when no line has one |
 | `first_zone_offset_minutes` | The zone offset, in minutes east of UTC, of the first timestamp of a file whose timestamps carry zones; `null` otherwise |
 | `backward_steps`, `max_backward_ms` | How many lines carry a timestamp more than one second earlier than the latest timestamp before them, and the largest such step. Several programs writing one file disagree by a second or so; a large count says the file is mixed |
+| `first_text` | The first timestamp as its line writes it, such as `2025-12-10 07:00:04.574` or `Dec 10 07:00:12.156`: printable ASCII, any other byte written as `\xHH`, at most 64 bytes; `null` when no line has a timestamp. A client shows the file's times in the layout of its lines from it |
 | `max_before` | One entry per `line_index` checkpoint: the latest timestamp of every line numbered below the checkpoint's line, or `null` when none of them has one. It never decreases, so a lookup by time can skip every checkpoint whose earlier lines all come before the time it looks for |
 
 A seekable zstd index has checkpoints of its own (each frame, and every

@@ -155,6 +155,8 @@ var (
 
 func intPtr(v int) *int { return &v }
 
+func strPtr(s string) *string { return &s }
+
 // logShape is one way the real logs of the playground write their
 // lines, reproduced in a few dozen generated lines.
 type logShape struct {
@@ -186,7 +188,7 @@ var logShapes = []logShape{
 		first: time.Date(2025, 12, 10, 7, 0, 4, 574e6, time.UTC),
 		line:  func(t time.Time) string { return t.Format("2006-01-02 15:04:05.000") + " INFO [main] request served" },
 		ms:    wallMs,
-		want:  rxtypes.TimeIndex{Format: "iso", Anchored: true},
+		want:  rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-12-10 07:00:04.574")},
 	},
 	{
 		// middleware.log is written on a -07:00 host: its own lines carry
@@ -199,14 +201,14 @@ var logShapes = []logShape{
 			return "[" + t.Format("2006-01-02T15:04:05.000") + "-0700][1246.139s][info][gc] GC(313) Pause Young"
 		},
 		ms:   wallMs,
-		want: rxtypes.TimeIndex{Format: "iso", Anchored: true},
+		want: rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-12-10 07:00:04.574")},
 	},
 	{
 		name:  "SOMELOG one-digit fields and milliseconds after a colon",
 		first: time.Date(2025, 2, 5, 8, 6, 2, 7e6, time.UTC),
 		line:  func(t time.Time) string { return unpadded(t) + " [worker] tick" },
 		ms:    wallMs,
-		want:  rxtypes.TimeIndex{Format: "iso", Anchored: true},
+		want:  rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-2-5 08:6:2:7")},
 	},
 	{
 		// MST is one of the zone words that name no single offset, so the
@@ -218,14 +220,14 @@ var logShapes = []logShape{
 		},
 		ms:           secondMs,
 		continuation: "\t->  Seq Scan on accounts  (cost=0.00..1.01 rows=1 width=4)",
-		want:         rxtypes.TimeIndex{Format: "iso", Anchored: true},
+		want:         rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-12-10 07:00:00")},
 	},
 	{
 		name:  "core syslog without a year",
 		first: time.Date(2025, 12, 10, 7, 49, 50, 123e6, time.UTC),
 		line:  func(t time.Time) string { return t.Format("Jan _2 15:04:05.000") + " host app[17]: handled" },
 		ms:    wallMs,
-		want:  rxtypes.TimeIndex{Format: "syslog", Anchored: true, YearFromMtime: true},
+		want:  rxtypes.TimeIndex{Format: "syslog", Anchored: true, YearFromMtime: true, FirstText: strPtr("Dec 10 07:49:50.123")},
 	},
 	{
 		name:         "python logging with a comma before the milliseconds",
@@ -233,14 +235,15 @@ var logShapes = []logShape{
 		line:         func(t time.Time) string { return t.Format("2006-01-02 15:04:05,000") + " - app - INFO - step done" },
 		ms:           wallMs,
 		continuation: "Traceback (most recent call last):",
-		want:         rxtypes.TimeIndex{Format: "iso", Anchored: true},
+		want:         rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2026-01-06 09:15:00,250")},
 	},
 	{
 		name:  "iso with a numeric zone",
 		first: time.Date(2026, 10, 6, 10, 34, 56, 123e6, time.UTC),
 		line:  func(t time.Time) string { return t.In(plus2).Format("2006-01-02T15:04:05.000-07:00") + " job ran" },
 		ms:    wallMs,
-		want:  rxtypes.TimeIndex{Format: "iso", Anchored: true, HasZone: true, FirstZoneOffsetMinutes: intPtr(120)},
+		want: rxtypes.TimeIndex{Format: "iso", Anchored: true, HasZone: true, FirstZoneOffsetMinutes: intPtr(120),
+			FirstText: strPtr("2026-10-06T12:34:56.123+02:00")},
 	},
 	{
 		name:  "access log with the timestamp inside the line",
@@ -248,8 +251,9 @@ var logShapes = []logShape{
 		line: func(t time.Time) string {
 			return `10.0.0.7 - - [` + t.Format("02/Jan/2006:15:04:05 -0700") + `] "GET /health HTTP/1.1" 200 12`
 		},
-		ms:   secondMs,
-		want: rxtypes.TimeIndex{Format: "clf", HasZone: true, FirstZoneOffsetMinutes: intPtr(0)},
+		ms: secondMs,
+		want: rxtypes.TimeIndex{Format: "clf", HasZone: true, FirstZoneOffsetMinutes: intPtr(0),
+			FirstText: strPtr("[10/Dec/2025:07:00:04 +0000]")},
 	},
 }
 
@@ -396,6 +400,19 @@ func randomTimedLog(rng *rand.Rand) []timedLine {
 	return lines
 }
 
+// firstStampText is the first width bytes of the first timestamped
+// line of lines, where a generator that starts each such line with its
+// timestamp writes it, or nil when no line has one.
+func firstStampText(lines []timedLine, width int) *string {
+	for _, l := range lines {
+		if l.has {
+			text := l.text[:width]
+			return &text
+		}
+	}
+	return nil
+}
+
 // randomCuts returns frame boundaries for text: mid-line cuts at random
 // spacing, some repeated (an empty frame), and sometimes a cut at the
 // very end.
@@ -448,7 +465,8 @@ func TestBuild_MaxBeforeIsTheRunningMaximumForEveryStorage(t *testing.T) {
 		if gotSk, want := withoutMaxBefore(sk.TimeIndex), withoutMaxBefore(plain.TimeIndex); !reflect.DeepEqual(gotSk, want) {
 			t.Fatalf("%s: seekable time_index %+v, plain %+v", label, gotSk, want)
 		}
-		if want := expectedTimeIndex(lines, rxtypes.TimeIndex{Format: "iso", Anchored: true}); !reflect.DeepEqual(withoutMaxBefore(plain.TimeIndex), want) {
+		base := rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: firstStampText(lines, len("2006-01-02 15:04:05.000"))}
+		if want := expectedTimeIndex(lines, base); !reflect.DeepEqual(withoutMaxBefore(plain.TimeIndex), want) {
 			t.Fatalf("%s: time_index %+v, want %+v", label, withoutMaxBefore(plain.TimeIndex), want)
 		}
 	}
