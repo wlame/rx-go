@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A time query that reads back from the end of a file for its last
+  timestamp reads each line of the tail once. A tail of lines whose
+  128th byte was the `\r` of a `\r\n` cost one more 4 KiB read per
+  line, 23 times the text on a plain file; on a seekable zstd file each
+  of those reads decompressed a whole frame.
 - Deciding what a zstd file is no longer costs the memory its frame
   header asks for. The 8 KiB text probe decompresses a stream at a time
   and holds one window of at most 16 MiB: a 28 KB file whose one frame
