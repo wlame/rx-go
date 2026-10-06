@@ -144,7 +144,8 @@ const (
 //
 // Every answer carries time_format, the file's timestamp format: from
 // the index when there is one, else from the head of the text (at most
-// a mebibyte).
+// a mebibyte), and line_timestamps, the effective timestamp of every
+// sample line (see fileTimes.lineTimestamps).
 func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 	if req.modeCount() > 1 {
 		return nil, ErrInvalidRequest
@@ -170,6 +171,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 		Samples:       map[string][]string{},
 		Timestamps:    map[string]int64{},
 	}
+	answer := newCollected(resp)
 	if kind.IsCompressed() {
 		resp.IsCompressed = true
 		name := kind.CompressionName()
@@ -189,13 +191,16 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 
 	switch req.Mode() {
 	case OffsetsMode:
-		err = resolveOffsets(req, resp, textSourceFor(req, kind))
+		err = resolveOffsets(req, answer, textSourceFor(req, kind))
 	case TimestampsMode:
-		err = resolveTimestamps(req, kind, times, resp)
+		err = resolveTimestamps(req, kind, times, answer)
 	default:
-		err = resolveLineWindows(req, kind, resp)
+		err = resolveLineWindows(req, kind, answer)
 	}
 	if err != nil {
+		return nil, err
+	}
+	if resp.LineTimestamps, err = times.lineTimestamps(req, kind, answer); err != nil {
 		return nil, err
 	}
 	return resp, nil
@@ -204,7 +209,7 @@ func Resolve(req Request) (*rxtypes.SamplesResponse, error) {
 // resolveLineWindows answers req.Lines, the lines-mode request, for a
 // file of the given kind. Timestamps mode hands it the lines it found,
 // so a time query reads its line and context exactly as --lines does.
-func resolveLineWindows(req Request, kind filekind.Kind, resp *rxtypes.SamplesResponse) error {
+func resolveLineWindows(req Request, kind filekind.Kind, resp *collected) error {
 	if !kind.IsCompressed() {
 		return resolveLines(req, resp)
 	}
@@ -312,6 +317,8 @@ type window struct {
 	done    bool
 	after   int
 	collect []string
+	// starts holds where each line of collect starts in the text.
+	starts []int64
 }
 
 // resolveOffsets answers every byte offset in the request from one
@@ -329,7 +336,7 @@ type window struct {
 // starts near the first offset when an index says where that is. The
 // pass itself is the same for every file, which is what keeps a plain
 // file and its compressed copies answering identically.
-func resolveOffsets(req Request, resp *rxtypes.SamplesResponse, text textSource) error {
+func resolveOffsets(req Request, resp *collected, text textSource) error {
 	windows := make([]*window, 0, len(req.Offsets))
 	var textSize int64 = -1
 	for _, v := range req.Offsets {
@@ -386,7 +393,10 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse, text textSource)
 			w.started, w.line = true, lineNum
 			resp.Offsets[w.key] = lineNum
 			if w.end < 0 {
-				w.collect = append(w.collect, before.lines()...)
+				for _, l := range before.lines() {
+					w.collect = append(w.collect, l.text)
+					w.starts = append(w.starts, l.start)
+				}
 				w.after = req.AfterContext
 			}
 			next++
@@ -400,6 +410,7 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse, text textSource)
 				continue
 			}
 			w.collect = append(w.collect, text)
+			w.starts = append(w.starts, pos)
 			switch {
 			case w.end >= 0:
 				// A byte range ends on the line holding its end offset.
@@ -416,7 +427,7 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse, text textSource)
 			}
 		}
 
-		before.push(text)
+		before.push(ringLine{text: text, start: pos})
 		pos, lineNum = end, lineNum+1
 		if readErr != nil {
 			break
@@ -438,6 +449,7 @@ func resolveOffsets(req Request, resp *rxtypes.SamplesResponse, text textSource)
 			continue
 		}
 		resp.Samples[w.key] = w.collect
+		resp.starts[w.key] = w.starts
 	}
 	return nil
 }
@@ -487,23 +499,30 @@ func checkpointBefore(
 // lineRing remembers the last n lines read, which is what a window that
 // reaches backwards needs.
 type lineRing struct {
-	buf  []string
+	buf  []ringLine
 	next int
 	size int
+}
+
+// ringLine is one remembered line: its text and where it starts in the
+// file's text.
+type ringLine struct {
+	text  string
+	start int64
 }
 
 func newLineRing(n int) *lineRing {
 	if n < 0 {
 		n = 0
 	}
-	return &lineRing{buf: make([]string, n)}
+	return &lineRing{buf: make([]ringLine, n)}
 }
 
-func (r *lineRing) push(text string) {
+func (r *lineRing) push(line ringLine) {
 	if len(r.buf) == 0 {
 		return
 	}
-	r.buf[r.next] = text
+	r.buf[r.next] = line
 	r.next = (r.next + 1) % len(r.buf)
 	if r.size < len(r.buf) {
 		r.size++
@@ -511,11 +530,11 @@ func (r *lineRing) push(text string) {
 }
 
 // lines returns the remembered lines in file order, oldest first.
-func (r *lineRing) lines() []string {
+func (r *lineRing) lines() []ringLine {
 	if r.size == 0 {
 		return nil
 	}
-	out := make([]string, 0, r.size)
+	out := make([]ringLine, 0, r.size)
 	start := (r.next - r.size + len(r.buf)) % len(r.buf)
 	for i := 0; i < r.size; i++ {
 		out = append(out, r.buf[(start+i)%len(r.buf)])
@@ -531,7 +550,7 @@ func (r *lineRing) lines() []string {
 // When req.IndexLoader returns a valid index and the requested line is
 // beyond the first checkpoint, we seek directly to the nearest checkpoint
 // at-or-before the target — avoids scanning the file from byte 0.
-func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
+func resolveLines(req Request, resp *collected) error {
 	// Lazy-load index; only needed if at least one query would benefit
 	// (single lines with context, or any range).
 	var idx *rxtypes.UnifiedFileIndex
@@ -586,7 +605,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 			if err != nil {
 				return err
 			}
-			lines, err := readLineRangeWithIndex(
+			lines, starts, err := readLineRangeWithIndex(
 				req.Source, v.Start, *v.End, ix,
 			)
 			if err != nil {
@@ -594,6 +613,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 			}
 			key := v.Key()
 			resp.Samples[key] = lines
+			resp.starts[key] = starts
 			resp.Lines[key] = -1 // Python parity: ranges skip the expensive offset compute
 			continue
 		}
@@ -625,7 +645,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 		if err != nil {
 			return err
 		}
-		lines, targetOffset, err := readLinesWithTarget(
+		lines, starts, targetOffset, err := readLinesWithTarget(
 			req.Source, startLine, endLine, target, ix,
 		)
 		if err != nil {
@@ -647,6 +667,7 @@ func resolveLines(req Request, resp *rxtypes.SamplesResponse) error {
 			continue
 		}
 		resp.Samples[key] = lines
+		resp.starts[key] = starts
 		// resp.Lines[key] holds the offset of line `target` — the line
 		// the caller asked about, not the context window's first line.
 		resp.Lines[key] = targetOffset
@@ -683,7 +704,8 @@ var openFileForSamples = func(src paths.Pinned) (readSeekCloser, error) {
 }
 
 // readLinesWithTarget reads lines [startLine, endLine] (1-based,
-// inclusive) and returns them PLUS the byte offset of `targetLine`.
+// inclusive) and returns them, the byte offset each of them starts at,
+// PLUS the byte offset of `targetLine`.
 //
 // When idx is non-nil and has a checkpoint at-or-before startLine, we
 // seek to that checkpoint first instead of scanning from byte 0. This
@@ -707,12 +729,12 @@ var openFileForSamples = func(src paths.Pinned) (readSeekCloser, error) {
 func readLinesWithTarget(
 	src paths.Pinned, startLine, endLine, targetLine int64,
 	idx *rxtypes.UnifiedFileIndex,
-) (lines []string, targetOffset int64, err error) {
+) (lines []string, starts []int64, targetOffset int64, err error) {
 	if startLine < 1 {
 		startLine = 1
 	}
 	if endLine < startLine {
-		return []string{}, -1, nil
+		return []string{}, []int64{}, -1, nil
 	}
 
 	// Decide seek origin: closest checkpoint <= startLine, or 0.
@@ -720,13 +742,13 @@ func readLinesWithTarget(
 
 	f, err := openFileForSamples(src)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	defer func() { _ = f.Close() }()
 
 	if seekOffset > 0 {
 		if _, err := f.Seek(seekOffset, io.SeekStart); err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 	}
 
@@ -755,13 +777,14 @@ func readLinesWithTarget(
 		// what the compressed paths and rx-python have always known.
 		if len(line) > 0 && currentLine >= startLine && currentLine <= endLine {
 			lines = append(lines, stripNewline(line))
+			starts = append(starts, offset)
 		}
 		offset += int64(len(line))
 		if readErr != nil {
 			if readErr == io.EOF {
 				break
 			}
-			return nil, 0, readErr
+			return nil, nil, 0, readErr
 		}
 		currentLine++
 		// Break as soon as we're past the requested range AND, if a
@@ -776,24 +799,25 @@ func readLinesWithTarget(
 			break
 		}
 	}
-	return lines, targetOffset, nil
+	return lines, starts, targetOffset, nil
 }
 
 // readLineRangeWithIndex is the range-path sibling of
-// readLinesWithTarget. Returns only the lines in [startLine, endLine];
-// the byte offset is not needed for range queries (Python returns -1).
+// readLinesWithTarget. Returns only the lines in [startLine, endLine]
+// and where each starts; the byte offset of a target line is not needed
+// for range queries (Python returns -1).
 func readLineRangeWithIndex(
 	src paths.Pinned, startLine, endLine int64,
 	idx *rxtypes.UnifiedFileIndex,
-) ([]string, error) {
-	lines, _, err := readLinesWithTarget(src, startLine, endLine, -1, idx)
-	return lines, err
+) ([]string, []int64, error) {
+	lines, starts, _, err := readLinesWithTarget(src, startLine, endLine, -1, idx)
+	return lines, starts, err
 }
 
-// readLineRange is the index-free sibling used by the byte-offset path.
+// readLineRange is the index-free sibling the bounded-read tests use.
 // Returns the lines and the offset of startLine (classic signature).
 func readLineRange(src paths.Pinned, startLine, endLine int64) ([]string, int64, error) {
-	lines, off, err := readLinesWithTarget(src, startLine, endLine, startLine, nil)
+	lines, _, off, err := readLinesWithTarget(src, startLine, endLine, startLine, nil)
 	return lines, off, err
 }
 

@@ -96,13 +96,16 @@ Both are overridden by explicit `--color=always`.
 ## Timestamps
 
 `rx samples --timestamps` and `GET /v1/samples?timestamps=` find lines
-by time ([timestamps](concepts/timestamps.md)). Two variables say which
-zone a time without one is in:
+by time ([timestamps](concepts/timestamps.md)), and every samples
+answer gives each line its timestamp (`line_timestamps`). Two variables
+say which zone a time without one is in, and a third how far a line
+without one looks back for it:
 
 | Variable | Default | Description |
 |---|---|---|
 | `RX_LOG_TZ` | `UTC` | The zone a file's timestamps were written in when they carry none. A query with a zone is turned into the file's wall-clock time with it, and `time_format.assumed_zone` reports it. |
 | `RX_QUERY_TZ` | unset | The zone a time query is read in when it carries none. Unset reads such a query in the file's own frame: as the file's wall clock, or at the offset of the first timestamp of a file whose timestamps carry zones, so a time copied from a line finds that line. `local` reads it in the zone of the rx process. |
+| `RX_TIMESTAMP_LOOKBACK_KB` | `64` | How far back, in KiB, a line without a timestamp of its own looks for the line whose timestamp it carries in `line_timestamps`: the nearest earlier line with one, when that line starts at most this far before it. `0` gives such a line none; at most `1024`. |
 
 ## Search-root sandbox
 
@@ -244,13 +247,15 @@ range:
 | `RX_ANALYZE_WINDOW_LINES` | 128 | 1 | 2048 | lines |
 | `RX_TASK_TTL_MINUTES` | 60 | 1 | 10080 | minutes (up to one week) |
 | `RX_SAMPLES_WAIT_SECONDS` | 5 | 0 | 3600 | seconds |
+| `RX_TIMESTAMP_LOOKBACK_KB` | 64 | 0 | 1024 | KiB |
 
 One rule applies to all of them:
 
 - Unset or empty: the default.
 - Not a whole decimal number (`abc`, `1.5`, ` 2`, `2MB`), or below the
   minimum (`0` and negative numbers for every variable except
-  `RX_SAMPLES_WAIT_SECONDS`, which takes `0`): the default.
+  `RX_SAMPLES_WAIT_SECONDS` and `RX_TIMESTAMP_LOOKBACK_KB`, which take
+  `0`): the default.
 - Above the maximum: the maximum.
 
 A value that is not used as it is logs one `invalid_setting` warning

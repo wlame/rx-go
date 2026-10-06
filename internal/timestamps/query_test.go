@@ -348,3 +348,37 @@ func TestResolve_DaylightSaving(t *testing.T) {
 		}
 	}
 }
+
+// InstantOf turns a value of a file's frame into a UTC instant: as it
+// is for a zoned file, read in the log zone for a zone-less one, and
+// refused when the instant falls outside the years 1 to 9999.
+func TestInstantOf(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("load zone: %v", err)
+	}
+	east, west := time.FixedZone("+05:00", 5*3600), time.FixedZone("-05:00", -5*3600)
+	wall := utcMs(2025, 12, 10, 7, 30, 0, 0)
+	cases := []struct {
+		name    string
+		fileMs  int64
+		hasZone bool
+		zone    *time.Location
+		want    int64
+		wantOK  bool
+	}{
+		{"zoned file", wall, true, tokyo, wall, true},
+		{"zone-less file in UTC", wall, false, nil, wall, true},
+		{"zone-less file in Tokyo", wall, false, tokyo, wall - 9*msPerHour, true},
+		{"first moment east of UTC", minValueMs, false, east, 0, false},
+		{"first moment west of UTC", minValueMs, false, west, minValueMs + 5*msPerHour, true},
+		{"last moment west of UTC", maxValueMs, false, west, 0, false},
+		{"last moment east of UTC", maxValueMs, false, east, maxValueMs - 5*msPerHour, true},
+	}
+	for _, tc := range cases {
+		got, ok := InstantOf(tc.fileMs, tc.hasZone, tc.zone)
+		if ok != tc.wantOK || (ok && got != tc.want) {
+			t.Errorf("%s: InstantOf = %d, %v; want %d, %v", tc.name, got, ok, tc.want, tc.wantOK)
+		}
+	}
+}

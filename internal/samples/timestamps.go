@@ -188,7 +188,7 @@ type timeWindow struct {
 // the lines-mode machinery (resolveLineWindows), which reads the lines
 // and their context exactly as `--lines=N` would: a time query never
 // numbers lines or picks context its own way.
-func resolveTimestamps(req Request, kind filekind.Kind, times *fileTimes, resp *rxtypes.SamplesResponse) error {
+func resolveTimestamps(req Request, kind filekind.Kind, times *fileTimes, resp *collected) error {
 	if len(req.Timestamps) > MaxTimestampValues {
 		return fmt.Errorf("%w: %d given, at most %d per request", ErrTooManyTimestamps, len(req.Timestamps), MaxTimestampValues)
 	}
@@ -285,7 +285,7 @@ func windowFor(value string, r timestamps.Resolved, found map[int64]lineAt) (tim
 
 // answerTimeWindows reads every window through the lines-mode machinery
 // in one request and files each answer under its query value.
-func answerTimeWindows(req Request, kind filekind.Kind, windows []timeWindow, resp *rxtypes.SamplesResponse) error {
+func answerTimeWindows(req Request, kind filekind.Kind, windows []timeWindow, resp *collected) error {
 	if len(windows) == 0 {
 		return nil
 	}
@@ -300,7 +300,7 @@ func answerTimeWindows(req Request, kind filekind.Kind, windows []timeWindow, re
 	}
 	sub := req
 	sub.Timestamps, sub.Lines = nil, lines
-	answer := &rxtypes.SamplesResponse{Offsets: map[string]int64{}, Lines: map[string]int64{}, Samples: map[string][]string{}}
+	answer := newCollected(&rxtypes.SamplesResponse{Offsets: map[string]int64{}, Lines: map[string]int64{}, Samples: map[string][]string{}})
 	if err := resolveLineWindows(sub, kind, answer); err != nil {
 		return err
 	}
@@ -313,6 +313,7 @@ func answerTimeWindows(req Request, kind filekind.Kind, windows []timeWindow, re
 			return fmt.Errorf("samples of %s: line %d, found at %q, was not read back", req.Path, w.first, w.value)
 		}
 		resp.Samples[w.value] = sample
+		resp.starts[w.value] = answer.starts[w.position().Key()]
 		resp.Timestamps[w.value] = w.first
 	}
 	return nil
@@ -582,8 +583,7 @@ func contentEndOf(b []byte) int {
 // be entered at its end, so its whole text is decompressed: the cost
 // that reading such a file without an index always has.
 func (t *fileTimes) lastStamp(req Request, kind filekind.Kind) (timestamps.Stamp, error) {
-	readsByPosition := !kind.IsCompressed() || (kind.IsSeekable() && kind.Table != nil)
-	if !readsByPosition {
+	if !readsByPosition(kind) {
 		return t.lastStampOfStream(req.Source, kind.Format)
 	}
 	f, err := openFileForSamples(req.Source)

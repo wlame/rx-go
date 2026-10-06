@@ -87,6 +87,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with an `invalid_setting` warning. The zone database is built into
   the binary (about 450 KB), so zone names work without
   `/usr/share/zoneinfo`.
+- Every `samples` answer gives each sample line its time in
+  `line_timestamps`, keyed and ordered as `samples`, in all three modes
+  (CLI `--json` and HTTP): milliseconds since the Unix epoch as a UTC
+  instant (a zone-less file's wall clock read in `RX_LOG_TZ`), or `null`.
+  A line without a timestamp of its own, such as a traceback line,
+  carries the timestamp of the nearest earlier line that has one when
+  that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB before it
+  (default 64, from 0 to 1024; 0 gives such a line none). A key whose
+  sample is `null` maps to `null`, and the field is `null` for a file
+  without a timestamp format. When a sample's first line has no
+  timestamp, the answer reads back at most that many KiB before it,
+  never through the index; a gzip, bzip2, xz or plain zstd file
+  decompresses its text up to that line once more for it. Human output
+  does not change. Part of contract 1.5.
 
 ### Changed
 

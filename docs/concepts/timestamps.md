@@ -66,6 +66,33 @@ lines without context, as a `--lines` range does. It is empty (`-1`,
 `null`) when no line is at T1, or when its end comes before its start,
 which a file whose writers disagree can give.
 
+## Effective timestamps
+
+Every samples answer gives each of its lines a time, in
+`line_timestamps`, in every mode (`--lines`, `--offsets`,
+`--timestamps`). A line's **effective timestamp** is its own timestamp,
+or else the own timestamp of the nearest earlier line that has one,
+when that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` KiB (64 by
+default) before this line's start; otherwise it has none (`null`). So
+each line of a traceback carries the time of the record it belongs to,
+and a line far from any record carries none rather than a guess. The
+distance is counted in bytes of the text, line breaks included.
+
+The value is milliseconds since the Unix epoch, a UTC instant: a file
+whose timestamps carry no zone has its wall clock read in `RX_LOG_TZ`.
+A value that zone would move outside the years 1 to 9999 is `null`.
+The whole field is `null` when the file has no timestamp format.
+
+When the first line of a sample has no timestamp of its own, rx reads
+the text before it, at most `RX_TIMESTAMP_LOOKBACK_KB` KiB, to find
+the record's line, even when that line is before the sample (a window
+that starts in the middle of a traceback). That read never uses the
+line index, so the answer is the same with and without one. A plain
+file and a seekable zstd file read only those bytes; a gzip, bzip2, xz
+or plain zstd file cannot be entered in the middle, so it decompresses
+its text up to the sample once more. One request reads each byte back
+at most once, however many samples it asks for.
+
 ## Queries
 
 Each end of a query may be:

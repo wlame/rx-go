@@ -134,3 +134,33 @@ func TestSamples_TimestampsRefusedAsBadRequest(t *testing.T) {
 		})
 	}
 }
+
+// line_timestamps is in a lines answer too, the same before and after
+// an index build, and null for a file without timestamps.
+func TestSamples_LineTimestampsOverHTTP(t *testing.T) {
+	files := timedRoot(t)
+	ts := newTestServer(t)
+	got := samplesanswer.ColdAndIndexed(t, files["app.log"], 0, func(t testing.TB) any {
+		status, body := getSamples(t, ts.URL, url.Values{"path": {files["app.log"]}, "lines": {"3"}, "context": {"1"}})
+		if status != http.StatusOK {
+			t.Fatalf("status %d: %s", status, body)
+		}
+		return json.RawMessage(body)
+	})
+	var answer struct {
+		LineTimestamps map[string][]*int64 `json:"line_timestamps"`
+	}
+	if err := json.Unmarshal(got.(json.RawMessage), &answer); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	line2, line4 := int64(1765370096123), int64(1765370097000)
+	if got := answer.LineTimestamps["3"]; len(got) != 3 || got[0] == nil || *got[0] != line2 ||
+		got[1] == nil || *got[1] != line2 || got[2] == nil || *got[2] != line4 {
+		t.Errorf("line_timestamps[3] = %v, want lines 2, 2 and 4's timestamps", got)
+	}
+
+	status, body := getSamples(t, ts.URL, url.Values{"path": {files["plain.log"]}, "lines": {"2"}})
+	if status != http.StatusOK || !strings.Contains(string(body), `"line_timestamps":null`) {
+		t.Errorf("file without timestamps: status %d, body %s; want line_timestamps null", status, body)
+	}
+}

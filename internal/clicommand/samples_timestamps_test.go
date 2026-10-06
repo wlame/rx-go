@@ -113,3 +113,37 @@ func captureStderr(t *testing.T) func() string {
 		return captured
 	}
 }
+
+// --json gives every sample line its effective timestamp in every mode:
+// the traceback line carries the timestamp of the line before it, and a
+// window that starts on it reads back for that line.
+func TestSamples_LineTimestampsInJSON(t *testing.T) {
+	path := timedLogFixture(t)
+	got := samplesanswer.ColdAndIndexed(t, path, 0, func(t testing.TB) any {
+		var buf bytes.Buffer
+		err := runSamples(&buf, samplesParams{path: path, lines: []string{"3", "2-4"}, ctxLines: 0, jsonOutput: true})
+		if err != nil {
+			t.Fatalf("runSamples: %v", err)
+		}
+		return json.RawMessage(buf.Bytes())
+	})
+	var answer struct {
+		LineTimestamps map[string][]*int64 `json:"line_timestamps"`
+	}
+	if err := json.Unmarshal(got.(json.RawMessage), &answer); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	line2, line4 := int64(1765370096123), int64(1765370097000) // 2025-12-10 12:34:56.123 and 12:34:57 UTC
+	want := map[string][]int64{"3": {line2}, "2-4": {line2, line2, line4}}
+	for key, values := range want {
+		got := answer.LineTimestamps[key]
+		if len(got) != len(values) {
+			t.Fatalf("line_timestamps[%s] = %v, want %v", key, got, values)
+		}
+		for i, v := range values {
+			if got[i] == nil || *got[i] != v {
+				t.Errorf("line_timestamps[%s][%d] = %v, want %d", key, i, got[i], v)
+			}
+		}
+	}
+}

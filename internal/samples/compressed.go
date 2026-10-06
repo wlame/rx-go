@@ -31,7 +31,7 @@ func resolveCompressedLines(
 	req Request,
 	format compression.Format,
 	idx *rxtypes.UnifiedFileIndex,
-	resp *rxtypes.SamplesResponse,
+	resp *collected,
 ) error {
 	needTotalLines := false
 	for _, v := range req.Lines {
@@ -144,6 +144,7 @@ func resolveCompressedLines(
 			for _, w := range windows {
 				if lineNum >= w.start && lineNum <= w.end {
 					resp.Samples[w.key] = append(resp.Samples[w.key], text)
+					resp.starts[w.key] = append(resp.starts[w.key], pos)
 				}
 				if lineNum == w.line {
 					resp.Lines[w.key] = pos
