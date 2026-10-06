@@ -178,7 +178,9 @@ with six differences that `rx` chose:
   a core dump of any size stored in the journal costs the length of its
   name. The size bounds of the first three points apply to the values
   the text shows; a field the text does not show is never damage for its
-  size, nor for the dictionary its xz stream declares.
+  size, nor for the dictionary its xz stream declares, except that a zstd
+  value whose frame declares a window above 128 MiB is damage (crafted
+  input only; journald writes windows of a few MiB).
 - Finding a field's name may need the start of its compressed value. A
   name that needs more than 129 KiB of the stored bytes is damage. Only
   an lz4 value whose text starts with an incompressible run of more than

@@ -433,17 +433,15 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
    names no chain), 4 access denied, 5 interrupted, 6 the log chain is
    invalid, 7 the log chain's files changed since `--fingerprint=`.
    Scripts branch on them, so a change is breaking.
-11. **A journal's text is fixed by the rules file, and a rule change
-   invalidates every cache.** The text of a systemd journal is, entry by
-   entry, what `journalctl --file=F --no-pager --utc -q -o
-   short-iso-precise` of systemd 257 prints. The authority for every byte
-   of it is the rules file of the journal work
-   (`2026-10-13-journalctl-short-rules.md`, kept with the owner's
-   analysis notes, outside this repo), which gives each rule with its
-   systemd source lines and the invented case that confirmed it; the
-   renderer (`internal/journal/render*.go`) implements all of them, and
-   `internal/journal/testdata/render_cases.json.zst` holds those cases
-   with `journalctl`'s own output as its test table. Line numbers and byte
+11. **A journal's text is fixed by `journalctl`'s output, and a rule
+   change invalidates every cache.** The text of a systemd journal is,
+   entry by entry, what `journalctl --file=F --no-pager --utc -q -o
+   short-iso-precise` of systemd 257 prints. The authorities for every
+   byte of it are
+   `internal/journal/testdata/render_cases.json.zst`, which holds each
+   case with `journalctl`'s own output and is checked by the renderer's
+   table test, and `docs/concepts/journal-files.md`; the renderer
+   (`internal/journal/render*.go`) implements them. Line numbers and byte
    offsets of every answer about a journal refer to this text, so a change
    to a rendering rule moves them in every stored cache: bump
    `index.Version`, `findings.CacheVersion` and `trace.TraceCacheVersion`
@@ -672,7 +670,8 @@ Paste the output. Do not summarize it.
   128 MiB it reads with) — its
   format from the magic bytes (never the name), seekable from the seek
   table, text against binary from a NUL byte in the first 8 KiB of its
-  text (decompressed for a compressed file) — and every command and
+  text (decompressed for a compressed file; a journal's text-ness comes
+  from its header alone, since its rendered text never holds a NUL) — and every command and
   route asks it, through the pin; without `--text`, rg on stdin turns each later NUL byte into a line
   break, which numbers the lines after it too high and splits the NUL
   line. Without `--encoding=none`, rg strips a UTF-8 byte-order mark at

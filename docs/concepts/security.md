@@ -518,7 +518,10 @@ rx only reads it. What the reader guarantees:
   reads the block (journald writes 1 MiB). A field the text does not
   show is read only as far as its name, through a small dictionary
   whatever its stream declares, so a core dump of any size stored in a
-  journal costs the length of its name.
+  journal costs the length of its name. The one exception is a zstd value
+  whose frame declares a window above 128 MiB, which is damage even in a
+  field the text does not show (crafted input only; journald writes
+  windows of a few MiB).
 - **The cost of the text is the cost of the file.** A value larger than
   the reader's cache (32 MiB) is decoded again for every entry that lists
   it, so a crafted journal can make rx produce much text from a small

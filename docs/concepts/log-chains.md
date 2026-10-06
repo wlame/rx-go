@@ -473,6 +473,9 @@ a journal's text starts with its time. No part is missing: the numbers
 between two archives belong to journald's other journals, and journald
 deletes old archives itself.
 
+The time gaps of a journal chain come from the parts' shown times, which
+may go back, so a time that goes back may hide a gap.
+
 A journal journald disposed of because it found it damaged
 (`system@{time}-{random}.journal~`) matches no template and stays a
 single file. A damaged journal rx can read stays in its chain: its text
@@ -492,7 +495,7 @@ invalid instead, with `unreadable`.
 | Parts of one chain | 10,000; more is `too_many_parts` |
 | Missing parts named | 100; `missing_count` counts them all |
 | Overlap between neighboring parts | `RX_CHAIN_OVERLAP_SECONDS`, 60 by default, 0 to 86400 |
-| Time gaps | Reported in a ready chain of four parts with lines or more, where the time from a part's highest timestamp to the next part's first is more than 1.5 times the median distance between neighboring first timestamps; a gap does not make a chain invalid |
+| Time gaps | Reported in a ready chain of four parts with lines or more, where the time from a part's highest timestamp to the next part's first is more than 1.5 times the median distance between neighboring first timestamps; a gap does not make a chain invalid; in a journal chain the times are the parts' shown times, so a time that goes back may hide a gap |
 | Kept descriptions | 64 chains and 40,000 parts in all |
 | Time values in one samples request | 1,000 |
 | Lines and bytes of one samples answer | `RX_SAMPLES_MAX_LINES`, `RX_SAMPLES_MAX_BYTES` (HTTP), over the whole answer |

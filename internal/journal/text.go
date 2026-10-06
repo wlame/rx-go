@@ -73,7 +73,9 @@ var errClosed = errors.New("read of a closed journal text reader")
 //     never writes, may reach 128 MiB on its own before it is refused,
 //     and its buffer grows as it decodes, so the buffers it grew out of
 //     are held too until they are collected (about 313 MiB of heap in
-//     all for a frame of 128 MiB, measured).
+//     all for a frame of 128 MiB, measured). A zstd value whose frames
+//     declare less text than they hold can take the heap of one value to
+//     about 287 MiB before it is refused.
 //     The values are kept until the next entry or Close, and let go
 //     before the next entry's values are read;
 //   - the stored bytes of the value being decoded, when they pass 129 KiB

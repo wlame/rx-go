@@ -16,8 +16,10 @@ package journal
 // first length bytes). So a core dump kept as one field
 // costs at most 129 KiB of reading, and a value of a few stored bytes
 // that decodes to 128 MiB costs a block of decoding, not 128 MiB per
-// entry that lists it. Such a value is never damage for its size. A
-// value of a field the renderer reads is read whole, so it may be at
+// entry that lists it. Such a value is never damage for its size, except
+// that a zstd value whose frame declares a window above
+// compression.WindowLimit is refused (decodeName). A value of a field the
+// renderer reads is read whole, so it may be at
 // most compression.WindowLimit (128 MiB), stored or decoded, and the
 // shown values of one entry may be at most 128 MiB together
 // (walker.readEntry); past either bound the entry is damaged. A size the
@@ -170,7 +172,8 @@ const nameStoredLimit = 129 << 10
 // does not decode as far as the answer needs, is damage; so is a value of
 // a field the renderer reads whose stored bytes pass 128 MiB, which is
 // refused before it is read whole. A value of another field is never
-// damage for its size.
+// damage for its size, except a zstd value whose frame declares a window
+// above compression.WindowLimit.
 //
 // room is what the budget of the entry being read has left for the
 // payload of a field the renderer reads (maxEntryValues at most). A
@@ -492,8 +495,11 @@ func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 // (4 KiB at least), whatever the stream declares. It is given no limit
 // on the declared dictionary (the largest uint64): it never makes the
 // dictionary a block declares, so a declared size costs nothing here,
-// and a field the text does not show is never damage for its size. The
-// whole decode of a shown value holds the dictionary to maxXZDictionary.
+// and a field the text does not show is never damage for its size (a zstd
+// value whose frame declares a window above WindowLimit is the one
+// exception: the decoder below refuses it, and decodeName reports it as
+// damage). The whole decode of a shown value holds the dictionary to
+// maxXZDictionary.
 func (w *walker) namePrefixReader(compressed uint8, stored io.Reader) (io.Reader, error) {
 	if compressed == objectCompressedXZ {
 		return compression.NewXzPrefixReader(stored, math.MaxUint64, namePrefixBytes)
