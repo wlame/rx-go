@@ -59,12 +59,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`not a text file: a NUL byte in its first 8 KiB`, `… UTF-16 text …`,
   `… a systemd journal rx cannot read: <why>`); `null` for a text file
   and a directory.
+- Rotated systemd journals form a log chain: `system.journal` and its
+  `system@{id}-{seqnum}-{time}.journal` archives, by a new name template
+  `journal` whose key is the head time an archive's name writes.
+  Archives without their active journal are a chain too, a
+  `….journal~` file stays a single file, and `user-1000.journal` is the
+  active file of its own chain, no longer a numbered part of
+  `user.journal`. A journal chain is ordered by its parts' headers, as
+  systemd orders journal files, not by the times its text shows, which
+  may go back: the parts of one counter by the sequence number of their
+  first entry, the counters by the time of their first part's first
+  entry. The order needs no line index, so `GET /v1/logs/chain` lists a
+  pending journal chain's parts in it already. Its checks: the new
+  reason `entries_overlap` (two neighboring parts of one counter hold
+  entries in common, as a copy of a part left beside it does),
+  `active_not_last`, and `unreadable` for a part whose bytes are not a
+  journal (`NAME cannot be read as a journal: …`); the time overlap
+  check does not apply, and no part is missing. For the parts of one
+  counter the chain's text is what `journalctl` prints over all of
+  them.
 
 ### Changed
 
 - HTTP wire contract 2.1, an addition to 2.0: `journal` in the index
-  answers and `not_text_reason` in the tree. A client of 2.0 keeps
-  working.
+  answers, `not_text_reason` in the tree and the chain reason
+  `entries_overlap`. A client of 2.0 keeps working.
 - Line index format 12, for the journal section: every index stored by
   an earlier version is treated as absent and built again once.
 - Dependencies updated: huma 2.39.1, chi 5.3.1, klauspost/compress

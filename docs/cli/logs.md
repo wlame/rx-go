@@ -95,9 +95,10 @@ code when they all share one, else 1.
 
 ## `rx logs show`
 
-The description of each chain: its parts in time order, their line
-counts and times, the checks that make the chain one text, its state and
-its fingerprint. The answer is the one
+The description of each chain: its parts in time order (a chain of
+rotated systemd journals in the order of its parts' headers), their
+line counts and times, the checks that make the chain one text, its
+state and its fingerprint. The answer is the one
 [`GET /v1/logs/chain`](../api/endpoints/logs-chain.md) gives; that page
 explains each field.
 
