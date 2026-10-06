@@ -15,7 +15,8 @@ import (
 // detected from.
 //
 // TextReader decodes each frame whole, so its memory follows the frame
-// size the seek table declares, up to 4 GiB a frame. HeadReader streams
+// size the seek table declares, up to compression.WindowLimit a frame
+// (ReadSeekTable refuses a table with a larger one). HeadReader streams
 // each frame through a compression.HeadDecoder instead: memory holds
 // one frame's window plus a block, whatever the frame's size, and a
 // frame that declares a window above the limit is refused with an error

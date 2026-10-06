@@ -89,23 +89,32 @@ func TestOf_AFileDeclaringALargeFrameCostsAFewMebibytes(t *testing.T) {
 	}
 }
 
-// The detection head of a seekable file is read frame by frame through
-// a streaming decoder, so it holds the frame's window and the head,
-// never the whole frame. A frame that declares more window than a head
-// read allows is refused with compression.ErrWindowTooLarge before the
+// A seekable file whose one frame holds 256 MiB of text has a seek
+// table rx does not use, since it gives the frame more than rx decodes
+// whole (TableUnused): the file is read as the zstd stream it also is.
+// Its detection head then holds the frame's window and the head, never
+// the frame, and a frame that declares more window than a head read
+// allows is refused with compression.ErrWindowTooLarge before the
 // decoder reserves it.
-func TestReadTextHead_ASeekableFrameIsNotDecodedWhole(t *testing.T) {
+func TestReadTextHead_AFrameAboveTheLimitIsReadAsAStream(t *testing.T) {
 	const limit = 1 << 20
 	text := largeFrameText()
 	files := largeFrameFiles(t, text)
+	formatOf := func(t *testing.T, body []byte) Kind {
+		t.Helper()
+		kind := FormatOf(bytes.NewReader(body), int64(len(body)))
+		if kind.Format != compression.FormatZstd || !errors.Is(kind.TableUnused, seekable.ErrFrameTooLargeToHold) {
+			t.Fatalf("FormatOf = %+v; want plain zstd with an unused table", kind)
+		}
+		return kind
+	}
 
 	t.Run("rx's encoder", func(t *testing.T) {
 		body := files["seekable, rx's encoder"]
-		r := bytes.NewReader(body)
-		kind := FormatOf(r, int64(len(body)))
+		kind := formatOf(t, body)
 		var head []byte
 		var err error
-		allocated := allocatedBy(func() { head, err = ReadTextHead(r, int64(len(body)), kind, limit) })
+		allocated := allocatedBy(func() { head, err = ReadTextHead(bytes.NewReader(body), int64(len(body)), kind, limit) })
 		t.Logf("ReadTextHead allocated %d KiB", allocated>>10)
 		if err != nil {
 			t.Fatalf("ReadTextHead: %v", err)
@@ -122,13 +131,9 @@ func TestReadTextHead_ASeekableFrameIsNotDecodedWhole(t *testing.T) {
 
 	t.Run("single segment", func(t *testing.T) {
 		body := files["seekable, single segment"]
-		r := bytes.NewReader(body)
-		kind := FormatOf(r, int64(len(body)))
-		if !kind.IsSeekable() {
-			t.Fatalf("fixture is %+v; want a seekable file", kind)
-		}
+		kind := formatOf(t, body)
 		var err error
-		allocated := allocatedBy(func() { _, err = ReadTextHead(r, int64(len(body)), kind, limit) })
+		allocated := allocatedBy(func() { _, err = ReadTextHead(bytes.NewReader(body), int64(len(body)), kind, limit) })
 		t.Logf("ReadTextHead allocated %d KiB to refuse: %v", allocated>>10, err)
 		if !errors.Is(err, compression.ErrWindowTooLarge) {
 			t.Errorf("err = %v; want compression.ErrWindowTooLarge", err)

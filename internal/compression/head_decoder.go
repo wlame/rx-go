@@ -8,9 +8,11 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// ErrWindowTooLarge reports a zstd frame that needs more window than a
-// head reader allows.
-var ErrWindowTooLarge = errors.New("zstd frame needs a larger window than a head read allows")
+// ErrWindowTooLarge reports a zstd frame that needs more window than
+// the decoder reading it allows: the window its header declares, or a
+// single-segment frame's content size, which is its window. It wraps
+// ErrTooLargeToDecode.
+var ErrWindowTooLarge = fmt.Errorf("%w: a zstd frame needs a window above the limit", ErrTooLargeToDecode)
 
 // windowRefusals are the errors klauspost's decoder gives for a frame
 // whose window is above its limits: the window a frame header declares
@@ -102,12 +104,38 @@ func (h *HeadDecoder) Close() error {
 // ErrWindowTooLarge and returns any other error, io.EOF included, as
 // it is.
 func windowError(err error) error {
-	for _, refusal := range windowRefusals {
-		if errors.Is(err, refusal) {
-			return fmt.Errorf("%w: %w", ErrWindowTooLarge, err)
-		}
+	if IsWindowRefusal(err) {
+		return fmt.Errorf("%w: %w", ErrWindowTooLarge, err)
 	}
 	return err
+}
+
+// IsWindowRefusal reports whether err is klauspost's refusal of a frame
+// whose window is above a decoder's limit: ErrWindowSizeExceeded, or
+// ErrDecoderSizeExceeded, which a streaming decoder gives for a
+// single-segment frame whose content size is above the limit. A decoder
+// used through DecodeAll gives ErrDecoderSizeExceeded for output beyond
+// its limit too; its caller tells the two apart (seekable.DecodeFrame).
+func IsWindowRefusal(err error) bool {
+	for _, refusal := range windowRefusals {
+		if errors.Is(err, refusal) {
+			return true
+		}
+	}
+	return false
+}
+
+// boundedOptions are the options every zstd decoder of a file's text is
+// created with, besides a HeadDecoder's own: a frame whose header
+// declares a window above WindowLimit is refused before the window is
+// reserved, and so is a single-segment frame whose content size, its
+// window, is above it. Through DecodeAll they also stop a frame's text
+// at WindowLimit, however much the frame would give.
+func boundedOptions() []zstd.DOption {
+	return []zstd.DOption{
+		zstd.WithDecoderMaxWindow(WindowLimit),
+		zstd.WithDecoderMaxMemory(WindowLimit),
+	}
 }
 
 // streamOnly hides every method of a reader except Read.

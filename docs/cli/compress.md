@@ -169,6 +169,8 @@ the 465 MB log, 429 frames and 95.3 MB (5.11x) against 114 frames and
 47.8 MB at 4 MiB. Smaller frames mean finer-grained random access: a
 line-index lookup decompresses only the enclosing 1 MiB instead of
 4 MiB. See [frame size trade-offs](../concepts/compression.md#frame-size-trade-offs).
+Frames above 128 MiB are written, but rx reads such a file as one plain
+zstd stream, without its seek table.
 
 Use smaller frames when:
 

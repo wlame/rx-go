@@ -84,7 +84,13 @@ func NewReader(src io.ReadCloser, format Format) (io.ReadCloser, error) {
 		// so it must be constructed fresh per stream and closed when
 		// done. The per-frame path in internal/seekable/decoder.go uses
 		// the pool instead.
-		r, err := zstd.NewReader(src)
+		//
+		// SECURITY: a frame declares the window the decoder reserves, so
+		// the decoder refuses one above WindowLimit before reserving it,
+		// with an error wrapping ErrWindowTooLarge (boundedOptions). It
+		// then holds one window at a time, however much text a frame
+		// holds.
+		r, err := zstd.NewReader(src, boundedOptions()...)
 		if err != nil {
 			return nil, fmt.Errorf("zstd reader: %w", err)
 		}
@@ -144,7 +150,11 @@ type zstdReaderCloser struct {
 	r *zstd.Decoder
 }
 
-func (z zstdReaderCloser) Read(p []byte) (int, error) { return z.r.Read(p) }
+// Read reads text, with a window refusal wrapped in ErrWindowTooLarge.
+func (z zstdReaderCloser) Read(p []byte) (int, error) {
+	n, err := z.r.Read(p)
+	return n, windowError(err)
+}
 
 // Close releases the decoder's internal buffers.
 func (z zstdReaderCloser) Close() error {

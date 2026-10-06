@@ -12,6 +12,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/config"
 	"github.com/wlame/rx-go/internal/filekind"
 	"github.com/wlame/rx-go/internal/paths"
@@ -302,6 +303,11 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			// A time the request names wrongly, or a time query on a
 			// file without timestamps: the request is at fault.
 			return nil, ErrBadRequest(err.Error())
+		}
+		if errors.Is(err, compression.ErrTooLargeToDecode) {
+			// A file rx refuses to decompress is refused like a file
+			// that is not text: the file, not the server, is at fault.
+			return nil, ErrBadRequest(fmt.Sprintf("%s: %s", compression.TooLargeToDecodeReason, validated))
 		}
 		if err != nil {
 			return nil, ErrInternal(err.Error())
