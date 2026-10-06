@@ -80,6 +80,12 @@ type Part struct {
 	// classified. Such a part stays in the chain, so a description can
 	// say why the chain cannot be read; Format is then FormatNone.
 	ReadError error
+	// NotText is the reason the text check gave (filekind.Kind.NotText)
+	// for a part that is not text, which only a journal chain keeps (see
+	// Group): a binary file named system.journal, or a journal whose
+	// header rx cannot read. Describing the chain says that such a part
+	// cannot be read as a journal. Empty for every other part.
+	NotText string
 
 	// newestLow is the direction of the part's key (nameMatch), kept
 	// for ordering.
@@ -181,17 +187,19 @@ func ClassifyPinned(e Entry) (filekind.Kind, error) {
 //
 // A file belongs to a chain when its name matches a row of Templates
 // (the chain name comes from the row), or when it is named exactly like
-// a chain name some other file gives: that file is the active part. A
-// file named like a journal chain is its active part even when its
-// name also matches another row (`user-1000.journal`, see groupNamed).
+// a chain name some other file gives: that file is the active part. When
+// archives of a journal chain are in the listing (`user-1000@….journal`),
+// the file named like that chain is its active part even when its name
+// also matches another row (`user-1000.journal`, see groupNamed).
 // Left out are directories, hidden entries (unless hidden entries are
 // on), names ending in `.tmp`, files whose text check says they are not
-// text (classify), and the parts of a template that needs the active
-// file when that file is absent or not text. A file the text check
-// cannot read stays a part, with the error (Part.ReadError): the chain
-// it belongs to cannot be read as one text, and its description says
-// why. One generation in several encodings is one part (see
-// choosePart). A group needs two parts to be a chain.
+// text (classify; a journal chain keeps them as parts, with the reason
+// in Part.NotText, see journalChainKeeps), and the parts of a template
+// that needs the active file when that file is absent or not text. A
+// file the text check cannot read stays a part, with the error
+// (Part.ReadError): the chain it belongs to cannot be read as one text,
+// and its description says why. One generation in several encodings is
+// one part (see choosePart). A group needs two parts to be a chain.
 //
 // classify is called only for entries that can form a chain: the names
 // of a group that holds two names or more, so the files of a large
@@ -216,12 +224,14 @@ type member struct {
 // groupNamed is Group, restricted to the chain named only when only is
 // not empty: the other groups are neither classified nor returned.
 //
-// A file named like a journal chain (a chain some name of the journal
-// row gives) is that chain's active part, whatever other row its name
-// also matches: journald's user journal `user-1000.journal` has the
-// shape of a numbered part before an extension, but it is the active
-// file of `user-1000@….journal`, never the 1000th rotation of
-// `user.journal`.
+// When archives of a journal chain are in the listing (names of the
+// journal row, `user-1000@….journal`), the file named like that chain is
+// its active part, whatever other row its name also matches: journald's
+// user journal `user-1000.journal` has the shape of a numbered part
+// before an extension, but beside its archives it is their active file,
+// not the 1000th rotation of `user.journal`. Without such archives the
+// name is matched as any other: `user-1000.journal` (or `app-1.journal`)
+// stays a numbered part of `user.journal` (`app.journal`).
 func groupNamed(dir string, entries []Entry, classify Classify, only string) []Candidate {
 	matched := matchEntries(entries)
 	journalChains := journalChainNames(matched)
@@ -299,6 +309,9 @@ func isCandidateFile(e Entry) bool {
 // whose names matched a template (members) and the active file, when
 // one exists. It reports false when they do not form a chain.
 func buildCandidate(dir, chain string, members []member, active Entry, hasActive bool, classify Classify) (Candidate, bool) {
+	// The rule comes from the members' names, before any file is read:
+	// a journal chain keeps every member, text or not.
+	keeps := keepRuleOf(members)
 	if !hasActive {
 		members = withoutActiveOnlyParts(members)
 	}
@@ -311,11 +324,11 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 
 	var activePart Part
 	if hasActive {
-		format, isPart, readErr := textCheck(active, classify)
-		if isPart {
+		if checked := textCheck(active, classify); keeps(checked) {
 			activePart = Part{
 				Name: active.Name, Path: active.Path, IsActive: true, Duplicates: []string{},
-				Info: active.Info, Format: format, File: active.File, ReadError: readErr,
+				Info: active.Info, Format: checked.format, File: active.File, ReadError: checked.readErr,
+				NotText: checked.notText,
 			}
 		} else {
 			hasActive = false
@@ -329,7 +342,7 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 	// directory of rotated names would be work for nothing: a listing
 	// costs at most MaxParts+1 classifications per chain, however many
 	// files share its name.
-	parts := chooseParts(members, classify, MaxParts+1-boolCount(hasActive))
+	parts := chooseParts(members, classify, keeps, MaxParts+1-boolCount(hasActive))
 	if hasActive {
 		parts = append(parts, activePart)
 	}
@@ -371,23 +384,62 @@ func boolCount(b bool) int {
 	return 0
 }
 
-// textCheck classifies an entry for membership. isPart is false for a
-// file that is not text. A text file gives its compression format; a
-// file the check cannot open or state is a part too, with the error
-// (readErr) and FormatNone. An empty file is plain text and is not
-// opened.
-func textCheck(e Entry, classify Classify) (format compression.Format, isPart bool, readErr error) {
+// textResult is what the text check says about an entry.
+type textResult struct {
+	// format is the entry's compression format, detected from its
+	// bytes; FormatNone for an empty file and for one the check could
+	// not read.
+	format compression.Format
+	// notText is why the entry is not text (filekind.Kind.NotText); ""
+	// for a text file.
+	notText string
+	// readErr is the error the check met when it could not open or
+	// state the entry; nil when it classified it.
+	readErr error
+}
+
+// textCheck classifies an entry for membership: its compression format
+// and whether it is text, or the error of a check that could not open
+// or state it. An empty file is plain text and is not opened.
+func textCheck(e Entry, classify Classify) textResult {
 	if e.Info.Size() == 0 {
-		return compression.FormatNone, true, nil
+		return textResult{format: compression.FormatNone}
 	}
 	kind, err := classify(e)
 	if err != nil {
-		return compression.FormatNone, true, err
+		return textResult{format: compression.FormatNone, readErr: err}
 	}
-	if !kind.IsText() {
-		return compression.FormatNone, false, nil
+	return textResult{format: kind.Format, notText: kind.NotText}
+}
+
+// keepsMember says whether a chain keeps, as a part, an entry the text
+// check found to be checked.
+type keepsMember func(checked textResult) bool
+
+// textChainKeeps is the rule of a chain of text logs: it keeps its text
+// files, and the files it cannot read so that its description says
+// why. A file that is not text (`wtmp.1`, a NUL byte in a log) is no
+// part.
+func textChainKeeps(checked textResult) bool { return checked.notText == "" }
+
+// journalChainKeeps is the rule of a journal chain: it keeps every
+// member. A member that is not text is a journal whose header rx cannot
+// read, or a file that is no journal (a binary file named
+// system.journal). Leaving it out would leave a chain that looks whole
+// while entries are lost, so it stays a part (Part.NotText), and the
+// chain's description says that it cannot be read as a journal.
+func journalChainKeeps(textResult) bool { return true }
+
+// keepRuleOf is the rule of the chain whose rotated files are members:
+// a journal chain's when one of their names is of the journal row, a
+// chain of text logs' otherwise.
+func keepRuleOf(members []member) keepsMember {
+	for _, m := range members {
+		if m.match.template.ID == journalTemplateID {
+			return journalChainKeeps
+		}
 	}
-	return kind.Format, true, nil
+	return textChainKeeps
 }
 
 // formatPreference ranks the encodings of one generation: the first
@@ -416,24 +468,28 @@ func formatRank(f compression.Format) int {
 	return len(formatPreference)
 }
 
-// encoding is one member of a generation that is a part: text, with
-// its format, or unreadable, with the error.
+// encoding is one member of a generation that its chain keeps (its
+// keepsMember rule), with what the text check said about it.
+//
+// Go note: embedding textResult makes its fields (format, notText,
+// readErr) fields of encoding too: e.format reads e.textResult.format.
 type encoding struct {
 	member
-	format  compression.Format
-	readErr error
+	textResult
 }
 
-// isUnreadable is 1 for an encoding the text check could not read and 0
-// for one it read, so a sort puts every readable encoding first.
-func (e encoding) isUnreadable() int { return boolCount(e.readErr != nil) }
+// cannotBeRead is 1 for an encoding that cannot be read as text (the
+// text check could not read it, or it is not text) and 0 for a text
+// encoding, so a sort puts every text encoding first.
+func (e encoding) cannotBeRead() int { return boolCount(e.readErr != nil || e.notText != "") }
 
 // chooseParts makes one part per generation of members, classifying
 // them a generation at a time in the order the generations first appear
 // (the directory listing's, by name), and stops once it holds limit
 // parts: the generations after that are neither classified nor kept. A
-// generation none of whose members is text makes no part.
-func chooseParts(members []member, classify Classify, limit int) []Part {
+// generation whose every member keeps declines (in a chain of text
+// logs, none of them is text) makes no part.
+func chooseParts(members []member, classify Classify, keeps keepsMember, limit int) []Part {
 	byGeneration := map[string][]member{}
 	var order []string
 	for _, m := range members {
@@ -449,7 +505,7 @@ func chooseParts(members []member, classify Classify, limit int) []Part {
 		if len(parts) == limit {
 			break
 		}
-		if part, ok := choosePart(byGeneration[g], classify); ok {
+		if part, ok := choosePart(byGeneration[g], classify, keeps); ok {
 			parts = append(parts, part)
 		}
 	}
@@ -459,15 +515,16 @@ func chooseParts(members []member, classify Classify, limit int) []Part {
 // choosePart classifies the members of one generation and makes its
 // part: the readable text encoding formatPreference ranks first (then
 // the shorter name, then by name), with the other encodings as its
-// duplicates in the same order; an encoding the text check could not
-// read comes after every readable one, so it is the part only when no
-// encoding can be read. It reports false when no member is a part (none
-// is text).
-func choosePart(members []member, classify Classify) (Part, bool) {
+// duplicates in the same order. An encoding that cannot be read as
+// text (the text check could not read it, or a journal chain keeps it
+// though it is not text) comes after every text one, so it is the part
+// only when no encoding is text. It reports false when keeps declines
+// every member.
+func choosePart(members []member, classify Classify, keeps keepsMember) (Part, bool) {
 	encodings := make([]encoding, 0, len(members))
 	for _, m := range members {
-		if format, isPart, readErr := textCheck(m.entry, classify); isPart {
-			encodings = append(encodings, encoding{member: m, format: format, readErr: readErr})
+		if checked := textCheck(m.entry, classify); keeps(checked) {
+			encodings = append(encodings, encoding{member: m, textResult: checked})
 		}
 	}
 	if len(encodings) == 0 {
@@ -475,7 +532,7 @@ func choosePart(members []member, classify Classify) (Part, bool) {
 	}
 	slices.SortFunc(encodings, func(a, b encoding) int {
 		return cmp.Or(
-			cmp.Compare(a.isUnreadable(), b.isUnreadable()),
+			cmp.Compare(a.cannotBeRead(), b.cannotBeRead()),
 			cmp.Compare(formatRank(a.format), formatRank(b.format)),
 			cmp.Compare(len(a.entry.Name), len(b.entry.Name)),
 			cmp.Compare(a.entry.Name, b.entry.Name))
@@ -488,7 +545,7 @@ func choosePart(members []member, classify Classify) (Part, bool) {
 	return Part{
 		Name: chosen.entry.Name, Path: chosen.entry.Path, Key: chosen.match.key,
 		Duplicates: duplicates, Info: chosen.entry.Info, Template: chosen.match.template.ID,
-		Format: chosen.format, File: chosen.entry.File, ReadError: chosen.readErr,
+		Format: chosen.format, File: chosen.entry.File, ReadError: chosen.readErr, NotText: chosen.notText,
 		newestLow: chosen.match.newestLow,
 	}, true
 }

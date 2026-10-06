@@ -274,6 +274,78 @@ func TestGroup_AUserJournalIsTheActivePartOfItsChain(t *testing.T) {
 	}
 }
 
+// Without an archive `user-1000@….journal` in the listing, no journal
+// chain has the name user-1000.journal: the file stays a numbered part
+// before the extension of user.journal, as for any text log
+// (`app.journal` and `app-1.journal`).
+func TestGroup_ANumberedJournalNameWithoutArchivesStaysANumberedPart(t *testing.T) {
+	for _, files := range [][]string{
+		{"user.journal", "user-1000.journal"},
+		{"app.journal", "app-1.journal"},
+	} {
+		got := Group(testDir, fakeEntries(files...), allText)
+		if len(got) != 1 || got[0].Name != files[0] || !slices.Equal(partNames(got[0]), []string{files[1], files[0]}) ||
+			got[0].Parts[0].Template != "numbered-ext" || got[0].IsJournal() {
+			t.Fatalf("%v: chains %v", files, chainsByName(got))
+		}
+	}
+}
+
+// A member of a journal chain that is not text stays a part, with its
+// detected format and the reason the text check gave (Part.NotText): a
+// binary file named system.journal is still the active part, and an
+// archive whose header rx cannot read is still an archive, so that
+// describing the chain says they cannot be read as journals. A chain
+// of text logs in the same listing drops its files that are not text,
+// the active file included, as always.
+func TestGroup_AJournalChainKeepsMembersThatAreNotText(t *testing.T) {
+	const (
+		archive    = "system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000001-00065db7fbffd8e8.journal"
+		badArchive = "system@b6423d6d2ca543b08b82cd46fafca6e4-0000000000000006-00065db7fc111b8d.journal"
+		nulReason  = filekind.NotTextPrefix + ": a NUL byte in its first 8 KiB"
+		headReason = filekind.NotTextPrefix + ": a systemd journal rx cannot read: a test reason"
+	)
+	notText := map[string]filekind.Kind{
+		"system.journal": {NotText: nulReason},
+		badArchive:       {Format: compression.FormatJournal, NotText: headReason},
+		"app.log":        {NotText: nulReason},
+		"app.log.1":      {NotText: nulReason},
+	}
+	classify := func(e Entry) (filekind.Kind, error) {
+		if kind, ok := notText[e.Name]; ok {
+			return kind, nil
+		}
+		if strings.HasSuffix(e.Name, ".journal") {
+			return filekind.Kind{Format: compression.FormatJournal}, nil
+		}
+		return filekind.Kind{}, nil
+	}
+	entries := fakeEntries("system.journal", archive, badArchive, "app.log", "app.log.1", "app.log.2", "app.log.3")
+	got := Group(testDir, entries, classify)
+	want := map[string][]string{
+		"system.journal": {archive, badArchive, "system.journal"},
+		"app.log":        {"app.log.3", "app.log.2"},
+	}
+	byName := chainsByName(got)
+	if len(byName) != len(want) || !slices.Equal(byName["system.journal"], want["system.journal"]) ||
+		!slices.Equal(byName["app.log"], want["app.log"]) {
+		t.Fatalf("chains %v, want %v", byName, want)
+	}
+	for _, c := range got {
+		for _, p := range c.Parts {
+			wantKind := filekind.Kind{Format: compression.FormatJournal}
+			if c.Name == "app.log" {
+				wantKind = filekind.Kind{}
+			} else if kind, ok := notText[p.Name]; ok {
+				wantKind = kind
+			}
+			if p.NotText != wantKind.NotText || p.Format != wantKind.Format || p.ReadError != nil {
+				t.Fatalf("%s: not text %q, format %q; want %q %q", p.Name, p.NotText, p.Format, wantKind.NotText, wantKind.Format)
+			}
+		}
+	}
+}
+
 // A /var/log with rotated, empty and binary files, files of one
 // generation only and subdirectories: exactly the rotated logs are
 // chains, and every other file is in none.

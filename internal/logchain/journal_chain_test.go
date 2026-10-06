@@ -422,6 +422,64 @@ func TestDescribe_APartOfAJournalChainThatIsNoJournalIsUnreadable(t *testing.T) 
 	}
 }
 
+// A member of a journal chain that is not text stays in the chain and
+// makes it invalid, with or without a scan: a binary file named
+// system.journal cannot be read as a journal for its signature, and an
+// archive whose header has an incompatible flag rx does not know for
+// the header's reason. Neither drops out to leave a chain of the other
+// parts that looks ready.
+func TestDescribe_AJournalChainMemberThatIsNotTextIsUnreadable(t *testing.T) {
+	first := testJournal{name: archiveName("system", testCounter, 1, journalBase), counter: testCounter, seqnum: 1,
+		times: secondsFrom(journalBase, 3)}
+	second := testJournal{name: archiveName("system", testCounter, 4, journalBase.Add(time.Minute)), counter: testCounter, seqnum: 4,
+		times: secondsFrom(journalBase.Add(time.Minute), 3)}
+	active := testJournal{name: "system.journal", counter: testCounter, seqnum: 7, times: secondsFrom(journalBase.Add(2*time.Minute), 3)}
+
+	t.Run("a binary file named system.journal", func(t *testing.T) {
+		c := buildJournalChain(t, "system.journal", first, second)
+		writeFiles(t, c.dir, map[string][]byte{"system.journal": binaryBytes})
+		requireNoJournal(t, c.dir, "system.journal", "the file does not start with LPKSHHRH, the signature of a systemd journal")
+	})
+	t.Run("an archive with an incompatible flag rx does not know", func(t *testing.T) {
+		c := buildJournalChain(t, "system.journal", first, second, active)
+		path := filepath.Join(c.dir, second.name)
+		journalfixture.AddUnknownIncompatibleFlag(t, path)
+		f, err := os.Open(path) // #nosec G304 -- a test's own file
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = f.Close() }()
+		info, err := f.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = journal.ReadHeader(f, info.Size())
+		if !errors.Is(err, journal.ErrUnreadable) || !strings.Contains(err.Error(), "bits rx does not know") {
+			t.Fatalf("the archive's header: %v", err)
+		}
+		requireNoJournal(t, c.dir, second.name, strings.TrimPrefix(err.Error(), journal.ErrUnreadable.Error()+": "))
+	})
+}
+
+// requireNoJournal fails unless the journal chain system.journal of dir
+// lists name among its parts and is invalid, with and without a scan,
+// for one reason: unreadable, naming that part as one that cannot be
+// read as a journal because of why.
+func requireNoJournal(t *testing.T, dir, name, why string) {
+	t.Helper()
+	if parts := partNames(resolveIn(t, dir, "system.journal")); !slices.Contains(parts, name) {
+		t.Fatalf("%s is not a part: %v", name, parts)
+	}
+	for _, opts := range []Options{{Scan: true}, {}} {
+		d := describe(t, dir, "system.journal", opts)
+		requireState(t, d, rxtypes.ChainStateInvalid, rxtypes.ChainReasonUnreadable)
+		reason := d.Response.Reasons[0]
+		if want := name + " cannot be read as a journal: " + why; !slices.Equal(reason.Parts, []string{name}) || reason.Message != want {
+			t.Fatalf("scan %v: reason %+v\nwant message %q", opts.Scan, reason, want)
+		}
+	}
+}
+
 // The order of a journal chain needs no index: before its parts are
 // indexed the chain is pending and lists them in the order of their
 // headers, and that order stays once they are read, even where the head

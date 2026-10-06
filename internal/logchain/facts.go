@@ -227,6 +227,12 @@ func readFacts(ctx context.Context, c Candidate, opts Options) ([]partFacts, err
 		}
 		var err error
 		switch {
+		case part.NotText != "":
+			// A part that is not text (only a journal chain keeps one)
+			// has no text to index or to take times from:
+			// withJournalHeader below says why it cannot be read as a
+			// journal. Its facts are never cached (they have no stamp).
+			facts[i] = partFacts{}
 		case part.IsActive:
 			facts[i], err = activeFacts(ctx, part, opts)
 		case cached:
@@ -355,7 +361,10 @@ const notJournalSignature = "the file does not start with " + journal.Signature 
 // of the file. A part f already calls unreadable is not read again; an
 // empty file (0 bytes) has no header and needs none, since it adds no
 // line; and a part whose first bytes the listing found no journal
-// signature in (Part.Format) is not opened.
+// signature in (Part.Format), text or not, is not opened. A part with
+// the signature that the listing found not to be text (Part.NotText) is
+// a journal whose header rx cannot read: its header is read here for
+// the reason, journal.ErrUnreadable's.
 //
 // The error is failedRead's: ErrPartChanged when the part's name leads
 // to another file or to none by now (a rotation renamed it), or the
