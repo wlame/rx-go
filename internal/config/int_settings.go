@@ -94,7 +94,22 @@ var (
 	// accepted: such a line then carries none. Its maximum, 1 MiB,
 	// bounds the read back from each sample's first line.
 	TimestampLookbackKBSetting = IntSetting{Name: "RX_TIMESTAMP_LOOKBACK_KB", Default: DefaultTimestampLookbackKB, Min: 0, Max: 1024}
+
+	// SamplesMaxLinesSetting is RX_SAMPLES_MAX_LINES: the most lines one
+	// GET /v1/samples answer may hold, summed over its samples. A
+	// request whose answer would hold more is refused with 400, so one
+	// request (a thousand ranges open to the end of the file) cannot
+	// make the server hold gigabytes. `rx samples` has no limit: it
+	// runs as the user's own process.
+	SamplesMaxLinesSetting = IntSetting{Name: "RX_SAMPLES_MAX_LINES", Default: DefaultSamplesMaxLines, Min: 1000, Max: 10_000_000}
 )
+
+// DefaultSamplesMaxLines is the default of RX_SAMPLES_MAX_LINES.
+const DefaultSamplesMaxLines = 100_000
+
+// SamplesMaxLines returns RX_SAMPLES_MAX_LINES, from 1000 to 10000000
+// lines, or DefaultSamplesMaxLines.
+func SamplesMaxLines() int { return SamplesMaxLinesSetting.Value() }
 
 // IntSettings is every integer setting rx reads, in the order the
 // documentation lists them.
@@ -109,6 +124,7 @@ var IntSettings = []IntSetting{
 	TaskTTLMinutesSetting,
 	SamplesWaitSecondsSetting,
 	TimestampLookbackKBSetting,
+	SamplesMaxLinesSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule
