@@ -165,6 +165,10 @@ type sameAnswerSurface interface {
 	// index builds the file's line index and returns it as the surface
 	// shows it.
 	index(t *testing.T, path string) map[string]any
+	// answeredFromTheHead reports whether answer, a samples answer just
+	// given by the surface in a cache that can store an index, came
+	// from the head of the file (journal_head_answer_test.go).
+	answeredFromTheHead(t *testing.T, answer map[string]any) bool
 }
 
 // samplesQuery is one samples request: lines, offsets or timestamps.
@@ -434,10 +438,19 @@ func unstorableCache(t *testing.T) {
 // index: an answer asked now is asked without one.
 func requireNoIndexStored(t *testing.T, when string) {
 	t.Helper()
-	stored, err := filepath.Glob(filepath.Join(config.GetIndexCacheDir(), "*"))
-	if err != nil || len(stored) != 0 {
-		t.Fatalf("an index is stored %s: %v (%v)", when, stored, err)
+	if indexStored(t) {
+		t.Fatalf("an index is stored %s", when)
 	}
+}
+
+// indexStored reports whether the index cache holds an index.
+func indexStored(t *testing.T) bool {
+	t.Helper()
+	stored, err := filepath.Glob(filepath.Join(config.GetIndexCacheDir(), "*"))
+	if err != nil {
+		t.Fatalf("list the index cache: %v", err)
+	}
+	return len(stored) != 0
 }
 
 // askTimeRanges asks the time range of every copy. source says how the
