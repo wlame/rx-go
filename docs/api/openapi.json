@@ -67,7 +67,7 @@
         "additionalProperties": false,
         "properties": {
           "compression_formats": {
-            "description": "The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included). A plain part adds none.",
+            "description": "The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included), and journal for a systemd journal. A plain part adds none.",
             "items": {
               "type": "string"
             },

@@ -95,7 +95,7 @@ answer shows:
 | `missing` | string[] | The name each absent number would have, from 0 when a `.0` part exists (else from 1) up to the highest number present, lowest first, without a compression suffix; at most 100 names, and `missing_count` says how many are missing in all. They are named only when no more numbers are missing than parts with a number are present: `x.1` beside `x.500` names none. Dated parts, years among them, are never missing |
 | `missing_count` | int | How many numbered parts are missing, whether `missing` names them all or stops at 100; 0 when `missing` names none |
 | `size` | int64 | The sum of the parts' file sizes in bytes, as stored |
-| `compression_formats` | string[] | The distinct compression formats of the parts, sorted: `gzip`, `bz2`, `xz`, `zstd` (a seekable zstd file is `zstd`). A plain part adds none |
+| `compression_formats` | string[] | The distinct compression formats of the parts, sorted: `gzip`, `bz2`, `xz`, `zstd` (a seekable zstd file is `zstd`), and `journal` for a systemd journal. A plain part adds none |
 | `is_indexed` | bool | Whether every part but the active file has a current line index, built from the file the listing found: an index of another file that took a part's name since (a rotation renamed it there) does not count. An empty part (0 bytes) needs none: it holds no line, and the chain is `ready` without its index |
 | `unreadable` | string[] | The parts that cannot be opened (their permissions, an I/O error), in the order of `parts`; empty when every part can. A part is named here, not dropped, so the chain does not look complete or name it as missing |
 | `too_many_parts` | bool | Whether the chain has more than 10,000 parts |

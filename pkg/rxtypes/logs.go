@@ -24,7 +24,7 @@ type ChainEntry struct {
 	// Size is the sum of the parts' file sizes.
 	Size int64 `json:"size" doc:"The sum of the sizes in bytes of the files listed in parts, as stored (compressed for a compressed part)."`
 	// CompressionFormats are the distinct formats among the parts.
-	CompressionFormats []string `json:"compression_formats" nullable:"false" doc:"The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included). A plain part adds none."`
+	CompressionFormats []string `json:"compression_formats" nullable:"false" doc:"The distinct compression formats of the parts, sorted: gzip, bz2, xz, zstd (seekable zstd included), and journal for a systemd journal. A plain part adds none."`
 	// IsIndexed says whether every frozen part has a current line index;
 	// an empty one (0 bytes) needs none.
 	IsIndexed bool `json:"is_indexed" doc:"Whether every part but the active file has a current line index built from the file the listing found (the same inode and device), as is_indexed of /v1/tree tells for one file. An empty part (0 bytes) needs none: it holds no line. False for a chain of more than 10,000 parts, whose indexes are not looked at."`
