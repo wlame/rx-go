@@ -150,6 +150,7 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "path", Kind: ArgPositional},
 			{Field: "offsets", Flag: "offsets", Kind: ArgFlag, Absent: defaultValue("[]")},
 			{Field: "lines", Flag: "lines", Kind: ArgFlag, Absent: defaultValue("[]")},
+			{Field: "timestamps", Flag: "timestamps", Kind: ArgFlag, Absent: defaultValue("[]")},
 			{Field: "context", Flag: "context", Kind: ArgFlag, Absent: defaultValue("3")},
 			{Field: "before_context", Flag: "before", Kind: ArgFlag, Absent: sameAsField("context")},
 			{Field: "after_context", Flag: "after", Kind: ArgFlag, Absent: sameAsField("context")},

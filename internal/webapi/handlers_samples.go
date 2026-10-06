@@ -22,8 +22,13 @@ import (
 
 // samplesInput is the query-string shape for GET /v1/samples.
 //
-// offsets and lines are mutually exclusive. Exactly one must be set;
-// both-set or neither-set returns 400.
+// offsets, lines and timestamps are mutually exclusive. Exactly one
+// must be set; more than one, or none, returns 400.
+//
+// timestamps repeats (`?timestamps=A&timestamps=B`) and is never split
+// at commas: a comma is part of some timestamp formats
+// (`12:34:56,123`), which is why it is a list where offsets and lines
+// are comma-separated strings.
 //
 // context is an alias that sets both before_context and after_context.
 // Individual contexts override it. Each stops at MaxTraceContextLines,
@@ -32,13 +37,14 @@ import (
 // forbids pointer query params. -1 is outside the normal value range
 // (context must be >= 0), so it's a safe signal for "default".
 type samplesInput struct {
-	Path          string `query:"path" required:"true" example:"/var/log/app.log" doc:"File path to read from"`
-	Offsets       string `query:"offsets" example:"100,200,300" doc:"Comma-separated byte offsets or ranges"`
-	Lines         string `query:"lines" example:"100,200-205,-1" doc:"Comma-separated 1-based line numbers or ranges"`
-	Context       int    `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
-	BeforeContext int    `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
-	AfterContext  int    `query:"after_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
-	Prefer        string `header:"Prefer" doc:"RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200."`
+	Path          string   `query:"path" required:"true" example:"/var/log/app.log" doc:"File path to read from"`
+	Offsets       string   `query:"offsets" example:"100,200,300" doc:"Comma-separated byte offsets or ranges"`
+	Lines         string   `query:"lines" example:"100,200-205,-1" doc:"Comma-separated 1-based line numbers or ranges"`
+	Timestamps    []string `query:"timestamps,explode" example:"2025-12-10T07:30:00" doc:"A time or time range (T, T1..T2, ..T2, T1..); repeat the parameter for several, at most 1000. Each answers the first line whose own timestamp is at or after the time, with context, or a range's lines without context. A value is never split at commas."`
+	Context       int      `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
+	BeforeContext int      `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
+	AfterContext  int      `query:"after_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines after each offset (-1 = default 3)"`
+	Prefer        string   `header:"Prefer" doc:"RFC 7240 preferences. respond-async lets the server answer 202 with the task building the file's line index when the build outlasts RX_SAMPLES_WAIT_SECONDS; without it the request waits for the build and answers 200."`
 }
 
 // samplesOutput is the answer of GET /v1/samples: 200 with an
@@ -107,7 +113,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		OperationID: "samples",
 		Method:      http.MethodGet,
 		Path:        "/v1/samples",
-		Summary:     "Get context lines around byte offsets or line numbers",
+		Summary:     "Get context lines around byte offsets, line numbers or times",
 		Description: "Use this endpoint to view actual content around matches from /v1/trace.",
 		Tags:        []string{"Context"},
 		// No 503: samples reads the file itself and never runs ripgrep.
@@ -131,12 +137,15 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			validated = in.Path
 		}
 
-		// Mutual exclusion on offsets/lines.
+		// Mutual exclusion on offsets/lines/timestamps.
 		if in.Offsets != "" && in.Lines != "" {
 			return nil, ErrBadRequest("Cannot use both 'offsets' and 'lines'. Provide only one.")
 		}
-		if in.Offsets == "" && in.Lines == "" {
-			return nil, ErrBadRequest("Must provide either 'offsets' or 'lines' parameter.")
+		if len(in.Timestamps) > 0 && (in.Offsets != "" || in.Lines != "") {
+			return nil, ErrBadRequest("Cannot use 'timestamps' with 'offsets' or 'lines'. Provide only one.")
+		}
+		if in.Offsets == "" && in.Lines == "" && len(in.Timestamps) == 0 {
+			return nil, ErrBadRequest("Must provide one of 'offsets', 'lines' or 'timestamps'.")
 		}
 
 		// Context defaults (-1 sentinel = "not provided").
@@ -161,12 +170,13 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			parsedOffsets []samples.OffsetOrRange
 			parsedLines   []samples.OffsetOrRange
 		)
-		if in.Offsets != "" {
+		switch {
+		case in.Offsets != "":
 			parsedOffsets, err = samples.ParseCSV(in.Offsets)
 			if err != nil {
 				return nil, ErrBadRequest(fmt.Sprintf("Invalid offsets format: %s", err.Error()))
 			}
-		} else {
+		case in.Lines != "":
 			parsedLines, err = samples.ParseCSV(in.Lines)
 			if err != nil {
 				return nil, ErrBadRequest(fmt.Sprintf("Invalid lines format: %s", err.Error()))
@@ -251,10 +261,16 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			Kind:          &kind,
 			Offsets:       parsedOffsets,
 			Lines:         parsedLines,
+			Timestamps:    in.Timestamps,
 			BeforeContext: before,
 			AfterContext:  after,
 			IndexLoader:   loader,
 		})
+		if samples.IsUsageError(err) {
+			// A time the request names wrongly, or a time query on a
+			// file without timestamps: the request is at fault.
+			return nil, ErrBadRequest(err.Error())
+		}
 		if err != nil {
 			return nil, ErrInternal(err.Error())
 		}
@@ -266,13 +282,14 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 			"path":           validated,
 			"offsets":        in.Offsets,
 			"lines":          in.Lines,
+			"timestamps":     in.Timestamps,
 			"context":        nilIfNegative(in.Context),
 			"before_context": nilIfNegative(in.BeforeContext),
 			"after_context":  nilIfNegative(in.AfterContext),
 		})
 		resp.CLICommand = &cli
 
-		observeSamplesResult(start, len(parsedOffsets)+len(parsedLines), before, after)
+		observeSamplesResult(start, len(parsedOffsets)+len(parsedLines)+len(in.Timestamps), before, after)
 		return &samplesOutput{Status: http.StatusOK, Body: *resp}, nil
 	})
 }
