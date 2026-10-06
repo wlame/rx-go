@@ -44,8 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Six differences between the text of a journal and `journalctl`'s,
   chosen on purpose: an entry whose text would be larger than 256 MiB is
   left out as damaged, and so is an entry whose shown values come to more
-  than 128 MiB together; an xz value whose stream declares a dictionary
-  above 16 MiB is damage (systemd writes 1 MiB); a field the text does
+  than 128 MiB together; an xz value of a field the text shows whose
+  stream declares a dictionary above 16 MiB is damage (systemd writes
+  1 MiB); a field the text does
   not show is read only as far as its name, so damage in its value is
   not noticed and a core dump of any size stored in the journal costs
   the length of its name; a field

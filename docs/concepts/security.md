@@ -506,20 +506,27 @@ rx only reads it. What the reader guarantees:
   -fuzz`), and their seed inputs run in every test run.
 - **Memory is bounded per value and per entry.** A value of a field the
   text shows is decoded to at most 128 MiB, the shown values of one entry
-  to 128 MiB together, and one entry's text to 256 MiB; an entry past a
-  bound is damaged. A zstd or lz4 value that declares more text than its
-  stored bytes can hold is refused before its buffer is made, so a few
-  stored bytes cannot make the reader allocate 128 MiB. A field the text
-  does not show is read only as far as its name, so a core dump of any
-  size stored in a journal costs the length of its name. An xz value
-  whose stream declares a dictionary above 16 MiB is damage, in a field
-  the text shows or not, since the decoder makes the whole dictionary a
-  block declares before it reads the block (journald writes 1 MiB).
+  to 128 MiB together (every item of a field the text shows counts, so a
+  field listed twice counts twice), and one entry's text to 256 MiB; an
+  entry past a bound is damaged. A zstd or lz4 value that declares more
+  text than its stored bytes can hold is refused before its buffer is
+  made, so a few stored bytes cannot make the reader allocate 128 MiB,
+  and a zstd value's buffer is made once from the sizes its frames
+  declare, however many frames it has. An xz value of a field the text
+  shows whose stream declares a dictionary above 16 MiB is damage, since
+  the decoder makes the whole dictionary a block declares before it
+  reads the block (journald writes 1 MiB). A field the text does not
+  show is read only as far as its name, through a small dictionary
+  whatever its stream declares, so a core dump of any size stored in a
+  journal costs the length of its name.
 - **The cost of the text is the cost of the file.** A value larger than
   the reader's cache (32 MiB) is decoded again for every entry that lists
   it, so a crafted journal can make rx produce much text from a small
-  file. The work is proportional to the text produced, as for a small
-  gzip file that expands to a large one; `--max-results` and the limits
+  file. For a value whose stored bytes declare its size, the work is
+  proportional to the text produced, as for a small gzip file that
+  expands to a large one. A zstd frame that declares no size, which
+  journald never writes, is decoded to at most 128 MiB, the bound of one
+  value, before it is refused or shown. `--max-results` and the limits
   of [`GET /v1/samples`](../api/endpoints/samples.md#answer-over-the-line-or-byte-limit)
   bound what an answer returns.
 

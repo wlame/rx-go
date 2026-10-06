@@ -25,10 +25,12 @@ package journal
 // (checkDeclaredSize): against those bounds, and, for a zstd frame or an
 // lz4 block, against the most text its stored bytes can hold, so that a
 // value of a few stored bytes cannot make the reader allocate 128 MiB.
-// A decoder stops at the bound whatever the stream holds. An xz stream
-// may declare a dictionary of at most 16 MiB (maxXZDictionary), in the
-// name search too: the decoder makes the whole dictionary a block
-// declares before it reads the block.
+// A decoder stops at the bound whatever the stream holds. The xz stream
+// of a shown value may declare a dictionary of at most 16 MiB
+// (maxXZDictionary): the decoder makes the whole dictionary a block
+// declares before it reads the block. The name search of an xz value
+// reads through a 4 KiB dictionary whatever the stream declares, so it
+// holds the declared dictionary to no bound.
 
 import (
 	"bytes"
@@ -57,13 +59,14 @@ const (
 // maxValue is the largest value, stored or decoded, rx reads.
 const maxValue = compression.WindowLimit
 
-// maxXZDictionary is the largest dictionary an xz value may declare:
-// 16 MiB. systemd writes its xz values with a 1 MiB dictionary
-// (compress_blob_xz, compress.c), and the dictionary of xz's default
-// preset is 8 MiB; a stream that declares more is damage. The LZMA2
-// decoder makes the whole dictionary a block declares when the block
-// header leaves the text's size out, so without this bound a value of 60
-// stored bytes could make the reader allocate 128 MiB.
+// maxXZDictionary is the largest dictionary the xz value of a field the
+// renderer reads may declare: 16 MiB. systemd writes its xz values with a
+// 1 MiB dictionary (compress_blob_xz, compress.c), and the dictionary of
+// xz's default preset is 8 MiB; a shown value whose stream declares more
+// is damage. The LZMA2 decoder makes the whole dictionary a block
+// declares when the block header leaves the text's size out, so without
+// this bound a value of 60 stored bytes could make the reader allocate
+// 128 MiB. The name search does not apply it (namePrefixReader).
 const maxXZDictionary = 16 << 20
 
 // payloadDecoder decodes one compressed payload, and says what its
@@ -71,8 +74,10 @@ const maxXZDictionary = 16 << 20
 type payloadDecoder struct {
 	name string
 	// decode decodes stored into a new slice of at most limit bytes; a
-	// value that passes limit is refused (tooLarge).
-	decode func(stored []byte, limit int) ([]byte, error)
+	// value that passes limit is refused (tooLarge). declared is what
+	// declaredSize gave, already checked against limit (0 when the stored
+	// bytes declare no size).
+	decode func(stored []byte, declared uint64, limit int) ([]byte, error)
 	// declaredSize returns the decoded size stored declares up front,
 	// from which the decoder makes its buffer, and 0 when it declares
 	// none. It is nil for a format that never declares one (xz), whose
@@ -85,9 +90,16 @@ type payloadDecoder struct {
 
 // payloadDecoders holds the decoder of each compression flag.
 var payloadDecoders = map[uint8]payloadDecoder{
-	objectCompressedXZ:   {name: "xz", decode: decodeXZ},
-	objectCompressedLZ4:  {name: "lz4", decode: decodeLZ4, declaredSize: lz4DeclaredSize, mostText: lz4MostText},
+	objectCompressedXZ:   {name: "xz", decode: withoutDeclared(decodeXZ)},
+	objectCompressedLZ4:  {name: "lz4", decode: withoutDeclared(decodeLZ4), declaredSize: lz4DeclaredSize, mostText: lz4MostText},
 	objectCompressedZstd: {name: "zstd", decode: decodeZstd, declaredSize: zstdDeclaredSize, mostText: zstdMostText},
+}
+
+// withoutDeclared adapts a decoder that needs no declared size to the
+// decode field of payloadDecoder: xz declares none up front, and the lz4
+// decoder reads its size from the stored bytes itself.
+func withoutDeclared(decode func(stored []byte, limit int) ([]byte, error)) func([]byte, uint64, int) ([]byte, error) {
+	return func(stored []byte, _ uint64, limit int) ([]byte, error) { return decode(stored, limit) }
 }
 
 // errValueTooLarge is a decoder's error for a value larger than maxValue,
@@ -346,10 +358,6 @@ func (w *walker) decodeName(stored []byte, cut bool, compressed uint8, codec str
 		return nil, damaged("%s needs more than %d of its stored bytes to give its field name (%s)", what, nameStoredLimit, codec)
 	case err == nil:
 		return w.nameBuf[:n], nil
-	case errors.Is(err, compression.ErrDictionaryTooLarge):
-		// ErrDictionaryTooLarge wraps ErrTooLargeToDecode, so it is told
-		// apart first: the bound it reports is maxXZDictionary.
-		return nil, xzDictionaryDamage(what)
 	case errors.Is(err, compression.ErrTooLargeToDecode), compression.IsWindowRefusal(err):
 		return nil, damaged("%s decompresses to more than 128 MiB (%s)", what, codec)
 	}
@@ -481,13 +489,14 @@ func decodeLZ4Prefix(stored, dst []byte) (n int, atEnd bool, err error) {
 // at most WindowLimit, allocated once and reused.
 //
 // xz: compression.NewXzPrefixReader, whose dictionary is namePrefixBytes
-// (4 KiB at least), whatever the stream declares. A stream that declares
-// a dictionary above maxXZDictionary is refused, as the whole decode
-// refuses it, so that the value of a field the text does not show is
-// held to the bound of a shown one.
+// (4 KiB at least), whatever the stream declares. It is given no limit
+// on the declared dictionary (the largest uint64): it never makes the
+// dictionary a block declares, so a declared size costs nothing here,
+// and a field the text does not show is never damage for its size. The
+// whole decode of a shown value holds the dictionary to maxXZDictionary.
 func (w *walker) namePrefixReader(compressed uint8, stored io.Reader) (io.Reader, error) {
 	if compressed == objectCompressedXZ {
-		return compression.NewXzPrefixReader(stored, maxXZDictionary, namePrefixBytes)
+		return compression.NewXzPrefixReader(stored, math.MaxUint64, namePrefixBytes)
 	}
 	if w.zstdNames == nil {
 		d, err := zstd.NewReader(nil,
@@ -530,10 +539,11 @@ func readPrefix(r io.Reader, buf []byte) (int, error) {
 // stops at room, what the entry's budget has left; a payload that passes
 // room gives errPastEntryBudget, which is not damage of the object.
 func decodeStored(decoder payloadDecoder, stored []byte, room int, what objectRef) ([]byte, error) {
-	if err := checkDeclaredSize(decoder, stored, room, what); err != nil {
+	declared, err := checkDeclaredSize(decoder, stored, room, what)
+	if err != nil {
 		return nil, err
 	}
-	value, err := decoder.decode(stored, room)
+	value, err := decoder.decode(stored, declared, room)
 	switch {
 	case errors.Is(err, errPastEntryBudget):
 		return nil, err
@@ -555,21 +565,23 @@ func decodeStored(decoder payloadDecoder, stored []byte, room int, what objectRe
 // 128 MiB would otherwise cost a 128 MiB buffer per DATA object that
 // holds one. Above room, what the entry's budget has left, it is
 // errPastEntryBudget. A format that declares no size up front (xz) is
-// held to the same bounds as it decodes instead.
-func checkDeclaredSize(decoder payloadDecoder, stored []byte, room int, what objectRef) error {
+// held to the same bounds as it decodes instead. It returns the declared
+// size, 0 when the stored bytes declare none, for the decoder to make its
+// buffer from.
+func checkDeclaredSize(decoder payloadDecoder, stored []byte, room int, what objectRef) (uint64, error) {
 	if decoder.declaredSize == nil {
-		return nil
+		return 0, nil
 	}
 	declared := decoder.declaredSize(stored)
 	switch {
 	case declared > maxValue:
-		return damaged("%s decompresses to more than 128 MiB (%s)", what, decoder.name)
+		return 0, damaged("%s decompresses to more than 128 MiB (%s)", what, decoder.name)
 	case declared > decoder.mostText(len(stored)):
-		return damaged("%s declares %d bytes of text, which its %d stored bytes cannot hold (%s)", what, declared, len(stored), decoder.name)
+		return 0, damaged("%s declares %d bytes of text, which its %d stored bytes cannot hold (%s)", what, declared, len(stored), decoder.name)
 	case declared > uint64(room): // #nosec G115 -- room is not negative
-		return errPastEntryBudget
+		return 0, errPastEntryBudget
 	}
-	return nil
+	return declared, nil
 }
 
 // checkDataLinks checks the links of a DATA object as check_object does
@@ -588,20 +600,40 @@ func checkDataLinks(o object, what objectRef) error {
 	return nil
 }
 
+// zstdOverAlloc is the room the zstd decoder wants after a frame's text
+// in the buffer it writes the frame into (klauspost's
+// compressedBlockOverAlloc, 16 bytes): with less, it makes a new buffer.
+const zstdOverAlloc = 16
+
 // decodeZstd decodes the zstd frames of stored with a pooled decoder,
-// into a value of at most limit bytes. The pool's decoders refuse a
-// frame that declares more than WindowLimit and stop one that grows past
-// it. DecodeAll makes the buffer of a frame that declares its content
-// size from that size, before it decodes the frame, so the caller checks
-// the declared sizes first (checkDeclaredSize, zstdDeclaredSize). A frame
-// that declares no size grows its buffer as it decodes, and is held to
-// limit once it is decoded; systemd writes no such frame.
-func decodeZstd(stored []byte, limit int) ([]byte, error) {
+// into a value of at most limit bytes. declared is the sum of the
+// content sizes the frames declare (zstdDeclaredSize), which the caller
+// has checked against limit and against what the stored bytes can hold
+// (checkDeclaredSize). The pool's decoders refuse a frame that declares
+// more than WindowLimit and stop one that grows past it.
+//
+// SECURITY: DecodeAll writes each frame after the text before it, in
+// the buffer it is given. When the buffer lacks room for the size a
+// frame declares, it makes a new one, of the text so far and that size,
+// and copies the text into it, before it decodes the frame; so given no
+// buffer, a value of n frames that declare their sizes costs n buffers,
+// each larger than the one before: 1,023 frames of 128 KiB in 17 KB of
+// stored bytes would allocate 64 GiB. The value's buffer is made here
+// once, of declared bytes and the decoder's margin, so every frame that
+// declares its size is written into it, and the decode of such a value
+// allocates the value. A frame that declares no size grows the buffer as
+// it decodes (systemd writes no such frame), and the value is held to
+// limit once it is decoded.
+func decodeZstd(stored []byte, declared uint64, limit int) ([]byte, error) {
+	var dst []byte
+	if declared > 0 && declared <= uint64(limit) { // #nosec G115 -- limit is not negative
+		dst = make([]byte, 0, declared+zstdOverAlloc)
+	}
 	d := compression.AcquireDecoder()
 	// defer runs ReleaseDecoder when decodeZstd returns, so the decoder
 	// goes back to the pool whichever way it returns.
 	defer compression.ReleaseDecoder(d)
-	value, err := d.DecodeAll(stored, nil)
+	value, err := d.DecodeAll(stored, dst)
 	switch {
 	case compression.IsWindowRefusal(err):
 		return nil, errValueTooLarge
@@ -647,11 +679,12 @@ func zstdMostText(n int) uint64 {
 // declares no size adds nothing.
 //
 // SECURITY: DecodeAll decodes every frame of its input, one after the
-// other, and makes each frame's buffer from the size that frame
-// declares, so the sizes of all the frames are added, not only the first
-// one's. systemd writes one frame per value; a value of several frames
-// comes from a crafted file, which could otherwise hide a frame that
-// declares 128 MiB behind a small first one.
+// other, so the sizes of all the frames are added, not only the first
+// one's: checkDeclaredSize holds the sum to the bounds, and decodeZstd
+// makes the value's one buffer from it. systemd writes one frame per
+// value; a value of several frames comes from a crafted file, which
+// could otherwise hide a frame that declares 128 MiB behind a small
+// first one.
 //
 // The walk takes the frames as the decoder reads them: a skippable frame
 // is passed over by the size its header gives, a frame's blocks by their
@@ -659,7 +692,8 @@ func zstdMostText(n int) uint64 {
 // says, an RLE block one), and the checksum after a frame's last block
 // when its header asks for one. It ends where the bytes end, or where a
 // header does not parse or a block runs past the end: the decoder stops
-// with an error at that place too, so it sizes no frame after it.
+// with an error at that place or before it, so it decodes no frame after
+// it.
 func zstdDeclaredSize(stored []byte) uint64 {
 	var declared uint64
 	for len(stored) > 0 {
@@ -700,7 +734,8 @@ func zstdDeclaredSize(stored []byte) uint64 {
 // skipZstdBlocks passes over the blocks of a frame, from the first block
 // header in b to the end of its last block, and returns the bytes after
 // it. It returns false when b ends first or a block has the reserved
-// type, which the decoder refuses too. A block header is 3 bytes, little
+// type: the decoder stops with an error at that block or before it. A
+// block header is 3 bytes, little
 // endian: bit 0 says the block is the frame's last, bits 1-2 give its
 // type (0 raw, 1 RLE, 2 compressed, 3 reserved) and bits 3-23 its size.
 func skipZstdBlocks(b []byte) ([]byte, bool) {

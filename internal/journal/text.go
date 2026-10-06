@@ -70,7 +70,10 @@ var errClosed = errors.New("read of a closed journal text reader")
 //     an xz value, which declares no size, is stopped there as it is
 //     decoded (while its buffer doubles, the buffer before is held too,
 //     half as large). A zstd frame that declares no size, which systemd
-//     never writes, may reach 128 MiB on its own before it is refused.
+//     never writes, may reach 128 MiB on its own before it is refused,
+//     and its buffer grows as it decodes, so the buffers it grew out of
+//     are held too until they are collected (about 313 MiB of heap in
+//     all for a frame of 128 MiB, measured).
 //     The values are kept until the next entry or Close, and let go
 //     before the next entry's values are read;
 //   - the stored bytes of the value being decoded, when they pass 129 KiB

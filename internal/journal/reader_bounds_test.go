@@ -303,14 +303,16 @@ func TestTextReader_LetsGoOfThePreviousEntrysValuesBeforeReadingTheNext(t *testi
 }
 
 // Fifty entries each list a crafted value of their own, of a few dozen
-// stored bytes that declare 128 MiB, and a short message. The entries are
-// left out, and what the read allocates does not grow with the number of
-// values: a zstd frame or an lz4 value that declares more text than its
+// stored bytes that declare 128 MiB, and a short message. What the read
+// allocates does not grow with the number of values. In a field the text
+// shows, a zstd frame or an lz4 value that declares more text than its
 // stored bytes can hold is refused before its buffer is made, and an xz
 // stream that declares a dictionary above 16 MiB before the dictionary
-// is made, whether its field is shown or not. A single-segment zstd
-// frame's window is its content size, so the name decoder reserves that
-// window once for the reader.
+// is made: the entries are left out. In a field the text does not show,
+// the xz stream is read only as far as its name, through a dictionary of
+// 4 KiB whatever it declares, and is not damage: the entries are shown.
+// A single-segment zstd frame's window is its content size, so the name
+// decoder reserves that window once for the reader.
 func TestTextReader_LeavesOutTinyValuesThatDeclare128MiBWithoutAllocatingIt(t *testing.T) {
 	const entries = 50
 	head := func(field string, i int) []byte {
@@ -321,9 +323,10 @@ func TestTextReader_LeavesOutTinyValuesThatDeclare128MiBWithoutAllocatingIt(t *t
 		return xzWithDictionary(t, journalfile.Stored(t, journalfile.XZ, fmt.Appendf(nil, "%s=%d", field, i)), 30)
 	}
 	rows := []struct {
-		name      string
-		flags     byte
-		value     func(i int) []byte
+		name  string
+		flags byte
+		value func(i int) []byte
+		// reason is the damage reason; "" when the entries are shown.
 		reason    string
 		allowance uint64
 	}{
@@ -336,7 +339,7 @@ func TestTextReader_LeavesOutTinyValuesThatDeclare128MiBWithoutAllocatingIt(t *t
 		{"xz", objectCompressedXZ, func(i int) []byte { return xzValue("MESSAGE", i) },
 			"declares an xz dictionary of more than 16 MiB", 16 * mib},
 		{"xz in a field the text does not show", objectCompressedXZ, func(i int) []byte { return xzValue("COREDUMP", i) },
-			"declares an xz dictionary of more than 16 MiB", 16 * mib},
+			"", 16 * mib},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -352,6 +355,9 @@ func TestTextReader_LeavesOutTinyValuesThatDeclare128MiBWithoutAllocatingIt(t *t
 			var report Report
 			allocated := allocatedBytes(func() { _, report = readBytes(t, data, Options{}) })
 			want := Report{Entries: entries, LeftOut: entries, FirstDamaged: 1}
+			if row.reason == "" {
+				want = Report{Entries: entries, Shown: entries}
+			}
 			if want.DamageReason = report.DamageReason; report != want || !bytes.Contains([]byte(report.DamageReason), []byte(row.reason)) {
 				t.Errorf("Report = %+v, want %+v with a reason holding %q", report, want, row.reason)
 			}

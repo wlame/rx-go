@@ -56,7 +56,7 @@ func TestDecodeZstd_RefusesAStreamedFrameThatDecodesToMoreThan128MiB(t *testing.
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeZstd(frame.Bytes(), maxValue); !errors.Is(err, errValueTooLarge) {
+	if _, err := decodeZstd(frame.Bytes(), 0, maxValue); !errors.Is(err, errValueTooLarge) {
 		t.Errorf("a %d-byte frame of 129 MiB gives %v, want errValueTooLarge", frame.Len(), err)
 	}
 }
@@ -334,7 +334,7 @@ func TestCheckDeclaredSize_RefusesMoreTextThanTheStoredBytesCanHold(t *testing.T
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			err := checkDeclaredSize(payloadDecoders[row.flags], row.stored, row.room, what)
+			_, err := checkDeclaredSize(payloadDecoders[row.flags], row.stored, row.room, what)
 			reason, isDamage := damageReason(err)
 			switch {
 			case row.budget:
@@ -383,20 +383,21 @@ func TestCheckDeclaredSize_PassesTheDensestValuesZstdAndLZ4Write(t *testing.T) {
 	}
 	for name, v := range values {
 		decoder := payloadDecoders[v.flags]
-		if err := checkDeclaredSize(decoder, v.stored, maxValue, what); err != nil {
+		declared, err := checkDeclaredSize(decoder, v.stored, maxValue, what)
+		if err != nil {
 			t.Errorf("%s (%d stored bytes): %v", name, len(v.stored), err)
 			continue
 		}
-		if value, err := decoder.decode(v.stored, maxValue); err != nil || !bytes.Equal(value, payload) {
+		if value, err := decoder.decode(v.stored, declared, maxValue); err != nil || !bytes.Equal(value, payload) {
 			t.Errorf("%s: %d bytes, %v", name, len(value), err)
 		}
 	}
 }
 
-// journald's xz values declare a 1 MiB dictionary. A stream that
-// declares more than 16 MiB is refused before its dictionary is made, in
-// any stream of the value, not only the first, which the name search
-// reads.
+// journald's xz values declare a 1 MiB dictionary. The whole decode of
+// a shown value refuses a stream that declares more than 16 MiB before
+// its dictionary is made, in any stream of the value, not only the
+// first.
 func TestDecodeXZ_RefusesAStreamThatDeclaresADictionaryAbove16MiB(t *testing.T) {
 	payload := append([]byte("MESSAGE="), bytes.Repeat([]byte("x"), 100)...)
 	plain := journalfile.Stored(t, journalfile.XZ, payload)
@@ -419,4 +420,36 @@ func TestDecodeXZ_RefusesAStreamThatDeclaresADictionaryAbove16MiB(t *testing.T) 
 			t.Errorf("%s: %v, want errXZDictionaryTooLarge", row.name, err)
 		}
 	}
+}
+
+// A zstd value of 1,023 frames of 128 KiB, each declaring its size, in
+// 17 KB of stored bytes. The decoder makes the buffer of a frame that
+// declares its size before it decodes the frame; given no buffer, it
+// makes one per frame, of the text decoded so far and that frame's
+// size, and copies into it. The value's buffer is made once instead,
+// from the sum the frames declare, so what the decode allocates is the
+// value.
+func TestDecodeStored_MakesTheBufferOfAZstdValueOfManyFramesOnce(t *testing.T) {
+	const frames, frameText = 1023, 128 << 10
+	var stored []byte
+	for range frames {
+		stored = append(stored, zstdFrameDeclaring(frameText, true, zstdRLE(true, frameText, 0))...)
+	}
+	what := objectRef{objectData, 4096}
+	decoder := payloadDecoders[objectCompressedZstd]
+	// A first decode makes the pooled decoder's own tables, which the
+	// measured decode reuses.
+	if _, err := decodeStored(decoder, zstdFrameDeclaring(5, true, zstdRLE(true, 5, 0)), maxValue, what); err != nil {
+		t.Fatal(err)
+	}
+	var value []byte
+	var err error
+	allocated := allocatedBytes(func() { value, err = decodeStored(decoder, stored, maxValue, what) })
+	if err != nil || len(value) != frames*frameText {
+		t.Fatalf("decodes to %d bytes, %v; want %d", len(value), err, frames*frameText)
+	}
+	if limit := uint64(frames*frameText + 8<<20); allocated > limit {
+		t.Errorf("the decode of %d stored bytes allocated %d MiB, want at most %d MiB", len(stored), allocated>>20, limit>>20)
+	}
+	t.Logf("%d stored bytes: %d MiB allocated", len(stored), allocated>>20)
 }
