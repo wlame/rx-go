@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -166,5 +167,49 @@ func TestResolve_MaxBytesDoesNotHoldALongLine(t *testing.T) {
 				t.Errorf("allocated %d bytes around a %d-byte line; the limit is %d", allocated, long, maxBytes)
 			}
 		})
+	}
+}
+
+// The lines the offsets pass keeps for the context of a window that may
+// start later hold at most the byte limit of text: older lines' text is
+// let go first, and a window that would need it passes the limit.
+func TestLineRing_KeepsAtMostTheByteLimitOfText(t *testing.T) {
+	const limit = 1 << 20
+	ring := newLineRing(50, limit)
+	line := strings.Repeat("x", 900_000)
+	for i := range 50 {
+		ring.push(ringLine{text: line, start: int64(i) * 900_001, textBytes: 900_000})
+	}
+	kept := 0
+	for _, l := range ring.lines() {
+		kept += len(l.text)
+	}
+	if kept > limit {
+		t.Errorf("the ring keeps %d bytes of text; the limit is %d", kept, limit)
+	}
+	if got := len(ring.lines()); got != 50 {
+		t.Errorf("%d lines remembered, want 50 (their sizes still count)", got)
+	}
+}
+
+// A window whose leading context would pass the byte limit is refused;
+// one whose context fits is answered whole.
+func TestResolve_MaxBytesCountsTheLeadingContext(t *testing.T) {
+	const maxBytes = 1 << 20
+	path, text := longLinesLog(t, 50, 300_000, 10)
+	lastLine := int64(bytes.LastIndex(text[:len(text)-1], []byte("\n")) + 1)
+	for _, tc := range []struct {
+		before  int
+		refused bool
+	}{{3, false}, {50, true}} {
+		resp, err := Resolve(t.Context(), Request{Path: path, Offsets: []OffsetOrRange{{Start: lastLine}}, BeforeContext: tc.before, IndexLoader: NoIndex, MaxBytes: maxBytes})
+		if tc.refused != errors.Is(err, ErrTooManyBytes) || (!tc.refused && err != nil) {
+			t.Fatalf("before %d: err %v; want refused %v", tc.before, err, tc.refused)
+		}
+		if !tc.refused {
+			if got := resp.Samples[strconv.FormatInt(lastLine, 10)]; len(got) != 4 || len(got[0]) < 300_000 {
+				t.Errorf("before %d: sample of %d lines", tc.before, len(got))
+			}
+		}
 	}
 }
