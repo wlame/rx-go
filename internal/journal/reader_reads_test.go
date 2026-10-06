@@ -321,7 +321,7 @@ func TestTextReader_ShowsAnLZ4MessageThatStartsWithAMatchOf40MiB(t *testing.T) {
 	if d.StoredAs != journalfile.LZ4 || len(stored) <= nameStoredLimit {
 		t.Fatalf("the message is stored as %s in %d bytes, want lz4 in more than %d", d.StoredAs, len(stored), nameStoredLimit)
 	}
-	if value, err := decodeLZ4(stored); err != nil || !bytes.Equal(value, payload) {
+	if value, err := decodeLZ4(stored, maxValue); err != nil || !bytes.Equal(value, payload) {
 		t.Fatalf("the full decode gives %d bytes, %v; want the %d-byte payload", len(value), err, len(payload))
 	}
 	w := &compareWriter{want: expectedTextOf(j)}
@@ -418,7 +418,7 @@ func TestTextReader_LeavesOutAnEntryWhoseLZ4ValueStartsWithARunOfLiteralsPastThe
 	if len(stored) >= len(text) {
 		t.Fatalf("the value is stored in %d bytes, not fewer than its %d bytes of text", len(stored), len(text))
 	}
-	if value, err := decodeLZ4(stored); err != nil || !bytes.Equal(value, text) {
+	if value, err := decodeLZ4(stored, maxValue); err != nil || !bytes.Equal(value, text) {
 		t.Fatalf("the full decode gives %d bytes, %v; want the %d-byte text", len(value), err, len(text))
 	}
 	_, data := craftedJournal(t, 3, objectCompressedLZ4, stored)

@@ -41,11 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the new dependency pierrec/lz4/v4 4.1.33 (BSD-3-Clause license).
   `rx_trace_duration_seconds` labels a search of a path that ends in
   `.journal` with `path_kind="compressed"`.
-- Four differences between the text of a journal and `journalctl`'s,
+- Six differences between the text of a journal and `journalctl`'s,
   chosen on purpose: an entry whose text would be larger than 256 MiB is
-  left out as damaged; a field the text does not show is read only as far
-  as its name, so damage in its value is not noticed and a core dump of
-  any size stored in the journal costs the length of its name; a field
+  left out as damaged, and so is an entry whose shown values come to more
+  than 128 MiB together; an xz value whose stream declares a dictionary
+  above 16 MiB is damage (systemd writes 1 MiB); a field the text does
+  not show is read only as far as its name, so damage in its value is
+  not noticed and a core dump of any size stored in the journal costs
+  the length of its name; a field
   name that needs more than 129 KiB of a value's stored bytes (only an
   lz4 value whose text starts with an incompressible run of more than
   about 32 MiB) is damage; and damaged entries are left out where

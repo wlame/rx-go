@@ -64,15 +64,26 @@ var errClosed = errors.New("read of a closed journal text reader")
 // holds, at most:
 //   - the text of one entry (256 MiB at most; a buffer above 1 MiB is let
 //     go before the next entry);
-//   - the values of the last entry read, one per field the renderer reads
-//     (seven fields, 128 MiB each at most), kept until the next entry or
-//     Close;
-//   - one value being decoded (128 MiB at most);
+//   - the values of one entry, one per field the renderer reads, and the
+//     value being decoded: 128 MiB together. A value whose declared size
+//     would take them past that is refused before its buffer is made, and
+//     an xz value, which declares no size, is stopped there as it is
+//     decoded (while its buffer doubles, the buffer before is held too,
+//     half as large). A zstd frame that declares no size, which systemd
+//     never writes, may reach 128 MiB on its own before it is refused.
+//     The values are kept until the next entry or Close, and let go
+//     before the next entry's values are read;
+//   - the stored bytes of the value being decoded, when they pass 129 KiB
+//     (128 MiB at most, from a file at least that large);
+//   - the dictionary of an xz value being decoded (16 MiB at most);
 //   - the DATA cache (Options.CacheBytes);
 //   - the buffer of the stored bytes a name search reads (129 KiB at
 //     most, reused for every value);
-//   - the zstd decoder that reads the names of other fields, with a window
-//     as large as the largest frame read declares (128 MiB at most).
+//   - the zstd decoder that reads the names of fields, with a window as
+//     large as the largest frame read declares (128 MiB at most). The
+//     window is reserved when a frame declares it; its memory becomes
+//     resident as far as it is written, or at once when the allocator
+//     reuses memory freed before.
 //
 // It reads the file only through ReadAt and never closes it. A TextReader
 // is used by one goroutine at a time.

@@ -29,6 +29,14 @@ import (
 // errListDone ends a walk that took every entry the header counts.
 var errListDone = errors.New("the walk took every entry the header counts")
 
+// maxEntryValues bounds the shown values of one entry together: the
+// payloads ("FIELD=value") of the items of the fields the renderer reads,
+// 128 MiB in all, each item counted as it is read, so that an item
+// listed twice counts twice. One value may be 128 MiB on its own
+// (maxValue), and an entry lists seven fields the renderer reads, so
+// without this bound one entry could hold 896 MiB of values.
+const maxEntryValues = maxValue
+
 // walker walks the entry list of one journal and reads its entries. It
 // is used by one goroutine.
 type walker struct {
@@ -202,7 +210,20 @@ func checkItems(o object, itemsOffset, width uint64, what objectRef) error {
 // entry of many large values holds at most one value per field. A
 // payload without '=' names no field and is skipped. The returned Entry
 // is valid until the next call.
+//
+// SECURITY: the payloads of the items of fields the renderer reads may
+// hold maxEntryValues (128 MiB) together. An entry whose items pass it is
+// damaged; the item that would pass it is refused before it is read
+// whole or decoded when its size is known up front. The previous entry's
+// values are let go before this entry's DATA objects are read, so that
+// one entry's values are in memory at a time.
 func (w *walker) readEntry(offset uint64) (Entry, error) {
+	// The Entry returned last holds w.fields, so the previous entry's
+	// values stay reachable through the array until it is cleared. clear
+	// sets every Field of the array to its zero value, up to its capacity:
+	// reslicing to [:0] alone would leave them in it.
+	clear(w.fields[:cap(w.fields)])
+	w.fields = w.fields[:0]
 	if offset <= w.lastRead {
 		return Entry{}, damaged("the entry list points to offset %d, not after the last entry read at offset %d", offset, w.lastRead)
 	}
@@ -223,20 +244,26 @@ func (w *walker) readEntry(offset uint64) (Entry, error) {
 	var items itemCursor
 	items.start(w.f, o, objectEntry, entryItemsOffset, width, w.entryChunk)
 	var picked pickedFields
+	// shown counts the payload bytes of the items of fields the renderer
+	// reads, read so far; it never passes maxEntryValues.
+	shown := 0
 	for items.left > 0 {
 		dataOffset, err := items.nextItem()
 		if err != nil {
 			return Entry{}, err
 		}
-		field, value, rendered, err := w.dataField(dataOffset)
+		field, value, rendered, err := w.dataField(dataOffset, maxEntryValues-shown)
+		if errors.Is(err, errPastEntryBudget) {
+			return Entry{}, damaged("%s holds shown values of more than 128 MiB together", what)
+		}
 		if err != nil {
 			return Entry{}, err
 		}
 		if rendered {
 			picked.value[field], picked.present[field] = value, true
+			shown += len(shortFieldNames[field]) + len("=") + len(value)
 		}
 	}
-	w.fields = w.fields[:0]
 	for field, present := range picked.present {
 		if present {
 			w.fields = append(w.fields, Field{Name: shortFieldNames[field], Value: picked.value[field]})
@@ -284,10 +311,17 @@ func renderedField(name []byte) (shortField, bool) {
 // comes from the cache, or from readData and is then cached, damage
 // included, so that an object is read once however many entries list it.
 // An I/O error is not an answer and is not cached.
-func (w *walker) dataField(offset uint64) (field shortField, value []byte, rendered bool, err error) {
+//
+// room is what the entry's budget has left for the payload of a field
+// the renderer reads; a payload that passes it, read now or held by the
+// cache, gives errPastEntryBudget. That refusal belongs to the entry, not
+// to the object, which another entry may have room for, so it is not
+// cached either. A payload has the same size from the cache as from a
+// read, so whether an entry fits does not depend on the cache.
+func (w *walker) dataField(offset uint64, room int) (field shortField, value []byte, rendered bool, err error) {
 	answer, cached := w.cache.get(offset)
 	if !cached {
-		payload, err := w.readData(offset)
+		payload, err := w.readData(offset, room)
 		reason, isDamage := damageReason(err)
 		switch {
 		case isDamage:
@@ -306,6 +340,8 @@ func (w *walker) dataField(offset uint64) (field shortField, value []byte, rende
 		return 0, nil, false, &damageError{reason: answer.damage}
 	case answer.unread:
 		return 0, nil, false, nil
+	case len(answer.payload) > room:
+		return 0, nil, false, errPastEntryBudget
 	}
 	// readData returns a payload only when its name, before '=', is one
 	// the renderer reads.
