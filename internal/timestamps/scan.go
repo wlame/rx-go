@@ -106,15 +106,17 @@ func decimalFraction(b []byte, j int) (milli, next int, ok bool) {
 	return milli, k, true
 }
 
-// colonMillis reads milliseconds written after a colon (`12:34:5:123`),
-// which must be exactly three digits: `12:34:56:12` is not a timestamp. A
-// colon followed by something other than a digit ends the timestamp
-// before it (`12:34:56: message`).
+// colonMillis reads milliseconds written after a colon, as a count of one
+// to three digits, not a decimal fraction: a writer that leaves every
+// field unpadded (`2025-2-15 12:34:5:123`) writes 34 ms as `:34`, and
+// reading it as 340 ms would put the line before its neighbors. Four or
+// more digits are not a timestamp. A colon followed by something other
+// than a digit ends the timestamp before it (`12:34:56: message`).
 func colonMillis(b []byte, j int) (milli, next int, ok bool) {
 	if j+1 >= len(b) || !isDigit(b[j+1]) {
 		return 0, j, true
 	}
-	return number(b, j+1, 3, 3)
+	return number(b, j+1, 1, 3)
 }
 
 // numericOffset reads a zone offset at b[j]: a sign, two hour digits and
