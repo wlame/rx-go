@@ -106,11 +106,16 @@
             "type": "boolean"
           },
           "missing": {
-            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix; named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing.",
+            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, lowest first, without a compression suffix; at most 100 of them (missing_count gives how many are missing). Named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing.",
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "missing_count": {
+            "description": "How many numbered parts are missing, whether missing names them all or stops at 100; 0 when missing names none.",
+            "format": "int64",
+            "type": "integer"
           },
           "name": {
             "description": "The chain's name: the name of its active file (the one without a number or date), such as syslog or app.log.",
@@ -139,6 +144,7 @@
           "parts",
           "has_active",
           "missing",
+          "missing_count",
           "size",
           "compression_formats",
           "is_indexed"
@@ -391,11 +397,16 @@
             ]
           },
           "missing": {
-            "description": "The names absent numbered parts would have, as GET /v1/logs/chains gives them.",
+            "description": "The names absent numbered parts would have, as GET /v1/logs/chains gives them: at most 100, lowest first.",
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "missing_count": {
+            "description": "How many numbered parts are missing, as GET /v1/logs/chains counts them.",
+            "format": "int64",
+            "type": "integer"
           },
           "name": {
             "description": "The chain's name: the name of its active file.",
@@ -437,6 +448,7 @@
           "fingerprint",
           "parts",
           "missing",
+          "missing_count",
           "gaps",
           "first_ms",
           "last_ms",

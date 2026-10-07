@@ -117,7 +117,34 @@ func TestGroup_MissingNumbers(t *testing.T) {
 			if got[0].Missing == nil || !slices.Equal(got[0].Missing, tc.missing) {
 				t.Fatalf("missing %#v, want %v", got[0].Missing, tc.missing)
 			}
+			if got[0].MissingCount != len(tc.missing) {
+				t.Fatalf("missing count %d, want %d", got[0].MissingCount, len(tc.missing))
+			}
 		})
+	}
+}
+
+// A chain names at most MaxMissingNames missing parts, the lowest
+// numbers first; MissingCount says how many are missing in all.
+func TestGroup_MissingNamesStopAtTheirLimit(t *testing.T) {
+	// 300 parts present (1–150 and 301–450) around a hole of 150.
+	var names []string
+	for n := 1; n <= 450; n++ {
+		if n <= 150 || n > 300 {
+			names = append(names, fmt.Sprintf("x.log.%d.gz", n))
+		}
+	}
+	got := Group(testDir, fakeEntries(names...), allText)
+	if len(got) != 1 || len(got[0].Parts) != 300 {
+		t.Fatalf("chains %v", chainsByName(got))
+	}
+	want := make([]string, 0, MaxMissingNames)
+	for n := 151; n < 151+MaxMissingNames; n++ {
+		want = append(want, fmt.Sprintf("x.log.%d", n))
+	}
+	if !slices.Equal(got[0].Missing, want) || got[0].MissingCount != 150 {
+		t.Fatalf("missing %v (%d names), count %d; want %d names from x.log.151, count 150",
+			got[0].Missing, len(got[0].Missing), got[0].MissingCount, MaxMissingNames)
 	}
 }
 
@@ -324,7 +351,7 @@ func TestGroup_TooManyPartsIsMarked(t *testing.T) {
 	}
 
 	sparse := Group(testDir, fakeEntries("x.1", "x.99999"), allText)
-	if len(sparse) != 1 || sparse[0].TooManyParts || len(sparse[0].Missing) != 0 {
+	if len(sparse) != 1 || sparse[0].TooManyParts || len(sparse[0].Missing) != 0 || sparse[0].MissingCount != 0 {
 		t.Fatalf("sparse chain: %+v", sparse)
 	}
 	if sparse[0].Missing == nil {

@@ -485,3 +485,18 @@ func TestDescribeHandle_ListsAgainWhenAPartChanges(t *testing.T) {
 		t.Fatalf("no chain: %v", err)
 	}
 }
+
+// The description names the missing parts and counts them as the
+// listing does.
+func TestDescribe_MissingPartsAsTheListingGivesThem(t *testing.T) {
+	dir := t.TempDir()
+	writeChainFiles(t, dir, []chainFile{
+		{name: "x.log.3", text: timedLines(chainBase, time.Second, 1, 5, "3")},
+		{name: "x.log.1", text: timedLines(chainBase.Add(time.Hour), time.Second, 6, 5, "1")},
+		{name: "x.log", text: timedLines(chainBase.Add(2*time.Hour), time.Second, 11, 5, "active")},
+	})
+	d := describe(t, dir, "x.log", Options{Scan: true})
+	if !slices.Equal(d.Response.Missing, []string{"x.log.2"}) || d.Response.MissingCount != 1 {
+		t.Fatalf("missing %v, count %d", d.Response.Missing, d.Response.MissingCount)
+	}
+}

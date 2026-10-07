@@ -20,6 +20,17 @@ import (
 // text.
 const MaxParts = 10000
 
+// MaxMissingNames is the most missing parts a chain names
+// (Candidate.Missing); Candidate.MissingCount says how many are
+// missing in all.
+//
+// SECURITY: the names are made up from the numbers between the parts,
+// not read from the directory, so without a limit a few files could
+// make an answer far larger than the directory's listing. With it the
+// names of one chain take at most MaxMissingNames times the length of
+// one file name.
+const MaxMissingNames = 100
+
 // Entry is one entry of a directory listing, as Group takes it. The
 // caller fills it from a paths.ListedEntry (EntriesOf) or from a
 // paths.WalkEntry, leaving out the entries the listing refused.
@@ -76,9 +87,12 @@ type Candidate struct {
 	// Parts are the chain's parts in the provisional order, oldest
 	// first; the active part, when it exists, is last.
 	Parts []Part
-	// Missing are the names absent numbered parts would have; never
-	// nil.
+	// Missing are the names absent numbered parts would have, the
+	// lowest numbers first, at most MaxMissingNames of them; never nil.
 	Missing []string
+	// MissingCount is how many numbered parts are missing, whether
+	// Missing names them all or stops at MaxMissingNames.
+	MissingCount int
 	// TooManyParts says that the chain has more than MaxParts parts.
 	TooManyParts bool
 }
@@ -214,7 +228,7 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 	}
 
 	c := Candidate{Dir: dir, Name: chain, Parts: parts}
-	c.Missing = missingNumbers(parts)
+	c.Missing, c.MissingCount = missingNumbers(parts)
 	c.TooManyParts = len(parts) > MaxParts
 	sortProvisional(c.Parts)
 	return c, true
@@ -340,9 +354,13 @@ func chooseParts(members []member, classify Classify) []Part {
 // unbroken run, so a few holes are parts lost; a span mostly of holes
 // (`x.1` beside `x.500`) says the numbers are not a rotation's, and
 // naming hundreds of parts that never existed would only hide the
-// chain. The rule also bounds the list by the parts present, so the
-// loop below runs at most twice the number of present numbers.
-func missingNumbers(parts []Part) []string {
+// chain. Then both results are empty.
+//
+// It returns the names of the lowest MaxMissingNames missing numbers and
+// how many are missing in all. The loop below stops at whichever comes
+// first: the limit, or the highest present number, which the count rule
+// keeps within twice the number of present numbers.
+func missingNumbers(parts []Part) (names []string, count int) {
 	present := map[int64]bool{}
 	var highest *Part
 	for i := range parts {
@@ -355,9 +373,9 @@ func missingNumbers(parts []Part) []string {
 			highest = p
 		}
 	}
-	missing := []string{}
+	names = []string{}
 	if highest == nil {
-		return missing
+		return names, 0
 	}
 	lowest := int64(1)
 	if present[0] {
@@ -367,17 +385,19 @@ func missingNumbers(parts []Part) []string {
 	// the present numbers is how many are missing.
 	absent := highest.Key.Number - lowest + 1 - int64(len(present))
 	if absent > int64(len(present)) {
-		return missing
+		return names, 0
 	}
 	// The name of the highest-numbered part around its number, without
 	// a compression suffix.
 	m, _ := matchName(highest.Name)
-	for n := lowest; n < highest.Key.Number; n++ {
+	for n := lowest; n < highest.Key.Number && len(names) < MaxMissingNames; n++ {
 		if !present[n] {
-			missing = append(missing, m.beforeNumber+strconv.FormatInt(n, 10)+m.afterNumber)
+			names = append(names, m.beforeNumber+strconv.FormatInt(n, 10)+m.afterNumber)
 		}
 	}
-	return missing
+	// Go note: the conversion is safe: absent is at most the number of
+	// present parts, which is a slice length, an int.
+	return names, int(absent)
 }
 
 // sortProvisional puts a chain's parts in the provisional order, oldest

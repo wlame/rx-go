@@ -168,7 +168,7 @@ func writeChainTable(out io.Writer, resp *rxtypes.ChainsResponse) {
 			idx = "idx"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n",
-			output.Printable(c.Name), len(c.Parts), output.HumanSize(c.Size), idx, missingCell(c.Missing))
+			output.Printable(c.Name), len(c.Parts), output.HumanSize(c.Size), idx, missingCell(c.Missing, c.MissingCount))
 	}
 	_ = tw.Flush()
 }
@@ -182,8 +182,11 @@ func chainCount(n int) string {
 }
 
 // missingCell is the MISSING cell of a row: "-" for none, the names up
-// to maxMissingShown, and the count of the others after them.
-func missingCell(missing []string) string {
+// to maxMissingShown, and how many more are missing after them. count
+// is the answer's missing_count, the number of missing parts in all:
+// the answer names at most logchain.MaxMissingNames of them, so the
+// rest is counted from it, not from the names.
+func missingCell(missing []string, count int) string {
 	if len(missing) == 0 {
 		return "-"
 	}
@@ -196,7 +199,7 @@ func missingCell(missing []string) string {
 		names[i] = output.Printable(name)
 	}
 	cell := strings.Join(names, ", ")
-	if rest := len(missing) - len(shown); rest > 0 {
+	if rest := count - len(shown); rest > 0 {
 		cell += fmt.Sprintf(" and %d more", rest)
 	}
 	return cell

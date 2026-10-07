@@ -132,13 +132,13 @@ func overlapReason(a Part, fa partFacts, b Part, fb partFacts, toleranceMs int64
 }
 
 // newResponse is the part of a description that comes from the
-// candidate alone: its handle, name, fingerprint and missing parts,
-// with empty lists for the rest.
+// candidate alone: its handle, name, fingerprint, missing parts and
+// their count, with empty lists for the rest.
 func newResponse(c Candidate, fingerprint string) *rxtypes.ChainResponse {
 	return &rxtypes.ChainResponse{
 		Path: c.Handle(), Name: c.Name, Fingerprint: fingerprint,
 		Reasons: []rxtypes.ChainReason{}, Parts: []rxtypes.ChainPart{},
-		Missing: c.Missing, Gaps: []rxtypes.ChainGap{},
+		Missing: c.Missing, MissingCount: c.MissingCount, Gaps: []rxtypes.ChainGap{},
 	}
 }
 
