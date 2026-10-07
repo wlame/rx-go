@@ -67,7 +67,9 @@ func pointAt(lines []timedLine, n int) *rxtypes.TimePoint {
 }
 
 // expectedTimeIndex is the time section of lines with every field but
-// max_before, computed from the generator's own values.
+// max_before, computed from the generator's own values. Its max is the
+// first line that holds the highest value: a later line replaces it only
+// with a strictly higher one.
 func expectedTimeIndex(lines []timedLine, base rxtypes.TimeIndex) rxtypes.TimeIndex {
 	want := base
 	var maxMs int64
@@ -81,6 +83,9 @@ func expectedTimeIndex(lines []timedLine, base rxtypes.TimeIndex) rxtypes.TimeIn
 			want.First = pointAt(lines, i+1)
 		}
 		want.Last = pointAt(lines, i+1)
+		if want.Max == nil || l.ms > want.Max.Ms {
+			want.Max = pointAt(lines, i+1)
+		}
 		if want.TimestampedLines == 1 {
 			// Every shape writes one offset throughout: the offset of its
 			// first timestamp, or 0 when its timestamps carry no zone.
@@ -468,6 +473,13 @@ func TestBuild_MaxBeforeIsTheRunningMaximumForEveryStorage(t *testing.T) {
 		}
 		requireMaxBeforeMatches(t, label+" plain", plain, lines)
 		requireMaxBeforeMatches(t, label+" seekable", sk, lines)
+		// What a build writes, the load-time check accepts: max agrees
+		// with max_before at every checkpoint of each storage's layout.
+		for name, idx := range map[string]*rxtypes.UnifiedFileIndex{"plain": plain, "gzip": gz, "seekable": sk} {
+			if err := validTimeIndex(idx); err != nil {
+				t.Fatalf("%s %s: a built index fails the load check: %v", label, name, err)
+			}
+		}
 		if !reflect.DeepEqual(gz.TimeIndex, plain.TimeIndex) {
 			t.Fatalf("%s: gzip time_index differs from plain", label)
 		}
@@ -584,8 +596,8 @@ func TestSaveLoad_KeepsTheTimeSection(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			built := buildAt(t, t.TempDir(), name, write, text, fileMtime, 128)
-			if built.TimeIndex == nil || built.Version != 9 {
-				t.Fatalf("version %d, time section present %v; want 9 and true", built.Version, built.TimeIndex != nil)
+			if built.TimeIndex == nil || built.Version != 10 {
+				t.Fatalf("version %d, time section present %v; want 10 and true", built.Version, built.TimeIndex != nil)
 			}
 			cachePath, err := Save(built)
 			if err != nil {

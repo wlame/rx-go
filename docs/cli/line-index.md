@@ -288,12 +288,13 @@ rx index /var/log/audit-*.log --json \
 The `indexed[].index_path` field is the absolute path to the on-disk
 cache — useful when piping to other tools that need to open it.
 
-`indexed[].time_index` is the whole time section, `max_before` and
-`zone_offsets` included, or `null` for a file with no timestamp format:
+`indexed[].time_index` is the whole time section, `max` (the line with
+the highest timestamp), `max_before` and `zone_offsets` included, or
+`null` for a file with no timestamp format:
 
 ```bash
 rx index /var/log/app.log-2025121008 --json \
-    | jq '.indexed[0].time_index | {format, timestamped_lines, first, last, backward_steps}'
+    | jq '.indexed[0].time_index | {format, timestamped_lines, first, last, max, backward_steps}'
 ```
 
 ## How it works
