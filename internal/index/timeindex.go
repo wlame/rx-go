@@ -389,10 +389,10 @@ const maxZoneOffsetMinutes = 18 * 60
 // validTimeIndex reports why a stored time section cannot be used, or
 // nil when it can: its format must be one this build can parse, its
 // first, last and max lines must be lines of the file, its zone offset a
-// real one, and max_before must have one entry per checkpoint, never
-// decrease, hold values in the years 1 to 9999 and none above max. A
-// time search trusts all of these, so an index that breaks one is
-// treated as damaged.
+// real one, max_before must have one entry per checkpoint, never
+// decrease and hold values in the years 1 to 9999, and max must agree
+// with first, last and max_before (validMax). A time search trusts all
+// of these, so an index that breaks one is treated as damaged.
 func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 	ti := idx.TimeIndex
 	if ti == nil {
@@ -432,31 +432,52 @@ func validTimeIndex(idx *rxtypes.UnifiedFileIndex) error {
 		if v != nil && !timestamps.InValueRange(*v) {
 			return fmt.Errorf("time_index: max_before entry %d holds %d ms, outside the years 1 to 9999", i, *v)
 		}
-		if err := maxBeforeWithinMax(i, v, ti.Max); err != nil {
-			return fmt.Errorf("time_index: %w", err)
-		}
 		if v != nil {
 			previous = v
 		}
 	}
+	if err := validMax(ti, idx.LineIndex); err != nil {
+		return fmt.Errorf("time_index: %w", err)
+	}
 	return nil
 }
 
-// maxBeforeWithinMax checks max_before entry i, v, against the file's
-// max: an entry is the highest value of some lines of the file, so it is
-// never above the highest value of all of them, and a file without max
-// (no timestamped line) has no value to put in an entry.
-func maxBeforeWithinMax(i int, v *int64, highest *rxtypes.TimePoint) error {
-	if v == nil {
+// maxBeforeAgreesWithMax checks max_before entry i, v, which belongs to
+// the checkpoint on line checkpointLine, against the file's max.
+//
+// max names the first line that holds the file's highest value, so:
+//
+//   - a checkpoint after that line has that line before it, and the
+//     highest value before it is exactly max's;
+//   - a checkpoint on that line or before it has only lines before it
+//     whose values are lower than max's (none of them holds the highest
+//     value, or max would name it), so its entry is below max's value,
+//     or null when none of them has a timestamp.
+//
+// A search under a time trusts both: the first to start at the last
+// checkpoint whose entry is below the time, the second to skip a part
+// of a chain whose highest value is below it.
+func maxBeforeAgreesWithMax(i int, v *int64, checkpointLine int64, highest *rxtypes.TimePoint) error {
+	if checkpointLine > highest.Line {
+		if v == nil || *v != highest.Ms {
+			return fmt.Errorf("max_before entry %d (checkpoint line %d, after max's line %d) is %s, not max %d ms",
+				i, checkpointLine, highest.Line, msOrNull(v), highest.Ms)
+		}
 		return nil
 	}
-	if highest == nil {
-		return fmt.Errorf("max_before entry %d holds %d ms in a file without timestamped lines", i, *v)
-	}
-	if *v > highest.Ms {
-		return fmt.Errorf("max_before entry %d holds %d ms, above max %d ms", i, *v, highest.Ms)
+	if v != nil && *v >= highest.Ms {
+		return fmt.Errorf("max_before entry %d (checkpoint line %d, up to max's line %d) holds %d ms, not below max %d ms",
+			i, checkpointLine, highest.Line, *v, highest.Ms)
 	}
 	return nil
+}
+
+// msOrNull writes a value of max_before for an error message.
+func msOrNull(v *int64) string {
+	if v == nil {
+		return "null"
+	}
+	return fmt.Sprintf("%d ms", *v)
 }
 
 // validZoneOffsets checks zone_offsets against the rest of a time
@@ -550,8 +571,7 @@ func validFirstText(ti *rxtypes.TimeIndex) error {
 // exactly when the count is above zero, and all three name lines between
 // 1 and lineCount, first no later than last, with values in the years 1
 // to 9999 (a search adds a zone offset of up to 18 hours to them, which
-// must stay far from the ends of int64). validMax then places max
-// between them.
+// must stay far from the ends of int64). validMax checks max further.
 func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	if ti.TimestampedLines < 0 {
 		return fmt.Errorf("timestamped_lines is %d", ti.TimestampedLines)
@@ -578,17 +598,40 @@ func validTimeSpan(ti *rxtypes.TimeIndex, lineCount *int64) error {
 	if ti.First.Line > ti.Last.Line {
 		return fmt.Errorf("first names line %d, after last's line %d", ti.First.Line, ti.Last.Line)
 	}
-	return validMax(ti)
+	return nil
 }
 
-// validMax checks max against first and last, which validTimeSpan has
-// accepted: max is one of the timestamped lines, so it lies between the
-// first and the last of them, and it holds the highest value, so neither
-// first's nor last's value is above it. A search by time across several
-// files passes over a file whose max comes before the time it looks for,
-// so a max below a value of the file would skip lines it should find.
-func validMax(ti *rxtypes.TimeIndex) error {
+// validMax checks max, which validTimeSpan has placed on a line of the
+// file (or found null with every other point, in a file without
+// timestamped lines), against first, last and the checkpoints:
+//
+//   - max is one of the timestamped lines, so it lies between the first
+//     and the last of them, and it holds the highest value, so neither
+//     first's nor last's value is above it;
+//   - the three offsets are positions in one text, the text's bytes
+//     (decompressed for a compressed file, so an offset is never
+//     compared with the stored file's size): none is negative, they
+//     keep the order of their lines, and two are equal exactly when
+//     their lines are (validOffsets);
+//   - each checkpoint's max_before agrees with max
+//     (maxBeforeAgreesWithMax), and a file without timestamped lines
+//     has no value in max_before.
+//
+// A search by time across several files passes over a file whose max
+// comes before the time it looks for, so a max below a value of the
+// file, or one that disagrees with the checkpoints a search within the
+// file trusts, would skip lines it should find. A reader that seeks to
+// a stored offset trusts the offsets.
+func validMax(ti *rxtypes.TimeIndex, checkpoints []rxtypes.LineIndexEntry) error {
 	highest := ti.Max
+	if highest == nil {
+		for i, v := range ti.MaxBefore {
+			if v != nil {
+				return fmt.Errorf("max_before entry %d holds %d ms in a file without timestamped lines", i, *v)
+			}
+		}
+		return nil
+	}
 	if highest.Line < ti.First.Line || highest.Line > ti.Last.Line {
 		return fmt.Errorf("max names line %d, outside the timestamped lines %d to %d",
 			highest.Line, ti.First.Line, ti.Last.Line)
@@ -596,6 +639,35 @@ func validMax(ti *rxtypes.TimeIndex) error {
 	if highest.Ms < ti.First.Ms || highest.Ms < ti.Last.Ms {
 		return fmt.Errorf("max holds %d ms, below first's %d ms or last's %d ms",
 			highest.Ms, ti.First.Ms, ti.Last.Ms)
+	}
+	if err := validOffsets(ti.First, highest, ti.Last); err != nil {
+		return err
+	}
+	// validTimeIndex has checked that max_before has one entry per
+	// checkpoint, so the two lists are read side by side.
+	for i, v := range ti.MaxBefore {
+		if err := maxBeforeAgreesWithMax(i, v, checkpoints[i].LineNumber, highest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validOffsets checks the offsets of first, max and last, three points
+// whose lines are in that order: first's is not negative, and from one
+// point to the next the offset grows when the line does and stays the
+// same when the line does, as the starts of lines in one text do.
+func validOffsets(first, highest, last *rxtypes.TimePoint) error {
+	if first.Offset < 0 {
+		return fmt.Errorf("first offset %d is negative", first.Offset)
+	}
+	for _, pair := range [][2]*rxtypes.TimePoint{{first, highest}, {highest, last}} {
+		earlier, later := pair[0], pair[1]
+		sameLine := earlier.Line == later.Line
+		if sameLine != (earlier.Offset == later.Offset) || earlier.Offset > later.Offset {
+			return fmt.Errorf("offsets are not in the order of their lines: line %d at offset %d, line %d at offset %d",
+				earlier.Line, earlier.Offset, later.Line, later.Offset)
+		}
 	}
 	return nil
 }
