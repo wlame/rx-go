@@ -60,6 +60,10 @@ type Description struct {
 	// so a time after every frozen part's MaxSoFar lies in the active
 	// part. Nil until the chain is ready.
 	MaxSoFar []int64
+
+	// waiting says, for each part of Candidate.Parts, whether the chain
+	// waits for its line index (waitsFor); see WaitingParts.
+	waiting []bool
 }
 
 // wireTimestampLayout is how modified_at is written: RFC 3339 in UTC
@@ -131,6 +135,10 @@ func (d *Description) assemble(facts []partFacts, toleranceMs int64) {
 	for i, part := range c.Parts {
 		resp.Reasons = append(resp.Reasons, partReasons(part, facts[i])...)
 	}
+	d.waiting = make([]bool, len(c.Parts))
+	for i, part := range c.Parts {
+		d.waiting[i] = waitsFor(part, facts[i])
+	}
 	known := everyPartKnown(c, facts)
 	invalid := len(resp.Reasons) > 0
 	// Once every part is known the parts are ordered by time. An invalid
@@ -164,15 +172,63 @@ func (d *Description) assemble(facts []partFacts, toleranceMs int64) {
 // needs nothing.
 func everyPartKnown(c Candidate, facts []partFacts) bool {
 	for i, part := range c.Parts {
-		f := facts[i]
-		if isEmpty(part, f) {
-			continue
-		}
-		if !f.timesKnown || (!part.IsActive && f.lines == nil) {
+		if waitsFor(part, facts[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+// waitsFor reports whether a ready chain needs facts of part that were
+// not read, and that only its line index gives: a frozen part's line
+// count and times, or the active part's first timestamp (a gzip, bzip2,
+// xz or plain zstd active file without an index). An empty part needs
+// nothing.
+func waitsFor(part Part, f partFacts) bool {
+	if isEmpty(part, f) {
+		return false
+	}
+	return !f.timesKnown || (!part.IsActive && f.lines == nil)
+}
+
+// Parts returns the chain's parts in its order, the order of
+// Response.Parts: by time once the chain is ready (or invalid), the
+// provisional order before. A chain of more than MaxParts parts has
+// none.
+func (d *Description) Parts() []Part {
+	parts := make([]Part, 0, len(d.Order))
+	for _, i := range d.Order {
+		parts = append(parts, d.Candidate.Parts[i])
+	}
+	return parts
+}
+
+// UnindexedParts returns the parts without a current stored line
+// index, in the chain's order: frozen parts and the active part alike,
+// empty ones too.
+func (d *Description) UnindexedParts() []Part {
+	parts := []Part{}
+	for k, i := range d.Order {
+		if !d.Response.Parts[k].IsIndexed {
+			parts = append(parts, d.Candidate.Parts[i])
+		}
+	}
+	return parts
+}
+
+// WaitingParts returns the parts whose line index the chain waits for,
+// in the chain's order: each frozen part with lines and without a
+// current index, and the active part when only its index gives its
+// first timestamp. Once they are indexed the chain is ready, unless a
+// check fails; a ready chain waits for none.
+func (d *Description) WaitingParts() []Part {
+	parts := []Part{}
+	for _, i := range d.Order {
+		if d.waiting[i] {
+			parts = append(parts, d.Candidate.Parts[i])
+		}
+	}
+	return parts
 }
 
 // isEmpty reports whether a part holds no line: a file of 0 bytes, or
