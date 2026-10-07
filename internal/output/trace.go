@@ -2,6 +2,8 @@ package output
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,7 +42,9 @@ type FileContext struct {
 }
 
 // BuildFileContexts turns a response's context_lines map into merged,
-// ordered blocks per file.
+// ordered blocks per file. The files come in the order the match list
+// gives them: by the number in the file id (f2 before f10), which is
+// the order the paths were given or walked.
 //
 // context_lines is keyed "pattern:file:offset" and each entry is the
 // window around one match, so adjacent matches repeat lines. Merging by
@@ -79,8 +83,13 @@ func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 		}
 	}
 
-	out := make([]FileContext, 0, len(byFile))
-	for fileID, perLine := range byFile {
+	// Go map iteration is random, so the file ids are put in order
+	// first: slices.SortedFunc collects the keys maps.Keys yields and
+	// sorts them with rxtypes.CompareIDs.
+	fileIDs := slices.SortedFunc(maps.Keys(byFile), rxtypes.CompareIDs)
+	out := make([]FileContext, 0, len(fileIDs))
+	for _, fileID := range fileIDs {
+		perLine := byFile[fileID]
 		numbers := make([]int, 0, len(perLine))
 		for n := range perLine {
 			numbers = append(numbers, n)
@@ -108,8 +117,6 @@ func BuildFileContexts(resp *rxtypes.TraceResponse) []FileContext {
 		}
 		out = append(out, fc)
 	}
-
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
@@ -236,7 +243,7 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 		}
 	} else {
 		fmt.Fprintf(&b, "%sPatterns (%d):%s\n", c.grey, len(resp.Patterns), c.reset)
-		for _, id := range sortedKeys(resp.Patterns) {
+		for _, id := range sortedIDs(resp.Patterns) {
 			fmt.Fprintf(&b, "  %s%s%s: %s%s%s\n",
 				c.blue, id, c.reset, c.magenta, resp.Patterns[id], c.reset)
 		}
@@ -321,14 +328,12 @@ func chunkStats(fileChunks map[string]int) (chunkedFiles, totalChunks int) {
 	return chunkedFiles, totalChunks
 }
 
-// sortedKeys keeps map-driven output stable; Go map iteration is random.
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+// sortedIDs returns the ids that key m (pattern or file ids) in the
+// order an answer lists them: by their number, p2 before p10
+// (rxtypes.CompareIDs). Go map iteration is random, so map-driven
+// output needs the keys sorted to be stable.
+func sortedIDs(m map[string]string) []string {
+	return slices.SortedFunc(maps.Keys(m), rxtypes.CompareIDs)
 }
 
 // tracePalette holds the sequences one render uses. Building it once,

@@ -101,6 +101,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` and `GET /v1/trace` order files and patterns by the number
+  in their id, not as text: the matches of the tenth file given (`f10`)
+  come after those of the second (`f2`), and on one line `p10` comes
+  after `p2`. The cut to `--max-results` / `max_results` runs after this
+  order, so with ten or more files or patterns it now keeps the matches
+  of the first files and patterns given, where it used to keep `f10`'s
+  before `f2`'s. `match_found` webhooks go out in this order. The human
+  output lists the patterns in it too, and its context section lists the
+  files in the order of the match list, where it used to sort them by
+  path.
 - A request whose client went away before the answer is logged and
   counted as status `499`, not `500`: the `http_request` log line and
   `rx_http_responses_total{status_code="499"}` report it, the trace and

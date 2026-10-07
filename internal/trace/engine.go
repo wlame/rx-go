@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -633,14 +634,12 @@ func (e *Engine) RunWithOptions(
 	// than paying for a full pass.
 	resolveUnknownLineNumbers(sources, allMatches, allContexts, lineResolverFor(opts))
 
+	// The answer's order: by file, then offset, then pattern. The cut
+	// to max_results below runs after it, so the order also decides
+	// which of the matches found are kept. The less function gets
+	// pointers into the slice so a comparison copies no Match.
 	sort.SliceStable(allMatches, func(i, j int) bool {
-		if allMatches[i].File != allMatches[j].File {
-			return allMatches[i].File < allMatches[j].File
-		}
-		if allMatches[i].Offset != allMatches[j].Offset {
-			return allMatches[i].Offset < allMatches[j].Offset
-		}
-		return allMatches[i].Pattern < allMatches[j].Pattern
+		return compareMatches(&allMatches[i], &allMatches[j]) < 0
 	})
 	// Every match found, kept or not, can be a line in a kept match's
 	// window, so the windows look lines up in the matches before the cut.
@@ -797,6 +796,22 @@ func classifyForSearch(src sandbox.Pinned) (file searchFile, reason string) {
 		return searchFile{}, kind.NotText
 	}
 	return searchFile{src: src, kind: kind}, ""
+}
+
+// compareMatches orders two matches the way an answer lists them: by
+// file in the order the files were given or walked (f1, f2, …, f10),
+// then by byte offset in the file, then by pattern in the order the
+// patterns were given (p1, p2, …, p10). Both ids are compared by their
+// number, not as text (rxtypes.CompareIDs). It returns a negative
+// number, 0 or a positive number, like strings.Compare.
+func compareMatches(a, b *rxtypes.Match) int {
+	if byFile := rxtypes.CompareIDs(a.File, b.File); byFile != 0 {
+		return byFile
+	}
+	if byOffset := cmp.Compare(a.Offset, b.Offset); byOffset != 0 {
+		return byOffset
+	}
+	return rxtypes.CompareIDs(a.Pattern, b.Pattern)
 }
 
 // patternIDsMap builds the "p1" -> "pattern" map. Single place so

@@ -1,6 +1,7 @@
 package output
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -135,20 +136,51 @@ func TestBuildFileContexts_DropsLinesNumberedOnlyInsideTheirChunk(t *testing.T) 
 	}
 }
 
-// TestBuildFileContexts_SortsFilesByPath keeps output stable across runs;
-// Go map iteration is random.
-func TestBuildFileContexts_SortsFilesByPath(t *testing.T) {
+// TestBuildFileContexts_ListsFilesInFileIDOrder: the context section
+// lists the files in the order the match list does, by the number in
+// the file id (f2 before f10), whatever their paths; Go map iteration is
+// random, so the order is set here.
+func TestBuildFileContexts_ListsFilesInFileIDOrder(t *testing.T) {
 	resp := baseResponse()
-	resp.Files["f2"] = "/logs/a-first.log"
-	resp.ContextLines["p1:f2:10"] = []rxtypes.ContextLine{ctxLine(1, "first file")}
+	resp.Files["f2"] = "/logs/b-second.log"
+	resp.ContextLines["p1:f2:10"] = []rxtypes.ContextLine{ctxLine(1, "second file")}
+	resp.Files["f10"] = "/logs/a-tenth.log"
+	resp.ContextLines["p1:f10:10"] = []rxtypes.ContextLine{ctxLine(1, "tenth file")}
 
 	contexts := BuildFileContexts(resp)
 
-	if len(contexts) != 2 {
-		t.Fatalf("files: got %d, want 2", len(contexts))
+	var got []string
+	for _, fc := range contexts {
+		got = append(got, fc.Path)
 	}
-	if contexts[0].Path != "/logs/a-first.log" {
-		t.Errorf("first file: got %s, want /logs/a-first.log", contexts[0].Path)
+	want := []string{"/logs/app.log", "/logs/b-second.log", "/logs/a-tenth.log"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("files: got %v, want %v", got, want)
+	}
+}
+
+// TestFormatTraceCLI_ListsPatternsByNumber: the patterns header lists
+// p2 before p10, as the matches are ordered.
+func TestFormatTraceCLI_ListsPatternsByNumber(t *testing.T) {
+	resp := baseResponse()
+	resp.Patterns = map[string]string{}
+	var want []string
+	for k := 1; k <= 11; k++ {
+		id := "p" + strconv.Itoa(k)
+		resp.Patterns[id] = "word" + strconv.Itoa(k)
+		want = append(want, "  "+id+": word"+strconv.Itoa(k))
+	}
+
+	out := FormatTraceCLI(resp, TraceFormatOptions{})
+
+	var got []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "  p") {
+			got = append(got, line)
+		}
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("patterns header:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
