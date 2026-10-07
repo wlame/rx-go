@@ -140,6 +140,13 @@
           "too_many_parts": {
             "description": "Whether the chain has more than 10,000 parts. Such a chain is not read as one text: parts and missing are empty, missing_count is 0, is_indexed is false, and GET /v1/logs/chain answers it invalid with the reason too_many_parts.",
             "type": "boolean"
+          },
+          "unreadable": {
+            "description": "The names of the parts whose text check could not open the file (its permissions, an I/O error), in the order of parts. They are parts all the same: GET /v1/logs/chain answers the chain invalid with the reason unreadable for each until they can be read. Empty when every part can.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -152,6 +159,7 @@
           "size",
           "compression_formats",
           "is_indexed",
+          "unreadable",
           "too_many_parts"
         ],
         "type": "object"

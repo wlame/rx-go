@@ -73,6 +73,12 @@ type Part struct {
 	Format compression.Format
 	// File is the file pinned by the listing; read the part through it.
 	File paths.Pinned
+	// ReadError is the error the text check met when it could not open
+	// or state the file (its permissions, an I/O error, or its name led
+	// to another file or to none by then); nil for a part that was
+	// classified. Such a part stays in the chain, so a description can
+	// say why the chain cannot be read; Format is then FormatNone.
+	ReadError error
 
 	// newestLow is the direction of the part's key (nameMatch), kept
 	// for ordering.
@@ -136,11 +142,13 @@ func ClassifyPinned(e Entry) (filekind.Kind, error) {
 // (the chain name comes from the row), or when it is named exactly like
 // a chain name some other file gives: that file is the active part.
 // Left out are directories, hidden entries (unless hidden entries are
-// on), names ending in `.tmp`, files whose text check fails or that
-// cannot be read (classify), and the parts of a template that needs the
-// active file when that file is absent or not text. One generation in
-// several encodings is one part (see choosePart). A group needs two
-// parts to be a chain.
+// on), names ending in `.tmp`, files whose text check says they are not
+// text (classify), and the parts of a template that needs the active
+// file when that file is absent or not text. A file the text check
+// cannot read stays a part, with the error (Part.ReadError): the chain
+// it belongs to cannot be read as one text, and its description says
+// why. One generation in several encodings is one part (see
+// choosePart). A group needs two parts to be a chain.
 //
 // classify is called only for entries that can form a chain: the names
 // of a group that holds two names or more, so the files of a large
@@ -220,11 +228,11 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 
 	var activePart Part
 	if hasActive {
-		format, ok := textFormat(active, classify)
-		if ok {
+		format, isPart, readErr := textCheck(active, classify)
+		if isPart {
 			activePart = Part{
 				Name: active.Name, Path: active.Path, IsActive: true, Duplicates: []string{},
-				Info: active.Info, Format: format, File: active.File,
+				Info: active.Info, Format: format, File: active.File, ReadError: readErr,
 			}
 		} else {
 			hasActive = false
@@ -280,18 +288,23 @@ func boolCount(b bool) int {
 	return 0
 }
 
-// textFormat classifies an entry and returns its compression format, or
-// false when the entry is not text or cannot be read. An empty file is
-// plain text and is not opened.
-func textFormat(e Entry, classify Classify) (compression.Format, bool) {
+// textCheck classifies an entry for membership. isPart is false for a
+// file that is not text. A text file gives its compression format; a
+// file the check cannot open or state is a part too, with the error
+// (readErr) and FormatNone. An empty file is plain text and is not
+// opened.
+func textCheck(e Entry, classify Classify) (format compression.Format, isPart bool, readErr error) {
 	if e.Info.Size() == 0 {
-		return compression.FormatNone, true
+		return compression.FormatNone, true, nil
 	}
 	kind, err := classify(e)
-	if err != nil || !kind.IsText() {
-		return compression.FormatNone, false
+	if err != nil {
+		return compression.FormatNone, true, err
 	}
-	return kind.Format, true
+	if !kind.IsText() {
+		return compression.FormatNone, false, nil
+	}
+	return kind.Format, true, nil
 }
 
 // formatPreference ranks the encodings of one generation: the first
@@ -315,11 +328,17 @@ func formatRank(f compression.Format) int {
 	return len(formatPreference)
 }
 
-// encoding is one text member of a generation, with its format.
+// encoding is one member of a generation that is a part: text, with
+// its format, or unreadable, with the error.
 type encoding struct {
 	member
-	format compression.Format
+	format  compression.Format
+	readErr error
 }
+
+// isUnreadable is 1 for an encoding the text check could not read and 0
+// for one it read, so a sort puts every readable encoding first.
+func (e encoding) isUnreadable() int { return boolCount(e.readErr != nil) }
 
 // chooseParts makes one part per generation of members, classifying
 // them a generation at a time in the order the generations first appear
@@ -350,14 +369,17 @@ func chooseParts(members []member, classify Classify, limit int) []Part {
 }
 
 // choosePart classifies the members of one generation and makes its
-// part: the text encoding formatPreference ranks first (then the shorter
-// name, then by name), with the other text encodings as its duplicates
-// in the same order. It reports false when no member is text.
+// part: the readable text encoding formatPreference ranks first (then
+// the shorter name, then by name), with the other encodings as its
+// duplicates in the same order; an encoding the text check could not
+// read comes after every readable one, so it is the part only when no
+// encoding can be read. It reports false when no member is a part (none
+// is text).
 func choosePart(members []member, classify Classify) (Part, bool) {
 	encodings := make([]encoding, 0, len(members))
 	for _, m := range members {
-		if format, ok := textFormat(m.entry, classify); ok {
-			encodings = append(encodings, encoding{member: m, format: format})
+		if format, isPart, readErr := textCheck(m.entry, classify); isPart {
+			encodings = append(encodings, encoding{member: m, format: format, readErr: readErr})
 		}
 	}
 	if len(encodings) == 0 {
@@ -365,6 +387,7 @@ func choosePart(members []member, classify Classify) (Part, bool) {
 	}
 	slices.SortFunc(encodings, func(a, b encoding) int {
 		return cmp.Or(
+			cmp.Compare(a.isUnreadable(), b.isUnreadable()),
 			cmp.Compare(formatRank(a.format), formatRank(b.format)),
 			cmp.Compare(len(a.entry.Name), len(b.entry.Name)),
 			cmp.Compare(a.entry.Name, b.entry.Name))
@@ -377,7 +400,7 @@ func choosePart(members []member, classify Classify) (Part, bool) {
 	return Part{
 		Name: chosen.entry.Name, Path: chosen.entry.Path, Key: chosen.match.key,
 		Duplicates: duplicates, Info: chosen.entry.Info, Template: chosen.match.template.ID,
-		Format: chosen.format, File: chosen.entry.File,
+		Format: chosen.format, File: chosen.entry.File, ReadError: chosen.readErr,
 		newestLow: chosen.match.newestLow,
 	}, true
 }

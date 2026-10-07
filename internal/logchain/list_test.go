@@ -41,7 +41,7 @@ func TestList_EntryFields(t *testing.T) {
 	wantApp := rxtypes.ChainEntry{
 		Path: filepath.Join(logs, "App.log"), Name: "App.log", Parts: []string{"App.log.2", "App.log.1"},
 		HasActive: false, Missing: []string{}, Size: int64(len(textLines("App.log.1")) + len(textLines("App.log.2"))),
-		CompressionFormats: []string{}, IsIndexed: false,
+		CompressionFormats: []string{}, IsIndexed: false, Unreadable: []string{},
 	}
 	if !equalEntries(app, wantApp) {
 		t.Fatalf("App.log entry %+v\nwant %+v", app, wantApp)
@@ -51,7 +51,7 @@ func TestList_EntryFields(t *testing.T) {
 		Parts:     []string{"syslog.4.xz", "syslog.2.gz", "syslog.1", "syslog"},
 		HasActive: true, Missing: []string{"syslog.3"}, MissingCount: 1,
 		Size:               int64(len(textLines("syslog")) + len(textLines("syslog.1")) + len(gz) + len(xz)),
-		CompressionFormats: []string{"gzip", "xz"}, IsIndexed: false,
+		CompressionFormats: []string{"gzip", "xz"}, IsIndexed: false, Unreadable: []string{},
 	}
 	if !equalEntries(sys, wantSys) {
 		t.Fatalf("syslog entry %+v\nwant %+v", sys, wantSys)
@@ -158,7 +158,7 @@ func equalEntries(a, b rxtypes.ChainEntry) bool {
 	return a.Path == b.Path && a.Name == b.Name && slices.Equal(a.Parts, b.Parts) && a.HasActive == b.HasActive &&
 		a.Missing != nil && slices.Equal(a.Missing, b.Missing) && a.MissingCount == b.MissingCount && a.Size == b.Size &&
 		a.CompressionFormats != nil && slices.Equal(a.CompressionFormats, b.CompressionFormats) &&
-		a.IsIndexed == b.IsIndexed && a.Parts != nil
+		a.IsIndexed == b.IsIndexed && a.Parts != nil && a.Unreadable != nil && slices.Equal(a.Unreadable, b.Unreadable)
 }
 
 // is_indexed holds a stored index to the file the listing pinned: a
@@ -212,5 +212,31 @@ func TestListingEntry_TooManyPartsIsNotRead(t *testing.T) {
 	}
 	if peeks != 0 {
 		t.Fatalf("%d stored indexes looked at", peeks)
+	}
+}
+
+// A part the process may not read is listed, and named in unreadable;
+// the chain is not indexed.
+func TestList_UnreadablePartIsListedAndNamed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its permissions")
+	}
+	_, logs := sandbox(t)
+	writeFiles(t, logs, map[string][]byte{
+		"syslog": textLines("syslog"), "syslog.1": textLines("syslog.1"), "syslog.2": textLines("syslog.2"),
+	})
+	locked := filepath.Join(logs, "syslog.2")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+	resp, err := List(logs)
+	if err != nil || len(resp.Chains) != 1 {
+		t.Fatalf("list: %+v %v", resp, err)
+	}
+	entry := resp.Chains[0]
+	if !slices.Equal(entry.Parts, []string{"syslog.2", "syslog.1", "syslog"}) ||
+		!slices.Equal(entry.Unreadable, []string{"syslog.2"}) || len(entry.Missing) != 0 || entry.IsIndexed {
+		t.Fatalf("entry %+v", entry)
 	}
 }

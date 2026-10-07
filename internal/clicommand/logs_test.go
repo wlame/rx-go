@@ -32,12 +32,17 @@ func TestMissingCell(t *testing.T) {
 	}
 }
 
-// The PARTS cell counts the parts the answer lists, and says ">10000"
+// The PARTS cell counts the parts the answer lists, with how many of
+// them cannot be read, and says ">10000"
 // for a chain of more parts than are read as one text, whose answer
 // lists none.
 func TestPartsCell(t *testing.T) {
 	if got := partsCell(rxtypes.ChainEntry{Parts: []string{"x.log.1", "x.log"}}); got != "2" {
 		t.Errorf("two parts: %q", got)
+	}
+	unreadable := rxtypes.ChainEntry{Parts: []string{"x.log.2", "x.log.1", "x.log"}, Unreadable: []string{"x.log.2"}}
+	if got := partsCell(unreadable); got != "3 (1 unreadable)" {
+		t.Errorf("an unreadable part: %q", got)
 	}
 	if got := partsCell(rxtypes.ChainEntry{Parts: []string{}, TooManyParts: true}); got != ">10000" {
 		t.Errorf("too many parts: %q", got)

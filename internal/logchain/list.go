@@ -68,6 +68,7 @@ func listingEntry(c Candidate) rxtypes.ChainEntry {
 		Missing:            c.Missing,
 		MissingCount:       c.MissingCount,
 		CompressionFormats: []string{},
+		Unreadable:         []string{},
 		TooManyParts:       c.TooManyParts,
 	}
 	if c.TooManyParts {
@@ -77,6 +78,9 @@ func listingEntry(c Candidate) rxtypes.ChainEntry {
 	for _, p := range c.Parts {
 		entry.Parts = append(entry.Parts, p.Name)
 		entry.Size += p.Info.Size()
+		if p.ReadError != nil {
+			entry.Unreadable = append(entry.Unreadable, p.Name)
+		}
 		if p.Format == compression.FormatNone {
 			continue
 		}
@@ -111,6 +115,11 @@ func everyFrozenPartIndexed(c Candidate) bool {
 	for _, p := range c.Parts {
 		if p.IsActive {
 			continue
+		}
+		// A part the listing could not read has no index this check can
+		// trust: validating one reads the part's head and tail.
+		if p.ReadError != nil {
+			return false
 		}
 		idx, err := peekPartIndex(p.Path)
 		if err != nil || idx == nil || !index.DescribesPinned(idx, p.File) {

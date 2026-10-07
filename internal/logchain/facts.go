@@ -93,8 +93,14 @@ func readFacts(ctx context.Context, c Candidate, fingerprint string, opts Option
 }
 
 // frozenFacts reads a frozen part: its stored index, or, without one, a
-// check that it opens and, with opts.Scan, an index built in memory.
+// check that it opens and, with opts.Scan, an index built in memory. A
+// part the listing could not read is not read again: failedRead makes
+// its error the reason unreadable, or a changed part when its name led
+// to another file or to none.
 func frozenFacts(part Part, opts Options) (partFacts, error) {
+	if part.ReadError != nil {
+		return failedRead(context.Background(), part, part.ReadError)
+	}
 	stored := storedIndex(part)
 	if part.Info.Size() == 0 {
 		// An empty file holds no line, whatever its index says, and is
@@ -122,8 +128,12 @@ func frozenFacts(part Part, opts Options) (partFacts, error) {
 // activeFacts reads the active part: its first and last timestamp from
 // samples.TimeRange (from its index when one is current or built, else
 // from the head of its text and a bounded read back from its end), and
-// its line count and highest timestamp from that index.
+// its line count and highest timestamp from that index. An active file
+// the listing could not read is not read again.
 func activeFacts(ctx context.Context, part Part, opts Options) (partFacts, error) {
+	if part.ReadError != nil {
+		return failedRead(ctx, part, part.ReadError)
+	}
 	stored := storedIndex(part)
 	if part.Info.Size() == 0 {
 		return partFacts{indexed: stored != nil, lines: new(int64), timesKnown: true}, nil
