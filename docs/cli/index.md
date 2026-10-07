@@ -1,6 +1,6 @@
 # CLI reference
 
-`rx` exposes six subcommands. `trace` is the default — any invocation whose
+`rx` exposes seven subcommands. `trace` is the default — any invocation whose
 first argument isn't a subcommand name gets `trace` prepended automatically.
 
 ```text
@@ -11,6 +11,7 @@ Subcommands:
   index      Build, inspect, or delete line-offset indexes
   samples    Retrieve context lines by byte offset or line number
   time-range Show the format and first and last timestamp of files
+  logs       Read rotated logs (syslog, syslog.1, syslog.2.gz, …) as one log chain
   compress   Encode files as seekable zstd
   serve      Start the HTTP API server
 ```
@@ -25,8 +26,8 @@ rx trace "error" /var/log/app.log
 ```
 
 If the first positional argument matches a known subcommand name
-(`trace`, `index`, `samples`, `time-range`, `compress`, `serve`, `help`, `completion`,
-`version`), it's routed to that subcommand. Otherwise, `trace` is
+(`trace`, `index`, `samples`, `time-range`, `logs`, `compress`, `serve`, `help`,
+`completion`, `version`), it's routed to that subcommand. Otherwise, `trace` is
 assumed.
 
 ## Global flags
@@ -63,6 +64,8 @@ All subcommands share the same exit-code scheme:
 | 3 | File not found |
 | 4 | Access denied: a path outside `--search-root`, or a file the user named that the process may not read (`permission denied: <path>`, the same in `trace`, `samples` and `index`) |
 | 5 | Interrupted by signal (SIGINT or SIGTERM) |
+| 6 | The log chain an [`rx logs`](logs.md) command reads is invalid: its parts cannot be read as one text |
+| 7 | The log chain's files changed since the fingerprint an `rx logs` command was given (`--fingerprint=`) |
 
 A scan that completes and finds nothing exits **0**, not 1: `rx` reports
 whether the search ran, not whether it matched. This differs from `grep`
@@ -74,7 +77,8 @@ prints ripgrep's own message, which names the offending position, and
 exits 2. It does not list the file under `skipped_files` and report
 success; `skipped_files` is for files that could not be read.
 
-`rx-python` uses the same table.
+`rx-python` uses the same table for 0 to 5; it has no log chains, so
+no 6 or 7.
 
 ## Subcommands
 
@@ -91,6 +95,9 @@ success; `skipped_files` is for files that could not be read.
 
 - **[`rx time-range`](time-range.md)**  
   The timestamp format and the first and last timestamp of each file.
+
+- **[`rx logs`](logs.md)**  
+  Rotated logs read as one log chain: `rx logs list` finds them.
 
 - **[`rx compress`](compress.md)**  
   Encode files as seekable zstd for random-access decompression.

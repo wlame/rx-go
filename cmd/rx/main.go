@@ -63,6 +63,7 @@ var knownSubcommands = []string{
 	"trace",
 	"samples",
 	"time-range",
+	"logs",
 	"index",
 	"compress",
 	"serve",
@@ -166,6 +167,7 @@ func newRootCmd() *cobra.Command {
 			"Common flows:\n" +
 			"  rx \"pattern\" file.log              # trace (default)\n" +
 			"  rx samples file.log --lines=100    # context around line 100\n" +
+			"  rx logs list /var/log              # rotated logs, one chain each\n" +
 			"  rx index file.log --analyze        # build anomaly index\n" +
 			"  rx compress file.log               # make a seekable .zst\n" +
 			"  rx serve --port=7777               # HTTP API + rx-viewer SPA",
@@ -200,6 +202,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(clicommand.NewTraceCommand(os.Stdout))
 	root.AddCommand(clicommand.NewSamplesCommand(os.Stdout))
 	root.AddCommand(clicommand.NewTimeRangeCommand(os.Stdout))
+	root.AddCommand(clicommand.NewLogsCommand(os.Stdout))
 	root.AddCommand(clicommand.NewIndexCommand(os.Stdout))
 	root.AddCommand(clicommand.NewCompressCommand(os.Stdout))
 	root.AddCommand(clicommand.NewServeCommand(os.Stdout, appVersion))

@@ -24,6 +24,11 @@ import (
 //	3 → file not found
 //	4 → access denied (path outside --search-root)
 //	5 → interrupted by a signal
+//	6 → the log chain a command reads is invalid (`rx logs`)
+//	7 → the log chain's files changed since the fingerprint the command
+//	    was given (`rx logs … --fingerprint=`)
+//
+// rx-python has no log chains, so 6 and 7 are rx-go's alone.
 const (
 	ExitSuccess      = 0
 	ExitGenericError = 1
@@ -31,6 +36,8 @@ const (
 	ExitFileNotFound = 3
 	ExitAccessDenied = 4
 	ExitInterrupted  = 5
+	ExitChainInvalid = 6
+	ExitChainChanged = 7
 )
 
 // colorDecision reads NO_COLOR and RX_NO_COLOR envs plus the --no-color
@@ -227,6 +234,13 @@ var failureSummaries = map[int]string{
 // "one or more files failed to index". It returns nil when nothing
 // failed.
 func multiPathFailure(failureCodes []int, genericSummary string) error {
+	return multiPathFailureWith(failureCodes, failureSummaries, genericSummary)
+}
+
+// multiPathFailureWith is multiPathFailure with the closing lines of
+// one shared exit code given by the caller, for a command whose paths
+// are not files.
+func multiPathFailureWith(failureCodes []int, summaries map[int]string, genericSummary string) error {
 	if len(failureCodes) == 0 {
 		return nil
 	}
@@ -237,7 +251,7 @@ func multiPathFailure(failureCodes []int, genericSummary string) error {
 			break
 		}
 	}
-	summary, ok := failureSummaries[code]
+	summary, ok := summaries[code]
 	if !ok {
 		summary = genericSummary
 	}

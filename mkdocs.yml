@@ -166,6 +166,7 @@ nav:
       - index: cli/line-index.md
       - samples: cli/samples.md
       - time-range: cli/time-range.md
+      - logs: cli/logs.md
       - compress: cli/compress.md
       - serve: cli/serve.md
   - HTTP API:
