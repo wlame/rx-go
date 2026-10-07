@@ -106,7 +106,7 @@
             "type": "boolean"
           },
           "missing": {
-            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix. Empty for a chain whose parts are all dated.",
+            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, without a compression suffix; named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing.",
             "items": {
               "type": "string"
             },

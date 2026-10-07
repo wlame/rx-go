@@ -15,7 +15,9 @@ const (
 	// KeyNumber is a rotation number: `syslog.3`, `app.3.log`.
 	KeyNumber
 	// KeyDate is a date, optionally followed by a number:
-	// `syslog-20261001-1790812801`, `app-2026-10-01.3.log`.
+	// `syslog-20261001-1790812801`, `app-2026-10-01.3.log`; or a year
+	// written where a rotation number goes (`report.2023`, see
+	// yearKey).
 	KeyDate
 )
 
@@ -167,6 +169,10 @@ type nameMatch struct {
 	generation string
 	// key is the name's key.
 	key Key
+	// newestLow is the provisional direction of the key: the template's
+	// for a key of the template's kind, and a later date is newer for a
+	// year a numbered row read (see yearKey).
+	newestLow bool
 	// beforeNumber and afterNumber are what the generation holds before
 	// and after the rotation number of a numbered row (`dpkg.log.`, "";
 	// `app.`, `.log`), to name a missing number; empty for other rows.
@@ -200,6 +206,7 @@ func matchName(name string) (nameMatch, bool) {
 			match.generation = name[:loc[2*comp]]
 		}
 		match.key, match.beforeNumber, match.afterNumber = keyOf(tpl, name, loc, match.generation)
+		match.newestLow = tpl.NewestLow && match.key.Kind == tpl.KeyKind
 		return match, true
 	}
 	return nameMatch{}, false
@@ -236,6 +243,9 @@ func keyOf(tpl *Template, name string, loc []int, generation string) (key Key, b
 	}
 	if tpl.KeyKind == KeyNumber {
 		key.Text = name[numStart:numEnd]
+		if year, ok := yearKey(key.Text); ok {
+			return year, "", ""
+		}
 		return key, generation[:numStart], generation[numEnd:]
 	}
 	dateStart, dateEnd := span("date")
@@ -246,6 +256,32 @@ func keyOf(tpl *Template, name string, loc []int, generation string) (key Key, b
 	}
 	key.Text = name[dateStart:keyEnd]
 	return key, "", ""
+}
+
+// The numbers yearKey reads as years: four digits, from 1970 to 2100.
+const (
+	yearDigits = 4
+	firstYear  = 1970
+	lastYear   = 2100
+)
+
+// yearKey reads the digits a numbered row matched (`report.2023`,
+// `app.2024.log`) as a year when they are one: four digits from 1970 to
+// 2100. Such a file is a yearly part, not the 2023rd rotation of
+// `report`: its key is a date, the start of that year in UTC, so a later
+// year is newer and no number below it counts as missing. It reports
+// false for any other number, which stays a rotation number; 5-digit
+// `02024` included.
+func yearKey(digits string) (Key, bool) {
+	if len(digits) != yearDigits {
+		return Key{}, false
+	}
+	year := digitsValue(digits)
+	if year < firstYear || year > lastYear {
+		return Key{}, false
+	}
+	start := time.Date(int(year), time.January, 1, 0, 0, 0, 0, time.UTC)
+	return Key{Kind: KeyDate, Text: digits, DateMs: start.UnixMilli()}, true
 }
 
 // digitsValue is the value of a run of at most 18 ASCII digits, which

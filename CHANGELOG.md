@@ -29,13 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handle (its directory joined with the active file's name), its parts
   oldest first by the number or date in their names, whether the active
   file exists, the missing numbers, the total size, the compression
-  formats and whether every frozen part has a line index. One
-  generation in several encodings is one part (plain, seekable zstd,
-  zstd, gzip, bzip2, xz, by the bytes); directories, hidden entries,
-  `.tmp` files and files that are not text are no parts, so `wtmp` and
-  `wtmp.1` form no chain; a chain needs two parts and may have 10,000.
-  Errors as `GET /v1/tree` for the same path. `GET /health` lists the
-  feature `log_chains`. Contract 1.7.
+  formats and whether every frozen part has a line index. A four-digit
+  number from 1970 to 2100 where a rotation number goes (`report.2023`)
+  is a year, so yearly files are ordered by year and name no missing
+  parts; missing numbers are named only when no more are missing than
+  numbered parts are present. One generation in several encodings is
+  one part (plain, seekable zstd, zstd, gzip, bzip2, xz, by the bytes);
+  directories, hidden entries, `.tmp` files and files that are not text
+  are no parts, so `wtmp` and `wtmp.1` form no chain; a chain needs two
+  parts and may have 10,000. Errors as `GET /v1/tree` for the same path.
+  `GET /health` lists the feature `log_chains`. Contract 1.7.
 - `rx samples --file-tz=ZONE` (all three modes) and
   `rx time-range --file-tz=ZONE` read a file's timestamps as the wall
   clock each line writes, in ZONE, for a log whose zone is missing or

@@ -84,7 +84,9 @@ func TestGroup_DuplicatePreferenceFollowsTheDetectedKind(t *testing.T) {
 }
 
 // Missing numbers: from 0 when a .0 part exists, else from 1, up to the
-// highest number present. Dated parts are never missing.
+// highest number present, named only when no more of them are missing
+// than parts with a number are present. Dated parts, years among them,
+// are never missing.
 func TestGroup_MissingNumbers(t *testing.T) {
 	cases := []struct {
 		label   string
@@ -98,8 +100,13 @@ func TestGroup_MissingNumbers(t *testing.T) {
 		{"dated parts", []string{"app.log-20261001", "app.log-20261005", "app.log"}, []string{}},
 		{"before the extension", []string{"app.log", "app.1.log", "app.3.log.gz"}, []string{"app.2.log"}},
 		{"named without a compression suffix", []string{"dpkg.log.1", "dpkg.log.4.gz"}, []string{"dpkg.log.2", "dpkg.log.3"}},
-		{"in numeric order", []string{"z.1", "z.12"},
-			[]string{"z.2", "z.3", "z.4", "z.5", "z.6", "z.7", "z.8", "z.9", "z.10", "z.11"}},
+		{"in numeric order", []string{"z.1", "z.2", "z.3", "z.4", "z.5", "z.6", "z.12"},
+			[]string{"z.7", "z.8", "z.9", "z.10", "z.11"}},
+		{"as many missing as present", []string{"x.1", "x.4"}, []string{"x.2", "x.3"}},
+		{"more missing than present", []string{"x.1", "x.5"}, []string{}},
+		{"far more missing than present", []string{"z.1", "z.12"}, []string{}},
+		{"years", []string{"report.2023", "report.2024", "report.2026"}, []string{}},
+		{"years beside numbers", []string{"report.1", "report.3", "report.2024"}, []string{"report.2"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.label, func(t *testing.T) {
@@ -290,9 +297,9 @@ func TestGroup_RealLogDirectoryLayout(t *testing.T) {
 	}
 }
 
-// A chain of more than MaxParts parts is still returned, marked; so is
-// one whose numbers span more than MaxParts, which would otherwise name
-// that many missing parts.
+// A chain of more than MaxParts parts is still returned, marked. One of
+// two parts whose numbers span far more is not: it names no missing
+// part, since more are missing than present.
 func TestGroup_TooManyPartsIsMarked(t *testing.T) {
 	names := []string{"big.log"}
 	for n := 1; n <= 20000; n++ {
@@ -317,10 +324,10 @@ func TestGroup_TooManyPartsIsMarked(t *testing.T) {
 	}
 
 	sparse := Group(testDir, fakeEntries("x.1", "x.99999"), allText)
-	if len(sparse) != 1 || !sparse[0].TooManyParts || len(sparse[0].Missing) != 0 {
+	if len(sparse) != 1 || sparse[0].TooManyParts || len(sparse[0].Missing) != 0 {
 		t.Fatalf("sparse chain: %+v", sparse)
 	}
-	if !sparse[0].TooManyParts || sparse[0].Missing == nil {
+	if sparse[0].Missing == nil {
 		t.Fatalf("missing must be an empty list, not nil")
 	}
 }
