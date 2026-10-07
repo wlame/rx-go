@@ -3,6 +3,8 @@ package index
 import (
 	"os"
 	"time"
+
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // SourceIdentity is what a cache records about the file it was built
@@ -99,6 +101,17 @@ func IdentityFromOpenFile(f *os.File, info os.FileInfo) SourceIdentity {
 // identityOf assembles an identity from a stat result and a fingerprint
 // read, leaving the fingerprint nil when the read failed (fpErr).
 func identityOf(info os.FileInfo, fp string, fpErr error) SourceIdentity {
+	id := StatIdentity(info)
+	if fpErr == nil {
+		id.Fingerprint = &fp
+	}
+	return id
+}
+
+// StatIdentity is the identity a stat result shows of a file, without
+// the fingerprint, which needs a read of the file: its size and mtime,
+// and its inode, device and ctime where the platform reports them.
+func StatIdentity(info os.FileInfo) SourceIdentity {
 	id := SourceIdentity{
 		SizeBytes:  info.Size(),
 		ModifiedAt: formatMtime(info.ModTime()),
@@ -112,10 +125,13 @@ func identityOf(info os.FileInfo, fp string, fpErr error) SourceIdentity {
 		id.ChangedAt = &changedAt
 		id.ChangedNs = &changedNs
 	}
-	if fpErr == nil {
-		id.Fingerprint = &fp
-	}
 	return id
+}
+
+// RecordedIdentity is the identity an index recorded of the file it
+// was built from: what IsValidForSource holds that file to.
+func RecordedIdentity(idx *rxtypes.UnifiedFileIndex) SourceIdentity {
+	return recordedIdentity(idx)
 }
 
 // Equal reports whether id and other record the same file in the same
@@ -156,16 +172,25 @@ func (id SourceIdentity) MatchesFile(path string) bool {
 	if err != nil {
 		return false
 	}
-	if info.Size() != id.SizeBytes {
-		return false
-	}
-	if info.ModTime().UnixNano() != id.ModifiedNs {
-		return false
-	}
-	if !id.matchesStat(info) {
+	if !id.MatchesInfo(info) {
 		return false
 	}
 	return id.matchesFingerprint(path)
+}
+
+// MatchesInfo reports whether a stat result, info, still shows the file
+// id describes, by every field one stat gives: the size, the mtime, and
+// the inode, device and ctime (a field id does not record is not
+// compared, as in MatchesFile). It reads no byte of the file, so it does
+// not compare the fingerprint; MatchesFile is the full check. A caller
+// that read an index which passed MatchesFile uses it to learn cheaply
+// that the file has not been written, replaced or had its inode changed
+// since: a write moves the ctime even when it keeps the size and the
+// mtime.
+func (id SourceIdentity) MatchesInfo(info os.FileInfo) bool {
+	return info.Size() == id.SizeBytes &&
+		info.ModTime().UnixNano() == id.ModifiedNs &&
+		id.matchesStat(info)
 }
 
 // matchesStat compares the recorded inode, device and ctime with the

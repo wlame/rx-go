@@ -61,7 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `missing_count`, and a fingerprint of its files (16 hex digits; the active file growing does
   not change it). It reads each frozen part's stored index and the head
   and tail of the active file, never a whole part; descriptions of
-  chains whose frozen parts are all indexed are kept in memory (64).
+  chains whose frozen parts are all indexed (or empty) are kept in
+  memory (64 chains, 40,000 parts in all), keyed by a digest of every
+  part's stat with its ctime, and a kept description is dropped when a
+  frozen part's index file was removed or rebuilt.
   Year-less timestamps take their year from their own part. 409 with
   the current description when `fingerprint` differs or a part is
   replaced while the request reads it; 404 when the handle names fewer

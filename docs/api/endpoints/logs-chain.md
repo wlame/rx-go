@@ -38,10 +38,15 @@ only opened, to learn that it can be read, and the chain is `pending`
 until its index is built (`rx index` on the part). An empty part is not
 opened.
 
-The frozen parts' data of a chain whose frozen parts are all indexed is
-kept in memory (64 chains, the least recently used dropped), keyed by
-the handle, the fingerprint and the zones; the next request reads no
-index of a frozen part. The active file is read on every request.
+The frozen parts' data of a chain whose frozen parts are all indexed
+(or empty) is kept in memory: at most 64 chains and 40,000 parts in
+all, the least recently used dropped. It is keyed by the handle, a
+SHA-256 of every part's name and stat (a frozen part's size,
+modification time and ctime included) and the zones, so a change to any
+frozen part is a new key. The next request reads no index of a frozen
+part: it stats each one's index file, and drops the kept data when an
+index was removed, rebuilt or no longer describes its part. The active
+file is read on every request.
 
 ## The checks and the states
 

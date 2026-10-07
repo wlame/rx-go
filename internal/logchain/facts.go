@@ -39,6 +39,90 @@ type partFacts struct {
 	// upper bound (samples.IndexedTimes).
 	firstMs, lastMs, maxMs *int64
 	maxIsBound             bool
+	// stamp is what a frozen part's index file looked like before it was
+	// read, and what the index recorded of the part; nil for the active
+	// part, and for a frozen part whose index file could not be stated.
+	stamp *indexStamp
+}
+
+// indexStamp lets a cache hit learn, without reading an index again,
+// that the facts read from it still hold: the index file is as it was
+// (still absent, or the same file, unchanged), and the index still
+// records the part as the listing sees it now.
+type indexStamp struct {
+	// present says that the index file existed.
+	present bool
+	// size, mtimeNs, inode and device identify the index file: a
+	// rebuild writes a new file (another inode) or changes its size or
+	// mtime.
+	size, mtimeNs int64
+	inode, device uint64
+	// source is the identity the index recorded of the part; nil when
+	// no index was read.
+	source *index.SourceIdentity
+}
+
+// stampIndexFile stats the stored index file of part (a file in rx's
+// cache directory, not one of the user's). A missing file is a stamp
+// too; any other failure gives nil, and the part's facts are not kept.
+func stampIndexFile(part Part) *indexStamp {
+	info, err := os.Stat(index.GetCachePath(part.Path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return &indexStamp{}
+	}
+	if err != nil {
+		return nil
+	}
+	inode, device, _ := index.InodeAndDevice(info)
+	return &indexStamp{present: true, size: info.Size(), mtimeNs: info.ModTime().UnixNano(), inode: inode, device: device}
+}
+
+// withSource is the stamp with the identity idx recorded of the part,
+// or the stamp as it is when idx is nil. A nil stamp stays nil.
+func (s *indexStamp) withSource(idx *rxtypes.UnifiedFileIndex) *indexStamp {
+	if s == nil || idx == nil {
+		return s
+	}
+	recorded := index.RecordedIdentity(idx)
+	s.source = &recorded
+	return s
+}
+
+// holds reports whether the stamp still holds for part, as the listing
+// of this describe sees it: one stat of the index file, which must be
+// as it was, and a comparison of the identity the index recorded with
+// the part's stat (size, mtime, inode, device and ctime,
+// index.SourceIdentity.MatchesInfo). No index and no byte of the part
+// is read.
+func (s *indexStamp) holds(part Part) bool {
+	now := stampIndexFile(part)
+	if now == nil || now.present != s.present || now.size != s.size || now.mtimeNs != s.mtimeNs ||
+		now.inode != s.inode || now.device != s.device {
+		return false
+	}
+	return s.source == nil || s.source.MatchesInfo(part.Info)
+}
+
+// stampsHold reports whether the stamp of every frozen part's cached
+// facts still holds.
+func stampsHold(c Candidate, facts []partFacts) bool {
+	for i, part := range c.Parts {
+		if part.IsActive {
+			continue
+		}
+		if facts[i].stamp == nil || !facts[i].stamp.holds(part) {
+			return false
+		}
+	}
+	return true
+}
+
+// cacheable reports whether a frozen part's facts may be kept: they came
+// from a stored index whose file was stamped, or the part is empty
+// (0 bytes), whose facts follow from its size, which the cache key
+// holds; its stamp still records whether it has an index.
+func cacheable(part Part, f partFacts) bool {
+	return f.stamp != nil && (part.Info.Size() == 0 || f.indexed)
 }
 
 // The seams describing reads a part through. Tests replace them to count
@@ -59,15 +143,22 @@ var (
 )
 
 // readFacts reads the facts of every part of c, in the candidate's
-// order: the frozen parts' from the memory cache when it holds them,
-// the active part's always.
-func readFacts(ctx context.Context, c Candidate, fingerprint string, opts Options) ([]partFacts, error) {
-	key := cacheKey(c, fingerprint, opts.FileZone)
+// order: the frozen parts' from the memory cache when it holds them and
+// their stamps still hold, the active part's always.
+func readFacts(ctx context.Context, c Candidate, opts Options) ([]partFacts, error) {
+	key := cacheKey(c, opts.FileZone)
 	facts, cached := descriptions.get(key, len(c.Parts))
+	if cached && !stampsHold(c, facts) {
+		// An index the facts came from was removed, rebuilt, or no
+		// longer describes its part: the entry is dropped and the parts
+		// are read again, as on a miss.
+		descriptions.drop(key)
+		cached = false
+	}
 	if !cached {
 		facts = make([]partFacts, len(c.Parts))
 	}
-	everyFrozenIndexed := true
+	keep := true
 	for i, part := range c.Parts {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -80,13 +171,13 @@ func readFacts(ctx context.Context, c Candidate, fingerprint string, opts Option
 			continue
 		default:
 			facts[i], err = frozenFacts(part, opts)
-			everyFrozenIndexed = everyFrozenIndexed && facts[i].indexed
+			keep = keep && cacheable(part, facts[i])
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
-	if !cached && everyFrozenIndexed {
+	if !cached && keep {
 		descriptions.put(key, facts)
 	}
 	return facts, nil
@@ -101,15 +192,19 @@ func frozenFacts(part Part, opts Options) (partFacts, error) {
 	if part.ReadError != nil {
 		return failedRead(context.Background(), part, part.ReadError)
 	}
+	// The index file is stamped before it is read, so a change after
+	// the stamp, even one during the read, shows on the next cache hit.
+	stamp := stampIndexFile(part)
 	stored := storedIndex(part)
 	if part.Info.Size() == 0 {
 		// An empty file holds no line, whatever its index says, and is
 		// not opened.
-		return partFacts{indexed: stored != nil, lines: new(int64), timesKnown: true}, nil
+		return partFacts{indexed: stored != nil, lines: new(int64), timesKnown: true, stamp: stamp.withSource(stored)}, nil
 	}
 	if stored != nil {
 		facts := factsOfIndex(stored, opts.FileZone)
 		facts.indexed = true
+		facts.stamp = stamp.withSource(stored)
 		return facts, nil
 	}
 	if facts, err := checkReadable(part); err != nil || facts.unreadable != "" {
