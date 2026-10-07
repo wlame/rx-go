@@ -23,7 +23,9 @@ import (
 // a rotated log — `syslog`, `syslog.1`, `syslog.2.gz`, … — as one log
 // chain. Each subcommand calls the same function as its /v1/logs route.
 //
-//	rx logs list /var/log          # the chains of a directory
+//	rx logs list /var/log             # the chains of a directory
+//	rx logs show /var/log/syslog      # one chain: its parts in time order, checks, state
+//	rx logs time-range /var/log/syslog  # its first and last timestamp
 //
 // `rx logs` alone prints its help; an unknown subcommand is a usage
 // error.
@@ -40,7 +42,7 @@ func NewLogsCommand(out io.Writer) *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(newLogsListCommand(out))
+	cmd.AddCommand(newLogsListCommand(out), newLogsShowCommand(out), newLogsTimeRangeCommand(out))
 	return cmd
 }
 

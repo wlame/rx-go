@@ -177,3 +177,36 @@ func everyPartKnown(c Candidate, facts []partFacts) bool {
 func isEmpty(part Part, f partFacts) bool {
 	return part.Info.Size() == 0 || (f.lines != nil && *f.lines == 0)
 }
+
+// maxDescribeAttempts is how many times DescribeHandle lists and
+// describes a chain whose parts change while it is read. A rotation
+// renames a few files in a moment, so the next listing nearly always
+// sees the chain at rest; the bound stops the work when files keep
+// moving.
+const maxDescribeAttempts = 3
+
+// DescribeHandle finds the chain a handle names (Resolve) and describes
+// it (Describe): what GET /v1/logs/chain and the `rx logs` commands that
+// read one chain do.
+//
+// When a part changes between the listing and the read (ErrPartChanged:
+// a rotation ran in between), the chain is listed and described again,
+// at most maxDescribeAttempts times in all, and changed is true: the
+// answer is the chain as it is now, and a caller holding an earlier
+// description learns that the files moved (GET /v1/logs/chain answers
+// 409). When every attempt meets a change the error is ErrPartChanged.
+// The other errors are Resolve's, and the context's.
+func DescribeHandle(ctx context.Context, handle string, opts Options) (d *Description, changed bool, err error) {
+	for attempt := 0; attempt < maxDescribeAttempts; attempt++ {
+		var c Candidate
+		if c, err = Resolve(handle); err != nil {
+			return nil, changed, err
+		}
+		d, err = Describe(ctx, c, opts)
+		if !errors.Is(err, ErrPartChanged) {
+			return d, changed, err
+		}
+		changed = true
+	}
+	return nil, changed, err
+}

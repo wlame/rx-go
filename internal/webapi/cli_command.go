@@ -180,6 +180,24 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "analyze_window_lines", Flag: "analyze-window-lines", Kind: ArgFlag, Absent: defaultValue("0")},
 		},
 	},
+	// The commands that read one log chain: GET /v1/logs/chain is
+	// `rx logs show`, and `rx logs time-range` renders its own command
+	// from the same table. Subcommand holds two words.
+	"log_chain": {
+		Subcommand: "logs show",
+		Args: []CLIArg{
+			{Field: "path", Kind: ArgPositional},
+			{Field: "file_tz", Flag: "file-tz", Kind: ArgFlag, Absent: defaultValue("")},
+			{Field: "fingerprint", Flag: "fingerprint", Kind: ArgFlag, Absent: defaultValue("")},
+		},
+	},
+	"logs_time_range": {
+		Subcommand: "logs time-range",
+		Args: []CLIArg{
+			{Field: "path", Kind: ArgPositional},
+			{Field: "file_tz", Flag: "file-tz", Kind: ArgFlag, Absent: defaultValue("")},
+		},
+	},
 	"compress": {
 		Subcommand: "compress",
 		Args: []CLIArg{

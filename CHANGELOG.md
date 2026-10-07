@@ -39,6 +39,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are no parts, so `wtmp` and `wtmp.1` form no chain; a chain needs two
   parts and may have 10,000. Errors as `GET /v1/tree` for the same path.
   `GET /health` lists the feature `log_chains`. Contract 1.7.
+- `GET /v1/logs/chain?path=HANDLE[&file_tz=ZONE][&fingerprint=FP]`
+  describes one log chain: its parts in time order (by first
+  timestamp; an empty part keeps its place), each with its line count,
+  first, last and highest timestamp (`max_ms`, an upper bound marked
+  `max_is_bound` under `file_tz` in a part that writes several zone
+  offsets), `global_start` (the chain's number of its first line),
+  compression, size, `is_indexed`, time format and duplicates; the
+  chain's state (`pending` until every frozen part has a current line
+  index, `ready`, or `invalid` with `reasons`: `no_timestamps`,
+  `overlap` with `overlap_ms`, `active_not_last`, `unreadable`,
+  `too_many_parts`), its first and last time, `frozen_line_count` and
+  `line_count`, the time gaps (with four parts or more, where a part's
+  end and the next part's start are more than 1.5 times the median
+  distance between first timestamps apart), the missing parts, and a
+  fingerprint of its files (16 hex digits; the active file growing does
+  not change it). It reads each frozen part's stored index and the head
+  and tail of the active file, never a whole part; descriptions of
+  chains whose frozen parts are all indexed are kept in memory (64).
+  Year-less timestamps take their year from their own part. 409 with
+  the current description when `fingerprint` differs or a part is
+  replaced while the request reads it; 404 when the handle names fewer
+  than two parts; 400, 403 and 422 as the other routes.
+- `rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]`
+  prints each chain's description: its state, reasons and fingerprint,
+  then a table of its parts in order (name, compression, lines, global
+  lines, first time, highest time, `idx`), its gaps and missing parts;
+  `--json` prints the `GET /v1/logs/chain` body. It never waits: a part
+  without a line index is indexed in memory. `rx logs time-range
+  CHAIN... [--json] [--file-tz=ZONE]` prints each chain's first and last
+  time in the layout of `rx time-range`. Exit 3 when a handle names no
+  chain, 6 when a chain is invalid, 7 when `--fingerprint=` differs
+  (each after printing), 2 for a malformed fingerprint or one given
+  with several chains.
+- `RX_CHAIN_OVERLAP_SECONDS` (default 60, 0 to 86400): how far a part
+  of a log chain may reach past the first timestamp of the next part
+  before the chain is invalid.
 - `rx samples --file-tz=ZONE` (all three modes) and
   `rx time-range --file-tz=ZONE` read a file's timestamps as the wall
   clock each line writes, in ZONE, for a log whose zone is missing or

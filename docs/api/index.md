@@ -28,6 +28,7 @@ Customize with `--host` and `--port`. See [`rx serve`](../cli/serve.md).
 | `GET` | `/v1/tasks/{task_id}` | Poll a background task | [tasks](endpoints/tasks.md) |
 | `GET` | `/v1/tree` | Browse directories within search roots | [tree](endpoints/tree.md) |
 | `GET` | `/v1/logs/chains` | The log chains (rotated logs) of a directory | [logs-chains](endpoints/logs-chains.md) |
+| `GET` | `/v1/logs/chain` | One log chain described: parts in time order, checks, state, fingerprint | [logs-chain](endpoints/logs-chain.md) |
 | `GET` | `/v1/detectors` | List registered anomaly detectors | [detectors](endpoints/detectors.md) |
 | `GET` | `/metrics` | Prometheus exposition | [metrics](endpoints/metrics.md) |
 
