@@ -128,7 +128,22 @@ var (
 	// past it waits in a queue. Its maximum bounds them whatever the
 	// environment asks for.
 	MaxIndexBuildsSetting = IntSetting{Name: "RX_MAX_INDEX_BUILDS", Default: DefaultMaxIndexBuilds, Min: 1, Max: 64}
+
+	// ChainOverlapSecondsSetting is RX_CHAIN_OVERLAP_SECONDS: how far, in
+	// seconds, the highest timestamp of a part of a log chain may be
+	// after the first timestamp of the next part before the chain is
+	// invalid (an overlap). It covers a program that writes to a rotated
+	// file for a moment after the rotation. 0 is accepted: no overlap at
+	// all. Its maximum is one day.
+	ChainOverlapSecondsSetting = IntSetting{Name: "RX_CHAIN_OVERLAP_SECONDS", Default: DefaultChainOverlapSeconds, Min: 0, Max: 86400}
 )
+
+// DefaultChainOverlapSeconds is the default of RX_CHAIN_OVERLAP_SECONDS.
+const DefaultChainOverlapSeconds = 60
+
+// ChainOverlapMs returns RX_CHAIN_OVERLAP_SECONDS, from 0 to 86400
+// seconds, or DefaultChainOverlapSeconds, in milliseconds.
+func ChainOverlapMs() int64 { return int64(ChainOverlapSecondsSetting.Value()) * 1000 }
 
 // DefaultMaxIndexBuilds is the default of RX_MAX_INDEX_BUILDS.
 const DefaultMaxIndexBuilds = 2
@@ -179,6 +194,7 @@ var IntSettings = []IntSetting{
 	SamplesMaxBytesSetting,
 	SamplesHeadMBSetting,
 	MaxIndexBuildsSetting,
+	ChainOverlapSecondsSetting,
 }
 
 // Value returns the setting's value from the environment, by the rule

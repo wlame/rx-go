@@ -289,17 +289,7 @@ func (t *fileTimes) describe() *rxtypes.SamplesTimeFormat {
 	if t == nil {
 		return nil
 	}
-	// A file whose timestamps carry zones reads a line without one as
-	// UTC; a file whose timestamps carry none was written in RX_LOG_TZ,
-	// and under a file zone every line is read in that zone. has_zone
-	// is the file's, whatever the frame.
-	assumed := "UTC"
-	if !t.frame.hasZone {
-		assumed = t.frame.zone.Name
-	}
-	return &rxtypes.SamplesTimeFormat{
-		Format: string(t.detected.Family), HasZone: t.detected.HasZone, AssumedZone: assumed,
-	}
+	return timeFormatIn(t.detected, t.frame)
 }
 
 // lineAt is the answer to one search bound: the first line, in file
