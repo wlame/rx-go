@@ -329,6 +329,10 @@ func conformanceFixtures(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Join(root, "emptydir"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
+	// A rotated log with a missing number: a log chain.
+	write("rotated/app.log", []byte("2025-12-10 07:00:03.000 LINE 3\n"))
+	write("rotated/app.log.1", []byte("2025-12-10 07:00:02.000 LINE 2\n"))
+	write("rotated/app.log.3.gz", gzipped(t, []byte("2025-12-10 07:00:01.000 LINE 1\n")))
 	return root
 }
 
@@ -382,6 +386,13 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("tree of a file", "/v1/tree", q("path", at("app.log")), http.StatusBadRequest)
 	get("tree outside the root", "/v1/tree", q("path", "/etc"), http.StatusForbidden)
 	get("tree of a missing path", "/v1/tree", q("path", at("nope")), http.StatusNotFound)
+
+	get("log chains of a directory", "/v1/logs/chains", q("path", at("rotated")), http.StatusOK)
+	get("log chains of a directory without any", "/v1/logs/chains", q("path", at("emptydir")), http.StatusOK)
+	get("log chains of a file", "/v1/logs/chains", q("path", at("app.log")), http.StatusBadRequest)
+	get("log chains outside the root", "/v1/logs/chains", q("path", "/etc"), http.StatusForbidden)
+	get("log chains of a missing path", "/v1/logs/chains", q("path", at("nope")), http.StatusNotFound)
+	get("log chains without a path", "/v1/logs/chains", nil, http.StatusUnprocessableEntity)
 
 	get("trace plain", "/v1/trace", q("path", at("app.log"), "regexp", "ERROR"), http.StatusOK)
 	get("trace capped, two files, two patterns", "/v1/trace",

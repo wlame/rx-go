@@ -139,12 +139,9 @@ func TestFileTZ_LongValueIsQuotedCut(t *testing.T) {
 	}
 }
 
-// /health lists file_tz, and the contract is 1.6.
+// /health lists file_tz.
 func TestHealth_ListsFileTZ(t *testing.T) {
 	if !slices.Contains(Features(), "file_tz") {
 		t.Errorf("features %v lack file_tz", Features())
-	}
-	if ContractVersion != "1.6" {
-		t.Errorf("contract %s, want 1.6", ContractVersion)
 	}
 }

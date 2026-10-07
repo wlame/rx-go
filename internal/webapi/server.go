@@ -148,6 +148,7 @@ func NewServer(cfg Config) *Server {
 	registerCompressHandlers(s, api)
 	registerTaskHandlers(s, api)
 	registerTreeHandlers(s, api)
+	registerLogsHandlers(s, api)
 	registerDetectorsHandlers(s, api)
 	declareOptionalBearerToken(api)
 

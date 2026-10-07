@@ -16,4 +16,4 @@ package webapi
 // is paused, a bump here is a row in ../tickets/PARITY-DEBT.md rather than
 // a change there. `rx-viewer` reads it from /health and refuses a major it
 // does not know.
-const ContractVersion = "1.6"
+const ContractVersion = "1.7"
