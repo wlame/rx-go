@@ -160,3 +160,57 @@ func equalEntries(a, b rxtypes.ChainEntry) bool {
 		a.CompressionFormats != nil && slices.Equal(a.CompressionFormats, b.CompressionFormats) &&
 		a.IsIndexed == b.IsIndexed && a.Parts != nil
 }
+
+// is_indexed holds a stored index to the file the listing pinned: a
+// part another file replaced after the listing (renamed into its name,
+// as a rotation does) is not indexed, even though the file now at its
+// path has a current index of its own.
+func TestListingEntry_IsIndexedOnlyForThePinnedFile(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string][]byte{"app.log": textLines("app.log"), "app.log.1": textLines("app.log.1")})
+	listed := Group(dir, listedEntries(t, dir), ClassifyPinned)
+	if len(listed) != 1 {
+		t.Fatalf("chains %v", chainsByName(listed))
+	}
+
+	swapped := filepath.Join(dir, "swapped")
+	if err := os.WriteFile(swapped, textLines("another app.log.1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(swapped, filepath.Join(dir, "app.log.1")); err != nil {
+		t.Fatal(err)
+	}
+	storeIndexes(t, dir, "app.log.1")
+	if listingEntry(listed[0]).IsIndexed {
+		t.Fatal("the index of the file now at the part's path counted for the pinned part")
+	}
+
+	// A new listing pins the new file, which its index describes.
+	relisted := Group(dir, listedEntries(t, dir), ClassifyPinned)
+	if !listingEntry(relisted[0]).IsIndexed {
+		t.Fatal("not indexed after a new listing")
+	}
+}
+
+// The listing entry of a chain of more than MaxParts parts lists no
+// part, names no missing part and looks at no stored index: such a
+// chain is not read as one text.
+func TestListingEntry_TooManyPartsIsNotRead(t *testing.T) {
+	c := Group(testDir, fakeEntries(fakeNames("big.log", MaxParts)...), allText)[0]
+	peeks := 0
+	peek := peekPartIndex
+	t.Cleanup(func() { peekPartIndex = peek })
+	peekPartIndex = func(path string) (*rxtypes.UnifiedFileIndex, error) {
+		peeks++
+		return peek(path)
+	}
+	entry := listingEntry(c)
+	if !entry.TooManyParts || entry.Parts == nil || len(entry.Parts) != 0 || len(entry.Missing) != 0 ||
+		entry.MissingCount != 0 || entry.IsIndexed || entry.HasActive != true {
+		t.Fatalf("entry %+v", entry)
+	}
+	if peeks != 0 {
+		t.Fatalf("%d stored indexes looked at", peeks)
+	}
+}

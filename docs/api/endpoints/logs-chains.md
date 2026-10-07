@@ -80,7 +80,8 @@ listed in `parts`.
       "missing_count": 1,
       "size": 20147,
       "compression_formats": ["gzip"],
-      "is_indexed": false
+      "is_indexed": false,
+      "too_many_parts": false
     }
   ]
 }
@@ -103,10 +104,13 @@ listed in `parts`.
 | `missing_count` | int | How many numbered parts are missing, whether `missing` names them all or stops at 100; 0 when `missing` names none |
 | `size` | int64 | The sum of the parts' file sizes in bytes, as stored |
 | `compression_formats` | string[] | The distinct compression formats of the parts, sorted: `gzip`, `bz2`, `xz`, `zstd` (a seekable zstd file is `zstd`). A plain part adds none |
-| `is_indexed` | bool | Whether every part but the active file has a current line index |
+| `is_indexed` | bool | Whether every part but the active file has a current line index, built from the file the listing found: an index of another file that took a part's name since (a rotation renamed it there) does not count |
+| `too_many_parts` | bool | Whether the chain has more than 10,000 parts |
 
-A chain may have at most 10,000 parts. A larger one is still listed;
-the routes that read a chain as one text refuse it.
+A chain may have at most 10,000 parts. A larger one is still listed,
+with `too_many_parts` true, and is read no further: `parts` and
+`missing` are empty, `missing_count` is 0, `size` is 0 and `is_indexed`
+is false. The routes that read a chain as one text refuse it.
 
 ## Status codes
 
@@ -125,9 +129,12 @@ The same as [`GET /v1/tree`](tree.md) for the same path:
 One listing of the directory, as `GET /v1/tree` makes it. For each name
 that can belong to a chain (a group of two names or more), the text
 check `GET /v1/tree` makes for `is_text`: at most the file's signature,
-its seek table and 8 KiB of its text. An empty file is not opened. For
-each chain, the stored line index of each frozen part, stopping at the
-first without one. Nothing is written, and no index is built.
+its seek table and 8 KiB of its text. An empty file is not opened. A
+chain is checked only until it is known to have more than 10,000 parts,
+so one listing makes at most 10,001 checks per chain. For each chain of
+at most 10,000 parts, the stored line index of each frozen part,
+stopping at the first without one. Nothing is written, and no index is
+built.
 
 ## Examples
 

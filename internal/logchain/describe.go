@@ -100,14 +100,16 @@ func Describe(ctx context.Context, c Candidate, opts Options) (*Description, err
 	if c.TooManyParts {
 		// SECURITY: a chain past MaxParts is refused before any of its
 		// parts is read, so the work of describing one is bounded by
-		// MaxParts index loads whatever a directory holds.
-		d.Order = provisionalOrder(len(c.Parts))
+		// MaxParts index loads whatever a directory holds. Its answer
+		// lists no part (the reason gives the count), so its size does
+		// not follow the number of files that share the chain's name.
+		d.Order = []int{}
 		d.Response.State = rxtypes.ChainStateInvalid
 		d.Response.Reasons = append(d.Response.Reasons, rxtypes.ChainReason{
 			Code: rxtypes.ChainReasonTooManyParts, Parts: []string{},
-			Message: fmt.Sprintf("the chain has %d parts; at most %d are read as one text", len(c.Parts), MaxParts),
+			Message: fmt.Sprintf("the names of the chain's files give %d parts; at most %d are read as one text",
+				c.NamedParts, MaxParts),
 		})
-		d.Response.Parts = partEntries(c, d.Order, make([]partFacts, len(c.Parts)))
 		return d, nil
 	}
 	facts, err := readFacts(ctx, c, fingerprint, opts)

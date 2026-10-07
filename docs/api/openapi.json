@@ -102,11 +102,11 @@
             "type": "boolean"
           },
           "is_indexed": {
-            "description": "Whether every part but the active file has a current line index, as is_indexed of /v1/tree tells for one file.",
+            "description": "Whether every part but the active file has a current line index built from the file the listing found (the same inode and device), as is_indexed of /v1/tree tells for one file. False for a chain of more than 10,000 parts, whose indexes are not looked at.",
             "type": "boolean"
           },
           "missing": {
-            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, lowest first, without a compression suffix; at most 100 of them (missing_count gives how many are missing). Named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing.",
+            "description": "The names an absent part would have, for each number missing between the lowest expected number (0 when a .0 part exists, else 1) and the highest present one, lowest first, without a compression suffix; at most 100 of them (missing_count gives how many are missing). Named only when no more numbers are missing than parts with a number are present. Empty for a chain whose parts are all dated. A four-digit number from 1970 to 2100 where a rotation number goes (report.2023) is a year, a date, and is never missing. Empty for a chain of more than 10,000 parts.",
             "items": {
               "type": "string"
             },
@@ -122,7 +122,7 @@
             "type": "string"
           },
           "parts": {
-            "description": "The names of the chain's files in the directory, in the provisional order, oldest first: by the number or date in each name in its rotation scheme's direction, then by modification time; the active file last. One file in several encodings is listed once, as the encoding rx reads.",
+            "description": "The names of the chain's files in the directory, in the provisional order, oldest first: by the number or date in each name in its rotation scheme's direction, then by modification time; the active file last. One file in several encodings is listed once, as the encoding rx reads. Empty for a chain of more than 10,000 parts (too_many_parts).",
             "items": {
               "type": "string"
             },
@@ -136,6 +136,10 @@
             "description": "The sum of the sizes in bytes of the files listed in parts, as stored (compressed for a compressed part).",
             "format": "int64",
             "type": "integer"
+          },
+          "too_many_parts": {
+            "description": "Whether the chain has more than 10,000 parts. Such a chain is not read as one text: parts and missing are empty, missing_count is 0, is_indexed is false, and GET /v1/logs/chain answers it invalid with the reason too_many_parts.",
+            "type": "boolean"
           }
         },
         "required": [
@@ -147,7 +151,8 @@
           "missing_count",
           "size",
           "compression_formats",
-          "is_indexed"
+          "is_indexed",
+          "too_many_parts"
         ],
         "type": "object"
       },
@@ -413,7 +418,7 @@
             "type": "string"
           },
           "parts": {
-            "description": "The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads.",
+            "description": "The chain's parts in its order: by first timestamp once the chain is ready (an empty part keeps its place among the others), by the number or date in their names before (as GET /v1/logs/chains lists them). One file in several encodings is one part, the encoding rx reads. Empty for a chain of more than 10,000 parts, which is invalid with the reason too_many_parts.",
             "items": {
               "$ref": "#/components/schemas/ChainPart"
             },

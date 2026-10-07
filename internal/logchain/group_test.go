@@ -324,28 +324,41 @@ func TestGroup_RealLogDirectoryLayout(t *testing.T) {
 	}
 }
 
-// A chain of more than MaxParts parts is still returned, marked. One of
-// two parts whose numbers span far more is not: it names no missing
-// part, since more are missing than present.
+// A chain of more than MaxParts parts is still returned, marked, and
+// its files are classified only until that is known: MaxParts+1 parts
+// are found, the files after them are neither classified nor kept, and
+// no missing part is named. NamedParts counts the parts the names give.
+// One of two parts whose numbers span far more is not marked: it names
+// no missing part, since more are missing than present.
 func TestGroup_TooManyPartsIsMarked(t *testing.T) {
-	names := []string{"big.log"}
-	for n := 1; n <= 20000; n++ {
-		names = append(names, fmt.Sprintf("big.log.%d", n))
-	}
-	calls := 0
-	classify := func(Entry) (filekind.Kind, error) {
-		calls++
-		return filekind.Kind{}, nil
-	}
-	got := Group(testDir, fakeEntries(names...), classify)
-	if len(got) != 1 || !got[0].TooManyParts || len(got[0].Parts) != 20001 {
-		t.Fatalf("got %d chains; too many %v with %d parts", len(got), len(got) == 1 && got[0].TooManyParts, len(got[0].Parts))
-	}
-	if calls != 20001 {
-		t.Fatalf("classified %d entries, want one call per name", calls)
+	for _, active := range []bool{true, false} {
+		var names []string
+		if active {
+			names = append(names, "big.log")
+		}
+		for n := 1; n <= 20000; n++ {
+			names = append(names, fmt.Sprintf("big.log.%d", n))
+		}
+		calls := 0
+		classify := func(Entry) (filekind.Kind, error) {
+			calls++
+			return filekind.Kind{}, nil
+		}
+		got := Group(testDir, fakeEntries(names...), classify)
+		if len(got) != 1 || !got[0].TooManyParts || got[0].HasActive() != active {
+			t.Fatalf("active %v: %d chains, marked %v", active, len(got), len(got) == 1 && got[0].TooManyParts)
+		}
+		c := got[0]
+		if calls != MaxParts+1 || len(c.Parts) != MaxParts+1 || c.NamedParts != len(names) {
+			t.Fatalf("active %v: classified %d entries, kept %d parts, named %d; want %d, %d and %d",
+				active, calls, len(c.Parts), c.NamedParts, MaxParts+1, MaxParts+1, len(names))
+		}
+		if c.Missing == nil || len(c.Missing) != 0 || c.MissingCount != 0 {
+			t.Fatalf("active %v: missing %d names, count %d", active, len(c.Missing), c.MissingCount)
+		}
 	}
 
-	exactly := Group(testDir, fakeEntries(names[:MaxParts]...), allText)
+	exactly := Group(testDir, fakeEntries(fakeNames("big.log", MaxParts-1)...), allText)
 	if len(exactly) != 1 || exactly[0].TooManyParts || len(exactly[0].Parts) != MaxParts {
 		t.Fatalf("a chain of exactly MaxParts parts is marked")
 	}
@@ -357,6 +370,33 @@ func TestGroup_TooManyPartsIsMarked(t *testing.T) {
 	if sparse[0].Missing == nil {
 		t.Fatalf("missing must be an empty list, not nil")
 	}
+}
+
+// A chain is known to be too large once MaxParts+1 of its files are
+// parts; files that are not text do not count, so a chain whose names
+// pass MaxParts while its text parts do not is an ordinary chain.
+func TestGroup_FilesThatAreNotTextDoNotCountTowardTooManyParts(t *testing.T) {
+	names := fakeNames("big.log", MaxParts+5)
+	classify := func(e Entry) (filekind.Kind, error) {
+		// Every number that ends in 7 or 8: about 2,000 of them.
+		if last := e.Name[len(e.Name)-1]; last == '7' || last == '8' {
+			return filekind.Kind{NotText: filekind.NotTextPrefix + ": test"}, nil
+		}
+		return filekind.Kind{}, nil
+	}
+	got := Group(testDir, fakeEntries(names...), classify)
+	if len(got) != 1 || got[0].TooManyParts || len(got[0].Parts) > MaxParts {
+		t.Fatalf("marked %v with %d parts", len(got) == 1 && got[0].TooManyParts, len(got[0].Parts))
+	}
+}
+
+// fakeNames is the active file name and its parts name.1 … name.n.
+func fakeNames(name string, n int) []string {
+	names := []string{name}
+	for i := 1; i <= n; i++ {
+		names = append(names, fmt.Sprintf("%s.%d", name, i))
+	}
+	return names
 }
 
 // BenchmarkGroup_20000Parts measures grouping a directory listing of

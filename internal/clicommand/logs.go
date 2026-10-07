@@ -167,10 +167,20 @@ func writeChainTable(out io.Writer, resp *rxtypes.ChainsResponse) {
 		if c.IsIndexed {
 			idx = "idx"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n",
-			output.Printable(c.Name), len(c.Parts), output.HumanSize(c.Size), idx, missingCell(c.Missing, c.MissingCount))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			output.Printable(c.Name), partsCell(c), output.HumanSize(c.Size), idx, missingCell(c.Missing, c.MissingCount))
 	}
 	_ = tw.Flush()
+}
+
+// partsCell is the PARTS cell of a row: how many parts the chain has,
+// or ">10000" for a chain of more than logchain.MaxParts parts, whose
+// answer lists none.
+func partsCell(c rxtypes.ChainEntry) string {
+	if c.TooManyParts {
+		return ">" + strconv.Itoa(logchain.MaxParts)
+	}
+	return strconv.Itoa(len(c.Parts))
 }
 
 // chainCount words how many chains a directory holds.

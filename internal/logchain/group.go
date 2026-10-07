@@ -94,7 +94,17 @@ type Candidate struct {
 	// Missing names them all or stops at MaxMissingNames.
 	MissingCount int
 	// TooManyParts says that the chain has more than MaxParts parts.
+	// Such a chain is not read as one text, and its files are classified
+	// only until that is known: Parts then holds the first MaxParts+1
+	// parts found, in the order of the directory listing (by name), the
+	// files after them are left out, and Missing is empty.
 	TooManyParts bool
+	// NamedParts is how many parts the names of the chain's files give:
+	// one per generation, the active file included, counted before any
+	// file is read. Files that turn out not to be text make it larger
+	// than len(Parts). For a chain of more than MaxParts parts it is the
+	// count its description gives.
+	NamedParts int
 }
 
 // Handle is the chain's handle: its directory joined with its name.
@@ -134,8 +144,10 @@ func ClassifyPinned(e Entry) (filekind.Kind, error) {
 //
 // classify is called only for entries that can form a chain: the names
 // of a group that holds two names or more, so the files of a large
-// directory that no template matches are never opened. The candidates
-// come back sorted by name, case-insensitive, as /v1/tree sorts files.
+// directory that no template matches are never opened. In a chain of
+// more than MaxParts parts it is called only until MaxParts+1 parts are
+// found (see Candidate.TooManyParts). The candidates come back sorted
+// by name, case-insensitive, as /v1/tree sorts files.
 //
 // The work is bounded by the number of entries: one regexp match per
 // name (four at most), one classify per entry at most, and a sort per
@@ -201,7 +213,8 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 	}
 	// Two generations at least, counting the active file: otherwise no
 	// text check could make a chain, and none is made.
-	if countGenerations(members)+boolCount(hasActive) < 2 {
+	named := countGenerations(members) + boolCount(hasActive)
+	if named < 2 {
 		return Candidate{}, false
 	}
 
@@ -219,7 +232,13 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 		}
 	}
 
-	parts := chooseParts(members, classify)
+	// SECURITY: the frozen parts are classified only until the chain is
+	// known to have more than MaxParts parts, the active file counted.
+	// Such a chain is not read as one text, so classifying the rest of a
+	// directory of rotated names would be work for nothing: a listing
+	// costs at most MaxParts+1 classifications per chain, however many
+	// files share its name.
+	parts := chooseParts(members, classify, MaxParts+1-boolCount(hasActive))
 	if hasActive {
 		parts = append(parts, activePart)
 	}
@@ -227,9 +246,13 @@ func buildCandidate(dir, chain string, members []member, active Entry, hasActive
 		return Candidate{}, false
 	}
 
-	c := Candidate{Dir: dir, Name: chain, Parts: parts}
-	c.Missing, c.MissingCount = missingNumbers(parts)
+	c := Candidate{Dir: dir, Name: chain, Parts: parts, Missing: []string{}, NamedParts: named}
 	c.TooManyParts = len(parts) > MaxParts
+	if !c.TooManyParts {
+		// The parts of a chain that is too large stop where it became
+		// known, so their numbers would name holes that are not there.
+		c.Missing, c.MissingCount = missingNumbers(parts)
+	}
 	sortProvisional(c.Parts)
 	return c, true
 }
@@ -298,47 +321,65 @@ type encoding struct {
 	format compression.Format
 }
 
-// chooseParts classifies the members, drops those that are not text,
-// and makes one part per generation: the encoding formatPreference
-// ranks first (then the shorter name, then by name), with the others as
-// its duplicates in the same order.
-func chooseParts(members []member, classify Classify) []Part {
-	byGeneration := map[string][]encoding{}
+// chooseParts makes one part per generation of members, classifying
+// them a generation at a time in the order the generations first appear
+// (the directory listing's, by name), and stops once it holds limit
+// parts: the generations after that are neither classified nor kept. A
+// generation none of whose members is text makes no part.
+func chooseParts(members []member, classify Classify, limit int) []Part {
+	byGeneration := map[string][]member{}
 	var order []string
 	for _, m := range members {
-		format, ok := textFormat(m.entry, classify)
-		if !ok {
-			continue
-		}
 		g := m.match.generation
 		if _, seen := byGeneration[g]; !seen {
 			order = append(order, g)
 		}
-		byGeneration[g] = append(byGeneration[g], encoding{member: m, format: format})
+		byGeneration[g] = append(byGeneration[g], m)
 	}
 
-	parts := make([]Part, 0, len(order))
+	parts := make([]Part, 0, min(len(order), limit))
 	for _, g := range order {
-		encodings := byGeneration[g]
-		slices.SortFunc(encodings, func(a, b encoding) int {
-			return cmp.Or(
-				cmp.Compare(formatRank(a.format), formatRank(b.format)),
-				cmp.Compare(len(a.entry.Name), len(b.entry.Name)),
-				cmp.Compare(a.entry.Name, b.entry.Name))
-		})
-		chosen := encodings[0]
-		duplicates := make([]string, 0, len(encodings)-1)
-		for _, other := range encodings[1:] {
-			duplicates = append(duplicates, other.entry.Name)
+		if len(parts) == limit {
+			break
 		}
-		parts = append(parts, Part{
-			Name: chosen.entry.Name, Path: chosen.entry.Path, Key: chosen.match.key,
-			Duplicates: duplicates, Info: chosen.entry.Info, Template: chosen.match.template.ID,
-			Format: chosen.format, File: chosen.entry.File,
-			newestLow: chosen.match.newestLow,
-		})
+		if part, ok := choosePart(byGeneration[g], classify); ok {
+			parts = append(parts, part)
+		}
 	}
 	return parts
+}
+
+// choosePart classifies the members of one generation and makes its
+// part: the text encoding formatPreference ranks first (then the shorter
+// name, then by name), with the other text encodings as its duplicates
+// in the same order. It reports false when no member is text.
+func choosePart(members []member, classify Classify) (Part, bool) {
+	encodings := make([]encoding, 0, len(members))
+	for _, m := range members {
+		if format, ok := textFormat(m.entry, classify); ok {
+			encodings = append(encodings, encoding{member: m, format: format})
+		}
+	}
+	if len(encodings) == 0 {
+		return Part{}, false
+	}
+	slices.SortFunc(encodings, func(a, b encoding) int {
+		return cmp.Or(
+			cmp.Compare(formatRank(a.format), formatRank(b.format)),
+			cmp.Compare(len(a.entry.Name), len(b.entry.Name)),
+			cmp.Compare(a.entry.Name, b.entry.Name))
+	})
+	chosen := encodings[0]
+	duplicates := make([]string, 0, len(encodings)-1)
+	for _, other := range encodings[1:] {
+		duplicates = append(duplicates, other.entry.Name)
+	}
+	return Part{
+		Name: chosen.entry.Name, Path: chosen.entry.Path, Key: chosen.match.key,
+		Duplicates: duplicates, Info: chosen.entry.Info, Template: chosen.match.template.ID,
+		Format: chosen.format, File: chosen.entry.File,
+		newestLow: chosen.match.newestLow,
+	}, true
 }
 
 // missingNumbers names the numbers missing from a chain's numbered
