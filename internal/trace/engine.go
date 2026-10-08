@@ -120,6 +120,9 @@ func New() *Engine { return &Engine{} }
 //  7. Optionally writes new trace caches for large completed scans.
 //  8. Returns the response.
 //
+// It is RunResolved over the plan expandPaths makes of paths: every
+// path pinned, every directory walked, every file classified.
+//
 // Parity with rx-python/src/rx/trace.py::parse_paths is bit-for-bit
 // up to intentional differences in logging (structured vs slog) and
 // the order in which concurrent batches complete (we sort at the end,
@@ -127,6 +130,56 @@ func New() *Engine { return &Engine{} }
 func (e *Engine) RunWithOptions(
 	ctx context.Context,
 	paths []string,
+	patterns []string,
+	opts Options,
+) (*rxtypes.TraceResponse, error) {
+	expand := func(context.Context) (*SearchPlan, error) {
+		return expandPaths(paths, !opts.NoRecursive), nil
+	}
+	return e.RunResolved(ctx, expand, patterns, opts)
+}
+
+// SearchPlan is what one search reads, as a Resolver resolved it from
+// the paths the search was given.
+type SearchPlan struct {
+	// Paths are the paths the search was given, as the answer's path
+	// lists them.
+	Paths []string
+	// Files are the files to read, in order. Files[i] is answered as
+	// file id f<i+1>, so the order of the matches and the cut to
+	// max_results follow this order.
+	Files []SearchFile
+	// ScannedDirs are the directories walked to find Files. When there
+	// is one, the answer's scanned_files lists every file of Files, as
+	// for a trace of a directory; otherwise it is empty.
+	ScannedDirs []string
+	// Skipped are the paths passed over before the search, each with
+	// the reason the answer gives (SkipReason words an error the way a
+	// search does), in order. The answer's skipped_files and
+	// skip_reasons list them first, then the files the search itself
+	// could not read in full.
+	Skipped []rxtypes.SkippedFile
+}
+
+// Resolver resolves the paths of a search into the files it reads: a
+// SearchPlan. RunResolved calls it once, after the patterns are
+// checked and before any file is read; its error ends the search as it
+// is.
+type Resolver func(ctx context.Context) (*SearchPlan, error)
+
+// RunResolved is the search of RunWithOptions over the files a resolver
+// chose: the patterns are checked first (validatePatterns), so a
+// pattern rg cannot compile ends the search before resolve walks or
+// reads anything; then resolve gives the plan, and every later step of
+// RunWithOptions runs on the plan's files in the plan's order. Each file
+// is read only through the pin it carries (SearchFile), as the resolver
+// classified it.
+//
+// A search of log chains uses it to search the parts of each chain in
+// the chain's order with the one engine every trace uses.
+func (e *Engine) RunResolved(
+	ctx context.Context,
+	resolve Resolver,
 	patterns []string,
 	opts Options,
 ) (*rxtypes.TraceResponse, error) {
@@ -149,9 +202,16 @@ func (e *Engine) RunWithOptions(
 	if err := validatePatterns(ctx, patternIDs, patternOrder, opts.RgExtraArgs); err != nil {
 		return nil, err
 	}
+	plan, err := resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	paths, files, scannedDirs := plan.Paths, plan.Files, plan.ScannedDirs
 	// skips collects every path passed over or not searched in full,
-	// with the reason the answer gives for it (skip_reasons).
-	files, scannedDirs, skips := expandPaths(paths, !opts.NoRecursive)
+	// with the reason the answer gives for it (skip_reasons): first the
+	// plan's, then the search's own.
+	skips := &skipList{}
+	skips.addAll(plan.Skipped)
 	if len(files) == 0 {
 		// Nothing to search still answers with the request it was
 		// given: an empty request id and a null path made a skipped
@@ -715,13 +775,36 @@ type contextWithFile struct {
 	ctx    rxtypes.ContextLine
 }
 
-// searchFile is a file a trace reads: its pin and what it is.
-type searchFile struct {
+// SearchFile is one file a search reads: the pin every read of it goes
+// through, and what it is (filekind), decided once through that pin by
+// ClassifyForSearch.
+type SearchFile struct {
 	src  sandbox.Pinned
 	kind filekind.Kind
 }
 
-// expandPaths splits input paths into (files, dirs-scanned, skips).
+// Path is the file's path as the search reports it: the pin's.
+func (f SearchFile) Path() string { return f.src.Path() }
+
+// Kind is what the file is: its format, whether it is seekable, and
+// whether its text is text (Kind.IsText; Kind.NotText says why not).
+func (f SearchFile) Kind() filekind.Kind { return f.kind }
+
+// ClassifyForSearch decides what the file src leads to, through its pin,
+// as a search decides it before reading: filekind.OfPinnedForReading,
+// which probes with the window the search reads with. The error says
+// the file cannot be read, and SkipReason words it for the answer. A
+// file that can be read is searched only when its Kind is text.
+func ClassifyForSearch(src sandbox.Pinned) (SearchFile, error) {
+	kind, err := filekind.OfPinnedForReading(src)
+	if err != nil {
+		return SearchFile{}, err
+	}
+	return SearchFile{src: src, kind: kind}, nil
+}
+
+// expandPaths turns the input paths into the plan of RunWithOptions:
+// the files to read, the directories walked, and the paths skipped.
 //
 // recursive defaults to TRUE (Python
 // parity). When recursive is false (CLI `--no-recursive`), only the
@@ -732,14 +815,15 @@ type searchFile struct {
 // so the scan later reads that file or nothing. A directory is walked
 // by sandbox.WalkPinned, which follows a symlink only when naming its
 // target would be allowed, enters each directory once, and pins every
-// file it reports. Each file is then classified once (filekind.OfPinned)
-// through its pin: what the classification finds decides how the file
-// is read. skips names, each with its reason, every path refused, every
-// file that cannot be opened, every file whose text is not text (a
-// binary file, a .tar.gz, UTF-16) and every subdirectory that cannot be
-// listed; the rest of a tree is still searched.
-func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDirs []string, skips *skipList) {
-	skips = &skipList{}
+// file it reports. Each file is then classified once through its pin
+// (ClassifyForSearch): what the classification finds decides how the
+// file is read. The plan's skips name, each with its reason, every path
+// refused, every file that cannot be opened, every file whose text is
+// not text (a binary file, a .tar.gz, UTF-16) and every subdirectory
+// that cannot be listed; the rest of a tree is still searched.
+func expandPaths(paths []string, recursive bool) *SearchPlan {
+	plan := &SearchPlan{Paths: paths}
+	skips := &skipList{}
 	for _, p := range paths {
 		src, err := sandbox.Pin(p)
 		if err != nil {
@@ -748,14 +832,14 @@ func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDir
 		}
 		if !src.Info().IsDir() {
 			if file, reason := classifyForSearch(src); reason == "" {
-				files = append(files, file)
+				plan.Files = append(plan.Files, file)
 			} else {
 				skips.add(p, reason)
 			}
 			continue
 		}
 
-		scannedDirs = append(scannedDirs, p)
+		plan.ScannedDirs = append(plan.ScannedDirs, p)
 		entries, walkErr := sandbox.WalkPinned(src, recursive)
 		if walkErr != nil {
 			// The directory itself cannot be listed: report it rather
@@ -774,28 +858,29 @@ func expandPaths(paths []string, recursive bool) (files []searchFile, scannedDir
 				skips.add(entry.Path, entry.Refused)
 			default:
 				if file, reason := classifyForSearch(entry.File); reason == "" {
-					files = append(files, file)
+					plan.Files = append(plan.Files, file)
 				} else {
 					skips.add(entry.Path, reason)
 				}
 			}
 		}
 	}
-	return files, scannedDirs, skips
+	plan.Skipped = skips.reasons()
+	return plan
 }
 
 // classifyForSearch decides what src is through its pin. reason is
 // empty for a file the search reads, and otherwise says why it is
 // skipped: the file cannot be opened, or its text is not text.
-func classifyForSearch(src sandbox.Pinned) (file searchFile, reason string) {
-	kind, err := filekind.OfPinnedForReading(src)
+func classifyForSearch(src sandbox.Pinned) (file SearchFile, reason string) {
+	file, err := ClassifyForSearch(src)
 	if err != nil {
-		return searchFile{}, skipReason(err)
+		return SearchFile{}, SkipReason(err)
 	}
-	if !kind.IsText() {
-		return searchFile{}, kind.NotText
+	if !file.kind.IsText() {
+		return SearchFile{}, file.kind.NotText
 	}
-	return searchFile{src: src, kind: kind}, ""
+	return file, ""
 }
 
 // compareMatches orders two matches the way an answer lists them: by
@@ -976,7 +1061,7 @@ func settleFiles(
 			fc := credits[next]
 			next++
 			if fc.err != nil {
-				lost = append(lost, rxtypes.SkippedFile{Path: o.path, Reason: skipReason(fc.err)})
+				lost = append(lost, rxtypes.SkippedFile{Path: o.path, Reason: SkipReason(fc.err)})
 				continue
 			}
 			fileMatches = creditedMatches(o.scanned, fc.lines)
