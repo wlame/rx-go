@@ -2,7 +2,9 @@
 
 Read a rotated log — `syslog`, `syslog.1`, `syslog.2.gz`, … — as one
 **log chain**: the files of one rotated log in one directory, found by
-their names.
+their names. [Log chains](../concepts/log-chains.md) explains which
+names form a chain, how its parts are ordered and numbered, and how a
+chain follows a live log.
 
 ## Synopsis
 
@@ -25,8 +27,9 @@ its `--json` output is that route's body.
 
 The chains of each directory (default: the current one), from the
 files' names alone. The answer is the one
-[`GET /v1/logs/chains`](../api/endpoints/logs-chains.md) gives; that
-page says which names form a chain.
+[`GET /v1/logs/chains`](../api/endpoints/logs-chains.md) gives; the
+[name templates](../concepts/log-chains.md#name-templates) say which
+names form a chain.
 
 ```bash
 rx logs list /var/log
@@ -425,3 +428,4 @@ the commands that read one chain use two more:
 - [`GET /v1/logs/samples`](../api/endpoints/logs-samples.md) — `rx logs samples` over HTTP
 - [`GET /v1/logs/trace`](../api/endpoints/logs-trace.md) — `rx logs trace` over HTTP
 - [`rx time-range`](time-range.md) — the time range of single files
+- [Log chains](../concepts/log-chains.md) — what a chain is, its states, its numbering and live logs

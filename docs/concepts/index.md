@@ -24,6 +24,11 @@ performance trade-offs, operational behavior, and how to extend the tool.
   On-disk cache layout, cache key scheme, mtime-based invalidation,
   and the `--no-cache` / `--no-index` escape hatches.
 
+- **[Log chains](log-chains.md)**  
+  Rotated logs (`syslog`, `syslog.1`, `syslog.2.gz`) read as one text:
+  which names form a chain, its order by time, its states, its one
+  numbering, and how it follows a live log.
+
 - **[Compression](compression.md)**  
   Supported read formats (gzip, bzip2, xz, zstd, seekable-zstd), the
   seekable-zstd write format, and the trade-offs between frame size
@@ -51,8 +56,9 @@ If you're new to `rx`, read in this order:
 4. [Caching](caching.md) — where results live between runs
 5. [Compression](compression.md) — what works on compressed data and
    what doesn't
-6. [Security](security.md) — before you expose `rx serve` to anything
-7. [Analyzers](analyzers.md) — only if you want to add custom file
+6. [Log chains](log-chains.md) — when your logs rotate
+7. [Security](security.md) — before you expose `rx serve` to anything
+8. [Analyzers](analyzers.md) — only if you want to add custom file
    analysis
 
 ## See also
