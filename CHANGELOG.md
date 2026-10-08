@@ -203,12 +203,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     file opens only the files that can belong to the chain of its name,
     never the rest of its directory. What a request reaches more than
     once (a path given twice, a directory and a handle or a part in it, a
-    link to a directory) is searched once: one entry per chain, one file
-    id per file, each match once and in its chain. A chain is known by
-    its name and the device and inode its directory had when it was
-    listed (by its path where the filesystem gives inode 0), and two
+    link to a directory, a directory under another case on a
+    case-insensitive disk or through a bind mount) is searched once: one
+    entry per chain, one file id per file, each match once and in its
+    chain. A chain is known by its name and the device and inode its
+    directory had when it was listed (by its path where the filesystem
+    gives inode 0, and then also by its parts' paths with every link
+    resolved), and a part by its device and inode, so one directory
+    under two spellings is one chain whose parts are searched once; two
     chains that still give one identity are both searched, the second's
-    parts as files of their own, never left out. The parts of
+    parts that are not the first's files as files of their own, never
+    left out. The parts of
     each chain are searched in the chain's order (by time once it is
     ready, by name before) by the trace engine, where the walk met the
     chain's first file, so the file ids, the order of the matches and the
@@ -220,9 +225,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     its own, a pending or invalid chain, and a match the trace left
     unnumbered). Another encoding of a part is skipped with the reason
     `duplicate_part: …`, also when it is named on its own beside its
-    chain, whichever comes first (never both searched and skipped, so
-    each of its lines comes once, in the chain), a part that cannot be
-    read with its read error,
+    chain, whichever comes first and under whatever path leads to it
+    (never both searched and skipped, so each of its lines comes once,
+    in the chain), a part that cannot be read with its read error,
     and a chain of more than 10,000 parts is searched as files of their
     own. Chains are described from their parts' indexes, and no index
     build starts. 409 when a part changed while its chain was described;

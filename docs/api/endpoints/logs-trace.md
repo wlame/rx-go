@@ -50,21 +50,32 @@ cannot be opened is `403`, as on `GET /v1/trace`.
 
 Whatever the request reaches more than once is searched once: a `path`
 given twice (however it is spelled), a directory and a handle or a file
-in it, a link to a directory. Each chain is described once and has one
-entry in `chains` (a chain is the same when its directory, by the device
-and inode it had when it was listed, and its name are; on a filesystem
-that gives every directory inode 0, by its handle), each file is
-searched once under one file id (a file is the same when its path with
-every link resolved is), and so each match comes once. A part's own path named beside its chain's handle
-or directory is a part of that chain, whichever comes first. Another
-encoding of a part named beside its chain (`syslog.3.gz` beside the
-handle `syslog`, whose chain reads `syslog.3`) is skipped with
-`duplicate_part` and never searched, whichever comes first, so each of
-its lines comes once, from the part the chain reads. Two chains that
-still give one identity (an inode reused while the request runs) are
-both searched: the first as its chain, the second's parts as files of
-their own, with `chain` null. `path` in the answer lists the paths as
-the request gave them.
+in it, a link to a directory, a directory under another spelling of its
+path (another case on a case-insensitive disk, a bind mount). Each chain
+is described once and has one entry in `chains` (a chain is the same
+when its directory, by the device and inode it had when it was listed,
+and its name are; on a filesystem that gives every directory inode 0,
+when its handle is, or when its parts' paths with every link resolved
+are), each part is searched once under one file id (a part is the same
+file under any spelling of its directory, by its device and inode), each
+other file is searched once under one file id (a file is the same when
+its path with every link resolved is), and so each match comes once. A
+part's own path named beside its chain's handle or directory is a part
+of that chain, whichever comes first. Another encoding of a part named
+beside its chain (`syslog.3.gz` beside the handle `syslog`, whose chain
+reads `syslog.3`) is skipped with `duplicate_part` and never searched,
+whichever comes first and under whatever path it is named (by its device
+and inode), so each of its lines comes once, from the part the chain
+reads; it is named once in `skipped_files`, under the path its chain
+lists it by. Two chains that still give one identity (an inode reused
+while the request runs) are both searched: the first as its chain, the
+second's parts that are not the first's files as files of their own,
+with `chain` null. `path` in the answer lists the paths as the request
+gave them.
+
+A file of its own, and a part's own path, are known by their paths
+alone: two hard links are two files, and so is one file named under two
+case spellings of its directory, each searched.
 
 ## The order of the search
 
