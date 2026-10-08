@@ -122,6 +122,47 @@ func TestSamples_PartAddressedInAReadyChain(t *testing.T) {
 	}
 }
 
+// A part's own numbers up to the largest a request can name give the
+// lines the same positions give in the chain's numbers: a range to
+// 9223372036854775807 runs to the part's end (the active part's too),
+// and a line or a range that starts there names none. The sums that
+// turn a part's numbers into the chain's do not wrap, cold and indexed.
+func TestSamples_PartNumbersUpToTheLargest(t *testing.T) {
+	const largest = "9223372036854775807"
+	c := windowChain(t, true)
+	cases := []struct {
+		part, lines string
+		// global is the same lines in the chain's numbers.
+		global string
+	}{
+		{"app.log.4.gz", "5-" + largest, "105-300"},
+		{"app.log", "2-" + largest, "307-" + largest},
+		{"app.log.4.gz", largest, largest},
+		{"app.log.4.gz", largest + "-" + largest, largest + "-" + largest},
+		{"app.log", largest, largest},
+	}
+	for _, indexed := range []bool{false, true} {
+		if indexed {
+			storeIndexes(t, c.dir, c.order...)
+		}
+		for _, tc := range cases {
+			label := fmt.Sprintf("indexed %v, part %s lines %s", indexed, tc.part, tc.lines)
+			byPart := chainSamples(t, c, SamplesRequest{Part: tc.part, Lines: lines(t, tc.lines)}, !indexed)
+			global := chainSamples(t, c, SamplesRequest{Lines: lines(t, tc.global)}, !indexed)
+			got, _ := flatten(byPart.Samples[tc.lines])
+			want, _ := flatten(global.Samples[tc.global])
+			if (byPart.Samples[tc.lines] == nil) != (global.Samples[tc.global] == nil) || !slices.Equal(got, want) {
+				t.Fatalf("%s: %d lines (null %v), the chain's %s gives %d (null %v)", label,
+					len(got), byPart.Samples[tc.lines] == nil, tc.global, len(want), global.Samples[tc.global] == nil)
+			}
+			if byPart.Lines[tc.lines] != global.Lines[tc.global] {
+				t.Fatalf("%s: target %d, the chain's %s gives %d", label, byPart.Lines[tc.lines], tc.global, global.Lines[tc.global])
+			}
+			requirePieceNumbers(t, label, tc.lines, byPart)
+		}
+	}
+}
+
 // Before the chain is ready, a part answers on its own: its context
 // stops at its edges and the pieces say so, global numbers are -1, and a
 // request by global line is refused until the chain is ready.

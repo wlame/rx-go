@@ -384,13 +384,23 @@ func (s *sampler) countOf(ctx context.Context, k int) (int64, error) {
 // the chain's numbers (a ready chain): a single line keeps its key and
 // its context crosses the part's edges; -N counts back from the part's
 // end; a range stays in the part.
+//
+// SECURITY: a part's number n is the chain's number start+n-1, and n
+// comes from the request: any value up to 9223372036854775807. The sum
+// saturates (globalOf) rather than wrap to a negative number, so a range
+// that runs to the largest number still ends at the part's end, and a
+// line past every line names none, as the same position in the chain's
+// numbers does.
 func (s *sampler) partWindows(ctx context.Context, space lineSpace, k int) ([]window, error) {
 	start := s.d.Starts[k]
 	count := s.spanCount(k)
+	// globalOf is the chain's number of the part's line n (n >= 0), or
+	// math.MaxInt64 when that is past every number.
+	globalOf := func(n int64) int64 { return addWithin(start-1, n) }
 	windows := make([]window, 0, len(s.req.Lines))
 	for _, v := range s.req.Lines {
 		if v.IsRange() {
-			w := window{key: v.Key(), first: start + max(1, v.Start) - 1, last: start + *v.End - 1, isRange: true, emptyList: *v.End == 0}
+			w := window{key: v.Key(), first: globalOf(max(1, v.Start)), last: globalOf(*v.End), isRange: true, emptyList: *v.End == 0}
 			if *v.End == 0 {
 				w.last = w.first - 1
 			}
@@ -416,11 +426,11 @@ func (s *sampler) partWindows(ctx context.Context, space lineSpace, k int) ([]wi
 			// No such line in the part: like a line past the end of one
 			// file, the key names none, and its context is the part's
 			// lines before it.
-			w := s.around(key, start+line-1)
+			w := s.around(key, globalOf(line))
 			w.target, w.last = 0, min(w.last, start+count-1)
 			windows = append(windows, w)
 		default:
-			windows = append(windows, s.around(key, start+line-1))
+			windows = append(windows, s.around(key, globalOf(line)))
 		}
 	}
 	return windows, nil
