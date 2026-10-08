@@ -1,7 +1,10 @@
 package rxtypes
 
 import (
+	"math"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -82,4 +85,46 @@ func sign(n int) int {
 		return 1
 	}
 	return 0
+}
+
+// Reading the number of an id allocates nothing, whatever the id holds:
+// an id far longer than any number, and one whose 19 digits are past
+// the largest int, are refused without the error value strconv makes.
+// A sort of many matches compares ids on every step.
+func TestIDNumber_AllocatesNothingForAnyID(t *testing.T) {
+	ids := []string{
+		"f12",
+		"f9223372036854775807",          // the largest int64: well formed
+		"f9223372036854775808",          // 19 digits, one past it
+		"f99999999999999999999",         // 20 digits
+		"f" + strings.Repeat("7", 4096), // far longer than any number
+	}
+	for _, id := range ids {
+		if allocs := testing.AllocsPerRun(100, func() { _, _ = idNumber(id) }); allocs != 0 {
+			t.Errorf("idNumber(%.24q…) allocates %v times per call, want 0", id, allocs)
+		}
+	}
+}
+
+// A number past the int range is not well formed, and the largest int
+// is; the check on the length does not move that border.
+func TestIDNumber_TheIntRangeIsTheBorder(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		id         string
+		want       int
+		wellFormed bool
+	}{
+		{"f" + strconv.Itoa(math.MaxInt), math.MaxInt, true},
+		{"f" + strconv.FormatUint(uint64(math.MaxInt)+1, 10), 0, false},
+		{"f99999999999999999999", 0, false},
+		{"f" + strings.Repeat("1", 40), 0, false},
+		{"f1", 1, true},
+	}
+	for _, tc := range cases {
+		got, ok := idNumber(tc.id)
+		if got != tc.want || ok != tc.wellFormed {
+			t.Errorf("idNumber(%q) = %d, %v; want %d, %v", tc.id, got, ok, tc.want, tc.wellFormed)
+		}
+	}
 }

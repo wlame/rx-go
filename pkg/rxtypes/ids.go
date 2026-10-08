@@ -2,7 +2,7 @@ package rxtypes
 
 import (
 	"cmp"
-	"strconv"
+	"math"
 	"strings"
 )
 
@@ -60,8 +60,11 @@ func CompareIDs(a, b string) int {
 // letter, no digits after it, a leading zero, any other character, or a
 // number too large for an int.
 //
-// It reads the string in place and allocates nothing, so a sort of a
-// million matches can call it on every comparison.
+// It reads the string in place and allocates nothing, whatever the id
+// holds, so a sort of a million matches can call it on every
+// comparison. The digits are added up here rather than by strconv.Atoi:
+// Atoi reports a number past the int range with an error value it
+// allocates, which an id of 19 digits or more can reach.
 func idNumber(id string) (int, bool) {
 	if len(id) < 2 || id[0] < 'a' || id[0] > 'z' {
 		return 0, false
@@ -72,16 +75,21 @@ func idNumber(id string) (int, bool) {
 	if digits[0] == '0' {
 		return 0, false
 	}
+	n := 0
 	for i := 0; i < len(digits); i++ {
-		if digits[i] < '0' || digits[i] > '9' {
+		d := digits[i]
+		if d < '0' || d > '9' {
 			return 0, false
 		}
-	}
-	// Every byte is a digit, so the only way Atoi can fail now is a
-	// number past the int range; such an id is not well formed.
-	n, err := strconv.Atoi(digits)
-	if err != nil {
-		return 0, false
+		digit := int(d - '0')
+		// n*10 + digit would pass math.MaxInt exactly when n is above
+		// (math.MaxInt-digit)/10, so the check comes before the step
+		// and an int never wraps. A longer id stops at the first digit
+		// past the range: the loop reads at most 20 digits of it.
+		if n > (math.MaxInt-digit)/10 {
+			return 0, false
+		}
+		n = n*10 + digit
 	}
 	return n, true
 }
