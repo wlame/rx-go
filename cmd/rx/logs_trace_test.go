@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/internal/clicommand"
 	"github.com/wlame/rx-go/pkg/rxtypes"
@@ -142,7 +145,7 @@ func TestLogsTrace_AnUnindexedChainIsPendingWithAHint(t *testing.T) {
 		return resp.Chains["c1"].State, lines
 	}
 	const hint = "Hint: the log chain app.log is pending (a part has no line index), so its matches have no line " +
-		"in the chain: run rx logs index app.log for chain line numbers.\n"
+		"in the chain: run rx logs index -- app.log for chain line numbers.\n"
 
 	stdout, stderr := search("--json", "LINE", "app.log")
 	if state, lines := chainLines(stdout); state != rxtypes.ChainStatePending || !slices.Equal(lines, []int64{-1, -1, -1, -1, -1}) {
@@ -165,5 +168,57 @@ func TestLogsTrace_AnUnindexedChainIsPendingWithAHint(t *testing.T) {
 	}
 	if stderr != "" {
 		t.Fatalf("indexed stderr %q", stderr)
+	}
+}
+
+// A handle that starts with a dash: the hint ends the options with --
+// before the handle, so the command it names runs as printed, and
+// after it the same search numbers every match in the chain.
+func TestLogsTrace_TheHintRunsForAHandleThatStartsWithADash(t *testing.T) {
+	dir := t.TempDir()
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	files := map[string][]byte{
+		"-x.log.1": timedChainLines(start, 1, 3, "-x.log.1"),
+		"-x.log":   timedChainLines(start.Add(time.Hour), 4, 2, "-x.log"),
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := []string{"RX_CACHE_DIR=" + t.TempDir()}
+	search := func() (rxtypes.ChainTraceResponse, string) {
+		t.Helper()
+		code, stdout, stderr := runRxIn(t, dir, env, "logs", "trace", "--json", "LINE", "--", "-x.log")
+		if code != clicommand.ExitSuccess {
+			t.Fatalf("rx logs trace: exit %d: %s", code, stderr)
+		}
+		var resp rxtypes.ChainTraceResponse
+		if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+			t.Fatalf("decode %q: %v", stdout, err)
+		}
+		return resp, stderr
+	}
+
+	resp, stderr := search()
+	const want = "Hint: the log chain -x.log is pending (a part has no line index), so its matches have no line " +
+		"in the chain: run rx logs index -- -x.log for chain line numbers.\n"
+	if resp.Chains["c1"].State != rxtypes.ChainStatePending || stderr != want {
+		t.Fatalf("cold: state %s, stderr %q, want %q", resp.Chains["c1"].State, stderr, want)
+	}
+
+	// The command between "run " and " for" as a shell splits it: no
+	// argument in it needs quotes.
+	command := strings.Fields(stderr[strings.Index(stderr, "run rx ")+len("run rx ") : strings.Index(stderr, " for chain")])
+	if code, _, out := runRxIn(t, dir, env, command...); code != clicommand.ExitSuccess {
+		t.Fatalf("the hinted rx %v: exit %d: %s", command, code, out)
+	}
+	resp, stderr = search()
+	var lines []int64
+	for _, m := range resp.Matches {
+		lines = append(lines, m.ChainLine)
+	}
+	if resp.Chains["c1"].State != rxtypes.ChainStateReady || !slices.Equal(lines, []int64{1, 2, 3, 4, 5}) || stderr != "" {
+		t.Fatalf("after the hinted command: state %s, chain lines %v, stderr %q", resp.Chains["c1"].State, lines, stderr)
 	}
 }

@@ -164,7 +164,9 @@ func warnAboutInvalidChains(w io.Writer, resp *rxtypes.ChainTraceResponse) {
 // pending chain has a frozen part without a line index, which the
 // search does not read to describe the chain, so its matches have no
 // line in the chain (chain_line -1, `?` in the rows). The handle in the
-// command is quoted for a shell, so the line can be pasted as it is.
+// command is quoted for a shell and comes after `--`, which ends the
+// command's options, so the line can be pasted as it is: a handle that
+// starts with a dash (`-x.log`) is read as the chain, not as a flag.
 //
 // The work is one pass over the matches and one over the chains.
 func hintAboutPendingChains(w io.Writer, resp *rxtypes.ChainTraceResponse) {
@@ -180,7 +182,7 @@ func hintAboutPendingChains(w io.Writer, resp *rxtypes.ChainTraceResponse) {
 			continue
 		}
 		_, _ = fmt.Fprintf(w, "Hint: the log chain %s is pending (a part has no line index), so its matches have no "+
-			"line in the chain: run rx logs index %s for chain line numbers.\n",
+			"line in the chain: run rx logs index -- %s for chain line numbers.\n",
 			output.Printable(ref.Path), output.Printable(output.Quote(ref.Path)))
 	}
 }

@@ -208,9 +208,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--max-results=` reads what `rx trace` reads on the same files; a
   chain with a part not indexed yet is pending, its matches print `?`
   as their line in the chain, and stderr says
-  `run rx logs index CHAIN for chain line numbers`. An invalid chain is
-  named on stderr. Exit 3 for a path that is
-  no directory, chain or file, 4 outside the search roots or for a
+  `run rx logs index -- CHAIN for chain line numbers` (`--` before
+  the handle, so a handle that starts with a dash pastes as it is). An
+  invalid chain is named on stderr. Exit 3 for a path that is no
+  directory, chain or file, 4 outside the search roots or for a
   named file that cannot be read, 7 when a part changed while its chain
   was described, 2 for a pattern that does not compile, `-` and the
   usage errors of `rx trace`.
