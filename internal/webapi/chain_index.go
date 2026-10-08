@@ -18,8 +18,9 @@ import (
 const chainIndexOperation = "chain_index"
 
 // chainTaskKey is the key a chain's index task holds in the task
-// manager's path locks. The handle alone would collide with a task on
-// the chain's active file, whose path equals the handle.
+// manager's path locks when its directory's identity is not known
+// (chainKeyOf). The handle alone would collide with a task on the
+// chain's active file, whose path equals the handle.
 func chainTaskKey(handle string) string { return "chain:" + handle }
 
 // chainIndexTasks runs the index task of each log chain: one background
@@ -29,10 +30,12 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 //
 // # One task per chain
 //
-// The task holds chainTaskKey(handle) in the task manager, so a second
-// start for the same chain, from a describe or from POST
-// /v1/logs/index, finds the running task and joins it (CreateKeyed
-// hands it back). A joined task builds what its first start asked for:
+// The task holds the chain's key (chainKeyOf: its directory's device
+// and inode, and its name) in the task manager, so a second start for
+// the same chain, from a describe or from POST /v1/logs/index, through
+// the same handle or another path to the same directory, finds the
+// running task and joins it (CreateKeyed hands it back). The task shows
+// the handle it was started with as its path. A joined task builds what its first start asked for:
 // a POST with force=true that joins a running task does not force.
 //
 // # The parts, a few at a time
@@ -145,8 +148,26 @@ type chainTaskStart struct {
 }
 
 // chainKeyOf is the key of the chain d describes: the key its index
-// task holds in the task manager and its record's key here.
-func chainKeyOf(d *logchain.Description) string { return chainTaskKey(d.Response.Path) }
+// task holds in the task manager and its record's key here. It is made
+// of the device and inode of the chain's directory, as the listing
+// pinned it, and the chain's name as listed, so every path that leads
+// to the same directory gives the same key: another case on a
+// case-insensitive disk, or a symbolic link to the directory. Two such
+// handles then share one task instead of building the same parts twice
+// at once.
+//
+// A description without the directory's stat, or on a platform that
+// gives no inode, keys the chain by its handle (chainTaskKey). The key
+// starts with "chain:", which no absolute path does, so it never
+// collides with a file's lock.
+func chainKeyOf(d *logchain.Description) string {
+	if dir := d.Candidate.DirInfo; dir != nil {
+		if inode, device, ok := index.InodeAndDevice(dir); ok {
+			return fmt.Sprintf("chain:%d:%d/%s", device, inode, d.Candidate.Name)
+		}
+	}
+	return chainTaskKey(d.Response.Path)
+}
 
 // start starts the index task of a chain for the parts in s, or joins
 // the one running for the chain, and returns the task (a copy) and

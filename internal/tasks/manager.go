@@ -13,8 +13,8 @@
 //     submission returns the SAME task ID (idempotent POST). A task can
 //     hold more than one path (CreateHolding): a compression holds its
 //     input and its output. A task can also hold a key that is not its
-//     path (CreateKeyed): a log chain's index task holds
-//     `chain:<handle>`.
+//     path (CreateKeyed): a log chain's index task holds a key made of
+//     `chain:`, its directory's device and inode, and its name.
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
 //   - A cap on the table (DefaultMaxTasks): past it, creating a task
@@ -359,9 +359,9 @@ func (m *Manager) CreateSubtask(path, operation string) (*Task, bool) {
 // holds key it returns that task and false, as Create does.
 //
 // It is for a task whose work is not one file's: the index task of a log
-// chain holds `chain:<handle>`, so it never collides with a task on the
-// chain's active file, whose path equals the handle, while GET
-// /v1/tasks/{id} still shows the handle.
+// chain holds a key that starts with `chain:`, so it never collides with
+// a task on the chain's active file, whose path equals the handle, while
+// GET /v1/tasks/{id} still shows the handle.
 func (m *Manager) CreateKeyed(operation, path, key string) (*Task, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
