@@ -119,7 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keyed by the chain directory's device and inode and the chain's name,
   so handles that reach one directory by different paths (a symbolic
   link, another case on a case-insensitive disk) share it, and a task
-  on the active file runs beside it.
+  on the active file runs beside it; on a filesystem that gives inode 0
+  the key is the handle.
   The task `GET /v1/logs/chain` starts for a pending chain is the same
   task, for the parts the chain waits for; it is not started again on
   describe while the last one failed for the same files. 409 with the
@@ -182,7 +183,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never the rest of its directory. What a request reaches more than
   once (a path given twice, a directory and a handle or a part in it, a
   link to a directory) is searched once: one entry per chain, one file
-  id per file, each match once and in its chain. The parts of
+  id per file, each match once and in its chain. A chain is known by
+  its name and the device and inode its directory had when it was
+  listed (by its path where the filesystem gives inode 0), and two
+  chains that still give one identity are both searched, the second's
+  parts as files of their own, never left out. The parts of
   each chain are searched in the chain's order (by time once it is
   ready, by name before) by the trace engine, where the walk met the
   chain's first file, so the file ids, the order of the matches and the

@@ -246,6 +246,17 @@ type WalkEntry struct {
 	// Read it through File.Open. It is the zero Pinned when Refused or
 	// ReadErr is set.
 	File Pinned
+	// Dir is the directory File was listed from, as the walk pinned it:
+	// the walked directory, a subdirectory the walk entered, or the
+	// directory a followed link leads to, under the walk's spelling
+	// (Path is Dir.Path followed by the file's name). Dir.Info is the
+	// stat the listing was checked against (ListDir refuses a directory
+	// that is not the pinned one), so its device and inode name the
+	// directory the file was found in, whatever its path leads to by
+	// the time the caller looks. A caller that keys what it found by
+	// the directory takes this stat rather than pinning the directory's
+	// path again. It is the zero Pinned when Refused or ReadErr is set.
+	Dir Pinned
 	// Refused is non-empty for an entry the walk did not follow, and
 	// says why.
 	Refused string
@@ -324,7 +335,10 @@ func (w *walker) walk(dir Pinned) error {
 		case entry.Refused != "":
 			w.refuse(entry.Path, entry.Refused)
 		case !entry.IsDir():
-			w.entries = append(w.entries, WalkEntry{Path: entry.Path, File: entry.Target})
+			// dir is the pin ListDir just checked its handle against, so
+			// the file and its directory are reported as one listing saw
+			// them.
+			w.entries = append(w.entries, WalkEntry{Path: entry.Path, File: entry.Target, Dir: dir})
 		case entry.IsLink:
 			w.deferred = append(w.deferred, dirLink{target: entry.Target, from: dir.canonical})
 		default:

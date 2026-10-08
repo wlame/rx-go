@@ -11,6 +11,7 @@ import (
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
+	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
 )
 
@@ -121,6 +122,26 @@ type Candidate struct {
 
 // Handle is the chain's handle: its directory joined with its name.
 func (c Candidate) Handle() string { return filepath.Join(c.Dir, c.Name) }
+
+// DirectoryIdentity returns the device and inode a directory's stat
+// records (Candidate.DirInfo): the pair that names one directory on one
+// machine, whatever path spelled it (another case on a case-insensitive
+// disk, a symbolic link to it). ok is false when there is no stat, when
+// the platform's stat gives no inode, and when the inode is 0: a
+// filesystem that numbers no file (some FUSE and network filesystems
+// report 0 for every one) would give every directory one pair, and so
+// name them all as one. The caller then keys the directory by its path,
+// as the chain search and the index tasks of chains do.
+func DirectoryIdentity(info os.FileInfo) (device, inode uint64, ok bool) {
+	if info == nil {
+		return 0, 0, false
+	}
+	inode, device, ok = index.InodeAndDevice(info)
+	if !ok || inode == 0 {
+		return 0, 0, false
+	}
+	return device, inode, true
+}
 
 // HasActive reports whether the chain's active file exists.
 func (c Candidate) HasActive() bool {

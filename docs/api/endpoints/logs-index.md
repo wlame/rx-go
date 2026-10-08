@@ -39,7 +39,8 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
   `POST /v1/logs/index` and a describe of the pending chain join it: the
   same `task_id`. A joined task builds what its first start asked for,
   so `force=true` does not change a task that is already running. The
-  chain is known by its directory's device and inode and its name, so
+  chain is known by its directory's device and inode and its name (by
+  its handle on a filesystem that gives every directory inode 0), so
   two handles that reach one directory by different paths (a symbolic
   link to it, or another case of its name on a case-insensitive disk)
   share the task, which shows the handle it was started with as its
