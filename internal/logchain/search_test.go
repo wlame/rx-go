@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,34 +69,42 @@ var globalOf = regexp.MustCompile(`LINE (\d+) `)
 // by its directory, and with `rx trace` on each part gives one match
 // set; each chain_line is the part's start plus the part's line number,
 // which is the line `rx trace` gives on the concatenation of the parts;
-// each offset is the line's place in the part's decompressed text. Cold
-// (the chain described by a scan, as `rx logs trace` does) and with
-// every part indexed (as over HTTP), the answers are the same.
+// each offset is the line's place in the part's decompressed text.
+// Cold, the chain is described from what is stored and is pending, so
+// every chain_line is -1; with every part indexed it is ready and every
+// chain_line is set; the two answers agree under the -1 rule.
 func TestSearch_AChainByItsHandleByItsDirectoryAndPartByPart(t *testing.T) {
 	dir, files, order := mixedCodecChain(t)
 	concat := concatenation(t, t.TempDir(), files, order)
 	patterns := []string{`LINE [0-9]*7 `}
-
-	byHandle := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log")}, Patterns: patterns, Scan: true})
-	byDir := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns, Scan: true})
-	got := foundLines(byHandle.Answer)
-	if dirLines := foundLines(byDir.Answer); !slices.Equal(got, dirLines) {
-		t.Fatalf("by handle %v\nby directory %v", got, dirLines)
-	}
-	if len(got) == 0 {
-		t.Fatal("no match")
-	}
-	for _, answer := range []*rxtypes.ChainTraceResponse{byHandle.Answer, byDir.Answer} {
-		ref, ok := answer.Chains["c1"]
-		if len(answer.Chains) != 1 || !ok || ref.State != rxtypes.ChainStateReady || ref.Path != filepath.Join(dir, "app.log") {
-			t.Fatalf("chains %+v", answer.Chains)
+	byHandleAndByDir := func(state string) []foundLine {
+		t.Helper()
+		byHandle := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log")}, Patterns: patterns})
+		byDir := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns})
+		lines := foundLines(byHandle.Answer)
+		if dirLines := foundLines(byDir.Answer); !slices.Equal(lines, dirLines) {
+			t.Fatalf("%s: by handle %v\nby directory %v", state, lines, dirLines)
 		}
-		for k, id := range ref.Parts {
-			if answer.Files[id] != filepath.Join(dir, order[k]) || id != "f"+strconv.Itoa(k+1) {
-				t.Fatalf("part %d is %s = %s, want %s", k, id, answer.Files[id], order[k])
+		if len(lines) == 0 {
+			t.Fatalf("%s: no match", state)
+		}
+		for _, answer := range []*rxtypes.ChainTraceResponse{byHandle.Answer, byDir.Answer} {
+			ref, ok := answer.Chains["c1"]
+			if len(answer.Chains) != 1 || !ok || ref.State != state || ref.Path != filepath.Join(dir, "app.log") {
+				t.Fatalf("%s: chains %+v", state, answer.Chains)
+			}
+			for k, id := range ref.Parts {
+				if answer.Files[id] != filepath.Join(dir, order[k]) || id != "f"+strconv.Itoa(k+1) {
+					t.Fatalf("%s: part %d is %s = %s, want %s", state, k, id, answer.Files[id], order[k])
+				}
 			}
 		}
+		return lines
 	}
+
+	cold := byHandleAndByDir(rxtypes.ChainStatePending)
+	storeIndexes(t, dir, order...)
+	got := byHandleAndByDir(rxtypes.ChainStateReady)
 
 	// rx trace on each part: the same lines at the same offsets and
 	// line numbers, and each offset the line's place in the part's text.
@@ -124,8 +133,9 @@ func TestSearch_AChainByItsHandleByItsDirectoryAndPartByPart(t *testing.T) {
 	for _, m := range whole.Matches {
 		globalByText[strings.TrimSuffix(*m.LineText, "\n")] = int64(m.AbsoluteLineNumber)
 	}
-	if len(perPart) != len(got) || len(whole.Matches) != len(got) {
-		t.Fatalf("%d matches by chain, %d part by part, %d in the concatenation", len(got), len(perPart), len(whole.Matches))
+	if len(perPart) != len(got) || len(whole.Matches) != len(got) || len(cold) != len(got) {
+		t.Fatalf("%d matches by chain (%d cold), %d part by part, %d in the concatenation",
+			len(got), len(cold), len(perPart), len(whole.Matches))
 	}
 	for i, m := range got {
 		want := perPart[i]
@@ -138,12 +148,13 @@ func TestSearch_AChainByItsHandleByItsDirectoryAndPartByPart(t *testing.T) {
 		if m.chainLine != inConcat || m.chainLine != named {
 			t.Fatalf("match %d chain_line %d, the concatenation gives %d, the line names %d", i, m.chainLine, inConcat, named)
 		}
-	}
-
-	storeIndexes(t, dir, order...)
-	indexed := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns})
-	if again := foundLines(indexed.Answer); !slices.Equal(again, got) {
-		t.Fatalf("indexed %v\ncold %v", again, got)
+		// The -1 rule: cold, the same match with its chain line not
+		// computed.
+		unnumbered := m
+		unnumbered.chainLine = -1
+		if cold[i] != unnumbered {
+			t.Fatalf("match %d: cold %+v, indexed %+v", i, cold[i], m)
+		}
 	}
 }
 
@@ -199,7 +210,7 @@ var bothPatterns = []string{"alpha", "beta"}
 // the cut keeps the matches of the six oldest parts.
 func TestSearch_MatchesFollowThePartsOrderAndTheCutKeepsTheFirstParts(t *testing.T) {
 	dir, order := twelvePartChain(t)
-	full := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: bothPatterns, Scan: true})
+	full := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: bothPatterns})
 	var gotParts []string
 	for _, m := range full.Answer.Matches {
 		gotParts = append(gotParts, filepath.Base(full.Answer.Files[m.File]))
@@ -214,7 +225,7 @@ func TestSearch_MatchesFollowThePartsOrderAndTheCutKeepsTheFirstParts(t *testing
 
 	reads := &fileReads{}
 	limit := 12
-	capped := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: bothPatterns, Scan: true,
+	capped := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: bothPatterns,
 		Options: trace.Options{MaxResults: &limit, HookFirer: reads}})
 	if len(reads.paths) != len(order) {
 		t.Fatalf("the capped search read %d parts, want all %d: %v", len(reads.paths), len(order), reads.paths)
@@ -247,7 +258,8 @@ func TestSearch_ADirectoryWithTwoChainsAndThreeFiles(t *testing.T) {
 		{name: "other.log", text: []byte("hit other\n")},
 		{name: "zz.txt", text: []byte("hit zz\n")},
 	})
-	res := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: []string{"hit"}, Scan: true})
+	storeIndexes(t, dir, "a.log.2.gz", "a.log.1", "b.log-20261001.gz", "b.log-20261002.gz")
+	res := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: []string{"hit"}})
 	answer := res.Answer
 
 	wantFiles := []string{"a.log.2.gz", "a.log.1", "a.log", "b.log-20261001.gz", "b.log-20261002.gz", "notes.txt", "other.log", "zz.txt"}
@@ -298,7 +310,7 @@ func TestSearch_OtherEncodingsOfAPartAreSkipped(t *testing.T) {
 		{name: "x.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 7, 3, "active")},
 	})
 	for _, p := range []string{dir, filepath.Join(dir, "x.log")} {
-		answer := searchFor(t, SearchRequest{Paths: []string{p}, Patterns: []string{"LINE"}, Scan: true}).Answer
+		answer := searchFor(t, SearchRequest{Paths: []string{p}, Patterns: []string{"LINE"}}).Answer
 		duplicate := filepath.Join(dir, "x.log.1.gz")
 		if !slices.Contains(answer.SkippedFiles, duplicate) {
 			t.Fatalf("%s: skipped %v, want %s", p, answer.SkippedFiles, duplicate)
@@ -319,7 +331,7 @@ func TestSearch_OtherEncodingsOfAPartAreSkipped(t *testing.T) {
 	}
 }
 
-// A pending chain (a frozen part without a line index, over HTTP) is
+// A pending chain (a frozen part without a line index) is
 // searched in its provisional order; its matches have their lines in
 // their parts and chain_line -1. Once the parts are indexed the chain
 // is ready and every chain_line is set; the two answers agree under
@@ -357,7 +369,8 @@ func TestSearch_APendingChainHasNoChainLinesUntilItsPartsAreIndexed(t *testing.T
 // says invalid, with the reason, and no match has a chain line.
 func TestSearch_AnInvalidChainIsSearchedWithoutChainLines(t *testing.T) {
 	dir := overlapChain(t, 90*time.Second)
-	answer := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "x.log")}, Patterns: []string{"LINE"}, Scan: true}).Answer
+	storeIndexes(t, dir, "x.log.1")
+	answer := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "x.log")}, Patterns: []string{"LINE"}}).Answer
 	ref := answer.Chains["c1"]
 	if ref.State != rxtypes.ChainStateInvalid || len(ref.Reasons) != 1 || ref.Reasons[0].Code != rxtypes.ChainReasonOverlap || len(ref.Parts) != 2 {
 		t.Fatalf("chain %+v", ref)
@@ -375,7 +388,7 @@ func TestSearch_AnInvalidChainIsSearchedWithoutChainLines(t *testing.T) {
 // A part's own path is a file: searched alone, with no chain.
 func TestSearch_APartsOwnPathIsAFile(t *testing.T) {
 	dir, _, _ := mixedCodecChain(t)
-	answer := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log.2.gz")}, Patterns: []string{"LINE"}, Scan: true}).Answer
+	answer := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log.2.gz")}, Patterns: []string{"LINE"}}).Answer
 	if len(answer.Chains) != 0 || len(answer.Files) != 1 || len(answer.Matches) != 50 {
 		t.Fatalf("chains %+v, files %v, %d matches", answer.Chains, answer.Files, len(answer.Matches))
 	}
@@ -395,7 +408,8 @@ func TestSearch_APathThatNamesNothing(t *testing.T) {
 		{name: "app.log-20261001.gz", text: timedLines(chainBase, time.Second, 1, 2, "1"), codec: compressedcopy.Gzip},
 		{name: "app.log-20261002.gz", text: timedLines(chainBase.Add(time.Hour), time.Second, 3, 2, "2"), codec: compressedcopy.Gzip},
 	})
-	answer := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log")}, Patterns: []string{"LINE"}, Scan: true}).Answer
+	storeIndexes(t, dir, "app.log-20261001.gz", "app.log-20261002.gz")
+	answer := searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log")}, Patterns: []string{"LINE"}}).Answer
 	if len(answer.Chains) != 1 || len(answer.Matches) != 4 || answer.Matches[3].ChainLine != 4 {
 		t.Fatalf("chains %+v, %d matches", answer.Chains, len(answer.Matches))
 	}
@@ -423,13 +437,13 @@ func TestSearch_TheSecondSearchHitsEachPartsTraceCache(t *testing.T) {
 	}
 	writeChainFiles(t, dir, []chainFile{{name: "x.log.1", text: older}, {name: "x.log", text: newer}})
 	patterns := []string{`LINE [0-9]*77 `}
-	first := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns, Scan: true})
+	first := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns})
 	for _, name := range []string{"x.log.1", "x.log"} {
 		if _, err := trace.GetCachedScan(filepath.Join(dir, name), patterns, nil); err != nil {
 			t.Fatalf("no trace cache entry for %s after the first search: %v", name, err)
 		}
 	}
-	second := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns, Scan: true})
+	second := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: patterns})
 	if diff := traceanswer.Difference(second.Trace, first.Trace, nil); diff != "" {
 		t.Fatalf("the answers differ: %s", diff)
 	}
@@ -458,7 +472,7 @@ func TestSearch_APartThatCannotBeReadIsSkipped(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
 
 	for _, p := range []string{dir, filepath.Join(dir, "x.log")} {
-		answer := searchFor(t, SearchRequest{Paths: []string{p}, Patterns: []string{"LINE"}, Scan: true}).Answer
+		answer := searchFor(t, SearchRequest{Paths: []string{p}, Patterns: []string{"LINE"}}).Answer
 		if !slices.Equal(answer.SkipReasons, []rxtypes.SkippedFile{{Path: locked, Reason: paths.ReasonPermissionDenied}}) {
 			t.Fatalf("%s: skips %+v", p, answer.SkipReasons)
 		}
@@ -497,7 +511,7 @@ func TestSearch_AChainOfTooManyPartsIsSearchedAsFiles(t *testing.T) {
 
 	for _, p := range []string{dir, filepath.Join(dir, "x.log")} {
 		paths.Reset()
-		r := newSearchResolver(SearchRequest{Paths: []string{p}, Scan: true})
+		r := newSearchResolver(SearchRequest{Paths: []string{p}})
 		plan, err := r.resolve(context.Background())
 		if err != nil {
 			t.Fatalf("%s: resolve: %v", p, err)
@@ -534,7 +548,8 @@ func TestSearch_PartsAreSearchedInTimeOrderWhenNamesDisagree(t *testing.T) {
 		{name: "app.log.2", text: timedLines(chainBase.Add(time.Hour), time.Second, 5, 3, "2")},
 		{name: "app.log", text: timedLines(chainBase.Add(2*time.Hour), time.Second, 8, 2, "active")},
 	})
-	answer := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: []string{"LINE"}, Scan: true}).Answer
+	storeIndexes(t, dir, "app.log.1", "app.log.2")
+	answer := searchFor(t, SearchRequest{Paths: []string{dir}, Patterns: []string{"LINE"}}).Answer
 	wantOrder := []string{"app.log.1", "app.log.2", "app.log"}
 	for i, name := range wantOrder {
 		if id := "f" + strconv.Itoa(i+1); answer.Files[id] != filepath.Join(dir, name) {
@@ -563,8 +578,9 @@ func TestSearch_ARelativeDirectoryKeepsItsSpelling(t *testing.T) {
 		{name: "x.log.1.gz", text: first, codec: compressedcopy.Gzip},
 		{name: "x.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 3, 2, "active")},
 	})
+	storeIndexes(t, dir, "x.log.1")
 	t.Chdir(parent)
-	answer := searchFor(t, SearchRequest{Paths: []string{"./logs"}, Patterns: []string{"LINE"}, Scan: true}).Answer
+	answer := searchFor(t, SearchRequest{Paths: []string{"./logs"}, Patterns: []string{"LINE"}}).Answer
 	ref := answer.Chains["c1"]
 	if got := []string{answer.Files[ref.Parts[0]], answer.Files[ref.Parts[1]]}; !slices.Equal(got, []string{"./logs/x.log.1", "./logs/x.log"}) {
 		t.Fatalf("parts %v are %v", ref.Parts, got)
@@ -702,5 +718,52 @@ func TestSearch_EachChainAndFileIsSearchedOnceHoweverOftenItIsNamed(t *testing.T
 	}
 	if !slices.Equal(plan.ScannedDirs, []string{dir}) {
 		t.Fatalf("walked %v, want %s once", plan.ScannedDirs, dir)
+	}
+}
+
+// A capped search of a chain whose parts have no line index describes
+// the chain from what is stored alone: no part is indexed in memory,
+// each frozen part is only opened and closed (to learn that it can be
+// read), and the active file's head and tail are read once. The chain
+// is pending and every match has chain_line -1. Once the parts are
+// indexed the same search numbers its matches, and the two answers
+// agree under the -1 rule.
+func TestSearch_ACappedSearchReadsNoPartToDescribeItsChain(t *testing.T) {
+	dir, _, order := mixedCodecChain(t)
+	limit := 5
+	search := func() *SearchResult {
+		t.Helper()
+		return searchFor(t, SearchRequest{Paths: []string{filepath.Join(dir, "app.log")}, Patterns: []string{"LINE"},
+			Options: trace.Options{MaxResults: &limit}})
+	}
+	counts := countReads(t)
+	cold := search()
+	wantOpens := map[string]int{}
+	for _, name := range order[:len(order)-1] {
+		wantOpens[name] = 1
+	}
+	if len(counts.builds) != 0 || !maps.Equal(counts.opens, wantOpens) || !maps.Equal(counts.timeRanges, map[string]int{"app.log": 1}) {
+		t.Fatalf("describing read: builds %v, opens %v, time ranges %v", counts.builds, counts.opens, counts.timeRanges)
+	}
+	if ref := cold.Answer.Chains["c1"]; ref.State != rxtypes.ChainStatePending || len(cold.Answer.Matches) != limit {
+		t.Fatalf("cold: chain %+v, %d matches", ref, len(cold.Answer.Matches))
+	}
+	for _, m := range cold.Answer.Matches {
+		if m.ChainLine != -1 || m.Chain == nil || *m.Chain != "c1" {
+			t.Fatalf("cold match %+v", m)
+		}
+	}
+
+	storeIndexes(t, dir, order...)
+	indexed := search()
+	if ref := indexed.Answer.Chains["c1"]; ref.State != rxtypes.ChainStateReady {
+		t.Fatalf("indexed: chain %+v", ref)
+	}
+	traceanswer.RequireAgree(t, "capped search, indexed against cold", indexed.Trace, cold.Trace, nil)
+	for i, m := range indexed.Answer.Matches {
+		named, _ := strconv.ParseInt(globalOf.FindStringSubmatch(*m.LineText)[1], 10, 64)
+		if m.ChainLine != named || *cold.Answer.Matches[i].LineText != *m.LineText {
+			t.Fatalf("match %d: chain_line %d, the line names %d (cold %q)", i, m.ChainLine, named, *cold.Answer.Matches[i].LineText)
+		}
 	}
 }

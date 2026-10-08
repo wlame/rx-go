@@ -10,14 +10,27 @@ import (
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
+// indexedChainFixture is chainFixture with the parts of both its
+// chains indexed by rx logs index, in a cache directory of its own; it
+// returns the directory and the environment that names that cache.
+func indexedChainFixture(t *testing.T) (string, []string) {
+	t.Helper()
+	dir := chainFixture(t)
+	env := []string{"RX_CACHE_DIR=" + t.TempDir()}
+	if code, _, stderr := runRxIn(t, dir, env, "logs", "index", "app.log", "bad.log"); code != clicommand.ExitSuccess {
+		t.Fatalf("rx logs index: exit %d: %s", code, stderr)
+	}
+	return dir, env
+}
+
 // The human output: the trace header, then one row per match, a part's
 // as CHAIN:LINE (PART:LINE): TEXT with its line in the chain first, a
-// file's of its own as FILE:LINE: TEXT. The chain is described by a
-// scan, so it is ready and every row has its chain line. The invalid
-// chain of the directory is named on stderr.
+// file's of its own as FILE:LINE: TEXT. The chains' parts are indexed,
+// so app.log is ready and every row of it has its chain line. The
+// invalid chain of the directory is named on stderr.
 func TestLogsTrace_HumanOutput(t *testing.T) {
-	dir := chainFixture(t)
-	code, stdout, stderr := runRxIn(t, dir, nil, "logs", "trace", `LINE 1[01]? `, "app.log", "notes.txt", "bad.log")
+	dir, env := indexedChainFixture(t)
+	code, stdout, stderr := runRxIn(t, dir, env, "logs", "trace", `LINE 1[01]? `, "app.log", "notes.txt", "bad.log")
 	if code != clicommand.ExitSuccess {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -48,8 +61,8 @@ func TestLogsTrace_HumanOutput(t *testing.T) {
 // --json prints the GET /v1/logs/trace body: chains by id, a chain_line
 // on each match of a part, none on a file's of its own.
 func TestLogsTrace_JSON(t *testing.T) {
-	dir := chainFixture(t)
-	code, stdout, stderr := runRxIn(t, dir, nil, "logs", "trace", "--json", `LINE 1[01]? `, ".")
+	dir, env := indexedChainFixture(t)
+	code, stdout, stderr := runRxIn(t, dir, env, "logs", "trace", "--json", `LINE 1[01]? `, ".")
 	if code != clicommand.ExitSuccess {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
@@ -96,5 +109,61 @@ func TestLogsTrace_ExitCodes(t *testing.T) {
 		if code != tc.want {
 			t.Errorf("%s: exit %d, want %d: %s", tc.label, code, tc.want, stderr)
 		}
+	}
+}
+
+// A capped search of a chain whose parts have no line index describes
+// the chain from what is stored, never by reading a part: the chain is
+// pending, each match has chain_line -1 (`?` in the rows), the exit
+// code is 0, and stderr says how to get the chain lines. After
+// rx logs index the same search gives them, and stderr says nothing
+// more.
+func TestLogsTrace_AnUnindexedChainIsPendingWithAHint(t *testing.T) {
+	dir := chainFixture(t)
+	env := []string{"RX_CACHE_DIR=" + t.TempDir()}
+	search := func(args ...string) (string, string) {
+		t.Helper()
+		code, stdout, stderr := runRxIn(t, dir, env, append([]string{"logs", "trace", "--max-results=5"}, args...)...)
+		if code != clicommand.ExitSuccess {
+			t.Fatalf("rx logs trace %v: exit %d: %s", args, code, stderr)
+		}
+		return stdout, stderr
+	}
+	chainLines := func(stdout string) (string, []int64) {
+		t.Helper()
+		var resp rxtypes.ChainTraceResponse
+		if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+			t.Fatalf("decode %q: %v", stdout, err)
+		}
+		var lines []int64
+		for _, m := range resp.Matches {
+			lines = append(lines, m.ChainLine)
+		}
+		return resp.Chains["c1"].State, lines
+	}
+	const hint = "Hint: the log chain app.log is pending (a part has no line index), so its matches have no line " +
+		"in the chain: run rx logs index app.log for chain line numbers.\n"
+
+	stdout, stderr := search("--json", "LINE", "app.log")
+	if state, lines := chainLines(stdout); state != rxtypes.ChainStatePending || !slices.Equal(lines, []int64{-1, -1, -1, -1, -1}) {
+		t.Fatalf("cold: state %s, chain lines %v", state, lines)
+	}
+	if stderr != hint {
+		t.Fatalf("cold stderr %q, want %q", stderr, hint)
+	}
+	stdout, _ = search("LINE", "app.log")
+	if !strings.Contains(stdout, "  app.log:? (app.log.2.gz:1): ") {
+		t.Fatalf("cold rows\n%s", stdout)
+	}
+
+	if code, _, stderr := runRxIn(t, dir, env, "logs", "index", "app.log"); code != clicommand.ExitSuccess {
+		t.Fatalf("rx logs index: exit %d: %s", code, stderr)
+	}
+	stdout, stderr = search("--json", "LINE", "app.log")
+	if state, lines := chainLines(stdout); state != rxtypes.ChainStateReady || !slices.Equal(lines, []int64{1, 2, 3, 4, 5}) {
+		t.Fatalf("indexed: state %s, chain lines %v", state, lines)
+	}
+	if stderr != "" {
+		t.Fatalf("indexed stderr %q", stderr)
 	}
 }

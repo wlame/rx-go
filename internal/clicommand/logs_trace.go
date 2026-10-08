@@ -24,10 +24,15 @@ import (
 // directories and files, as GET /v1/logs/trace gives it. It takes every
 // flag of `rx trace`.
 //
-// It never waits for background work: each chain is described the way
-// `rx logs show` describes it (a part without a line index is indexed
-// in memory), so a valid chain is ready and every match of its parts
-// that the search numbers gets its line in the chain.
+// It never waits for background work and never reads a part to
+// describe its chain: each chain is described from its parts' stored
+// line indexes (logchain.Search), so a search capped by --max-results=
+// reads what `rx trace` reads on the same files. A chain with a part
+// not indexed yet is pending: its matches print `?` as their line in
+// the chain, and stderr names `rx logs index`, which stores the
+// indexes (hintAboutPendingChains). `rx logs show` and
+// `rx logs samples` still read such a part, as they need its line count
+// to answer at all.
 func newLogsTraceCommand(out io.Writer) *cobra.Command {
 	var f traceFlags
 	cmd := &cobra.Command{
@@ -37,7 +42,10 @@ func newLogsTraceCommand(out io.Writer) *cobra.Command {
 			"The files of a DIR are grouped into chains; a CHAIN is a chain's handle (its directory joined " +
 			"with its name, as rx logs list gives it); any other path is a FILE, a part's own path included. " +
 			"A match in a part prints as CHAIN:LINE (PART:LINE): TEXT, its line in the chain first; a match " +
-			"in a file of its own as FILE:LINE: TEXT. --json prints the GET /v1/logs/trace body. Another " +
+			"in a file of its own as FILE:LINE: TEXT. Chains are described from their parts' stored line " +
+			"indexes, never by reading a part: a chain with a part not indexed yet is pending, its LINE is ?, " +
+			"and stderr names rx logs index CHAIN, which gives the chain lines. --json prints the " +
+			"GET /v1/logs/trace body. Another " +
 			"encoding of a part is skipped (duplicate_part). Without a path, the current directory. Exit 3 " +
 			"for a path that is no directory, chain or file, 4 outside the search roots or for a FILE that " +
 			"cannot be read, 7 when a part of a chain was renamed or replaced while it was read, 2 for a " +
@@ -90,13 +98,13 @@ func runLogsTrace(out io.Writer, p traceParams) error {
 		Paths:    validated,
 		Patterns: patterns,
 		Options:  traceOptions(p, requestID, webhooks.firer),
-		Scan:     true,
 	})
 	if err != nil {
 		return logsTraceFailure(err)
 	}
 	resp = res.Trace
 	warnAboutInvalidChains(os.Stderr, res.Answer)
+	hintAboutPendingChains(os.Stderr, res.Answer)
 
 	if p.jsonOutput {
 		return writeTraceJSON(out, res.Answer)
@@ -148,5 +156,31 @@ func warnAboutInvalidChains(w io.Writer, resp *rxtypes.ChainTraceResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "Warning: the log chain %s is invalid (%s): its matches have no line in the chain.\n",
 			output.Printable(ref.Path), strings.Join(reasonWords(ref.Reasons), ", "))
+	}
+}
+
+// hintAboutPendingChains names on stderr each pending chain that has a
+// match in the answer, and the command that numbers its matches: a
+// pending chain has a frozen part without a line index, which the
+// search does not read to describe the chain, so its matches have no
+// line in the chain (chain_line -1, `?` in the rows). The handle in the
+// command is quoted for a shell, so the line can be pasted as it is.
+//
+// The work is one pass over the matches and one over the chains.
+func hintAboutPendingChains(w io.Writer, resp *rxtypes.ChainTraceResponse) {
+	matched := make(map[string]bool, len(resp.Chains))
+	for _, m := range resp.Matches {
+		if m.Chain != nil {
+			matched[*m.Chain] = true
+		}
+	}
+	for _, id := range output.SortedIDs(resp.Chains) {
+		ref := resp.Chains[id]
+		if ref.State != rxtypes.ChainStatePending || !matched[id] {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "Hint: the log chain %s is pending (a part has no line index), so its matches have no "+
+			"line in the chain: run rx logs index %s for chain line numbers.\n",
+			output.Printable(ref.Path), output.Printable(output.Quote(ref.Path)))
 	}
 }

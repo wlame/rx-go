@@ -200,11 +200,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the other statuses as `GET /v1/trace`. The webhooks fire with the
   payloads of a trace. `GET /v1/trace` is unchanged.
 - `rx logs trace PATTERN [CHAIN|DIR|FILE ...]` with every flag of
-  `rx trace` gives the same search from a terminal, each chain described
-  as `rx logs show` describes it, so a valid chain is ready: a match in
-  a part prints as `CHAIN:LINE (PART:LINE): TEXT`, one in a file of its
-  own as `FILE:LINE: TEXT`, and `--json` prints the `GET /v1/logs/trace`
-  body. An invalid chain is named on stderr. Exit 3 for a path that is
+  `rx trace` gives the same search from a terminal: a match in a part
+  prints as `CHAIN:LINE (PART:LINE): TEXT`, one in a file of its own as
+  `FILE:LINE: TEXT`, and `--json` prints the `GET /v1/logs/trace` body.
+  Each chain is described from its parts' stored line indexes, as the
+  route describes it, never by reading a part, so a search capped with
+  `--max-results=` reads what `rx trace` reads on the same files; a
+  chain with a part not indexed yet is pending, its matches print `?`
+  as their line in the chain, and stderr says
+  `run rx logs index CHAIN for chain line numbers`. An invalid chain is
+  named on stderr. Exit 3 for a path that is
   no directory, chain or file, 4 outside the search roots or for a
   named file that cannot be read, 7 when a part changed while its chain
   was described, 2 for a pattern that does not compile, `-` and the

@@ -348,7 +348,8 @@ Each `PATH` is a directory (its files are grouped into chains, as
 path is a file); without one, the current directory. The header is the
 one `rx trace` prints. A match in a part reads
 `CHAIN:LINE (PART:LINE): TEXT`: its line in the chain first (`?` when
-not known: an invalid chain, or a line a capped scan left unnumbered),
+not known: a pending or invalid chain, or a line a capped scan left
+unnumbered),
 then the part's name and its own line; a match in a file of its own
 reads `FILE:LINE: TEXT`. With several patterns each row names its
 pattern in square brackets before the text. Context (`--samples`,
@@ -360,12 +361,25 @@ reach more than once (a path given twice, a directory and a chain or a
 part in it, a link to a directory) is searched once, each match printed
 once and in its chain.
 
-`rx logs trace` never waits for background work: it describes each
-chain as `rx logs show` does (a part without a line index is indexed in
-memory, which reads that part once more than the search does), so a
-valid chain is ready and every match the search numbers has its line in
-the chain. [`rx logs index`](#rx-logs-index) stores the indexes and
-makes that step a read of each index. `--json` prints the
+`rx logs trace` never waits for background work, and never reads a
+part to describe its chain: each chain is described from its parts'
+stored line indexes and the head and tail of its active file, as
+`GET /v1/logs/trace` describes it. A search capped with
+`--max-results=` therefore reads what `rx trace` reads on the same
+files, however large the parts. A chain with a frozen part that has no
+line index yet is `pending`: its parts are searched in the order of
+their names, each of its matches prints `?` as its line in the chain
+(`chain_line` `-1` in `--json`), and stderr says, for each pending
+chain with a match:
+
+```text
+Hint: the log chain /var/log/syslog is pending (a part has no line index), so its matches have no line in the chain: run rx logs index /var/log/syslog for chain line numbers.
+```
+
+[`rx logs index`](#rx-logs-index) stores the indexes; the next search
+gives every match its line in the chain, and the parts in time order.
+(`rx logs show` and `rx logs samples` do read a part without an index,
+as they need its line count to answer at all.) `--json` prints the
 `GET /v1/logs/trace` body, with `cli_command` null as for `rx trace`.
 
 ### Flags
@@ -382,7 +396,7 @@ payloads are those of `rx trace`. It does not read standard input.
 
 | Code | When |
 |---:|---|
-| 0 | The search ran (an invalid chain is named on stderr) |
+| 0 | The search ran (an invalid chain is named on stderr, and a pending chain with a match gets its hint there) |
 | 2 | A pattern that does not compile, `-` as a path, and the usage errors of `rx trace` |
 | 3 | A path that is no directory, no chain's handle and no file |
 | 4 | A path outside `--search-root` or hidden, or a file named on its own that cannot be read |
