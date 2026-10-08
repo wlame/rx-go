@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file exists, the missing numbers (`missing`, at most 100 names, and
   `missing_count`, how many are missing in all), the total size, the
   compression formats and whether every frozen part has a line index
-  built from the file the listing found.
+  built from the file the listing found (an empty part needs none).
   A four-digit number from 1970 to 2100 where a rotation number goes
   (`report.2023`) is a year, so yearly files are ordered by year and
   name no missing parts; missing numbers are named only when no more

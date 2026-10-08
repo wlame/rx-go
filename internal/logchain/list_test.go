@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/paths"
@@ -104,6 +105,49 @@ func TestList_IsIndexedWhenEveryFrozenPartHasAnIndex(t *testing.T) {
 	}
 	if indexed() {
 		t.Fatal("indexed with a stale index")
+	}
+}
+
+// An empty frozen part needs no line index: it holds no line, and the
+// chain's description is ready without one. is_indexed is true once
+// every other frozen part is indexed, as the description says ready,
+// and the empty part's index is never looked at.
+func TestList_IsIndexedWithAnEmptyFrozenPart(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	_, logs := sandbox(t)
+	writeChainFiles(t, logs, []chainFile{
+		{name: "app.log.2", text: timedLines(chainBase, time.Second, 1, 5, "2")},
+		{name: "app.log.1"},
+		{name: "app.log", text: timedLines(chainBase.Add(time.Hour), time.Second, 6, 5, "active")},
+	})
+	peeks := map[string]int{}
+	peek := peekPartIndex
+	t.Cleanup(func() { peekPartIndex = peek })
+	peekPartIndex = func(path string) (*rxtypes.UnifiedFileIndex, error) {
+		peeks[filepath.Base(path)]++
+		return peek(path)
+	}
+	indexed := func() bool {
+		t.Helper()
+		resp, err := List(logs)
+		if err != nil || len(resp.Chains) != 1 {
+			t.Fatalf("list: %+v %v", resp, err)
+		}
+		return resp.Chains[0].IsIndexed
+	}
+	if indexed() {
+		t.Fatal("indexed before any index was built")
+	}
+	storeIndexes(t, logs, "app.log.2")
+	if !indexed() {
+		t.Fatal("not indexed once every frozen part with bytes is")
+	}
+	if peeks["app.log.1"] != 0 {
+		t.Fatalf("the empty part's index was looked at %d times", peeks["app.log.1"])
+	}
+	d := describe(t, logs, "app.log", Options{})
+	if d.Response.State != rxtypes.ChainStateReady || len(d.WaitingParts()) != 0 {
+		t.Fatalf("description: state %s, waiting for %v", d.Response.State, namesOfParts(d.WaitingParts()))
 	}
 }
 
