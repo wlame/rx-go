@@ -11,6 +11,7 @@ rx logs list [DIR...] [--json]
 rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]
 rx logs time-range CHAIN... [--json] [--file-tz=ZONE]
 rx logs index CHAIN... [--json] [--force]
+rx logs samples CHAIN (--lines=SPEC [--part=NAME] | --timestamps=T...) [--context=N] [--json] [--file-tz=ZONE] [--fingerprint=FP]
 ```
 
 `CHAIN` is a chain's **handle**: its directory joined with its name,
@@ -188,6 +189,78 @@ for several); `first_ms` and `last_ms` are UTC instants in milliseconds.
 `--file-tz` works as for `rx logs show`. The exit codes are those of
 `rx logs show`, without 7 from a fingerprint.
 
+## `rx logs samples`
+
+Lines of a chain by its global line numbers, by a part and its own
+line numbers, or by time: what [`rx samples`](samples.md) gives for one
+file, for the parts of a rotated log read as one text. The answer is
+the one [`GET /v1/logs/samples`](../api/endpoints/logs-samples.md)
+gives; that page says how each kind of position is answered.
+
+```bash
+rx logs samples /var/log/syslog --lines=15641 --context=1
+rx logs samples /var/log/syslog --part=syslog.3.gz --lines=500
+rx logs samples /var/log/syslog --timestamps=2026-10-03T14:00..2026-10-03T15:00
+```
+
+```text
+Chain: /var/log/syslog  ready  8 parts  fingerprint e8ed018e0ff41f34
+Times: Sep 29 00:00:01 .. Oct  6 22:11:00  UTC
+Context: 1 before, 1 after
+
+=== /var/log/syslog:15641 ===
+-- syslog-20260930-1790726400.gz --
+15640  syslog-20260930-1790726400.gz:15640  Sep 30 00:00:00 host systemd[1]: rotate-app.service: Deactivated successfully.
+15641  syslog-20260930-1790726400.gz:15641  Sep 30 00:00:00 host systemd[1]: Finished Rotate the application logs.
+-- syslog-20261001-1790812801.gz --
+15642  syslog-20261001-1790812801.gz:1  Sep 30 00:00:00 host systemd[1]: rotate-app.service: Deactivated successfully.
+```
+
+A head with the handle, the state, the number of parts and the
+fingerprint, the chain's first and last time (in the layout its parts
+write them, as for `rx logs show`) with their zone, and the context;
+then one block per position, in the order of the lines (a time by the
+line it found), headed `=== HANDLE:KEY ===` (`=== HANDLE PART:KEY ===`
+for a part's own numbers, `=== HANDLE:LINE @ TIME ===` for a time).
+Each line is printed with its global number (`?` before the chain is
+ready), the part it comes from and its number in that part; a
+`-- NAME --` line marks where a part's lines start. A position the
+chain has no line for is named on stderr, as `rx samples` names one.
+
+`rx logs samples` never waits for background work: it describes the
+chain as `rx logs show` does (a part without a line index is indexed in
+memory), so the chain is ready unless it is invalid, and reads each part
+with its stored index when one is current, else from its text. It
+stores nothing; [`rx logs index`](#rx-logs-index) stores the indexes.
+`--json` prints the `GET /v1/logs/samples` body, each piece with the
+`rx samples` command that gives exactly its lines.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `-l`, `--lines` | — | Line numbers and ranges, comma-separated or repeated: the chain's global numbers, or with `--part` the part's own. `-N` counts back from the end |
+| `--part` | — | The bare name of a part (`syslog.3.gz`): `--lines` then numbers that part as `rx samples` numbers it on its own. Context still crosses its edges |
+| `-t`, `--timestamps` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`), as `rx samples` takes it; repeat the flag for several |
+| `-c`, `--context` | `3` | Lines of context before and after each single line or time |
+| `-B`, `--before`, `-A`, `--after` | — | Override `--context` on one side |
+| `--file-tz` | — | Read every part's timestamps as wall clock in this zone, as for `rx logs show` |
+| `--fingerprint` | — | The fingerprint of an earlier description: exit 7 when the chain's files changed since |
+| `--json` | `false` | Print the `GET /v1/logs/samples` body |
+
+Exactly one of `--lines` and `--timestamps` is given.
+
+### Exit codes
+
+| Code | When |
+|---:|---|
+| 0 | The lines were given (a position the chain has no line for is named on stderr) |
+| 2 | Neither or both of `--lines` and `--timestamps`, `--part` without `--lines` or naming no part of the chain, a bad lines spec, time, zone or fingerprint, a handle that ends in no name |
+| 3 | The handle names no chain, or its directory does not exist |
+| 4 | The handle's directory is outside `--search-root`, hidden or unreadable |
+| 6 | The chain is invalid |
+| 7 | The chain's fingerprint differs from `--fingerprint=`, or a part changed while it was read |
+
 ## `rx logs index`
 
 Builds and stores the line index of every part of each chain, the
@@ -257,4 +330,5 @@ the commands that read one chain use two more:
 - [`GET /v1/logs/chains`](../api/endpoints/logs-chains.md) — `rx logs list` over HTTP
 - [`GET /v1/logs/chain`](../api/endpoints/logs-chain.md) — `rx logs show` over HTTP
 - [`POST /v1/logs/index`](../api/endpoints/logs-index.md) — `rx logs index` as a background task
+- [`GET /v1/logs/samples`](../api/endpoints/logs-samples.md) — `rx logs samples` over HTTP
 - [`rx time-range`](time-range.md) — the time range of single files

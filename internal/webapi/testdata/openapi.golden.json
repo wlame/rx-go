@@ -355,6 +355,69 @@
         ],
         "type": "object"
       },
+      "ChainPiece": {
+        "additionalProperties": false,
+        "properties": {
+          "cli_command": {
+            "description": "The rx samples command that gives exactly the piece's lines from the part: rx samples PART --lines=A-B.",
+            "type": "string"
+          },
+          "first_global_line": {
+            "description": "The global number of the piece's first line: the part's global_start plus first_local_line minus 1; -1 before the chain is ready.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "first_local_line": {
+            "description": "The part's own number of the piece's first line, as rx samples numbers the part.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "line_timestamps": {
+            "description": "The effective timestamp of each line of lines, in order, as GET /v1/samples gives line_timestamps: a UTC instant in ms, or null for a line without one. In a ready chain the look back for a line without a timestamp of its own continues into the parts before this one, so a piece answers as the chain's parts read as one file do. Null when the part has no timestamp format.",
+            "items": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "lines": {
+            "description": "The piece's lines, in order, without their line breaks.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "part": {
+            "description": "The name of the part the lines come from, as in parts.",
+            "type": "string"
+          },
+          "part_end": {
+            "description": "Whether the piece ends at the part's last line: its line count when known, or else the end of the part's text, which the read reached before the window's end. Before the chain is ready, a window that reaches past it stops there.",
+            "type": "boolean"
+          },
+          "part_start": {
+            "description": "Whether the piece begins at the part's first line. Before the chain is ready, a window that reaches before it stops there.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "part",
+          "first_local_line",
+          "first_global_line",
+          "lines",
+          "line_timestamps",
+          "part_start",
+          "part_end",
+          "cli_command"
+        ],
+        "type": "object"
+      },
       "ChainReason": {
         "additionalProperties": false,
         "properties": {
@@ -509,6 +572,101 @@
           "last_ms",
           "frozen_line_count",
           "line_count",
+          "index_build",
+          "cli_command"
+        ],
+        "type": "object"
+      },
+      "ChainSamplesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "after_context": {
+            "description": "Lines of context after each single line or time asked for.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "before_context": {
+            "description": "Lines of context before each single line or time asked for.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "cli_command": {
+            "description": "The rx command that gives this answer: rx logs samples.",
+            "type": "string"
+          },
+          "fingerprint": {
+            "description": "The chain's fingerprint, as GET /v1/logs/chain gives it. Send it back as fingerprint to learn, by a 409, that the files changed.",
+            "type": "string"
+          },
+          "index_build": {
+            "$ref": "#/components/schemas/SamplesIndexBuild",
+            "description": "The background index build this answer started or joined, to follow at GET /v1/tasks/{task_id}: for a pending chain, its index task (operation chain_index), as GET /v1/logs/chain starts it; for a ready chain, the build of a part whose piece came from the head of its text (the active file, as GET /v1/samples starts one). Null when there is none. It says how the answer was produced; the lines are the same without it."
+          },
+          "lines": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "Each line or range of a lines request, as asked, mapped to the global line it names: the line itself (a line counted back from the end, -N, is keyed by the line it names), or a range's first line; -1 when the chain has no such line, and before the chain is ready. Empty for a timestamps request.",
+            "type": "object"
+          },
+          "name": {
+            "description": "The chain's name: the name of its active file.",
+            "type": "string"
+          },
+          "parts": {
+            "description": "The chain's parts in its order, as GET /v1/logs/chain gives them; each piece names one of them.",
+            "items": {
+              "$ref": "#/components/schemas/ChainPart"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "The chain's handle: its directory joined with its name.",
+            "type": "string"
+          },
+          "samples": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/ChainPiece"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "description": "Each key of lines or timestamps mapped to its lines, as pieces in the chain's order, one per part its window touches: the line with its context for a single line or time, or a range's lines. Null when the chain has no line of it.",
+            "type": "object"
+          },
+          "state": {
+            "description": "The chain's state, as GET /v1/logs/chain describes it: ready, or pending for an answer addressed to one part (part and lines), which reads that part alone.",
+            "enum": [
+              "pending",
+              "ready",
+              "invalid"
+            ],
+            "type": "string"
+          },
+          "timestamps": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "description": "Each time query of a timestamps request mapped to the global line it found: the first line whose own timestamp is at or after the time, or a range's first line; -1 when there is none. Empty for a lines request.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "state",
+          "fingerprint",
+          "parts",
+          "before_context",
+          "after_context",
+          "lines",
+          "timestamps",
+          "samples",
           "index_build",
           "cli_command"
         ],
@@ -3070,6 +3228,283 @@
           {}
         ],
         "summary": "Index every part of one log chain (background task)",
+        "tags": [
+          "Logs"
+        ]
+      }
+    },
+    "/v1/logs/samples": {
+      "get": {
+        "description": "Lines of one log chain, as GET /v1/samples gives them for one file: by the chain's global line numbers (lines), by a part and its own numbers (part and lines), or by time (timestamps). Each key's lines come as pieces, one per part its window touches, with the part's name, its first local and global line, the lines and their line_timestamps, part_start and part_end, and the rx samples command for exactly that piece. Context crosses part edges once the chain is ready; before that only part and lines are answered, reading that part alone, and a global or time request waits up to RX_SAMPLES_WAIT_SECONDS for the chain's index task (202 with the task under Prefer: respond-async). RX_SAMPLES_MAX_LINES and RX_SAMPLES_MAX_BYTES bound the whole answer. 409 with the current description when fingerprint differs or a part changed while it was read; 422 for an invalid chain; 404 when the handle names fewer than two parts.",
+        "operationId": "log_samples",
+        "parameters": [
+          {
+            "description": "The chain's handle: its directory joined with its name, as GET /v1/logs/chains gives it in path.",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "The chain's handle: its directory joined with its name, as GET /v1/logs/chains gives it in path.",
+              "examples": [
+                "/var/log/syslog"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part).",
+            "explode": false,
+            "in": "query",
+            "name": "lines",
+            "schema": {
+              "description": "Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part).",
+              "examples": [
+                "123456,100-200,-1"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The bare name of a part, as GET /v1/logs/chain lists it: lines then number that part as GET /v1/samples numbers it on its own. Only with lines. Before the chain is ready, this is the only way to read it: the part is read alone.",
+            "explode": false,
+            "in": "query",
+            "name": "part",
+            "schema": {
+              "description": "The bare name of a part, as GET /v1/logs/chain lists it: lines then number that part as GET /v1/samples numbers it on its own. Only with lines. Before the chain is ready, this is the only way to read it: the part is read alone.",
+              "examples": [
+                "syslog.3.gz"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "A time or time range (T, T1..T2, ..T2, T1..), as GET /v1/samples takes it; repeat the parameter for several, at most 1000. Each answers the first line, in the chain's order, whose own timestamp is at or after the time, with context, or a range's lines without context. A time of day without a date takes its date from the chain's first and last timestamps, which must fall on one day.",
+            "explode": true,
+            "in": "query",
+            "name": "timestamps",
+            "schema": {
+              "description": "A time or time range (T, T1..T2, ..T2, T1..), as GET /v1/samples takes it; repeat the parameter for several, at most 1000. Each answers the first line, in the chain's order, whose own timestamp is at or after the time, with context, or a range's lines without context. A time of day without a date takes its date from the chain's first and last timestamps, which must fall on one day.",
+              "examples": [
+                [
+                  "2026-10-03T14:00:00"
+                ]
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Context lines before AND after each single line or time (-1 = default 3)",
+            "explode": false,
+            "in": "query",
+            "name": "context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines before AND after each single line or time (-1 = default 3)",
+              "examples": [
+                3
+              ],
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Context lines before each single line or time (-1 = default 3)",
+            "explode": false,
+            "in": "query",
+            "name": "before_context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines before each single line or time (-1 = default 3)",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Context lines after each single line or time (-1 = default 3)",
+            "explode": false,
+            "in": "query",
+            "name": "after_context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines after each single line or time (-1 = default 3)",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Read every part's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM, as GET /v1/samples reads one file. Another value is refused with 400.",
+            "explode": false,
+            "in": "query",
+            "name": "file_tz",
+            "schema": {
+              "description": "Read every part's timestamps as the wall clock each line writes, in this zone: UTC, an IANA zone name or ±HH:MM, as GET /v1/samples reads one file. Another value is refused with 400.",
+              "examples": [
+                "Europe/Berlin"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "The fingerprint of a description the client holds. When the chain's files changed since (the fingerprint differs), the answer is 409 with the current description.",
+            "explode": false,
+            "in": "query",
+            "name": "fingerprint",
+            "schema": {
+              "description": "The fingerprint of a description the client holds. When the chain's files changed since (the fingerprint differs), the answer is 409 with the current description.",
+              "examples": [
+                "3fa2c4d5e6f70812"
+              ],
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "RFC 7240 preferences. respond-async lets the server answer 202 with the task it waits for (the chain's index task, or a part's index build) once RX_SAMPLES_WAIT_SECONDS has passed; without it the request waits for the task and answers 200.",
+            "in": "header",
+            "name": "Prefer",
+            "schema": {
+              "description": "RFC 7240 preferences. respond-async lets the server answer 202 with the task it waits for (the chain's index task, or a part's index build) once RX_SAMPLES_WAIT_SECONDS has passed; without it the request waits for the task and answers 200.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainSamplesResponse"
+                }
+              }
+            },
+            "description": "The lines asked for, each key's as pieces, one per part its window touches."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponse"
+                }
+              }
+            },
+            "description": "Sent only to a request with `Prefer: respond-async`: the answer waits for a task that did not end within the server's wait (RX_SAMPLES_WAIT_SECONDS): the chain's index task (operation chain_index) for a request by global line or by time on a pending chain, or the line index build of the part a piece lies in. Poll GET /v1/tasks/{task_id} until it ends, then send the same request again.",
+            "headers": {
+              "Preference-Applied": {
+                "description": "respond-async: the server applied the preference the request sent (RFC 7240).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainResponse"
+                }
+              }
+            },
+            "description": "The chain's files changed: the fingerprint the request sent differs from the current one, or a part was renamed or replaced while the request read it. The body is the current description."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Get lines of a log chain by global line, by part and line, or by time",
         "tags": [
           "Logs"
         ]

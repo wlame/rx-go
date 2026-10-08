@@ -217,6 +217,15 @@ func TestCLICommand_LogChainCommandsParse(t *testing.T) {
 		{"logs_index", map[string]any{"path": "/var/log/syslog", "force": false}, "rx logs index /var/log/syslog"},
 		{"logs_index", map[string]any{"path": "/var/log/my app (1).log", "force": true},
 			"rx logs index '/var/log/my app (1).log' --force"},
+		{"logs_samples", map[string]any{"path": "/var/log/syslog", "lines": "123456,-1", "context": 3},
+			"rx logs samples /var/log/syslog --lines=123456,-1"},
+		{"logs_samples", map[string]any{
+			"path": "/var/log/my app (1).log", "part": "my app (1).log.2.gz", "lines": "500", "file_tz": "Asia/Tokyo",
+			"fingerprint": "0123456789abcdef", "context": 0, "after_context": 5,
+		}, "rx logs samples '/var/log/my app (1).log' --lines=500 --part='my app (1).log.2.gz' --file-tz=Asia/Tokyo " +
+			"--fingerprint=0123456789abcdef --context=0 --after=5"},
+		{"logs_samples", map[string]any{"path": "/var/log/syslog", "timestamps": []string{"2026-10-03 14:00..2026-10-03 15:00", "09:30"}},
+			"rx logs samples /var/log/syslog --timestamps='2026-10-03 14:00..2026-10-03 15:00' --timestamps=09:30"},
 	}
 	for _, tc := range cases {
 		rendered := webapi.BuildCLICommand(tc.operation, tc.params)

@@ -131,6 +131,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prints the chain as `rx logs show` does. `--json` prints per chain
   `{path, indexed, skipped, skip_reasons, errors, total_time, chain}`.
   Exit codes as `rx index`, and 3 when a handle names no chain.
+- `GET /v1/logs/samples?path=HANDLE&(lines=SPEC[&part=NAME]|timestamps=T...)`
+  gives lines of a log chain as `GET /v1/samples` gives a file's: by the
+  chain's global line numbers (`-N` from the chain's end), by a part and
+  its own numbers (`part`), or by time (the first line in the chain's
+  order at or after T, found in the first part whose highest time
+  reaches it; a range runs to the line before the first line later
+  than T2). Each key's lines come as pieces, one per part its window
+  touches, each with the part, its first local and global line, the
+  lines, their `line_timestamps`, `part_start`, `part_end` and the
+  `rx samples PART --lines=A-B` command for exactly those lines. Context
+  crosses part edges in a ready chain, and so does the look back of
+  `line_timestamps`: lines that continue at the start of a part a record
+  the part before began carry its timestamp, from the earlier part's
+  line index, as the parts read as one file give them. Before the chain
+  is ready a part is read alone (`part` and `lines`, global numbers
+  -1), and a request by global line or by time waits for the chain's
+  index task, `202` with the task under `Prefer: respond-async` once
+  `RX_SAMPLES_WAIT_SECONDS` has passed. Parts are read through the
+  path of `GET /v1/samples` (their index, an answer from the head while
+  a part's index builds, `202` for a part build that outlasts the
+  wait). `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` bound the
+  whole answer. 409 with the current description when `fingerprint`
+  differs or a part changed while it was read; 422 for an invalid
+  chain (the detail lists the reasons); 404 when the handle names fewer
+  than two parts; 400 for a part that is not a member and the samples
+  parameter errors.
+- `rx logs samples CHAIN (--lines=SPEC [--part=NAME] | --timestamps=T...)
+  [--context=N] [--before=N] [--after=N] [--file-tz=ZONE]
+  [--fingerprint=FP] [--json]` gives the same answer from a terminal,
+  without waiting for background work (the chain is described as
+  `rx logs show` describes it); each line is printed with its global
+  number and `part:local`, and a `-- NAME --` line where a part's lines
+  start. Exit 3 when the handle names no chain, 6 when it is invalid, 7
+  when `--fingerprint=` differs or a part changed while it was read, 2
+  for a part that is not a member and the usage errors of `rx samples`.
 - `RX_CHAIN_OVERLAP_SECONDS` (default 60, 0 to 86400): how far a part
   of a log chain may reach past the first timestamp of the next part
   before the chain is invalid.

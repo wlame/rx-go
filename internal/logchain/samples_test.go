@@ -3,9 +3,11 @@ package logchain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -351,4 +353,28 @@ func splitLines(text []byte) []string {
 		out = append(out, string(text[start:]))
 	}
 	return out
+}
+
+// SECURITY: the pieces a request plans are bounded before any part is
+// read. A piece of a frozen part holds at least one line, so a request
+// that plans more of them than MaxLines is refused at once, however
+// many positions it names.
+func TestSamples_PlanningIsBoundedByTheLimit(t *testing.T) {
+	c := windowChain(t, true)
+	d := describe(t, c.dir, c.name, Options{Scan: true})
+	reads := 0
+	counting := func(ctx context.Context, part Part, req samples.Request) (*rxtypes.SamplesResponse, error) {
+		reads++
+		return samples.Resolve(ctx, req)
+	}
+	var spec []string
+	for g := 1; g <= 300; g++ {
+		spec = append(spec, fmt.Sprintf("%d-%d", g, g))
+	}
+	_, err := Samples(context.Background(), d, SamplesRequest{
+		Lines: lines(t, strings.Join(spec, ",")), MaxLines: 100, IndexLoader: samples.StoredIndex,
+	}, counting)
+	if !errors.Is(err, samples.ErrTooManyLines) || reads != 0 {
+		t.Fatalf("300 one-line ranges with a limit of 100: %v after %d reads", err, reads)
+	}
 }

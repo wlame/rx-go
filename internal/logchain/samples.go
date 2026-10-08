@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -441,20 +442,9 @@ func (p piece) key() string { return fmt.Sprintf("%d-%d", p.from, p.to) }
 // fill reads every window's pieces, at most one read per part, and files
 // each key's pieces and target into the answer.
 func (s *sampler) fill(ctx context.Context, space lineSpace, windows []window, targets map[string]int64, out map[string][]rxtypes.ChainPiece) error {
-	byPart := map[int][]piece{}
-	var order []int
-	for w, win := range windows {
-		for _, sp := range space.spans {
-			p, ok := cut(win, sp)
-			if !ok {
-				continue
-			}
-			p.window = w
-			if _, seen := byPart[sp.part]; !seen {
-				order = append(order, sp.part)
-			}
-			byPart[sp.part] = append(byPart[sp.part], p)
-		}
+	byPart, order, err := s.planPieces(space, windows)
+	if err != nil {
+		return err
 	}
 	pieces := make([][]rxtypes.ChainPiece, len(windows))
 	// The parts are read in the chain's order, each once for every
@@ -492,6 +482,58 @@ func (s *sampler) fill(ctx context.Context, space lineSpace, windows []window, t
 		}
 	}
 	return nil
+}
+
+// planPieces splits every window into its pieces, grouped by part,
+// and lists the parts the pieces lie in.
+//
+// SECURITY: the work and the memory follow what the answer may hold,
+// not the number of positions times the number of parts. A window's
+// first span is found by a binary search over the spans (their first
+// lines ascend), and the walk stops at the first span past the window,
+// so a window costs O(log spans) plus the spans it touches. A piece of a
+// frozen part holds at least one line (cut keeps only lines the part
+// has), and the answer holds each key's pieces, so once the planned
+// pieces of frozen parts pass MaxLines the answer is refused with
+// samples.ErrTooManyLines before any part is read. The active part adds
+// at most one piece per window.
+func (s *sampler) planPieces(space lineSpace, windows []window) (map[int][]piece, []int, error) {
+	byPart := map[int][]piece{}
+	var order []int
+	frozen := 0
+	for w, win := range windows {
+		if win.last < win.first {
+			continue
+		}
+		// Go note: sort.Search returns the first index for which the
+		// function is true; the spans whose end is before the window's
+		// first line come first.
+		first := sort.Search(len(space.spans), func(i int) bool {
+			sp := space.spans[i]
+			return sp.count < 0 || sp.first+sp.count-1 >= win.first
+		})
+		for _, sp := range space.spans[first:] {
+			if sp.first > win.last {
+				break
+			}
+			p, ok := cut(win, sp)
+			if !ok {
+				continue
+			}
+			p.window = w
+			if sp.count >= 0 {
+				if frozen++; s.req.MaxLines > 0 && frozen > s.req.MaxLines {
+					return nil, nil, fmt.Errorf("%w: the answer would hold more than the %d lines allowed",
+						samples.ErrTooManyLines, s.req.MaxLines)
+				}
+			}
+			if _, seen := byPart[sp.part]; !seen {
+				order = append(order, sp.part)
+			}
+			byPart[sp.part] = append(byPart[sp.part], p)
+		}
+	}
+	return byPart, order, nil
 }
 
 // cut is the share of span sp in window w, in the part's own numbers,

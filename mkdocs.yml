@@ -186,6 +186,7 @@ nav:
           - api/endpoints/logs-chains.md
           - api/endpoints/logs-chain.md
           - api/endpoints/logs-index.md
+          - api/endpoints/logs-samples.md
           - api/endpoints/metrics.md
           - api/endpoints/detectors.md
   - Concepts:
