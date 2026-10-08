@@ -89,12 +89,16 @@ func (e *SearchPathError) Unwrap() error { return e.Err }
 // the trace cache, the line indexes, the hooks) applies to each part as
 // to one file. Context therefore never crosses a part's edge.
 //
-// Left out of the search, each named in skipped_files with its reason:
-// the other encodings of a part (ReasonDuplicatePart), a part the
-// listing could not read (its read error, as a trace words it), and
-// whatever a trace skips. A chain of more than MaxParts parts is not
-// read as one text: its files are searched as files of their own, and
-// its entry in the answer has no parts.
+// Left out of the search, each named in skipped_files once with its
+// reason: the other encodings of a part (ReasonDuplicatePart), a part
+// the listing could not read (its read error, as a trace words it), and
+// whatever a trace skips. Another encoding of a part is left out also
+// when it is named on its own beside its chain, whichever comes first:
+// the chain reads the encoding it described, so each line comes once,
+// in the chain, and no file is both searched and skipped. A chain of
+// more than MaxParts parts is not read as one text: its files are
+// searched as files of their own, and its entry in the answer has no
+// parts.
 //
 // Whatever reaches them twice — a path given twice, however spelled, a
 // directory and a handle or a file in it, a link to a directory — each
@@ -128,8 +132,9 @@ type searchResolver struct {
 	// chains are the chains found, in the order found: chains[i] is
 	// answered as c<i+1>.
 	chains []*searchChain
-	// partOf maps the file id of each part searched to its place.
-	partOf map[string]partPlace
+	// partOf maps the slot of each part searched (its index in
+	// plan.Files while the paths are resolved) to its place.
+	partOf map[int]partPlace
 	// files holds what each file classified so far is, by its path as
 	// reported, so no file is opened twice for its kind: Group asks for
 	// the parts' kinds, and the engine reads the same files.
@@ -146,30 +151,42 @@ type searchResolver struct {
 	// reached twice — through a directory and its handle, or through a
 	// link to its directory — is described once and has one entry.
 	chainKeys map[string]bool
-	// planned holds what addFile made of each file met so far, by the
-	// path it leads to with every link resolved (fileKey), so a file
-	// reached twice is searched once, under one file id.
+	// planned holds what the search made of each file met so far, by
+	// the path it leads to with every link resolved (fileKey): the slot
+	// it is searched in, or skipped. So a file reached twice is searched
+	// once, under one file id, or skipped once.
 	planned map[string]plannedFile
+	// withdrawn holds the slots taken back before the search runs
+	// (skipOtherEncoding): another encoding of a part, planned as a file
+	// of its own before its chain was found. finish leaves them out of
+	// the plan.
+	withdrawn map[int]bool
+	// placeByID maps the file id of each part searched to its place in
+	// its chain. finish fills it, once the file ids are given.
+	placeByID map[string]partPlace
 }
 
 // newSearchResolver is the resolver of one search, with its maps made.
 func newSearchResolver(req SearchRequest) *searchResolver {
 	return &searchResolver{
 		req:       req,
-		partOf:    map[string]partPlace{},
+		partOf:    map[int]partPlace{},
 		files:     map[string]classified{},
 		dirs:      map[string]*listedDir{},
 		resolved:  map[string]bool{},
 		chainKeys: map[string]bool{},
 		planned:   map[string]plannedFile{},
+		withdrawn: map[int]bool{},
+		placeByID: map[string]partPlace{},
 	}
 }
 
-// plannedFile is what addFile made of a file: the file id it is
-// searched under, or ok false when it was skipped.
+// plannedFile is what the search made of a file: the slot it is
+// searched in (its index in plan.Files while the paths are resolved),
+// or ok false when it is skipped.
 type plannedFile struct {
-	id string
-	ok bool
+	slot int
+	ok   bool
 }
 
 // classified is what a file is, as trace.ClassifyForSearch tells it, or
@@ -185,11 +202,13 @@ type partPlace struct {
 	chain, order int
 }
 
-// searchChain is one chain a search found: its description and the
-// file ids of its parts searched, in its order.
+// searchChain is one chain a search found: its description and its
+// parts searched, in its order: their slots while the paths are
+// resolved, their file ids once finish has given them.
 type searchChain struct {
 	id    string
 	desc  *Description
+	slots []int
 	files []string
 }
 
@@ -198,8 +217,8 @@ type searchChain struct {
 // listed.
 type listedDir struct {
 	entries []Entry
-	// names maps each entry's name to its path as listed.
-	names map[string]string
+	// byName maps each entry's name to the entry.
+	byName map[string]Entry
 	// place maps each entry's name to its place in entries.
 	place map[string]int
 	// members maps a chain name to the places in entries, in the
@@ -244,7 +263,41 @@ func (r *searchResolver) resolve(ctx context.Context) (*trace.SearchPlan, error)
 			return nil, err
 		}
 	}
+	r.finish()
 	return &r.plan, nil
+}
+
+// finish gives the files of the plan their ids, once no path can change
+// the plan any more: the engine answers plan.Files[i] as f<i+1>, so a
+// file taken back while the paths were resolved (withdrawn) is left out
+// here, and the files after it move up. Each chain's parts, and each
+// part's place, are then named by file id.
+//
+// INVARIANT: a slot that holds a part of a chain is never withdrawn
+// (skipOtherEncoding takes back only a file of its own), so every part
+// keeps an id.
+func (r *searchResolver) finish() {
+	ids := make([]string, len(r.plan.Files))
+	// Go note: kept shares plan.Files' array; each file is written at an
+	// index no later than the one it is read from, so the filter needs
+	// no second slice.
+	kept := r.plan.Files[:0]
+	for slot, f := range r.plan.Files {
+		if r.withdrawn[slot] {
+			continue
+		}
+		kept = append(kept, f)
+		ids[slot] = "f" + strconv.Itoa(len(kept))
+	}
+	r.plan.Files = kept
+	for slot, place := range r.partOf {
+		r.placeByID[ids[slot]] = place
+	}
+	for _, ch := range r.chains {
+		for _, slot := range ch.slots {
+			ch.files = append(ch.files, ids[slot])
+		}
+	}
 }
 
 // addPath resolves one path: a directory, else a chain's handle, else a
@@ -291,7 +344,7 @@ func (r *searchResolver) addHandle(ctx context.Context, p string) (found bool, e
 	if !ok {
 		return false, nil
 	}
-	if err := r.addChain(ctx, c, listed.names); err != nil {
+	if err := r.addChain(ctx, c, listed.byName); err != nil {
 		return true, err
 	}
 	if c.TooManyParts {
@@ -379,7 +432,7 @@ func (r *searchResolver) listDir(dir string) *listedDir {
 	}
 	listed.info = pinned.Info()
 	listed.entries = EntriesOf(entries)
-	listed.names = pathsByName(listed.entries)
+	listed.byName = entriesByName(listed.entries)
 	listed.place = make(map[string]int, len(listed.entries))
 	listed.members = map[string][]int{}
 	for i, e := range listed.entries {
@@ -429,7 +482,7 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 	// chain (a part, or another encoding of one) to its chain.
 	owner := map[string]*walkChain{}
 	for dir, entries := range byDir {
-		names := pathsByName(entries)
+		byName := entriesByName(entries)
 		chains := Group(dir, entries, r.classify)
 		if len(chains) == 0 {
 			continue
@@ -437,11 +490,11 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 		dirInfo := directoryInfo(dir)
 		for _, c := range chains {
 			c.DirInfo = dirInfo
-			wc := &walkChain{candidate: c, names: names}
+			wc := &walkChain{candidate: c, byName: byName}
 			for _, part := range c.Parts {
 				owner[part.Path] = wc
 				for _, dup := range part.Duplicates {
-					owner[names[dup]] = wc
+					owner[byName[dup].Path] = wc
 				}
 			}
 		}
@@ -455,7 +508,7 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 		}
 		if !wc.found {
 			wc.found = true
-			if err := r.addChain(ctx, wc.candidate, wc.names); err != nil {
+			if err := r.addChain(ctx, wc.candidate, wc.byName); err != nil {
 				return err
 			}
 		}
@@ -472,19 +525,19 @@ func (r *searchResolver) addDirectory(ctx context.Context, p string, pinned path
 // met its first file yet.
 type walkChain struct {
 	candidate Candidate
-	// names maps the name of each file of the chain's directory to its
-	// path as the walk spelled it.
-	names map[string]string
-	found bool
+	// byName maps the name of each file of the chain's directory to its
+	// entry, under the walk's spelling.
+	byName map[string]Entry
+	found  bool
 }
 
-// pathsByName maps each entry's name to its path as listed.
-func pathsByName(entries []Entry) map[string]string {
-	names := make(map[string]string, len(entries))
+// entriesByName maps each entry's name to the entry.
+func entriesByName(entries []Entry) map[string]Entry {
+	byName := make(map[string]Entry, len(entries))
 	for _, e := range entries {
-		names[e.Name] = e.Path
+		byName[e.Name] = e
 	}
-	return names
+	return byName
 }
 
 // directoryInfo is the stat of the directory dir as a pin finds it,
@@ -531,13 +584,17 @@ func absPath(p string) string {
 // addChain describes a chain, names it in the answer, and adds its
 // parts to the search in the chain's order. A part the listing could
 // not read is not searched; it is skipped with its read error. Another
-// encoding of a part is skipped with ReasonDuplicatePart. A chain of
-// more than MaxParts parts gets its entry and adds no part: its caller
-// searches its files on their own. A chain added already (chainKey)
-// adds nothing: it keeps its one entry, and its parts their places.
+// encoding of a part is skipped with ReasonDuplicatePart
+// (skipOtherEncoding). A chain of more than MaxParts parts gets its
+// entry and adds no part: its caller searches its files on their own.
+// A chain added already (chainKey) adds nothing: it keeps its one
+// entry, and its parts their places.
+//
+// byName holds the entries the chain was grouped from, by name: the
+// other encodings of its parts are looked up there.
 //
 // The error is Describe's: ErrPartChanged, or the context's.
-func (r *searchResolver) addChain(ctx context.Context, c Candidate, names map[string]string) error {
+func (r *searchResolver) addChain(ctx context.Context, c Candidate, byName map[string]Entry) error {
 	key := chainKey(c)
 	if r.chainKeys[key] {
 		return nil
@@ -554,24 +611,53 @@ func (r *searchResolver) addChain(ctx context.Context, c Candidate, names map[st
 	index := len(r.chains)
 	r.chains = append(r.chains, ch)
 	for order, part := range d.Parts() {
-		if part.ReadError != nil {
-			r.skip(part.Path, trace.SkipReason(part.ReadError))
-			continue
-		}
-		id, ok := r.addFile(part.File)
+		// A part the listing could not read was classified with its
+		// error (r.classify, which Group asked), so addFile skips it with
+		// that error's reason, once.
+		slot, ok := r.addFile(part.File)
 		// INVARIANT: a file is a part of one chain at most, the first to
 		// claim it, so each of its matches is placed once. A file
 		// planned on its own before (a part's own path named first) is
-		// claimed by its chain, under the file id it already has.
-		if _, claimed := r.partOf[id]; ok && !claimed {
-			ch.files = append(ch.files, id)
-			r.partOf[id] = partPlace{chain: index, order: order}
+		// claimed by its chain, in the slot it already has.
+		if _, claimed := r.partOf[slot]; ok && !claimed {
+			ch.slots = append(ch.slots, slot)
+			r.partOf[slot] = partPlace{chain: index, order: order}
 		}
-		for _, dup := range part.Duplicates {
-			r.skip(names[dup], duplicateReason(part.Name))
+		for _, name := range part.Duplicates {
+			// byName holds every entry the chain was grouped from, its
+			// parts' other encodings too.
+			r.skipOtherEncoding(byName[name].File, part.Name)
 		}
 	}
 	return nil
+}
+
+// skipOtherEncoding keeps another encoding of the part named part out of
+// the search and names it once in skipped_files, with
+// ReasonDuplicatePart: it holds the lines of the part its chain reads,
+// so searching it too would give each of them twice.
+//
+// The search may have met the file before its chain. Planned as a file
+// of its own (named on its own, as `app.log.1.gz` beside the handle
+// `app.log`), it is taken back (withdrawn) before the search runs, so
+// the file is skipped rather than both searched and skipped. Skipped
+// already (as another encoding, or because it cannot be read), it is
+// not named twice. Claimed as a part of another chain (a link into
+// that chain's directory), it stays that chain's part. Met after its
+// chain, it is skipped already, and addFile does not plan it.
+func (r *searchResolver) skipOtherEncoding(other paths.Pinned, part string) {
+	key := fileKey(other)
+	if planned, seen := r.planned[key]; seen {
+		if !planned.ok {
+			return
+		}
+		if _, claimed := r.partOf[planned.slot]; claimed {
+			return
+		}
+		r.withdrawn[planned.slot] = true
+	}
+	r.planned[key] = plannedFile{}
+	r.skip(other.Path(), duplicateReason(part))
 }
 
 // duplicateReason is the reason given for another encoding of the part
@@ -594,18 +680,20 @@ func (r *searchResolver) addNamedFile(p string, pinned paths.Pinned) error {
 }
 
 // addFile adds a file to the search, in the order called, and returns
-// its file id; ok is false for a file that is skipped instead: one that
-// cannot be read or is not text, named with the reason a trace gives. A
-// file met before, under any spelling (fileKey), is not added again: the
-// answer is the one it got then.
-func (r *searchResolver) addFile(src paths.Pinned) (id string, ok bool) {
+// its slot (its index in plan.Files until finish gives the file ids);
+// ok is false for a file that is skipped instead: one that cannot be
+// read or is not text, named with the reason a trace gives, or another
+// encoding of a part already skipped (skipOtherEncoding). A file met
+// before, under any spelling (fileKey), is not added again: the answer
+// is the one it got then.
+func (r *searchResolver) addFile(src paths.Pinned) (slot int, ok bool) {
 	key := fileKey(src)
 	if planned, seen := r.planned[key]; seen {
-		return planned.id, planned.ok
+		return planned.slot, planned.ok
 	}
-	id, ok = r.planFile(src)
-	r.planned[key] = plannedFile{id: id, ok: ok}
-	return id, ok
+	slot, ok = r.planFile(src)
+	r.planned[key] = plannedFile{slot: slot, ok: ok}
+	return slot, ok
 }
 
 // fileKey names the file a pin leads to by its path with every link
@@ -621,19 +709,18 @@ func fileKey(src paths.Pinned) string {
 
 // planFile classifies a file and adds it to the plan, or skips it with
 // its reason; see addFile.
-func (r *searchResolver) planFile(src paths.Pinned) (id string, ok bool) {
+func (r *searchResolver) planFile(src paths.Pinned) (slot int, ok bool) {
 	c := r.classified(src)
 	switch {
 	case c.err != nil:
 		r.skip(src.Path(), trace.SkipReason(c.err))
-		return "", false
+		return 0, false
 	case !c.file.Kind().IsText():
 		r.skip(src.Path(), c.file.Kind().NotText)
-		return "", false
+		return 0, false
 	}
 	r.plan.Files = append(r.plan.Files, c.file)
-	// The engine answers plan.Files[i] as file id f<i+1>.
-	return "f" + strconv.Itoa(len(r.plan.Files)), true
+	return len(r.plan.Files) - 1, true
 }
 
 // classify is the Classify a search groups with: the file's kind as the
@@ -703,7 +790,7 @@ func (r *searchResolver) answer(resp *rxtypes.TraceResponse) *rxtypes.ChainTrace
 // -1 when that is not known (the chain is not ready, or the trace left
 // the line unnumbered).
 func (r *searchResolver) chainMatch(m rxtypes.Match) rxtypes.ChainMatch {
-	place, ok := r.partOf[m.File]
+	place, ok := r.placeByID[m.File]
 	if !ok {
 		return rxtypes.ChainMatchOf(m, nil, -1)
 	}

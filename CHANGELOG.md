@@ -193,7 +193,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gives `chain` and `chain_line`, its global line (`-1` for a file of
   its own, a pending or invalid chain, and a match the trace left
   unnumbered). Another encoding of a part is skipped with the reason
-  `duplicate_part: …`, a part that cannot be read with its read error,
+  `duplicate_part: …`, also when it is named on its own beside its
+  chain, whichever comes first (never both searched and skipped, so
+  each of its lines comes once, in the chain), a part that cannot be
+  read with its read error,
   and a chain of more than 10,000 parts is searched as files of their
   own. Chains are described from their parts' indexes, and no index
   build starts. 409 when a part changed while its chain was described;
