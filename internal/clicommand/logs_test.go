@@ -1,7 +1,9 @@
 package clicommand
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
@@ -46,5 +48,22 @@ func TestPartsCell(t *testing.T) {
 	}
 	if got := partsCell(rxtypes.ChainEntry{Parts: []string{}, TooManyParts: true}); got != ">10000" {
 		t.Errorf("too many parts: %q", got)
+	}
+}
+
+// A chain of more parts than are read as one text lists none, and its
+// first line says how many its files' names give instead of "0 parts".
+func TestWriteChainDescription_TooManyParts(t *testing.T) {
+	resp := &rxtypes.ChainResponse{
+		Path: "/var/log/x.log", State: rxtypes.ChainStateInvalid, Fingerprint: "0123456789abcdef",
+		Parts: []rxtypes.ChainPart{},
+		Reasons: []rxtypes.ChainReason{{Code: rxtypes.ChainReasonTooManyParts, Parts: []string{},
+			Message: "the names of the chain's files give 20001 parts; at most 10000 are read as one text"}},
+	}
+	var out strings.Builder
+	writeChainDescription(&out, shownChain{resp: resp, namedParts: 20001}, time.UTC)
+	first := strings.SplitN(out.String(), "\n", 2)[0]
+	if first != "/var/log/x.log: invalid, too many parts (20001), fingerprint 0123456789abcdef, times in UTC" {
+		t.Fatalf("first line %q", first)
 	}
 }

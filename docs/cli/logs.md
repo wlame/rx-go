@@ -102,18 +102,20 @@ rx logs show /var/log/syslog
 
 ```text
 /var/log/syslog: ready, 8 parts, 1269 lines, fingerprint 3173803a68e459cd, times in UTC
-#  NAME                           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME               HIGHEST TIME             IDX
-1  syslog-20260930-1790726400.gz  gzip         109    1-109         2026-09-29 00:00:00.000  2026-09-30 00:00:00.000  -
-2  syslog-20261001-1790812801.gz  gzip         137    110-246       2026-09-30 00:00:01.000  2026-10-01 00:00:01.000  -
+#  NAME                           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME       HIGHEST TIME     IDX
+1  syslog-20260930-1790726400.gz  gzip         109    1-109         Sep 29 00:00:00  Sep 30 00:00:00  -
+2  syslog-20261001-1790812801.gz  gzip         137    110-246       Sep 30 00:00:01  Oct  1 00:00:01  -
 ...
-8  syslog                         -            64     1206-1269     2026-10-06 00:00:00.000  2026-10-06 22:06:44.000  -
+8  syslog                         -            64     1206-1269     Oct  6 00:00:00  Oct  6 22:06:44  -
 ```
 
 A first line with the handle, the state (`ready`, `pending` or
 `invalid`), the number of parts and of lines, the fingerprint and the
 zone the times are shown in (`--file-tz`, else `RX_LOG_TZ`, `UTC` by
-default). For an invalid chain a `reason CODE: …` line per failed check
-follows. Then one row per part in the chain's order:
+default). A chain of more than 10,000 parts lists none, and says
+`too many parts (N)` with the number its files' names give. For an
+invalid chain a `reason CODE: …` line per failed check follows. Then
+one row per part in the chain's order:
 
 | Column | Meaning |
 |---|---|
@@ -128,6 +130,13 @@ follows. Then one row per part in the chain's order:
 
 Then a `gap:` line per stretch of time no part covers and a `missing:`
 line naming absent numbered parts.
+
+The times are written in the layout the parts write their timestamps
+(`Sep 29 00:00:00`, `2025-12-10 07:00:30`, `2025-12-10 07:00:04.574`),
+as [`rx time-range`](time-range.md) writes one file's, when every part
+with lines writes them one way; when the parts write them in several
+layouts, they are written to the millisecond
+(`2026-09-29 00:00:00.000`).
 
 `rx logs show` never waits for background work: a part without a line
 index is read in full and indexed in memory, so the answer is the one a
@@ -161,16 +170,16 @@ failures' code when they all share one, else 1.
 
 The first and the last timestamp of each chain, in the layout of
 [`rx time-range`](time-range.md): the handle, the timestamp format of its
-first part with timestamps, the first and last time (to the
-millisecond), the zone they are shown in, and the chain's state. The
-times are known once the chain is ready; `?` before.
+first part with timestamps, the first and last time (written as
+`rx logs show` writes them), the zone they are shown in, and the
+chain's state. The times are known once the chain is ready; `?` before.
 
 ```bash
 rx logs time-range /var/log/syslog
 ```
 
 ```text
-/var/log/syslog  iso  2026-09-29 00:00:00.000 .. 2026-10-06 22:06:44.000  UTC  ready
+/var/log/syslog  syslog  Sep 29 00:00:00 .. Oct  6 22:06:44  UTC  ready
 ```
 
 `--json` prints `{path, name, state, format, first_ms, last_ms,
@@ -198,11 +207,11 @@ Indexed 4 files in 0.0s
   /var/log/kern.log-20261004-1791072001.gz: 12 lines, 168.00 B
   /var/log/kern.log: 0 lines, 0.00 B
 /var/log/kern.log: ready, 4 parts, 202 lines, fingerprint 600c143a06fed4df, times in UTC
-#  NAME                             COMPRESSION  LINES  GLOBAL LINES  FIRST TIME               HIGHEST TIME             IDX
-1  kern.log-20260929-1790640000.gz  gzip         12     1-12          2026-09-28 04:10:00.000  2026-09-28 04:10:00.000  idx
-2  kern.log-20261003-1790985601.gz  gzip         178    13-190        2026-10-02 23:58:32.000  2026-10-02 23:58:36.000  idx
-3  kern.log-20261004-1791072001.gz  gzip         12     191-202       2026-10-03 00:00:45.000  2026-10-03 00:00:45.000  idx
-4  kern.log                         -            0      -             ?                        ?                        idx
+#  NAME                             COMPRESSION  LINES  GLOBAL LINES  FIRST TIME       HIGHEST TIME     IDX
+1  kern.log-20260929-1790640000.gz  gzip         12     1-12          Sep 28 04:10:00  Sep 28 04:10:00  idx
+2  kern.log-20261003-1790985601.gz  gzip         178    13-190        Oct  2 23:58:32  Oct  2 23:58:36  idx
+3  kern.log-20261004-1791072001.gz  gzip         12     191-202       Oct  3 00:00:45  Oct  3 00:00:45  idx
+4  kern.log                         -            0      -             ?                ?                idx
 ```
 
 Every part is indexed whatever its size: `RX_LARGE_FILE_MB`, below

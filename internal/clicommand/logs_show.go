@@ -93,13 +93,13 @@ func checkFingerprintFlag(fingerprint string, chains int) error {
 // multiPathFailureWith's for several: 6 for an invalid chain and 7 for a
 // changed fingerprint count as failures, after the chain is printed.
 func runLogsShow(out io.Writer, handles []string, opts logsShowOptions) error {
-	answers := make([]*rxtypes.ChainResponse, 0, len(handles))
+	answers := make([]shownChain, 0, len(handles))
 	var failureCodes []int
 	var single *ExitError
 	for _, handle := range handles {
-		resp, failure := showChain(handle, opts)
-		if resp != nil {
-			answers = append(answers, resp)
+		shown, failure := showChain(handle, opts)
+		if shown.resp != nil {
+			answers = append(answers, shown)
 		}
 		if failure != nil {
 			failureCodes = append(failureCodes, failure.Code)
@@ -124,21 +124,30 @@ var logsShowFailureSummaries = map[int]string{
 	ExitChainChanged: "the chain's files changed",
 }
 
+// shownChain is a described chain as `rx logs show` prints it: the
+// description, and how many parts the names of its files give, which
+// the head of a chain of too many parts names (its description lists
+// none of them).
+type shownChain struct {
+	resp       *rxtypes.ChainResponse
+	namedParts int
+}
+
 // showChain describes one chain for `rx logs show`. It returns the
-// description (nil when there is none to print) and the failure the
-// command exits with for it: the description's own (invalid, changed
-// fingerprint), printed on stderr after a reason, or the error that kept
-// it from being described.
-func showChain(handle string, opts logsShowOptions) (*rxtypes.ChainResponse, *ExitError) {
+// description (its resp nil when there is none to print) and the
+// failure the command exits with for it: the description's own
+// (invalid, changed fingerprint), printed on stderr after a reason, or
+// the error that kept it from being described.
+func showChain(handle string, opts logsShowOptions) (shownChain, *ExitError) {
 	d, failure := describeForCLI(handle, opts.fileZone)
 	if failure != nil {
-		return nil, failure
+		return shownChain{}, failure
 	}
 	resp := d.Response
 	resp.CLICommand = webapi.BuildCLICommand("log_chain", map[string]any{
 		"path": resp.Path, "file_tz": opts.fileZone.Name, "fingerprint": opts.fingerprint,
 	})
-	return resp, chainFailure(resp, opts.fingerprint)
+	return shownChain{resp: resp, namedParts: d.Candidate.NamedParts}, chainFailure(resp, opts.fingerprint)
 }
 
 // describeForCLI resolves and describes a chain the way the CLI reads
@@ -201,7 +210,7 @@ func reasonWords(reasons []rxtypes.ChainReason) []string {
 
 // writeChainDescriptions prints the descriptions: as JSON, one object
 // when one chain was given and an array otherwise; or a block per chain.
-func writeChainDescriptions(out io.Writer, answers []*rxtypes.ChainResponse, oneChain bool, opts logsShowOptions) error {
+func writeChainDescriptions(out io.Writer, answers []shownChain, oneChain bool, opts logsShowOptions) error {
 	if opts.json {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -209,16 +218,20 @@ func writeChainDescriptions(out io.Writer, answers []*rxtypes.ChainResponse, one
 			if len(answers) == 0 {
 				return nil
 			}
-			return enc.Encode(answers[0])
+			return enc.Encode(answers[0].resp)
 		}
-		return enc.Encode(answers)
+		bodies := make([]*rxtypes.ChainResponse, len(answers))
+		for i, a := range answers {
+			bodies[i] = a.resp
+		}
+		return enc.Encode(bodies)
 	}
 	loc := chainDisplayLocation(opts.fileZone)
-	for i, resp := range answers {
+	for i, shown := range answers {
 		if i > 0 {
 			_, _ = fmt.Fprintln(out)
 		}
-		writeChainDescription(out, resp, loc)
+		writeChainDescription(out, shown, loc)
 	}
 	return nil
 }
@@ -235,18 +248,23 @@ func chainDisplayLocation(fileZone config.Zone) *time.Location {
 	return time.UTC
 }
 
-// chainTimeLayout is how `rx logs show` writes a time.
-const chainTimeLayout = "2006-01-02 15:04:05.000"
-
 // writeChainDescription prints one chain: a line with its handle, state,
 // part and line counts and fingerprint; the reasons of an invalid chain;
-// a table of its parts in order; then its gaps and missing parts.
+// a table of its parts in order; then its gaps and missing parts. The
+// times are written in the layout the parts write theirs when every
+// part with lines writes them one way, as `rx time-range` writes one
+// file's, and to the millisecond otherwise (output.ChainTimes).
 //
 //	/var/log/syslog: ready, 3 parts, 240 lines, fingerprint 3fa2c4d5e6f70812, times in UTC
-//	#  NAME                           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME               HIGHEST TIME             IDX
-//	1  syslog-20260930-1790726400.gz  gzip         130    1-130         2026-09-29 00:00:01.000  2026-09-30 01:59:58.000  idx
-func writeChainDescription(out io.Writer, resp *rxtypes.ChainResponse, loc *time.Location) {
-	header := fmt.Sprintf("%s: %s, %s", output.Printable(resp.Path), resp.State, countWord(len(resp.Parts), "part"))
+//	#  NAME                           COMPRESSION  LINES  GLOBAL LINES  FIRST TIME           HIGHEST TIME         IDX
+//	1  syslog-20260930-1790726400.gz  gzip         130    1-130         2026-09-29 00:00:01  2026-09-30 01:59:58  idx
+//
+// A chain of more parts than are read as one text lists none, and its
+// first line says how many its files' names give: "too many parts
+// (20001)".
+func writeChainDescription(out io.Writer, shown shownChain, loc *time.Location) {
+	resp := shown.resp
+	header := fmt.Sprintf("%s: %s, %s", output.Printable(resp.Path), resp.State, partsWord(shown))
 	if resp.LineCount != nil {
 		header += ", " + countWord(int(*resp.LineCount), "line")
 	}
@@ -256,21 +274,35 @@ func writeChainDescription(out io.Writer, resp *rxtypes.ChainResponse, loc *time
 	}
 	// Go note: a tabwriter buffers the rows and pads each tab-separated
 	// cell to its column's width when Flush is called.
+	times := output.NewChainTimes(resp.Parts, loc)
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "#\tNAME\tCOMPRESSION\tLINES\tGLOBAL LINES\tFIRST TIME\tHIGHEST TIME\tIDX")
 	for i, p := range resp.Parts {
 		_, _ = fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", i+1, output.Printable(p.Name),
-			compressionCell(p), countCell(p.LineCount), globalLinesCell(p), timeCell(p.FirstMs, false, loc),
-			timeCell(p.MaxMs, p.MaxIsBound, loc), indexCell(p))
+			compressionCell(p), countCell(p.LineCount), globalLinesCell(p), timeCell(p.FirstMs, false, times),
+			timeCell(p.MaxMs, p.MaxIsBound, times), indexCell(p))
 	}
 	_ = tw.Flush()
 	for _, g := range resp.Gaps {
 		_, _ = fmt.Fprintf(out, "gap: no lines from %s to %s (after %s, before %s)\n",
-			timeCell(&g.FromMs, false, loc), timeCell(&g.ToMs, false, loc), output.Printable(g.After), output.Printable(g.Before))
+			timeCell(&g.FromMs, false, times), timeCell(&g.ToMs, false, times), output.Printable(g.After), output.Printable(g.Before))
 	}
 	if len(resp.Missing) > 0 {
 		_, _ = fmt.Fprintf(out, "missing: %s\n", missingCell(resp.Missing, resp.MissingCount))
 	}
+}
+
+// partsWord is the part count of a chain's first line: "8 parts", or
+// for a chain of more parts than are read as one text, whose
+// description lists none, "too many parts (N)" with the count its
+// files' names give.
+func partsWord(shown shownChain) string {
+	for _, r := range shown.resp.Reasons {
+		if r.Code == rxtypes.ChainReasonTooManyParts {
+			return fmt.Sprintf("too many parts (%d)", shown.namedParts)
+		}
+	}
+	return countWord(len(shown.resp.Parts), "part")
 }
 
 // countWord writes a count with its noun, plural when it is not one.
@@ -312,13 +344,13 @@ func globalLinesCell(p rxtypes.ChainPart) string {
 	return fmt.Sprintf("%d-%d", *p.GlobalStart, *p.GlobalStart+*p.LineCount-1)
 }
 
-// timeCell writes an instant in loc, "<=" before an upper bound, or "?"
-// when it is not known.
-func timeCell(ms *int64, bound bool, loc *time.Location) string {
+// timeCell writes an instant as times writes the chain's times, "<="
+// before an upper bound, or "?" when it is not known.
+func timeCell(ms *int64, bound bool, times output.ChainTimes) string {
 	if ms == nil {
 		return unknownTime
 	}
-	text := time.UnixMilli(*ms).In(loc).Format(chainTimeLayout)
+	text := times.Format(*ms)
 	if bound {
 		return "<=" + text
 	}
@@ -361,12 +393,16 @@ func newLogsTimeRangeCommand(out io.Writer) *cobra.Command {
 // runLogsTimeRange answers every chain in order, as runLogsShow does.
 func runLogsTimeRange(out io.Writer, handles []string, jsonOutput bool, fileZone config.Zone) error {
 	answers := make([]*rxtypes.ChainTimeRange, 0, len(handles))
+	// parts are each answer's chain's parts, whose layouts the human
+	// line writes the times in.
+	parts := make([][]rxtypes.ChainPart, 0, len(handles))
 	var failureCodes []int
 	var single *ExitError
 	for _, handle := range handles {
 		d, failure := describeForCLI(handle, fileZone)
 		if failure == nil {
 			answers = append(answers, chainTimeRange(d.Response, fileZone))
+			parts = append(parts, d.Response.Parts)
 			failure = chainFailure(d.Response, "")
 		}
 		if failure != nil {
@@ -374,7 +410,7 @@ func runLogsTimeRange(out io.Writer, handles []string, jsonOutput bool, fileZone
 			single = failure
 		}
 	}
-	if err := writeChainTimeRanges(out, answers, len(handles) == 1, jsonOutput, fileZone); err != nil {
+	if err := writeChainTimeRanges(out, answers, parts, len(handles) == 1, jsonOutput, fileZone); err != nil {
 		return err
 	}
 	if len(handles) == 1 && single != nil {
@@ -403,11 +439,12 @@ func chainTimeRange(resp *rxtypes.ChainResponse, fileZone config.Zone) *rxtypes.
 }
 
 // writeChainTimeRanges prints the answers: as JSON, one object when one
-// chain was given and an array otherwise; or one line per chain.
-func writeChainTimeRanges(out io.Writer, answers []*rxtypes.ChainTimeRange, oneChain, jsonOutput bool, fileZone config.Zone) error {
+// chain was given and an array otherwise; or one line per chain, whose
+// parts are the matching element of parts.
+func writeChainTimeRanges(out io.Writer, answers []*rxtypes.ChainTimeRange, parts [][]rxtypes.ChainPart, oneChain, jsonOutput bool, fileZone config.Zone) error {
 	if !jsonOutput {
-		for _, r := range answers {
-			_, _ = fmt.Fprintln(out, chainTimeRangeLine(r, fileZone))
+		for i, r := range answers {
+			_, _ = fmt.Fprintln(out, chainTimeRangeLine(r, parts[i], fileZone))
 		}
 		return nil
 	}
@@ -425,12 +462,13 @@ func writeChainTimeRanges(out io.Writer, answers []*rxtypes.ChainTimeRange, oneC
 // chainTimeRangeLine is the human line of one chain, in the layout of
 // `rx time-range`: the handle, the format of its first part with
 // timestamps, the first and last timestamp, the zone they are shown in,
-// and the state. The times are written as `rx logs show` writes them,
-// to the millisecond, since the parts of a chain may write theirs in
-// several formats.
+// and the state. The times are written as `rx logs show` writes them:
+// in the layout the parts write theirs when every part with lines (of
+// parts) writes them one way, as `rx time-range` writes one file's, to
+// the millisecond otherwise.
 //
-//	/var/log/syslog  syslog  2026-09-29 00:00:01.000 .. 2026-10-07 00:06:03.000  UTC  ready
-func chainTimeRangeLine(r *rxtypes.ChainTimeRange, fileZone config.Zone) string {
+//	/var/log/syslog  iso  2026-09-29 00:00:01 .. 2026-10-07 00:06:03  UTC  ready
+func chainTimeRangeLine(r *rxtypes.ChainTimeRange, parts []rxtypes.ChainPart, fileZone config.Zone) string {
 	handle := output.Printable(r.Path)
 	if r.Format == nil {
 		return strings.Join([]string{handle, "no timestamps", r.State}, "  ")
@@ -439,6 +477,7 @@ func chainTimeRangeLine(r *rxtypes.ChainTimeRange, fileZone config.Zone) string 
 	if fileZone.Location == nil && r.DisplayZone == "UTC" {
 		loc = time.UTC
 	}
-	span := timeCell(r.FirstMs, false, loc) + " .. " + timeCell(r.LastMs, false, loc)
+	times := output.NewChainTimes(parts, loc)
+	span := timeCell(r.FirstMs, false, times) + " .. " + timeCell(r.LastMs, false, times)
 	return strings.Join([]string{handle, *r.Format, span, output.Printable(r.DisplayZone), r.State}, "  ")
 }
