@@ -84,10 +84,11 @@ the position, with a range sorting by its left-hand value
 | Where | What |
 |---|---|
 | `cmd/rx/main.go` | Entry point. `preprocessArgs` routes a bare pattern to `trace`; a new subcommand joins `knownSubcommands` there |
-| `internal/clicommand/` | One file per subcommand: `trace`, `index`, `samples`, `time-range`, `compress`, `serve` |
+| `internal/clicommand/` | One file per subcommand: `trace`, `index`, `samples`, `time-range`, `compress`, `serve`; `logs` and its subcommands (`list`, `show`, `time-range`, `index`, `samples`, `trace`) in `logs*.go` |
 | `internal/webapi/` | HTTP layer (chi + huma v2), middleware, OpenAPI, SPA fallback, `runDetached` |
 | `internal/trace/` | Search engine: `chunker.go`, `worker.go` (rg subprocess), `seekable.go`, `compressed.go`, `cache.go` |
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
+| `internal/logchain/` | Log chains (rotated logs read as one text): the name-template table (`Templates`), a directory listing grouped into chains (`Group`, `Resolve`), a chain described (`Describe`: time order, checks, state, fingerprint, global starts; a memory cache), samples across parts (`Samples`) and the chain search (`Search`). Every read of a part goes through the per-file code (`samples`, `index`, `trace`) and the part's pin |
 | `internal/index/` | Line-offset index builder, stats (Welford + reservoir), on-disk store |
 | `internal/seekable/`, `internal/compression/` | Seekable-zstd codec; magic-byte format signatures; pooled decoders |
 | `internal/filekind/` | The one classifier every command and route uses: format by magic bytes, seekable by seek table, text or not (with the reason) |
@@ -96,13 +97,13 @@ the position, with a range sorting by its left-hand value
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
 | `internal/frontend/` | Downloads and extracts the viewer bundle |
-| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress` and the index builds `GET /v1/samples` waits for; a task's done channel and progress |
+| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress`, the index builds `GET /v1/samples` waits for, and the index task of each log chain (`chain_index`, `internal/webapi/chain_index.go`): a lock key apart from the path it shows (`CreateKeyed`, the chain directory's device and inode with its name), part builds as subtasks whose finished entries are capped apart from other tasks (`CreateSubtask`), and a `Watch` that keeps how a task ended; a task's done channel and progress |
 | `internal/prometheus/` | Metrics behind an `atomic.Bool` enable gate (off in CLI, on in `serve`) |
 | `internal/output/` | Shared human-readable formatting |
 | `internal/testparity/` | Harness that runs `../rx-python` and diffs output |
-| `internal/testutil/counting/` | Byte-counting readers for bounded-read tests |
+| `internal/testutil/counting/` | Byte-counting readers for bounded-read tests: `OpenCounting` (a file), `NewReader`, `NewReaderAt` |
 | `pkg/rxtypes/` | Wire types. OpenAPI source of truth |
-| `docs/` | 35 MkDocs pages, built strict in CI, deployed to GitHub Pages |
+| `docs/` | 44 MkDocs pages, built strict in CI, deployed to GitHub Pages |
 
 ## Build, run, test
 
@@ -144,6 +145,7 @@ CLI (cobra)                HTTP (chi + huma v2)
 internal/clicommand/     internal/webapi/
     └──────────┬────────────────┘
                │
+       internal/logchain/  log chains: parts grouped by name, numbered as one text
        internal/trace/     chunker → workers → rg --json → dedup → response
        internal/samples/   line/offset resolver (index-aware)
        internal/index/     index builder + analyzer coordinator
@@ -160,6 +162,20 @@ Data flow for `rx trace "pattern" big.log`:
 4. Each worker pipes its byte range into `rg --json` over stdin and translates `absolute_offset` from rg-stream-relative to file-relative.
 5. Matches are deduplicated at chunk boundaries by range containment and sorted; `max_results` cancels sibling workers.
 6. Output is rendered by `clicommand/trace.go` (human) or serialized as `rxtypes.TraceResponse` (`--json`, HTTP).
+
+Data flow for `rx logs samples /var/log/syslog --lines=G`:
+
+1. `clicommand/logs_samples.go` calls `logchain.DescribeHandle`:
+   `Resolve` pins the directory, lists it once and groups the files
+   matching the chain name by the template table; `Describe` reads each
+   frozen part's line index (the CLI indexes a part without one in
+   memory), orders the parts by first timestamp, runs the checks and
+   computes each part's global start.
+2. `logchain.Samples` finds the part holding G by a binary search on the
+   starts, cuts the window into one piece per part it touches, and reads
+   each part once through `samples.Resolve` with the part's pin.
+3. The pieces are printed with global and local line numbers;
+   `GET /v1/logs/samples` returns the same pieces as JSON.
 
 ## Design contracts you must preserve
 
@@ -252,7 +268,42 @@ Data flow for `rx trace "pattern" big.log`:
    field changes. rx-python shares the cache directory and treats an index
    of another version as absent, so the bump also gets a
    `../tickets/PARITY-DEBT.md` row.
-3. **Bounded reads.** No code path reads more bytes than the request needs,
+3. **A log chain answers as the concatenation of its parts.** A chain
+   (`internal/logchain`) is the files of one rotated log, ordered by
+   time and numbered as one text. Decompress its parts in the chain's
+   order into one file, with a line break added after a part that lacks
+   one: every chain answer equals the single-file answer on that file —
+   the lines and `line_timestamps` of `rx logs samples`, the line a time
+   query finds, the line counts and the first and last times, and the
+   matches and line numbers of an uncapped `rx logs trace` — apart from
+   saying which part a line comes from, and apart from two documented
+   cases where `line_timestamps` is `null` ("not computed") and the
+   concatenation has a value (`docs/api/endpoints/logs-samples.md`).
+   Part arithmetic agrees: global line `G` is line
+   `G − global_start + 1` of its part, where `global_start` is 1 plus
+   the line counts of the parts before it, by the parts' indexes and by
+   `wc -l` of the decompressed parts. Cold and indexed answers are equal
+   under the `-1` rule of contract 2; global numbers exist only once the
+   chain is `ready` and are `-1` before.
+   Year-less timestamps take their year from each part's own mtime, so
+   a year-less chain is compared with its concatenation part by part.
+
+   A chain adds no reader of its own: every read of a part goes through
+   the per-file code (`samples.Resolve`, `samples.TimeRange`, the line
+   index, the trace engine) with the pin its directory listing made
+   (`Part.File`); an index build of a part pins the part's path anew,
+   and the index it gives is held to the listing's pin
+   (`index.DescribesPinned`). The backend keeps no state between
+   requests: a chain is found again from the disk each time, the
+   description cache only makes it faster, and the fingerprint lets a
+   client notice a rotation (409, exit 7). Tests build the parts and
+   their concatenation in `t.TempDir()` and compare, cold and after
+   indexing; a change to a chain answer gets such a test.
+   `docs/concepts/log-chains.md` states the rules; its template table is
+   checked against `logchain.Templates` by
+   `internal/logchain/concept_page_test.go`, and every `rx logs` example
+   in the docs runs in `cmd/rx/logs_doc_examples_test.go`.
+4. **Bounded reads.** No code path reads more bytes than the request needs,
    except an index build (`rx index`, and the index a samples lookup
    builds first when the head of the file cannot answer it), `rx trace`
    without `--max-results`, and `rx compress`. A samples lookup on a file
@@ -273,30 +324,56 @@ Data flow for `rx trace "pattern" big.log`:
    At most `RX_MAX_INDEX_BUILDS` of these builds run at once; later ones
    wait as `queued` tasks in a queue of at most 256, with no goroutine
    until a slot frees. `POST /v1/index` builds are outside the limit.
-   Every new file-reading path gets a budget test that uses
-   `counting.InjectOpen` and asserts the byte count.
-4. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
+
+   The log chain routes keep the same rules. `GET /v1/logs/chain` reads
+   each frozen part's stored index and the head and tail of the active
+   file, never a whole part; a pending chain starts or joins the chain's
+   one index task (`internal/webapi/chain_index.go`, operation
+   `chain_index`, its lock keyed by the directory's device and inode and
+   the chain name), whose part builds go through the same queue and
+   share `RX_MAX_INDEX_BUILDS`: a task submits at most that many parts at
+   once, the part builds of all chains together take at most half of
+   the queue, and each part build is a subtask whose finished entries
+   are capped apart from other tasks. `GET /v1/logs/samples` reads each
+   part a window touches once per request through the `GET /v1/samples`
+   path, with the answer's limits summed over every piece; time bounds
+   are searched in one forward pass, at most two reads per part.
+   `GET /v1/logs/trace` and `rx logs trace` describe chains from stored
+   indexes only, so a capped chain search reads what `rx trace` reads.
+   `rx logs show`, `time-range` and `samples` index a part without a
+   current index in memory (an index build) and store nothing;
+   `rx logs index` builds and stores every part's.
+
+   Every new file-reading path gets a budget test that counts what it
+   reads and asserts the count: `internal/testutil/counting` wraps a
+   file (`OpenCounting`) or a reader (`NewReader`, `NewReaderAt`) with a
+   byte counter, and `internal/logchain`'s read seams (`loadPartIndex`,
+   `openPart`, `buildPartIndex`, `readTimeRange`; see
+   `describe_reads_test.go`) count the reads of each part.
+5. **Cache cross-compatibility with Python.** Keep every `IndexAnalysis` field.
    Never add `omitempty` to a schema-documented wire field; use explicit nulls.
    Go-only extensions go under `go_extras`.
-5. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
+6. **Freeze-barrier registry.** `internal/analyzer/registry.go` freezes before
    the server starts; later registration panics; readers are lock-free. Do not
    add a mutex. A detector registers a factory with `RegisterLineDetector`,
    the only registration call, so every detector listed is one that runs
    and each build gets fresh detector state.
-6. **Sandbox on every path.** Every HTTP handler and every CLI command that
+7. **Sandbox on every path.** Every HTTP handler and every CLI command that
    receives a path, including output paths, calls
    `paths.ValidatePathWithinRoots` before touching the filesystem.
-7. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
+8. **SSRF defence stays layered.** `internal/hooks/config.go` rejects loopback,
    link-local, RFC 1918, CGNAT, multicast and unspecified addresses, and
    resolves DNS at validation time. Do not weaken it. Redirects must be refused
    or re-validated.
-8. **Metrics are off by default.** Wrap every new metric call behind the
+9. **Metrics are off by default.** Wrap every new metric call behind the
    enable gate. Never use `r.URL.Path` as a label; use the chi route pattern.
-9. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
+10. **Detached goroutines recover.** Any `go func()` spawned from a handler goes
    through `internal/webapi/run_detached.go::runDetached`.
-10. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
-   2 usage error, 3 file not found, 4 access denied, 5 interrupted. Scripts
-   branch on them, so a change is breaking.
+11. **Exit codes are part of the CLI contract.** 0 success, 1 generic error,
+   2 usage error, 3 file not found (for `rx logs`, also a handle that
+   names no chain), 4 access denied, 5 interrupted, 6 the log chain is
+   invalid, 7 the log chain's files changed since `--fingerprint=`.
+   Scripts branch on them, so a change is breaking.
 
 ## Coding standards
 
@@ -404,7 +481,10 @@ Paste the output. Do not summarize it.
   for a file it reaches from the root without passing through a link;
   keep it that way. A line index loaded for a pinned file goes through
   `index.LoadForPinned` (or `DescribesPinned`), which drops an index of
-  another inode.
+  another inode. `internal/logchain` reads each part of a chain through
+  the pin its directory listing made (`Part.File`; an index build of a
+  part pins its path anew and is held to that pin), and takes `part=` /
+  `--part=` only as the bare name of a member, never joined to a path.
 - **A file rx writes for a user goes through its directory's root.**
   `compressfile` opens the output's directory with `paths.OpenDir`
   (reached from the search root without passing a link) and creates,
