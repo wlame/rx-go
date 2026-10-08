@@ -12,6 +12,7 @@ rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]
 rx logs time-range CHAIN... [--json] [--file-tz=ZONE]
 rx logs index CHAIN... [--json] [--force]
 rx logs samples CHAIN (--lines=SPEC [--part=NAME] | --timestamps=T...) [--context=N] [--json] [--file-tz=ZONE] [--fingerprint=FP]
+rx logs trace PATTERN [CHAIN|DIR|FILE ...] [the flags of rx trace]
 ```
 
 `CHAIN` is a chain's **handle**: its directory joined with its name,
@@ -315,6 +316,75 @@ names no chain, 4 outside `--search-root`, 7 when the chain's files
 kept changing while they were read. With several chains the exit code
 is the failures' code when they all share one, else 1.
 
+## `rx logs trace`
+
+A search of rotated logs: what [`rx trace`](trace.md) does, with the
+parts of each chain searched in the chain's order and each of their
+matches given its line in the chain. The answer is the one
+[`GET /v1/logs/trace`](../api/endpoints/logs-trace.md) gives; that page
+says how each path is read and in which order the parts are searched.
+
+```bash
+rx logs trace 'Accepted publickey' /var/log
+rx logs trace error /var/log/syslog --max-results=100
+rx logs trace -e timeout -e refused /var/log/syslog /var/log/notes.txt
+```
+
+```text
+Request ID: 0199c8a2-…
+Path: /var/log/syslog
+Pattern: error
+Time: 0.041s
+Matches: 3
+
+Matches (chain:line (part:line), or file:line):
+  /var/log/syslog:404 (syslog-20261003-1790985601.gz:1): Oct  2 00:00:02 host kernel: … error …
+  /var/log/syslog:1100 (syslog-20261004-1791072001.gz:98): Oct  3 07:12:44 host sshd[812]: error: …
+  /var/log/syslog:1209 (syslog:4): Oct  6 00:01:10 host cron[1]: … error …
+```
+
+Each `PATH` is a directory (its files are grouped into chains, as
+`rx logs list` groups them), a chain's handle, or a file (a part's own
+path is a file); without one, the current directory. The header is the
+one `rx trace` prints. A match in a part reads
+`CHAIN:LINE (PART:LINE): TEXT`: its line in the chain first (`?` when
+not known: an invalid chain, or a line a capped scan left unnumbered),
+then the part's name and its own line; a match in a file of its own
+reads `FILE:LINE: TEXT`. With several patterns each row names its
+pattern in square brackets before the text. Context (`--samples`,
+`--context=`) is shown per file, as `rx trace` shows it, and never
+crosses a part's edge. Another encoding of a part (`syslog.3` beside
+`syslog.3.gz`) is listed under `Files skipped:` as `duplicate_part`. An
+invalid chain is still searched and is named on stderr.
+
+`rx logs trace` never waits for background work: it describes each
+chain as `rx logs show` does (a part without a line index is indexed in
+memory, which reads that part once more than the search does), so a
+valid chain is ready and every match the search numbers has its line in
+the chain. [`rx logs index`](#rx-logs-index) stores the indexes and
+makes that step a read of each index. `--json` prints the
+`GET /v1/logs/trace` body, with `cli_command` null as for `rx trace`.
+
+### Flags
+
+Every flag of [`rx trace`](trace.md#flags), with the same meaning:
+`-e`/`--regexp`, `--path`, `--max-results`, `--samples`, `--context`,
+`-B`/`--before`, `-A`/`--after`, the matching flags (`-i`, `-w`, `-x`,
+`-F`, `-P`), `--json`, `--color`, `--no-cache`, `--no-index` (for the
+search; describing a chain reads its indexes all the same),
+`--no-recursive`, `--request-id` and the `--hook-on-*` webhooks, whose
+payloads are those of `rx trace`. It does not read standard input.
+
+### Exit codes
+
+| Code | When |
+|---:|---|
+| 0 | The search ran (an invalid chain is named on stderr) |
+| 2 | A pattern that does not compile, `-` as a path, and the usage errors of `rx trace` |
+| 3 | A path that is no directory, no chain's handle and no file |
+| 4 | A path outside `--search-root` or hidden, or a file named on its own that cannot be read |
+| 7 | A part of a chain was renamed or replaced while its chain was described (a rotation ran meanwhile); run it again |
+
 ## Exit codes of the chain commands
 
 Beyond the codes every command uses ([exit codes](index.md#exit-codes)),
@@ -331,4 +401,5 @@ the commands that read one chain use two more:
 - [`GET /v1/logs/chain`](../api/endpoints/logs-chain.md) — `rx logs show` over HTTP
 - [`POST /v1/logs/index`](../api/endpoints/logs-index.md) — `rx logs index` as a background task
 - [`GET /v1/logs/samples`](../api/endpoints/logs-samples.md) — `rx logs samples` over HTTP
+- [`GET /v1/logs/trace`](../api/endpoints/logs-trace.md) — `rx logs trace` over HTTP
 - [`rx time-range`](time-range.md) — the time range of single files

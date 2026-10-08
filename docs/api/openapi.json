@@ -220,6 +220,81 @@
         ],
         "type": "object"
       },
+      "ChainMatch": {
+        "additionalProperties": false,
+        "properties": {
+          "absolute_line_number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "chain": {
+            "description": "The id of the chain (a key of chains) whose part the match is in; null for a file searched on its own.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "chain_line": {
+            "description": "The match's global line in its chain: the part's global_start plus absolute_line_number minus 1, the line rx logs samples gives for that number. -1 when it is not known: for a file searched on its own, before the chain is ready (pending), in an invalid chain, and where absolute_line_number is -1.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "file": {
+            "type": "string"
+          },
+          "line_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line_text_truncated": {
+            "description": "True when line_text holds only the first RX_MAX_LINE_TEXT_BYTES bytes of a longer line.",
+            "type": "boolean"
+          },
+          "offset": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "relative_line_number": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "submatches": {
+            "items": {
+              "$ref": "#/components/schemas/Submatch"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "submatches_truncated": {
+            "description": "True when submatches may leave some of the line's submatches out: the line had more than RX_MAX_SUBMATCHES_PER_LINE, or line_text is cut and the list covers only the text it holds.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pattern",
+          "file",
+          "offset",
+          "relative_line_number",
+          "absolute_line_number",
+          "line_text",
+          "submatches",
+          "line_text_truncated",
+          "submatches_truncated",
+          "chain",
+          "chain_line"
+        ],
+        "type": "object"
+      },
       "ChainPart": {
         "additionalProperties": false,
         "properties": {
@@ -460,6 +535,55 @@
         ],
         "type": "object"
       },
+      "ChainRef": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "description": "The chain's fingerprint, as GET /v1/logs/chain gives it.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The chain's name: the name of its active file.",
+            "type": "string"
+          },
+          "parts": {
+            "description": "The file ids (keys of files) of the chain's parts searched, in the chain's order: by time once the chain is ready (or invalid), in the provisional order of their names before. A part that cannot be read is not searched and has no id. Empty for a chain of more than 10,000 parts, whose files are searched as files of their own.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "The chain's handle: its directory joined with its name. GET /v1/logs/chain takes it.",
+            "type": "string"
+          },
+          "reasons": {
+            "description": "Why the chain is invalid, as GET /v1/logs/chain gives them (too_many_parts for a chain of more than 10,000 parts); empty unless state is invalid.",
+            "items": {
+              "$ref": "#/components/schemas/ChainReason"
+            },
+            "type": "array"
+          },
+          "state": {
+            "description": "The chain's state, as GET /v1/logs/chain gives it. Only a ready chain gives its matches a chain_line.",
+            "enum": [
+              "pending",
+              "ready",
+              "invalid"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "name",
+          "parts",
+          "fingerprint",
+          "state",
+          "reasons"
+        ],
+        "type": "object"
+      },
       "ChainResponse": {
         "additionalProperties": false,
         "properties": {
@@ -669,6 +793,133 @@
           "samples",
           "index_build",
           "cli_command"
+        ],
+        "type": "object"
+      },
+      "ChainTraceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "after_context": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "before_context": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "chains": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ChainRef"
+            },
+            "description": "The log chains found, by id (c1, c2, … in the order they were found): a path that is a chain's handle, or the chains among the files of a directory searched. Empty when there is none.",
+            "type": "object"
+          },
+          "cli_command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "context_lines": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/ContextLine"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "type": "object"
+          },
+          "file_chunks": {
+            "additionalProperties": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/ChainMatch"
+            },
+            "type": "array"
+          },
+          "max_results": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "patterns": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "scanned_files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "skip_reasons": {
+            "description": "Why each path of skipped_files was passed over or not searched in full, one entry per path in the same order. Besides a trace's reasons: duplicate_part for another encoding of a part that is searched, and a part's read error for a part of a chain that cannot be read.",
+            "items": {
+              "$ref": "#/components/schemas/SkippedFile"
+            },
+            "type": "array"
+          },
+          "skipped_files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "time": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "request_id",
+          "path",
+          "time",
+          "patterns",
+          "files",
+          "matches",
+          "scanned_files",
+          "skipped_files",
+          "skip_reasons",
+          "max_results",
+          "file_chunks",
+          "context_lines",
+          "before_context",
+          "after_context",
+          "cli_command",
+          "chains"
         ],
         "type": "object"
       },
@@ -3505,6 +3756,360 @@
           {}
         ],
         "summary": "Get lines of a log chain by global line, by part and line, or by time",
+        "tags": [
+          "Logs"
+        ]
+      }
+    },
+    "/v1/logs/trace": {
+      "get": {
+        "description": "GET /v1/trace for rotated logs: path repeats, and each is a directory (its files are grouped into log chains), a chain's handle, or a file (a part's own path is a file). The parts of each chain are searched in the chain's order (by time when it is ready, by name before), so the file ids, the order of the matches and the cut to max_results follow it. The answer is the trace answer plus chains, the chains found by id (c1, c2, …), and each match of a part gives its chain and chain_line, its global line in the chain (-1 before the chain is ready, in an invalid chain, and where the trace has no line number). Files keep their real paths and their own line numbers; context never crosses a part's edge. Another encoding of a part is skipped (duplicate_part), as is a part that cannot be read. No index build starts. 409 when a part of a chain was renamed or replaced while the request described it.",
+        "operationId": "log_trace",
+        "parameters": [
+          {
+            "description": "File or directory path(s) to search",
+            "explode": true,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "File or directory path(s) to search",
+              "examples": [
+                [
+                  "/var/log/app.log"
+                ]
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Regex pattern(s) to search for",
+            "explode": true,
+            "in": "query",
+            "name": "regexp",
+            "required": true,
+            "schema": {
+              "description": "Regex pattern(s) to search for",
+              "examples": [
+                [
+                  "error"
+                ]
+              ],
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Maximum results to return. 0 = unlimited.",
+            "explode": false,
+            "in": "query",
+            "name": "max_results",
+            "schema": {
+              "description": "Maximum results to return. 0 = unlimited.",
+              "examples": [
+                100
+              ],
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Custom UUID v7 request ID",
+            "explode": false,
+            "in": "query",
+            "name": "request_id",
+            "schema": {
+              "description": "Custom UUID v7 request ID",
+              "examples": [
+                "01936c8e-7b2a-7000-8000-000000000001"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Webhook URL called with GET once per file after its scan (event file_scanned, payload as query parameters). Overrides RX_HOOK_ON_FILE_URL for this request.",
+            "explode": false,
+            "in": "query",
+            "name": "hook_on_file",
+            "schema": {
+              "description": "Webhook URL called with GET once per file after its scan (event file_scanned, payload as query parameters). Overrides RX_HOOK_ON_FILE_URL for this request.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Webhook URL called with GET once per match (event match_found, payload as query parameters). Requires max_results. Overrides RX_HOOK_ON_MATCH_URL for this request.",
+            "explode": false,
+            "in": "query",
+            "name": "hook_on_match",
+            "schema": {
+              "description": "Webhook URL called with GET once per match (event match_found, payload as query parameters). Requires max_results. Overrides RX_HOOK_ON_MATCH_URL for this request.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Webhook URL called with GET once when the trace completes (event trace_complete, payload as query parameters). Overrides RX_HOOK_ON_COMPLETE_URL for this request.",
+            "explode": false,
+            "in": "query",
+            "name": "hook_on_complete",
+            "schema": {
+              "description": "Webhook URL called with GET once when the trace completes (event trace_complete, payload as query parameters). Overrides RX_HOOK_ON_COMPLETE_URL for this request.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Match case-insensitively (ripgrep -i)",
+            "explode": false,
+            "in": "query",
+            "name": "ignore_case",
+            "schema": {
+              "description": "Match case-insensitively (ripgrep -i)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Match only whole words (ripgrep -w)",
+            "explode": false,
+            "in": "query",
+            "name": "word_regexp",
+            "schema": {
+              "description": "Match only whole words (ripgrep -w)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Match only whole lines (ripgrep -x)",
+            "explode": false,
+            "in": "query",
+            "name": "line_regexp",
+            "schema": {
+              "description": "Match only whole lines (ripgrep -x)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Treat every pattern as literal text (ripgrep -F)",
+            "explode": false,
+            "in": "query",
+            "name": "fixed_strings",
+            "schema": {
+              "description": "Treat every pattern as literal text (ripgrep -F)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)",
+            "explode": false,
+            "in": "query",
+            "name": "pcre2",
+            "schema": {
+              "description": "Use the PCRE2 engine, for look-around and backreferences (ripgrep -P)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Context lines before and after each match (rx trace --context). Fills context_lines, before_context and after_context of the answer.",
+            "explode": false,
+            "in": "query",
+            "name": "context",
+            "schema": {
+              "default": 0,
+              "description": "Context lines before and after each match (rx trace --context). Fills context_lines, before_context and after_context of the answer.",
+              "examples": [
+                3
+              ],
+              "format": "int64",
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Context lines before each match (rx trace --before); wins over context, 0 included. -1 = the context value.",
+            "explode": false,
+            "in": "query",
+            "name": "before_context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines before each match (rx trace --before); wins over context, 0 included. -1 = the context value.",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Context lines after each match (rx trace --after); wins over context, 0 included. -1 = the context value.",
+            "explode": false,
+            "in": "query",
+            "name": "after_context",
+            "schema": {
+              "default": -1,
+              "description": "Context lines after each match (rx trace --after); wins over context, 0 included. -1 = the context value.",
+              "format": "int64",
+              "maximum": 100,
+              "minimum": -1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Neither read nor write the trace cache (rx trace --no-cache)",
+            "explode": false,
+            "in": "query",
+            "name": "no_cache",
+            "schema": {
+              "description": "Neither read nor write the trace cache (rx trace --no-cache)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Read and write no line index; a match a capped scan left unnumbered is numbered by counting lines from the start of the file (rx trace --no-index)",
+            "explode": false,
+            "in": "query",
+            "name": "no_index",
+            "schema": {
+              "description": "Read and write no line index; a match a capped scan left unnumbered is numbered by counting lines from the start of the file (rx trace --no-index)",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Search only the files directly inside a directory path, not its subdirectories (rx trace --no-recursive)",
+            "explode": false,
+            "in": "query",
+            "name": "no_recursive",
+            "schema": {
+              "description": "Search only the files directly inside a directory path, not its subdirectories (rx trace --no-recursive)",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainTraceResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request cannot be served as asked: a value rx cannot use (an uncompilable pattern, a malformed line or offset list, a file below the index threshold, an output file that exists), or a body that is not valid JSON"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The server requires an API token and the request did not carry it"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SandboxError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Refused: the path is outside every configured --search-root (SandboxError body), or it is hidden or cannot be read (ApiError body)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The file, directory, index or task does not exist"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A part of a log chain was renamed or replaced between the listing that found it and the read that described it (a rotation ran meanwhile); send the request again."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request does not match the schema: a required parameter or field is missing, or a value has the wrong type or is out of range"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "rx failed while serving the request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "ripgrep is not available on this system"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Any other error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Search log chains, directories and files for regex patterns",
         "tags": [
           "Logs"
         ]

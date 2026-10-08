@@ -30,8 +30,9 @@ type logChainsOutput struct {
 
 // registerLogsHandlers mounts the /v1/logs routes: the log chains of a
 // directory, which `rx logs list` gives from a terminal, the
-// description of one chain, which `rx logs show` gives, and its index
-// task, which `rx logs index` does in the foreground.
+// description of one chain, which `rx logs show` gives, its index
+// task, which `rx logs index` does in the foreground, its lines
+// (`rx logs samples`), and the search of chains (`rx logs trace`).
 //
 // GET /v1/logs/chains answers from the directory's names alone, as
 // GET /v1/tree lists it: one listing, the text check of the names that
@@ -61,6 +62,7 @@ func registerLogsHandlers(s *Server, api huma.API) {
 	registerLogChainHandler(s, api)
 	registerLogIndexHandler(s, api)
 	registerLogSamplesHandler(s, api)
+	registerLogTraceHandler(s, api)
 }
 
 // logChainsError is the answer to a directory GET /v1/logs/chains

@@ -135,6 +135,14 @@ func ErrFileAccess(path string, err error) huma.StatusError {
 	}
 }
 
+// ErrConflict returns a 409 apiError with the given detail: the files a
+// request read changed while it read them, and the same request sent
+// again reads them as they are now. A 409 that names a running task is
+// ErrTaskConflict.
+func ErrConflict(detail string) huma.StatusError {
+	return &apiError{Status: http.StatusConflict, Detail: detail}
+}
+
 // ErrTaskConflict returns the 409 for a path whose task is already
 // running: the detail sentence plus the running task's ID as task_id.
 func ErrTaskConflict(detail, taskID string) huma.StatusError {

@@ -252,6 +252,7 @@ human output lists each under `Files skipped:`. The reasons:
 | `not searched in full: the lines of damaged frames are left out; … (frames 2, 7)` | a seekable zstd file with frames that do not decompress: the matches of every other line are kept |
 | `a matched line matches none of the patterns alone, …` | with several patterns, a matched line could not be credited to one of them |
 | `the path leads to another file than the one that was checked` | the file was replaced between the check and the read |
+| `duplicate_part: the same part of its log chain as NAME, which is searched` | [`rx logs trace`](logs.md#rx-logs-trace) only: another encoding of one part of a log chain (`syslog.3` beside `syslog.3.gz`), whose lines the part searched holds |
 
 A file listed with `not searched in full` can still have matches in
 the answer; every other skipped file has none. A reason is one of these
@@ -525,4 +526,5 @@ decompressed; without one the match keeps
 - [`rx index`](line-index.md) — build an index for faster line-number resolution
 - [`rx samples`](samples.md) — retrieve content around matches
 - [api/endpoints/trace](../api/endpoints/trace.md) — same feature over HTTP
+- [`rx logs trace`](logs.md#rx-logs-trace) — the same search with rotated logs read as log chains
 - [api/webhooks](../api/webhooks.md) — webhook payload shapes

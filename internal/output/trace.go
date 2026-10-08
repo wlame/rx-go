@@ -232,49 +232,7 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 	}
 	var b strings.Builder
 	c := palette(opts.Colorize)
-
-	fmt.Fprintf(&b, "%sRequest ID:%s %s\n", c.grey, c.reset, resp.RequestID)
-	fmt.Fprintf(&b, "%sPath:%s %s%s%s\n",
-		c.grey, c.reset, c.boldCyan, Printable(strings.Join(resp.Path, ", ")), c.reset)
-
-	if len(resp.Patterns) == 1 {
-		for _, pattern := range resp.Patterns {
-			fmt.Fprintf(&b, "%sPattern:%s %s%s%s\n", c.grey, c.reset, c.boldMagenta, pattern, c.reset)
-		}
-	} else {
-		fmt.Fprintf(&b, "%sPatterns (%d):%s\n", c.grey, len(resp.Patterns), c.reset)
-		for _, id := range sortedIDs(resp.Patterns) {
-			fmt.Fprintf(&b, "  %s%s%s: %s%s%s\n",
-				c.blue, id, c.reset, c.magenta, resp.Patterns[id], c.reset)
-		}
-	}
-
-	fmt.Fprintf(&b, "%sTime:%s %s%.3fs%s\n", c.grey, c.reset, c.yellow, resp.Time, c.reset)
-	if len(resp.ScannedFiles) > 0 {
-		fmt.Fprintf(&b, "%sFiles scanned:%s %s%d%s\n",
-			c.grey, c.reset, c.green, len(resp.ScannedFiles), c.reset)
-	}
-	if len(resp.SkippedFiles) > 0 {
-		fmt.Fprintf(&b, "%sFiles skipped:%s %s%d%s\n",
-			c.grey, c.reset, c.grey, len(resp.SkippedFiles), c.reset)
-		// Each skipped path on its own line with why, the way `rx index`
-		// lists its skipped files.
-		for _, item := range resp.SkipReasons {
-			fmt.Fprintf(&b, "  %s%s: %s%s\n", c.grey, Printable(item.Path), Printable(item.Reason), c.reset)
-		}
-	}
-
-	// The count is the pieces the files were divided into, which is
-	// what got scanned in parallel — chunks for a plain file, frames
-	// for a seekable one. Calling it a worker count made a 137-frame
-	// archive claim 137 workers on a six-core machine.
-	chunked, totalChunks := chunkStats(resp.FileChunks)
-	if chunked > 0 {
-		fmt.Fprintf(&b, "%sParallel chunks:%s %s%d%s %s(%d file(s) chunked)%s\n",
-			c.grey, c.reset, c.cyan, totalChunks, c.reset, c.grey, chunked, c.reset)
-	}
-
-	fmt.Fprintf(&b, "%sMatches:%s %s%d%s\n", c.grey, c.reset, c.boldGreen, len(resp.Matches), c.reset)
+	writeTraceHeader(&b, resp, c)
 
 	if len(resp.Matches) > 0 {
 		fmt.Fprintf(&b, "\n%sMatches (file:line:offset [pattern]):%s\n", c.grey, c.reset)
@@ -293,6 +251,55 @@ func FormatTraceCLI(resp *rxtypes.TraceResponse, opts TraceFormatOptions) string
 		b.WriteString(FormatContextSection(BuildFileContexts(resp), opts.Before, opts.After))
 	}
 	return b.String()
+}
+
+// writeTraceHeader writes the header block of a trace's human output:
+// the request id, the paths, the patterns, the time, the files scanned
+// and skipped (each skipped one with why), the parallel chunks and the
+// match count. `rx trace` and `rx logs trace` print the same block.
+func writeTraceHeader(b *strings.Builder, resp *rxtypes.TraceResponse, c tracePalette) {
+	fmt.Fprintf(b, "%sRequest ID:%s %s\n", c.grey, c.reset, resp.RequestID)
+	fmt.Fprintf(b, "%sPath:%s %s%s%s\n",
+		c.grey, c.reset, c.boldCyan, Printable(strings.Join(resp.Path, ", ")), c.reset)
+
+	if len(resp.Patterns) == 1 {
+		for _, pattern := range resp.Patterns {
+			fmt.Fprintf(b, "%sPattern:%s %s%s%s\n", c.grey, c.reset, c.boldMagenta, pattern, c.reset)
+		}
+	} else {
+		fmt.Fprintf(b, "%sPatterns (%d):%s\n", c.grey, len(resp.Patterns), c.reset)
+		for _, id := range SortedIDs(resp.Patterns) {
+			fmt.Fprintf(b, "  %s%s%s: %s%s%s\n",
+				c.blue, id, c.reset, c.magenta, resp.Patterns[id], c.reset)
+		}
+	}
+
+	fmt.Fprintf(b, "%sTime:%s %s%.3fs%s\n", c.grey, c.reset, c.yellow, resp.Time, c.reset)
+	if len(resp.ScannedFiles) > 0 {
+		fmt.Fprintf(b, "%sFiles scanned:%s %s%d%s\n",
+			c.grey, c.reset, c.green, len(resp.ScannedFiles), c.reset)
+	}
+	if len(resp.SkippedFiles) > 0 {
+		fmt.Fprintf(b, "%sFiles skipped:%s %s%d%s\n",
+			c.grey, c.reset, c.grey, len(resp.SkippedFiles), c.reset)
+		// Each skipped path on its own line with why, the way `rx index`
+		// lists its skipped files.
+		for _, item := range resp.SkipReasons {
+			fmt.Fprintf(b, "  %s%s: %s%s\n", c.grey, Printable(item.Path), Printable(item.Reason), c.reset)
+		}
+	}
+
+	// The count is the pieces the files were divided into, which is
+	// what got scanned in parallel — chunks for a plain file, frames
+	// for a seekable one. Calling it a worker count made a 137-frame
+	// archive claim 137 workers on a six-core machine.
+	chunked, totalChunks := chunkStats(resp.FileChunks)
+	if chunked > 0 {
+		fmt.Fprintf(b, "%sParallel chunks:%s %s%d%s %s(%d file(s) chunked)%s\n",
+			c.grey, c.reset, c.cyan, totalChunks, c.reset, c.grey, chunked, c.reset)
+	}
+
+	fmt.Fprintf(b, "%sMatches:%s %s%d%s\n", c.grey, c.reset, c.boldGreen, len(resp.Matches), c.reset)
 }
 
 // matchDisplayLine is the line number to print: the one the scan
@@ -328,11 +335,14 @@ func chunkStats(fileChunks map[string]int) (chunkedFiles, totalChunks int) {
 	return chunkedFiles, totalChunks
 }
 
-// sortedIDs returns the ids that key m (pattern or file ids) in the
-// order an answer lists them: by their number, p2 before p10
+// SortedIDs returns the ids that key m (pattern, file or chain ids) in
+// the order an answer lists them: by their number, p2 before p10
 // (rxtypes.CompareIDs). Go map iteration is random, so map-driven
 // output needs the keys sorted to be stable.
-func sortedIDs(m map[string]string) []string {
+//
+// Go note: V is a type parameter, so one function sorts the keys of a
+// map of any value type (patterns map to strings, chains to ChainRef).
+func SortedIDs[V any](m map[string]V) []string {
 	return slices.SortedFunc(maps.Keys(m), rxtypes.CompareIDs)
 }
 

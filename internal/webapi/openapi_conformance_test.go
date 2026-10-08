@@ -432,6 +432,16 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("log samples without lines or times", "/v1/logs/samples", q("path", at("rotated/app.log")), http.StatusBadRequest)
 	get("log samples without a path", "/v1/logs/samples", q("lines", "1"), http.StatusUnprocessableEntity)
 
+	get("log trace of a directory", "/v1/logs/trace", q("path", at("rotated"), "regexp", "LINE"), http.StatusOK)
+	get("log trace of a chain, a file and an invalid chain, capped, with context", "/v1/logs/trace",
+		q("path", at("rotated/app.log"), "path", at("three.log"), "path", at("broken/x.log"),
+			"regexp", "LINE [12]", "max_results", "4", "context", "1"), http.StatusOK)
+	get("log trace with a pattern that does not compile", "/v1/logs/trace", q("path", at("rotated"), "regexp", "a("),
+		http.StatusBadRequest)
+	get("log trace outside the root", "/v1/logs/trace", q("path", "/etc", "regexp", "a"), http.StatusForbidden)
+	get("log trace of a missing path", "/v1/logs/trace", q("path", at("nope.log"), "regexp", "a"), http.StatusNotFound)
+	get("log trace without a pattern", "/v1/logs/trace", q("path", at("rotated")), http.StatusUnprocessableEntity)
+
 	get("trace plain", "/v1/trace", q("path", at("app.log"), "regexp", "ERROR"), http.StatusOK)
 	get("trace capped, two files, two patterns", "/v1/trace",
 		q("path", at("app.log"), "path", at("app.log.gz"), "regexp", "ERROR", "regexp", "WARN", "max_results", "5"), http.StatusOK)
