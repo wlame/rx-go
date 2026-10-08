@@ -130,8 +130,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index of every part of each chain, the active file too, in the
   foreground in the chain's order, whatever a part's size
   (`RX_LARGE_FILE_MB` does not apply), keeping a current index unless
-  `--force`; it reports each part as `rx index` reports a file, then
-  prints the chain as `rx logs show` does. `--json` prints per chain
+  `--force`; it reports each part as `rx index` reports a file,
+  counted as parts (`Indexed 4 parts in 0.1s`), then prints the chain
+  as `rx logs show` does. `--json` prints per chain
   `{path, indexed, skipped, skip_reasons, errors, total_time, chain}`.
   Exit codes as `rx index`, and 3 when a handle names no chain.
 - `GET /v1/logs/samples?path=HANDLE&(lines=SPEC[&part=NAME]|timestamps=T...)`

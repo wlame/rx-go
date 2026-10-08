@@ -68,7 +68,7 @@ func TestLogsIndex_IndexesEveryPartThenShowsTheChain(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
-	if len(lines) < 9 || !strings.HasPrefix(lines[0], "Indexed 3 files in ") {
+	if len(lines) < 9 || !strings.HasPrefix(lines[0], "Indexed 3 parts in ") {
 		t.Fatalf("stdout\n%s", stdout)
 	}
 	for i, name := range []string{"app.log.2.gz", "app.log.1", "app.log"} {
