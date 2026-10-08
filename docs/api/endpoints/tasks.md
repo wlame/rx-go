@@ -155,6 +155,13 @@ Finished tasks (both `completed` and `failed`) are swept from memory by
 a background goroutine that runs every 5 minutes. A task is swept when
 its `completed_at` is older than `RX_TASK_TTL_MINUTES` (default 60).
 
+The table also keeps at most 256 finished tasks: starting one past that
+drops the oldest finished ones first, before their TTL. The part builds
+of a log chain's index task (`chain_index`) are counted apart, at most
+256 finished ones among themselves, so the parts of a large chain drop
+only older part builds, never another task. A queued or running task is
+never dropped.
+
 After a task is swept, `GET /v1/tasks/{task_id}` returns `404`. If you
 need to retain results longer:
 

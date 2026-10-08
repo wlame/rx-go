@@ -46,31 +46,75 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 //
 // # What is remembered
 //
-// records maps each handle to the last index task started for it and
-// the fingerprint of the chain's files then. A description shows that task
-// in index_build while it runs and after it ends, as long as the task
-// manager keeps it (RX_TASK_TTL_MINUTES after its end, or until the
-// task table is full). A pending chain whose last task failed for the
-// same files does not start another on describe: the same files would
-// fail the same way, on every poll of a viewer. POST /v1/logs/index
-// starts one whatever the last ended as.
+// records maps each chain to the last index task started for it, the
+// fingerprint of the chain's files then, and, once the task has ended,
+// how it ended. A description shows that task in index_build while it
+// runs and after it ends. The record keeps the end itself, so the end
+// outlives the task's place in the task table, which a burst of other
+// tasks can take; it is dropped RX_TASK_TTL_MINUTES after the end (as
+// the sweeper drops a finished task), or once the chain's files have
+// another fingerprint, since the end no longer describes them.
+//
+// A pending chain whose last task failed for the same files does not
+// start another on describe: the same files would fail the same way, on
+// every poll of a viewer. POST /v1/logs/index starts one whatever the
+// last ended as.
+//
+// # Locks
 //
 // Lock order: mu, then the task manager's lock (CreateKeyed, Get). The
-// task goroutine never takes mu.
+// task goroutine takes mu once, alone, to record its end (recordEnd),
+// and never while it holds the task manager's lock or chainIndexRun.mu.
 type chainIndexTasks struct {
 	tasks  *tasks.Manager
 	builds *samplesIndexBuilds
 	logger *slog.Logger
 
 	mu sync.Mutex
-	// records maps a handle to the last index task started for it.
+	// records maps a chain's key (chainTaskKey) to the last index task
+	// started for it.
 	records map[string]chainTaskRecord
+	// now is the clock the records' ends are stamped and expired by:
+	// time.Now, which a test replaces to reach past the task TTL.
+	now func() time.Time
 }
+
+// maxEndedChainRecords is how many records of ended chain index tasks
+// are kept at most. Past it, the record that ended first is dropped:
+// a chain whose failed record goes is then started again by its next
+// describe, which costs one more failing build after this many other
+// chains' tasks have ended. Records of running tasks are never dropped
+// (one per chain whose task runs).
+const maxEndedChainRecords = 1024
 
 // chainTaskRecord is the last index task started for one chain.
 type chainTaskRecord struct {
 	taskID      string
 	fingerprint string
+	// startedAt is when the task was created, for index_build.
+	startedAt time.Time
+	// end is how the task ended; nil while it runs.
+	end *chainTaskEnd
+}
+
+// chainTaskEnd is how a chain's index task ended, kept in its record.
+type chainTaskEnd struct {
+	status tasks.Status
+	// err is the task's error: the failing part's name and its build's
+	// error. "" for a task that completed.
+	err string
+	// at is when the end was recorded, for the TTL.
+	at time.Time
+}
+
+// task is the record's task as index_build shows it once it has ended:
+// what the record keeps, whether or not the task table still holds it.
+// The caller checks that the record has an end.
+func (r chainTaskRecord) task() tasks.Task {
+	return tasks.Task{
+		TaskID: r.taskID, Operation: chainIndexOperation,
+		Status: r.end.status, Error: r.end.err, StartedAt: r.startedAt,
+	}
 }
 
 // newChainIndexTasks returns a registry whose tasks build the parts'
@@ -79,19 +123,27 @@ func newChainIndexTasks(manager *tasks.Manager, logger *slog.Logger, builds *sam
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &chainIndexTasks{tasks: manager, builds: builds, logger: logger, records: map[string]chainTaskRecord{}}
+	return &chainIndexTasks{
+		tasks: manager, builds: builds, logger: logger,
+		records: map[string]chainTaskRecord{}, now: time.Now,
+	}
 }
 
 // chainTaskStart is what starting a chain's index task needs: the
-// chain's handle and fingerprint, the parts to build in the chain's
-// order, and whether they are rebuilt even when current (for the
-// task's cli_command).
+// chain's handle (the path the task shows) and key (chainKeyOf), its
+// fingerprint, the parts to build in the chain's order, and whether
+// they are rebuilt even when current (for the task's cli_command).
 type chainTaskStart struct {
 	handle      string
+	key         string
 	fingerprint string
 	parts       []logchain.Part
 	force       bool
 }
+
+// chainKeyOf is the key of the chain d describes: the key its index
+// task holds in the task manager and its record's key here.
+func chainKeyOf(d *logchain.Description) string { return chainTaskKey(d.Response.Path) }
 
 // start starts the index task of a chain for the parts in s, or joins
 // the one running for the chain, and returns the task (a copy) and
@@ -104,7 +156,7 @@ func (c *chainIndexTasks) start(s chainTaskStart) (tasks.Task, bool) {
 
 // startLocked is start; the caller holds c.mu.
 func (c *chainIndexTasks) startLocked(s chainTaskStart) (tasks.Task, bool) {
-	task, isNew := c.tasks.CreateKeyed(chainIndexOperation, s.handle, chainTaskKey(s.handle))
+	task, isNew := c.tasks.CreateKeyed(chainIndexOperation, s.handle, s.key)
 	if !isNew {
 		// The running task is the manager's own, which its goroutine
 		// changes under the manager's lock: only its ID (never changed)
@@ -119,9 +171,11 @@ func (c *chainIndexTasks) startLocked(s chainTaskStart) (tasks.Task, bool) {
 	// changes the task's status under the manager's lock, and reading
 	// the manager's own Task then would be a data race.
 	snapshot := *task
-	c.rememberLocked(s.handle, chainTaskRecord{taskID: snapshot.TaskID, fingerprint: s.fingerprint})
+	c.rememberLocked(s.key, chainTaskRecord{
+		taskID: snapshot.TaskID, fingerprint: s.fingerprint, startedAt: snapshot.StartedAt,
+	})
 	run := &chainIndexRun{
-		tasks: c.tasks, builds: c.builds, logger: c.logger,
+		tasks: c.tasks, builds: c.builds, logger: c.logger, owner: c,
 		taskID: snapshot.TaskID, start: s, window: c.builds.maxRunning,
 	}
 	c.tasks.ReportProgress(snapshot.TaskID, run.progress)
@@ -132,32 +186,82 @@ func (c *chainIndexTasks) startLocked(s chainTaskStart) (tasks.Task, bool) {
 	return snapshot, true
 }
 
-// rememberLocked records record as the last index task of handle, and
-// drops the records of tasks the task manager no longer keeps.
-//
-// SECURITY: the map therefore holds at most one record per task the
-// manager keeps (tasks.DefaultMaxTasks finished ones, plus the running
-// ones), however many chains clients describe. The caller holds c.mu.
-func (c *chainIndexTasks) rememberLocked(handle string, record chainTaskRecord) {
-	for other, kept := range c.records {
-		if _, known := c.tasks.Get(kept.taskID); !known {
-			delete(c.records, other)
-		}
+// rememberLocked records record as the last index task of the chain
+// key, in place of any earlier one, then drops the records that have
+// expired or are too many (pruneLocked). The caller holds c.mu.
+func (c *chainIndexTasks) rememberLocked(key string, record chainTaskRecord) {
+	c.records[key] = record
+	c.pruneLocked()
+}
+
+// recordEnd records how the index task taskID of the chain key ended,
+// when it is still the chain's last task: a newer task may have taken
+// the record's place, or the record may have been dropped. It is called
+// from the task goroutine just before the task is marked ended in the
+// task manager, so a describe never finds the task ended without its
+// end in the record.
+func (c *chainIndexTasks) recordEnd(key, taskID string, status tasks.Status, err string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	record, recorded := c.records[key]
+	if !recorded || record.taskID != taskID {
+		return
 	}
-	c.records[handle] = record
+	record.end = &chainTaskEnd{status: status, err: err, at: c.now()}
+	c.records[key] = record
+	c.pruneLocked()
+}
+
+// pruneLocked drops the records of tasks that ended more than the task
+// TTL ago, then, while more than maxEndedChainRecords ended records
+// remain, the ones that ended first. The caller holds c.mu.
+//
+// SECURITY: the records are bounded whatever clients describe: one per
+// chain whose task runs (the task holds the chain's key, so a chain has
+// at most one), plus at most maxEndedChainRecords ended ones, each a few
+// short strings. Each call costs one pass over them.
+func (c *chainIndexTasks) pruneLocked() {
+	now := c.now()
+	ended := make([]string, 0, len(c.records))
+	for key, record := range c.records {
+		if record.end == nil {
+			continue
+		}
+		if c.expired(record, now) {
+			delete(c.records, key)
+			continue
+		}
+		ended = append(ended, key)
+	}
+	excess := len(ended) - maxEndedChainRecords
+	if excess <= 0 {
+		return
+	}
+	slices.SortFunc(ended, func(a, b string) int {
+		return c.records[a].end.at.Compare(c.records[b].end.at)
+	})
+	for _, key := range ended[:excess] {
+		delete(c.records, key)
+	}
+}
+
+// expired reports whether an ended record is older than the task TTL at
+// now: the time the sweeper drops a finished task from the table.
+func (c *chainIndexTasks) expired(record chainTaskRecord, now time.Time) bool {
+	return now.Sub(record.end.at) > c.tasks.TTL()
 }
 
 // forDescription is the index_build of a chain's description d: for a
 // pending chain, the task that builds the indexes it waits for, started
 // now or joined, unless the last task of these same files failed; for
-// every other chain, the last task started for it while the task
-// manager keeps it; nil when there is none.
+// every other chain, the last task started for it (lastLocked); nil
+// when there is none.
 func (c *chainIndexTasks) forDescription(d *logchain.Description) *rxtypes.SamplesIndexBuild {
-	handle, fingerprint := d.Response.Path, d.Response.Fingerprint
+	handle, key := d.Response.Path, chainKeyOf(d)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	last, record := c.lastLocked(handle)
-	failedForTheseFiles := last != nil && last.Status == tasks.StatusFailed && record.fingerprint == fingerprint
+	last := c.lastLocked(key, d.Response.Fingerprint)
+	failedForTheseFiles := last != nil && last.Status == tasks.StatusFailed
 	waiting := d.WaitingParts()
 	if d.Response.State != rxtypes.ChainStatePending || len(waiting) == 0 || failedForTheseFiles {
 		if last == nil {
@@ -165,54 +269,94 @@ func (c *chainIndexTasks) forDescription(d *logchain.Description) *rxtypes.Sampl
 		}
 		return chainIndexBuildOf(*last, handle)
 	}
-	task, _ := c.startLocked(chainTaskStart{handle: handle, fingerprint: fingerprint, parts: waiting})
+	task, _ := c.startLocked(chainTaskStart{
+		handle: handle, key: key, fingerprint: d.Response.Fingerprint, parts: waiting,
+	})
 	return chainIndexBuildOf(task, handle)
 }
 
-// last names the last index task started for the chain handle, while
-// the task manager keeps it, in a description's index_build; nil when
-// there is none.
-func (c *chainIndexTasks) last(handle string) *rxtypes.SamplesIndexBuild {
+// last names the last index task started for the chain d describes, as
+// lastLocked finds it, in a description's index_build; nil when there
+// is none.
+func (c *chainIndexTasks) last(d *logchain.Description) *rxtypes.SamplesIndexBuild {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	task, _ := c.lastLocked(handle)
+	task := c.lastLocked(chainKeyOf(d), d.Response.Fingerprint)
 	if task == nil {
 		return nil
 	}
-	return chainIndexBuildOf(*task, handle)
+	return chainIndexBuildOf(*task, d.Response.Path)
 }
 
-// lastLocked returns a copy of the last index task started for handle
-// and its record, or nil when there is none or the task manager no
-// longer keeps it. The caller holds c.mu.
-func (c *chainIndexTasks) lastLocked(handle string) (*tasks.Task, chainTaskRecord) {
-	record, recorded := c.records[handle]
+// lastLocked returns the last index task started for the chain key, as
+// a description of the chain's files with fingerprint shows it, or nil
+// when there is none. A running task is read from the task manager; an
+// ended one from its record, whether or not the task table still holds
+// it.
+//
+// An ended record is dropped instead when it has expired, or when it
+// was made for files with another fingerprint: its end describes files
+// that are no longer the chain's. A running task is kept whatever its
+// fingerprint: it holds the chain's key, so a start joins it anyway.
+//
+// A record without an end whose task has ended in the table is a task
+// whose goroutine panicked (runDetached failed it before its run could
+// record the end): its end is taken from the table now, so that it too
+// outlives the task's place there. When that task has left the table
+// already, its end is lost and the record is dropped. The caller holds
+// c.mu.
+func (c *chainIndexTasks) lastLocked(key, fingerprint string) *tasks.Task {
+	record, recorded := c.records[key]
 	if !recorded {
-		return nil, chainTaskRecord{}
+		return nil
 	}
-	task, known := c.tasks.Get(record.taskID)
-	if !known {
-		return nil, record
+	if record.end == nil {
+		task, known := c.tasks.Get(record.taskID)
+		switch {
+		case !known:
+			delete(c.records, key)
+			return nil
+		case !task.IsTerminal():
+			return task
+		}
+		record.end = &chainTaskEnd{status: task.Status, err: task.Error, at: c.now()}
+		c.records[key] = record
 	}
-	return task, record
+	if c.expired(record, c.now()) || record.fingerprint != fingerprint {
+		delete(c.records, key)
+		return nil
+	}
+	task := record.task()
+	return &task
 }
 
 // chainTaskMessages words a chain's index task by its status. Each
-// format takes the handle and the task's ID.
+// format takes, by explicit argument index, the handle (1), the task's
+// ID (2) and the task's error (3); a format need not use all three.
 var chainTaskMessages = map[tasks.Status]string{
-	tasks.StatusQueued:    "Building the line indexes of the parts of the log chain %s; follow GET /v1/tasks/%s",
-	tasks.StatusRunning:   "Building the line indexes of the parts of the log chain %s; follow GET /v1/tasks/%s",
-	tasks.StatusCompleted: "Built the line indexes of the parts of the log chain %s (GET /v1/tasks/%s)",
-	tasks.StatusFailed:    "Building the line indexes of the parts of the log chain %s failed; GET /v1/tasks/%s says why",
+	tasks.StatusQueued:    "Building the line indexes of the parts of the log chain %[1]s; follow GET /v1/tasks/%[2]s",
+	tasks.StatusRunning:   "Building the line indexes of the parts of the log chain %[1]s; follow GET /v1/tasks/%[2]s",
+	tasks.StatusCompleted: "Built the line indexes of the parts of the log chain %[1]s (task %[2]s)",
+	tasks.StatusFailed: "Building the line indexes of the parts of the log chain %[1]s failed (task %[2]s): %[3]s; " +
+		"POST /v1/logs/index starts it again",
 }
 
 // chainIndexBuildOf names a chain's index task in a description's
-// index_build.
+// index_build, shown as handle. A failed task's message carries its
+// error, the failing part and why, which outlives the task's place in
+// the task table.
+//
+// Go note: the message is formatted here, not by taskResponseOf, whose
+// format takes two arguments; the error is an argument, never part of
+// a format, so a % in a file name is printed as it is.
 func chainIndexBuildOf(task tasks.Task, handle string) *rxtypes.SamplesIndexBuild {
-	named := taskResponseOf(&task, handle, chainTaskMessages[task.Status])
+	started := formatTaskTime(task.StartedAt)
 	return &rxtypes.SamplesIndexBuild{
-		TaskID: named.TaskID, Status: named.Status, Message: named.Message,
-		Path: named.Path, StartedAt: named.StartedAt,
+		TaskID:    task.TaskID,
+		Status:    string(task.Status),
+		Message:   fmt.Sprintf(chainTaskMessages[task.Status], handle, task.TaskID, task.Error),
+		Path:      handle,
+		StartedAt: &started,
 	}
 }
 
@@ -222,6 +366,8 @@ type chainIndexRun struct {
 	tasks  *tasks.Manager
 	builds *samplesIndexBuilds
 	logger *slog.Logger
+	// owner keeps the chain's record, where the run records its end.
+	owner  *chainIndexTasks
 	taskID string
 	start  chainTaskStart
 	// window is how many part builds of this run are in flight at most.
@@ -239,10 +385,11 @@ type chainIndexRun struct {
 }
 
 // partWait is one part whose build the run waits for: its place in
-// start.parts and the task that builds its index (or holds its path).
+// start.parts and the task that builds its index (or holds its path),
+// with the watch the run reads the build's end from.
 type partWait struct {
 	position int
-	taskID   string
+	build    chainPartBuild
 }
 
 // run is the body of the task goroutine: it submits the parts' builds,
@@ -258,7 +405,7 @@ type partWait struct {
 // # How the waits work
 //
 // A part's build is a task of its own, and its done channel closes when
-// it ends (tasks.Manager.Done). The run cannot block on one done
+// it ends (tasks.Watch.Done). The run cannot block on one done
 // channel while others close first, so each submitted part gets a small
 // waiter goroutine that blocks on its done channel and then sends the
 // part on ended. The run blocks on ended alone: it wakes for whichever
@@ -293,37 +440,53 @@ func (r *chainIndexRun) run() {
 		// Blocks until one in-flight part's build ends.
 		wait := <-ended
 		inFlight--
-		r.finish(wait.taskID)
+		r.finish(wait.build.taskID)
 		ok, failure := r.outcome(wait)
 		if failure != "" {
-			r.tasks.Fail(r.taskID, failure)
+			r.fail(failure)
 			return
 		}
 		built[wait.position] = ok
 	}
+	r.complete(built)
+}
+
+// fail ends the task as failed with failure: in the chain's record
+// first, then in the task manager, so a describe never finds the task
+// ended without its end recorded.
+func (r *chainIndexRun) fail(failure string) {
+	r.owner.recordEnd(r.start.key, r.taskID, tasks.StatusFailed, failure)
+	r.tasks.Fail(r.taskID, failure)
+}
+
+// complete ends the task as completed, the parts in built as built, in
+// the same order as fail.
+func (r *chainIndexRun) complete(built []bool) {
+	r.owner.recordEnd(r.start.key, r.taskID, tasks.StatusCompleted, "")
 	r.tasks.Complete(r.taskID, r.result(built))
 }
 
 // submit starts the build of parts[position]'s line index, or joins the
-// task that builds it or holds its path (samplesIndexBuilds.join), and
-// records it as in flight. It returns false when the build queue is
+// task that builds it or holds its path (samplesIndexBuilds.joinChainPart),
+// and records it as in flight. It returns false when the build queue is
 // full and nothing holds the path: the part is to be submitted again
 // once a build ends.
+//
+// The run waits for the task whether it gives this file an index or
+// not: when it does not (a compression holds the path, or a build of
+// the file as it was before it changed), the part counts as neither
+// built nor failed once that task ends (outcome).
 func (r *chainIndexRun) submit(position int) (partWait, bool) {
 	part := r.start.parts[position]
 	identity := index.IdentityFromInfo(part.Path, part.Info)
-	// The task ID is the build's whether join says it gives this file
-	// an index or not: when it does not (a compression holds the path,
-	// or a build of the file as it was before it changed), the run waits
-	// for that task to end, and the part counts as not built.
-	taskID, _ := r.builds.join(part.Path, identity, part.Info.Size())
-	if taskID == "" {
+	build, submitted := r.builds.joinChainPart(part.Path, identity, part.Info.Size())
+	if !submitted {
 		return partWait{}, false
 	}
 	r.mu.Lock()
-	r.inFlight = append(r.inFlight, taskID)
+	r.inFlight = append(r.inFlight, build.taskID)
 	r.mu.Unlock()
-	return partWait{position: position, taskID: taskID}, true
+	return partWait{position: position, build: build}, true
 }
 
 // slotRetryDelay is how long awaitASlot waits when the build it would
@@ -365,11 +528,12 @@ var closedChannel = func() chan struct{} {
 
 // awaitInBackground starts the waiter goroutine of one in-flight part:
 // it blocks until the part's task ends, then sends wait on ended. A task
-// the manager no longer keeps has ended, so its waiter sends at once.
+// that could not be watched had ended already, so its waiter sends at
+// once.
 func (r *chainIndexRun) awaitInBackground(wait partWait, ended chan<- partWait) {
-	done, known := r.tasks.Done(wait.taskID)
-	if !known {
-		done = closedChannel
+	var done <-chan struct{} = closedChannel
+	if wait.build.watched {
+		done = wait.build.watch.Done()
 	}
 	// The waiter goroutine. runDetached keeps a panic in it from
 	// crashing the server; it cannot panic, but every goroutine of the
@@ -390,21 +554,23 @@ func (r *chainIndexRun) finish(taskID string) {
 	r.done++
 }
 
-// outcome reads how the task a part waited for ended: built when it was
-// an index build that completed; a failure naming the part when it was
-// an index build that failed. A task of another operation (a
-// compression held the path) builds nothing and fails nothing, and
-// neither does a task the manager no longer keeps.
+// outcome reads how the task a part waited for ended, from the watch
+// taken when the part was submitted, so the answer is the same whether
+// or not the task table still holds the task: built when the task gave
+// this file an index and completed; a failure naming the part when it
+// failed. A task that gives this file no index (a compression held the
+// path, or a build of the file as it was before) builds nothing and
+// fails nothing, and neither does one that had ended and left the table
+// before it could be watched, whose end is unknown.
 func (r *chainIndexRun) outcome(wait partWait) (built bool, failure string) {
-	task, known := r.tasks.Get(wait.taskID)
-	if !known || task.Operation != indexOperation {
+	if !wait.build.watched || !wait.build.givesIndex {
 		return false, ""
 	}
-	name := r.start.parts[wait.position].Name
-	if task.Status == tasks.StatusFailed {
-		return false, fmt.Sprintf("%s: %s", name, task.Error)
+	end := wait.build.watch.End()
+	if end.Status == tasks.StatusFailed {
+		return false, fmt.Sprintf("%s: %s", r.start.parts[wait.position].Name, end.Error)
 	}
-	return task.Status == tasks.StatusCompleted, ""
+	return end.Status == tasks.StatusCompleted, ""
 }
 
 // progress is the task's progress: the share of its parts done, a part

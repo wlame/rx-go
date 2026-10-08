@@ -229,7 +229,7 @@ func registerLogIndexHandler(s *Server, api huma.API) {
 		if status := logChainStatus(changed, in.Fingerprint, d.Response.Fingerprint); status != http.StatusOK {
 			resp := d.Response
 			resp.CLICommand = BuildCLICommand("log_chain", map[string]any{"path": resp.Path, "fingerprint": in.Fingerprint})
-			resp.IndexBuild = s.chainIndex.last(resp.Path)
+			resp.IndexBuild = s.chainIndex.last(d)
 			return &logChainOutput{Status: status, Body: resp}, nil
 		}
 		parts := d.UnindexedParts()
@@ -237,7 +237,7 @@ func registerLogIndexHandler(s *Server, api huma.API) {
 			parts = d.Parts()
 		}
 		task, isNew := s.chainIndex.start(chainTaskStart{
-			handle: d.Response.Path, fingerprint: d.Response.Fingerprint, parts: parts, force: in.Force,
+			handle: d.Response.Path, key: chainKeyOf(d), fingerprint: d.Response.Fingerprint, parts: parts, force: in.Force,
 		})
 		message := fmt.Sprintf("Indexing %s of the log chain %s; follow GET /v1/tasks/%s",
 			partCount(len(parts)), d.Response.Path, task.TaskID)

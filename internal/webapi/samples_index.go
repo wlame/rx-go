@@ -325,29 +325,106 @@ func (b *samplesIndexBuilds) join(path string, identity index.SourceIdentity, si
 	if build, ok := b.running[path]; ok {
 		return build.taskID, build.identity.Equal(identity)
 	}
-
-	if b.active >= b.maxRunning && len(b.queue) >= b.maxQueued {
-		// No room for another build. A task already holding the path is
-		// still joined; none is created.
-		holder, held := b.tasks.Holder(path)
-		if !held {
-			return "", false
-		}
-		return holder.TaskID, holder.Operation == indexOperation
+	if b.queueFullLocked() {
+		return b.holderLocked(path)
 	}
-
 	task, isNew := b.tasks.Create(path, indexOperation)
 	if !isNew {
 		return task.TaskID, task.Operation == indexOperation
 	}
-	b.running[path] = runningIndexBuild{taskID: task.TaskID, identity: identity}
-	build := queuedIndexBuild{taskID: task.TaskID, path: path, size: size}
+	b.addLocked(queuedIndexBuild{taskID: task.TaskID, path: path, size: size}, identity)
+	return task.TaskID, true
+}
+
+// chainPartBuild is the task one part of a log chain's index task waits
+// for, as joinChainPart found or started it.
+type chainPartBuild struct {
+	// taskID is the task's ID.
+	taskID string
+	// watch says when the task ends and how, even once the task has
+	// left the task table; it is valid only when watched is true.
+	watch   tasks.Watch
+	watched bool
+	// givesIndex says that the task builds this file's line index. It is
+	// false for a compression that holds the path, and for a build of
+	// the file as it was before it changed.
+	givesIndex bool
+}
+
+// chainPartOf names the task taskID of manager as the build a chain's
+// part waits for, with a watch of it. watched is false when the task had
+// already ended and left the table: its end is then unknown.
+func chainPartOf(manager *tasks.Manager, taskID string, givesIndex bool) chainPartBuild {
+	watch, watched := manager.Watch(taskID)
+	return chainPartBuild{taskID: taskID, watch: watch, watched: watched, givesIndex: givesIndex}
+}
+
+// joinChainPart is join for one part of a log chain's index task: it
+// returns the task that builds path's index for the file identity
+// describes, or that holds the path, and false when the part is to be
+// submitted again once a build ends (the queue is full and nothing holds
+// the path).
+//
+// A build it starts is a subtask (tasks.Manager.CreateSubtask): once
+// finished it counts toward the cap of the subtasks, so the parts of a
+// chain of any size never drop another client's task from the table.
+// The answer carries a watch of the task, taken while the task is in
+// the table, so the chain reads how the part's build ended even after
+// the task has left the table.
+func (b *samplesIndexBuilds) joinChainPart(path string, identity index.SourceIdentity, size int64) (chainPartBuild, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if build, ok := b.running[path]; ok {
+		return chainPartOf(b.tasks, build.taskID, build.identity.Equal(identity)), true
+	}
+	if b.queueFullLocked() {
+		taskID, givesIndex := b.holderLocked(path)
+		if taskID == "" {
+			return chainPartBuild{}, false
+		}
+		return chainPartOf(b.tasks, taskID, givesIndex), true
+	}
+	task, isNew := b.tasks.CreateSubtask(path, indexOperation)
+	if !isNew {
+		return chainPartOf(b.tasks, task.TaskID, task.Operation == indexOperation), true
+	}
+	// The watch is taken before the build goroutine exists, so the task
+	// cannot have ended, let alone left the table.
+	part := chainPartOf(b.tasks, task.TaskID, true)
+	b.addLocked(queuedIndexBuild{taskID: task.TaskID, path: path, size: size}, identity)
+	return part, true
+}
+
+// queueFullLocked reports whether there is no room for another build:
+// every slot is taken and the queue is full. The caller holds b.mu.
+func (b *samplesIndexBuilds) queueFullLocked() bool {
+	return b.active >= b.maxRunning && len(b.queue) >= b.maxQueued
+}
+
+// holderLocked returns the unfinished task that holds path and whether
+// it builds an index, or "" and false when none does. It is what a
+// lookup gets when there is no room for another build: a task already
+// holding the path is still joined, and none is created. The caller
+// holds b.mu.
+func (b *samplesIndexBuilds) holderLocked(path string) (string, bool) {
+	holder, held := b.tasks.Holder(path)
+	if !held {
+		return "", false
+	}
+	return holder.TaskID, holder.Operation == indexOperation
+}
+
+// addLocked records build, a new task for the file identity describes,
+// as the running build of its path, and starts it when a slot is free
+// or queues it otherwise. The caller holds b.mu.
+func (b *samplesIndexBuilds) addLocked(build queuedIndexBuild, identity index.SourceIdentity) {
+	b.running[build.path] = runningIndexBuild{taskID: build.taskID, identity: identity}
 	if b.active < b.maxRunning {
 		b.startLocked(build)
-	} else {
-		b.queue = append(b.queue, build)
+		return
 	}
-	return task.TaskID, true
+	b.queue = append(b.queue, build)
 }
 
 // slotHolder returns the task of a build that holds a slot now, and
