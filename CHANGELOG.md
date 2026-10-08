@@ -95,7 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (with `force=true`, of every part), whatever a part's size, through
   the same background builds a samples lookup starts: at most
   `RX_MAX_INDEX_BUILDS` at a time, the next part submitted as one ends,
-  so a chain of thousands of parts never fills the build queue. Each
+  so a chain of thousands of parts never fills the build queue, and the
+  part builds of all chains together, queued or running, take at most
+  half of it (128), so a lookup in another file finds room however many
+  chains are pending. Each
   part build is a task of its own; finished part builds are kept apart
   from other tasks (at most 256 of them), so a large chain never drops
   another client's task from the task table. Its

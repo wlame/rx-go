@@ -41,8 +41,11 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 // build queue: it keeps at most maxRunning part builds of its own in
 // flight (RX_MAX_INDEX_BUILDS, the number of builds that run at once)
 // and submits the next part only when one of them ends. So a chain adds
-// at most that many entries to the queue, whatever its size, and a
-// samples lookup in another file still finds room in the queue.
+// at most that many entries to the queue, whatever its size. All chains
+// together add at most half the queue (samplesIndexBuilds.maxChainParts):
+// a chain that finds that half taken waits for a build to end, so a
+// samples lookup in another file still finds room in the queue however
+// many chains are pending.
 //
 // # What is remembered
 //
@@ -396,10 +399,10 @@ type partWait struct {
 // at most window at a time, waits for each, and ends the task: failed
 // with the first part build that failed, completed otherwise.
 //
-// When other files' builds fill the build queue, a part is not
-// submitted: the run waits for one of its own builds to end, or, with
-// none in flight, for a build that holds a slot to end (awaitASlot),
-// and submits the part again. Each try therefore follows the end of a
+// When the build queue is full, or the part builds of all chains take
+// their half of it, a part is not submitted: the run waits for one of
+// its own builds to end, or, with none in flight, for a build that
+// holds a slot to end (awaitASlot), and submits the part again. Each try therefore follows the end of a
 // build, so the waiting costs nothing while the queue stays full.
 //
 // # How the waits work
@@ -433,7 +436,7 @@ func (r *chainIndexRun) run() {
 			inFlight++
 		}
 		if inFlight == 0 {
-			// The queue is full and no part of this run is in flight.
+			// No room for the part, and no part of this run in flight.
 			r.awaitASlot()
 			continue
 		}
@@ -468,9 +471,9 @@ func (r *chainIndexRun) complete(built []bool) {
 
 // submit starts the build of parts[position]'s line index, or joins the
 // task that builds it or holds its path (samplesIndexBuilds.joinChainPart),
-// and records it as in flight. It returns false when the build queue is
-// full and nothing holds the path: the part is to be submitted again
-// once a build ends.
+// and records it as in flight. It returns false when nothing holds the
+// path and the build queue is full or the chains' half of it is taken:
+// the part is to be submitted again once a build ends.
 //
 // The run waits for the task whether it gives this file an index or
 // not: when it does not (a compression holds the path, or a build of
@@ -494,7 +497,8 @@ func (r *chainIndexRun) submit(position int) (partWait, bool) {
 const slotRetryDelay = 10 * time.Millisecond
 
 // awaitASlot blocks until a build that holds a slot ends, so that a
-// part refused by a full queue can be submitted again.
+// part refused for want of room (a full queue, or the chains' half of
+// it taken) can be submitted again.
 //
 // A build whose task has ended gives its slot back a moment later, in
 // the same goroutine (samplesIndexBuilds.finish). When the build found

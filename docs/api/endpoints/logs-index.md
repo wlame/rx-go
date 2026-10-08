@@ -53,7 +53,11 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
   At most `RX_MAX_INDEX_BUILDS` builds run at once, the server over; the
   task submits at most that many of its parts at a time and the next one
   as one of them ends, so a chain of thousands of parts never fills the
-  queue of 256 builds that wait for a slot.
+  queue of 256 builds that wait for a slot. The part builds of all
+  chains together, queued or running, take at most half of that queue
+  (128): a chain that finds them all taken waits for a build to end, so
+  a lookup in another file always finds room, however many chains are
+  pending.
 - **Part builds leave other tasks alone.** Each part build the task
   starts is a task of its own (operation `index`, its `path` the
   part's), shown at `GET /v1/tasks/{id}` like any other. Finished part
