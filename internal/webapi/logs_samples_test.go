@@ -351,3 +351,40 @@ func TestLogSamples_TheActiveFileGrowsBetweenTwoRequests(t *testing.T) {
 		t.Fatalf("-1 after the append: %s", raw)
 	}
 }
+
+// In a ready chain, a piece whose part needs its own index build (a
+// large active file without one, asked for its last line, which the
+// head of the file cannot give) waits for that build as GET /v1/samples
+// does: with Prefer: respond-async, 202 with the build's task once the
+// server's wait has passed.
+func TestLogSamples_APartsIndexBuildAnswers202(t *testing.T) {
+	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	t.Setenv("RX_LARGE_FILE_MB", "1")
+	root := describedChainRoot(t)
+	storePartIndexes(t, root, "app.log.2", "app.log.1")
+	active := filepath.Join(root, "app.log")
+	f, err := os.OpenFile(active, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := "2026-10-01 02:00:05.000 LINE " + strings.Repeat("x", 200) + "\n"
+	if _, err := f.WriteString(strings.Repeat(line, 6000)); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	manager := tasks.New(tasks.Config{})
+	ts := httptest.NewServer(NewServer(Config{AppVersion: "unit-test", TaskManager: manager, SamplesIndexWait: 10 * time.Millisecond}))
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { awaitEveryTask(t, manager) })
+	// A build the manager holds for the active file stands in for a long
+	// one, so the answer does not depend on how fast a real build is.
+	held, _ := manager.Create(active, "index")
+	status, raw := getLogSamples(t, ts.URL, url.Values{"path": {filepath.Join(root, "app.log")}, "lines": {"-1"}},
+		http.Header{"Prefer": {"respond-async"}})
+	var task rxtypes.TaskResponse
+	_ = json.Unmarshal(raw, &task)
+	if status != http.StatusAccepted || task.TaskID != held.TaskID {
+		t.Fatalf("status %d: %s; want 202 naming the active file's build %s", status, raw, held.TaskID)
+	}
+	manager.Fail(held.TaskID, "released by the test")
+}
