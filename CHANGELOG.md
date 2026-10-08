@@ -64,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chains whose frozen parts are all indexed (or empty) are kept in
   memory (64 chains, 40,000 parts in all), keyed by a digest of every
   part's stat with its ctime, and a kept description is dropped when a
-  frozen part's index file was removed or rebuilt.
+  frozen part's index file was removed or rebuilt, and not used by a
+  request whose listing could not open a frozen part.
   A pending chain starts its index task in the background (or joins the
   running one) and names it in `index_build`; otherwise `index_build`
   names the chain's last index task while the server keeps it.
