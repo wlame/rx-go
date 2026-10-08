@@ -33,10 +33,31 @@ GET /v1/logs/chain?path=<handle>[&file_tz=<zone>][&fingerprint=<fp>]
 Each frozen part's stored line index, and the head and the tail of the
 active file (at most the first mebibyte and 16 MiB back from its end),
 or the active file's index when it is current. It never reads a whole
-part and never builds an index: a frozen part without a current index is
-only opened, to learn that it can be read, and the chain is `pending`
-until its index is built (`rx index` on the part). An empty part is not
+part and never builds an index inside the request: a frozen part without
+a current index is only opened, to learn that it can be read, and the
+chain is `pending` until its index is built. An empty part is not
 opened.
+
+## The index task of a pending chain
+
+A request that finds the chain `pending` starts the chain's **index
+task** in the background, or joins the one already running for it, and
+names it in `index_build`; it does not wait for it. The task (operation
+`chain_index`, shown at [`GET /v1/tasks/{id}`](tasks.md) with the
+handle as its `path`) builds and stores the line index of each part the
+chain waits for: every frozen part with lines and without a current
+index, and a gzip, bzip2, xz or plain zstd active file, whose first
+timestamp only its index gives. Its progress is the share of those
+parts done. Once it completes, the next request finds the chain `ready`
+(or `invalid`, when a check fails on what the indexes say).
+[`POST /v1/logs/index`](logs-index.md) builds every part's index, the
+active file's too, and has the details: one task per chain, the builds
+it runs at once, and why a part fails it.
+
+A pending chain whose last index task failed for the same files (the
+same fingerprint) does not start it again: its description names the
+failed task, whose `error` says which part failed and why. `POST
+/v1/logs/index` starts a new one.
 
 The frozen parts' data of a chain whose frozen parts are all indexed
 (or empty) is kept in memory: at most 64 chains and 40,000 parts in
@@ -172,7 +193,7 @@ lists the chain again and answers `409` with the current description.
 | `first_ms`, `last_ms` | int64 \| null | The chain's first and last timestamp; null unless ready (and `last_ms` when the active file's last timestamped line is more than 16 MiB from its end) |
 | `frozen_line_count` | int64 \| null | The lines of every part but the active file; null unless ready |
 | `line_count` | int64 \| null | All lines, when the active file's count is known (its current index); null unless ready |
-| `index_build` | object \| null | The task building the indexes the chain needs; null |
+| `index_build` | object \| null | `{task_id, status, message, path, started_at}` of the chain's index task: for a pending chain the task this request started or joined (see above); otherwise the chain's last index task, running or ended, while the server keeps it (`RX_TASK_TTL_MINUTES` after its end); null when there is none. The description is the same with a task and without |
 | `cli_command` | string | The equivalent `rx logs show` command |
 
 ### `parts[]` fields
@@ -216,4 +237,5 @@ curl -sG 'http://127.0.0.1:7777/v1/logs/chain' \
 
 - [`rx logs show`](../../cli/logs.md#rx-logs-show) — the same from a terminal
 - [`GET /v1/logs/chains`](logs-chains.md) — the chains of a directory
+- [`POST /v1/logs/index`](logs-index.md) — index every part of a chain
 - [Configuration](../../configuration.md#log-chains) — `RX_CHAIN_OVERLAP_SECONDS`

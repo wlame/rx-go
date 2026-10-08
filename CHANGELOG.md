@@ -65,6 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   memory (64 chains, 40,000 parts in all), keyed by a digest of every
   part's stat with its ctime, and a kept description is dropped when a
   frozen part's index file was removed or rebuilt.
+  A pending chain starts its index task in the background (or joins the
+  running one) and names it in `index_build`; otherwise `index_build`
+  names the chain's last index task while the server keeps it.
   Year-less timestamps take their year from their own part. 409 with
   the current description when `fingerprint` differs or a part is
   replaced while the request reads it; 404 when the handle names fewer
@@ -80,6 +83,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   chain, 6 when a chain is invalid, 7 when `--fingerprint=` differs
   (each after printing), 2 for a malformed fingerprint or one given
   with several chains.
+- `POST /v1/logs/index?path=HANDLE[&force=true][&fingerprint=FP]`
+  starts the index task of a log chain, or joins the one running for
+  it, and answers 200 with the task. The task (operation `chain_index`
+  at `GET /v1/tasks/{id}`, its `path` the handle) builds and stores the
+  line index of every part without a current one, the active file too
+  (with `force=true`, of every part), whatever a part's size, through
+  the same background builds a samples lookup starts: at most
+  `RX_MAX_INDEX_BUILDS` at a time, the next part submitted as one ends,
+  so a chain of thousands of parts never fills the build queue. Its
+  `progress` is the share of parts done; it fails with the first part
+  whose build fails, naming the part; its result
+  (`ChainIndexTaskResult`) lists the parts it built and gives
+  `rx logs index HANDLE` as `cli_command`. One task per chain: it holds
+  the key `chain:<handle>`, so a task on the active file runs beside it.
+  The task `GET /v1/logs/chain` starts for a pending chain is the same
+  task, for the parts the chain waits for; it is not started again on
+  describe while the last one failed for the same files. 409 with the
+  current description and no task when `fingerprint` differs; 400, 403,
+  404, 422 and 500 as `GET /v1/logs/chain`.
 - `rx logs index CHAIN... [--json] [--force]` builds and stores the line
   index of every part of each chain, the active file too, in the
   foreground in the chain's order, whatever a part's size

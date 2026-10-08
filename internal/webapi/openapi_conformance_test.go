@@ -361,6 +361,7 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	manager := tasks.New(tasks.Config{})
 	ts := httptest.NewServer(NewServer(Config{AppVersion: "conformance-test", RipgrepPath: rgPath, TaskManager: manager}))
 	t.Cleanup(ts.Close)
+	t.Cleanup(func() { awaitEveryTask(t, manager) })
 
 	run := &conformanceRun{t: t, base: ts.URL, contract: loadContract(t), answered: map[string][]int{}}
 	at := func(name string) string { return filepath.Join(root, name) }
@@ -401,6 +402,19 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	get("log chain without a name", "/v1/logs/chain", q("path", root+"/"), http.StatusBadRequest)
 	get("log chain outside the root", "/v1/logs/chain", q("path", "/etc/syslog"), http.StatusForbidden)
 	get("log chain without a path", "/v1/logs/chain", nil, http.StatusUnprocessableEntity)
+
+	postQuery := func(label, template string, query url.Values, want int) map[string]any {
+		return run.check(apiCall{label: label, method: http.MethodPost, template: template, path: template, query: query, want: want})
+	}
+	chainTask := postQuery("index a log chain", "/v1/logs/index", q("path", at("rotated/app.log"), "force", "true"), http.StatusOK)
+	run.finishTask("finished log chain index task", chainTask)
+	postQuery("index a log chain with an old fingerprint", "/v1/logs/index",
+		q("path", at("rotated/app.log"), "fingerprint", "0000000000000000"), http.StatusConflict)
+	postQuery("index a lone file as a chain", "/v1/logs/index", q("path", at("app.log")), http.StatusNotFound)
+	postQuery("index a chain without a name", "/v1/logs/index", q("path", root+"/"), http.StatusBadRequest)
+	postQuery("index a chain outside the root", "/v1/logs/index", q("path", "/etc/syslog"), http.StatusForbidden)
+	postQuery("index a chain without a path", "/v1/logs/index", nil, http.StatusUnprocessableEntity)
+	get("log chain after its index task", "/v1/logs/chain", q("path", at("rotated/app.log")), http.StatusOK)
 
 	get("trace plain", "/v1/trace", q("path", at("app.log"), "regexp", "ERROR"), http.StatusOK)
 	get("trace capped, two files, two patterns", "/v1/trace",
@@ -510,11 +524,14 @@ func TestOpenAPIConformance_EveryAnswerMatchesTheGoldenDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	manager.Create(busy, "index")
+	held, _ := manager.Create(busy, "index")
 	post("index while a task runs for the file", "/v1/index", map[string]any{"path": at("three.log"), "analyze": true},
 		http.StatusConflict)
 	post("compress while a task runs for the file", "/v1/compress",
 		map[string]any{"input_path": at("three.log"), "force": true}, http.StatusConflict)
+	// No worker runs the held task: it ends here, so that the wait for
+	// every task at the end of the test does not wait for it.
+	manager.Fail(held.TaskID, "held by the test")
 
 	run.requireEveryOperationSucceeded()
 }

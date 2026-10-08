@@ -96,12 +96,40 @@ func storePartIndexes(t *testing.T, dir string, names ...string) {
 	}
 }
 
+// awaitTaskOverHTTP polls GET /v1/tasks/{id} until the task ends, for
+// at most a minute, and returns its last status.
+func awaitTaskOverHTTP(t *testing.T, base, taskID string) rxtypes.TaskStatusResponse {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		resp, err := http.Get(base + "/v1/tasks/" + taskID)
+		if err != nil {
+			t.Fatalf("get task: %v", err)
+		}
+		var status rxtypes.TaskStatusResponse
+		err = json.NewDecoder(resp.Body).Decode(&status)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("decode task: %v", err)
+		}
+		if status.Status == "completed" || status.Status == "failed" {
+			return status
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s still %s", taskID, status.Status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // Over HTTP a frozen part without an index is not read: the chain is
-// pending, without global numbers. Once its parts are indexed it is
-// ready, and the description is what `rx logs show` reads by scanning
-// the parts (logchain.Options.Scan), field by field, except is_indexed
-// and cli_command, which say how the answer was made, and the active
-// file's count, which the scan reads and the request does not.
+// pending, without global numbers, and the request starts the chain's
+// index task, named in index_build. Once the task has ended the chain
+// is ready, and the description is what `rx logs show` reads by
+// scanning the parts (logchain.Options.Scan), field by field, except
+// is_indexed, index_build and cli_command, which say how the answer
+// was made, and the active file's count, which the scan reads and the
+// request does not.
 func TestLogChain_PendingThenReadyAsTheCLIScanGives(t *testing.T) {
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
 	root := describedChainRoot(t)
@@ -121,12 +149,17 @@ func TestLogChain_PendingThenReadyAsTheCLIScanGives(t *testing.T) {
 	if pending.CLICommand != "rx logs show "+handle {
 		t.Fatalf("cli_command %q", pending.CLICommand)
 	}
+	if pending.IndexBuild == nil || pending.IndexBuild.Path != handle {
+		t.Fatalf("index_build %+v, want the chain's index task", pending.IndexBuild)
+	}
 
 	scanned, _, err := logchain.DescribeHandle(context.Background(), handle, logchain.Options{Scan: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	storePartIndexes(t, root, "app.log.2", "app.log.1")
+	if task := awaitTaskOverHTTP(t, ts.URL, pending.IndexBuild.TaskID); task.Status != "completed" {
+		t.Fatalf("index task %s: %v", task.Status, task.Error)
+	}
 	status, raw = getChain(t, ts.URL, url.Values{"path": {handle}})
 	ready := decodeChain(t, raw)
 	if status != http.StatusOK || ready.State != rxtypes.ChainStateReady || *ready.FrozenLineCount != 30 {
@@ -134,6 +167,7 @@ func TestLogChain_PendingThenReadyAsTheCLIScanGives(t *testing.T) {
 	}
 	cli := *scanned.Response
 	cli.CLICommand, ready.CLICommand = "", ""
+	ready.IndexBuild = nil
 	cli.Parts = append([]rxtypes.ChainPart(nil), cli.Parts...)
 	for k := range cli.Parts {
 		cli.Parts[k].IsIndexed, ready.Parts[k].IsIndexed = false, false
@@ -201,13 +235,15 @@ func TestLogChain_Statuses(t *testing.T) {
 			}
 		}
 	}
-	// The part without timestamps is read once it is indexed; until
-	// then the chain is pending.
+	// The part without timestamps is read once it is indexed: the
+	// pending description started the chain's index task, and once that
+	// has ended the chain is invalid.
 	_, raw = getChain(t, ts.URL, url.Values{"path": {filepath.Join(root, "bad.log")}})
-	if bad := decodeChain(t, raw); bad.State != rxtypes.ChainStatePending {
-		t.Fatalf("unindexed: %s", raw)
+	bad := decodeChain(t, raw)
+	if bad.IndexBuild == nil {
+		t.Fatalf("no index task for the pending chain: %s", raw)
 	}
-	storePartIndexes(t, root, "bad.log.1")
+	awaitTaskOverHTTP(t, ts.URL, bad.IndexBuild.TaskID)
 	_, raw = getChain(t, ts.URL, url.Values{"path": {filepath.Join(root, "bad.log")}})
 	if bad := decodeChain(t, raw); bad.State != rxtypes.ChainStateInvalid || len(bad.Reasons) != 1 ||
 		bad.Reasons[0].Code != rxtypes.ChainReasonNoTimestamps {

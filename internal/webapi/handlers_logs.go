@@ -29,14 +29,15 @@ type logChainsOutput struct {
 }
 
 // registerLogsHandlers mounts the /v1/logs routes: the log chains of a
-// directory, which `rx logs list` gives from a terminal, and the
-// description of one chain, which `rx logs show` gives.
+// directory, which `rx logs list` gives from a terminal, the
+// description of one chain, which `rx logs show` gives, and its index
+// task, which `rx logs index` does in the foreground.
 //
 // GET /v1/logs/chains answers from the directory's names alone, as
 // GET /v1/tree lists it: one listing, the text check of the names that
 // can form a chain, and a peek at the stored line index of each frozen
 // part. It reads no part's text beyond that check and writes nothing.
-func registerLogsHandlers(_ *Server, api huma.API) {
+func registerLogsHandlers(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "log_chains",
 		Method:      http.MethodGet,
@@ -57,7 +58,8 @@ func registerLogsHandlers(_ *Server, api huma.API) {
 		}
 		return &logChainsOutput{Body: *resp}, nil
 	})
-	registerLogChainHandler(api)
+	registerLogChainHandler(s, api)
+	registerLogIndexHandler(s, api)
 }
 
 // logChainsError is the answer to a directory GET /v1/logs/chains
@@ -125,8 +127,11 @@ func logChainResponses(api huma.API) map[string]*huma.Response {
 // The request reads each frozen part's stored line index and the head
 // and the tail of the active file (samples.TimeRange): never a whole
 // part. A frozen part without an index is opened, to learn that it can
-// be read, and left unread; the chain is then pending.
-func registerLogChainHandler(api huma.API) {
+// be read, and left unread; the chain is then pending, and the request
+// starts the chain's index task in the background (or joins it), which
+// index_build names (chainIndexTasks.forDescription). The request does
+// not wait for it.
+func registerLogChainHandler(s *Server, api huma.API) {
 	huma.Register(api, huma.Operation{
 		OperationID: "log_chain",
 		Method:      http.MethodGet,
@@ -137,7 +142,8 @@ func registerLogChainHandler(api huma.API) {
 			"has timestamps, neighboring parts overlap by at most RX_CHAIN_OVERLAP_SECONDS, the active file comes " +
 			"last, every part can be read, at most 10,000 parts), its state (pending until every frozen part has a " +
 			"line index, ready, or invalid with the reasons), the time gaps and missing parts, and a fingerprint of " +
-			"its files. From the parts' line indexes and the head and tail of the active file only. 409 with the " +
+			"its files. From the parts' line indexes and the head and tail of the active file only. A pending chain " +
+			"starts its index task in the background (or joins the running one), named in index_build. 409 with the " +
 			"current description when fingerprint differs or a part changed while it was read; 404 when the handle " +
 			"names fewer than two parts.",
 		Tags:      []string{"Logs"},
@@ -156,7 +162,93 @@ func registerLogChainHandler(api huma.API) {
 		resp.CLICommand = BuildCLICommand("log_chain", map[string]any{
 			"path": resp.Path, "file_tz": in.FileTZ, "fingerprint": in.Fingerprint,
 		})
+		resp.IndexBuild = s.chainIndex.forDescription(d)
 		return &logChainOutput{Status: logChainStatus(changed, in.Fingerprint, resp.Fingerprint), Body: resp}, nil
+	})
+}
+
+// partCount words a number of parts: "1 part", "3 parts".
+func partCount(n int) string {
+	if n == 1 {
+		return "1 part"
+	}
+	return strconv.Itoa(n) + " parts"
+}
+
+// logIndexInput is the query string of POST /v1/logs/index.
+type logIndexInput struct {
+	Path        string `query:"path" required:"true" example:"/var/log/syslog" doc:"The chain's handle: its directory joined with its name, as GET /v1/logs/chains gives it in path."`
+	Force       bool   `query:"force" doc:"Build the index of every part again, current ones too. A request that joins the chain's running task does not change what that task builds."`
+	Fingerprint string `query:"fingerprint" pattern:"^[0-9a-f]{16}$" example:"3fa2c4d5e6f70812" doc:"The fingerprint of a description the client holds. When the chain's files changed since (the fingerprint differs), the answer is 409 with the current description, and no task starts."`
+}
+
+// logIndexResponses declares the answers of POST /v1/logs/index: the
+// task, or the current description with 409, beside the error answers.
+func logIndexResponses(api huma.API) map[string]*huma.Response {
+	registry := api.OpenAPI().Components.Schemas
+	description := registry.Schema(reflect.TypeOf(rxtypes.ChainResponse{}), true, "ChainResponse")
+	task := registry.Schema(reflect.TypeOf(rxtypes.TaskResponse{}), true, "TaskResponse")
+	responses := errorResponses(api, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound,
+		http.StatusUnprocessableEntity, http.StatusInternalServerError)
+	responses[strconv.Itoa(http.StatusOK)] = jsonResponse("The chain's index task: started, or the one already "+
+		"running for the chain, joined. Follow it at GET /v1/tasks/{task_id}.", task)
+	responses[strconv.Itoa(http.StatusConflict)] = jsonResponse("The chain's files changed: the fingerprint the "+
+		"request sent differs from the current one, or a part was renamed or replaced while the request read it. "+
+		"The body is the current description; no task started.", description)
+	return responses
+}
+
+// registerLogIndexHandler mounts POST /v1/logs/index, which starts the
+// index task of one chain, or joins the one running for it: the
+// background form of `rx logs index`.
+//
+// The request describes the chain as GET /v1/logs/chain does (no part
+// read in full) to learn its parts and which have a current index, and
+// returns at once; the task builds the indexes. Without force it builds
+// every part without a current index, the active file too, whose index
+// speeds a jump inside it; with force, every part.
+func registerLogIndexHandler(s *Server, api huma.API) {
+	huma.Register(api, huma.Operation{
+		OperationID: "log_index",
+		Method:      http.MethodPost,
+		Path:        "/v1/logs/index",
+		Summary:     "Index every part of one log chain (background task)",
+		Description: "Starts the index task of one log chain (operation chain_index), or joins the one running for " +
+			"it: it builds and stores the line index of every part without a current one, the active file " +
+			"too (with force=true, of every part), whatever a part's size, at most RX_MAX_INDEX_BUILDS at a " +
+			"time. Poll GET /v1/tasks/{task_id}: its progress is the share of parts done. 409 with the current " +
+			"description, and no task, when fingerprint differs or a part changed while it was read; 404 when " +
+			"the handle names fewer than two parts.",
+		Tags:      []string{"Logs"},
+		Responses: logIndexResponses(api),
+	}, func(ctx context.Context, in *logIndexInput) (*logChainOutput, error) {
+		d, changed, err := logchain.DescribeHandle(ctx, in.Path, logchain.Options{})
+		if err != nil {
+			return nil, logChainError(in.Path, err)
+		}
+		if status := logChainStatus(changed, in.Fingerprint, d.Response.Fingerprint); status != http.StatusOK {
+			resp := d.Response
+			resp.CLICommand = BuildCLICommand("log_chain", map[string]any{"path": resp.Path, "fingerprint": in.Fingerprint})
+			resp.IndexBuild = s.chainIndex.last(resp.Path)
+			return &logChainOutput{Status: status, Body: resp}, nil
+		}
+		parts := d.UnindexedParts()
+		if in.Force {
+			parts = d.Parts()
+		}
+		task, isNew := s.chainIndex.start(chainTaskStart{
+			handle: d.Response.Path, fingerprint: d.Response.Fingerprint, parts: parts, force: in.Force,
+		})
+		message := fmt.Sprintf("Indexing %s of the log chain %s; follow GET /v1/tasks/%s",
+			partCount(len(parts)), d.Response.Path, task.TaskID)
+		if !isNew {
+			message = fmt.Sprintf("Joined the index task already running for the log chain %s, which builds "+
+				"what it was started for; follow GET /v1/tasks/%s", d.Response.Path, task.TaskID)
+		}
+		started := formatTaskTime(task.StartedAt)
+		return &logChainOutput{Status: http.StatusOK, Body: rxtypes.TaskResponse{
+			TaskID: task.TaskID, Status: string(task.Status), Path: task.Path, StartedAt: &started, Message: message,
+		}}, nil
 	})
 }
 

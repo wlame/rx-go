@@ -212,6 +212,9 @@ each part's line count and times. A part whose index is current is kept
 indexes are those `GET /v1/logs/chain` and the other routes read, so a
 chain indexed this way is `ready` over HTTP at once.
 
+[`POST /v1/logs/index`](../api/endpoints/logs-index.md) does the same
+in the background, under `rx serve`.
+
 ### Flags
 
 | Flag | Default | Description |
@@ -244,4 +247,5 @@ the commands that read one chain use two more:
 
 - [`GET /v1/logs/chains`](../api/endpoints/logs-chains.md) — `rx logs list` over HTTP
 - [`GET /v1/logs/chain`](../api/endpoints/logs-chain.md) — `rx logs show` over HTTP
+- [`POST /v1/logs/index`](../api/endpoints/logs-index.md) — `rx logs index` as a background task
 - [`rx time-range`](time-range.md) — the time range of single files
