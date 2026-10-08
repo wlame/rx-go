@@ -612,3 +612,95 @@ func TestSearch_AFileOrAHandleClassifiesOnlyItsOwnChain(t *testing.T) {
 		}
 	}
 }
+
+// A path given twice, a directory with a handle or a part's own path in
+// it, in either order, and a link to the directory: each path is
+// resolved once, the chain is described once and has one entry, every
+// file is searched once under one file id, and each match comes once,
+// placed in its chain.
+func TestSearch_EachChainAndFileIsSearchedOnceHoweverOftenItIsNamed(t *testing.T) {
+	dir := t.TempDir()
+	first := timedLines(chainBase.Add(time.Hour), time.Second, 4, 3, "1")
+	writeChainFiles(t, dir, []chainFile{
+		{name: "app.log.2.gz", text: timedLines(chainBase, time.Second, 1, 3, "2"), codec: compressedcopy.Gzip},
+		{name: "app.log.1", text: first},
+		{name: "app.log.1.gz", text: first, codec: compressedcopy.Gzip},
+		{name: "app.log", text: timedLines(chainBase.Add(2*time.Hour), time.Second, 7, 3, "active")},
+		{name: "notes.txt", text: []byte("LINE 100 notes\n")},
+	})
+	storeIndexes(t, dir, "app.log.2.gz", "app.log.1")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	handle, part := filepath.Join(dir, "app.log"), filepath.Join(dir, "app.log.1")
+	counts := countReads(t)
+	for _, tc := range []struct {
+		label string
+		paths []string
+		files int // the chain's three parts, and notes.txt when a directory is searched
+	}{
+		{"a handle twice", []string{handle, handle}, 3},
+		{"a directory three times", []string{dir, dir, dir}, 4},
+		{"a directory spelled two ways", []string{dir, dir + "/."}, 4},
+		{"a directory and a handle in it", []string{dir, handle}, 4},
+		{"a handle and its directory", []string{handle, dir}, 4},
+		{"a directory and a part's own path", []string{dir, part}, 4},
+		{"a part's own path and its directory", []string{part, dir}, 4},
+		{"a directory and a link to it", []string{dir, link}, 4},
+		{"a handle and the same handle through a link", []string{handle, filepath.Join(link, "app.log")}, 3},
+	} {
+		counts.reset()
+		reads := &fileReads{}
+		answer := searchFor(t, SearchRequest{Paths: tc.paths, Patterns: []string{"LINE"}, Options: trace.Options{HookFirer: reads}}).Answer
+		ref, ok := answer.Chains["c1"]
+		if len(answer.Chains) != 1 || !ok || ref.State != rxtypes.ChainStateReady || len(ref.Parts) != 3 {
+			t.Fatalf("%s: chains %+v", tc.label, answer.Chains)
+		}
+		if counts.timeRanges["app.log"] != 1 {
+			t.Fatalf("%s: the chain was described %d times", tc.label, counts.timeRanges["app.log"])
+		}
+		if len(answer.Files) != tc.files || len(reads.paths) != tc.files {
+			t.Fatalf("%s: files %v, read %v, want %d files read once", tc.label, answer.Files, reads.paths, tc.files)
+		}
+		if len(answer.SkippedFiles) != 1 || filepath.Base(answer.SkippedFiles[0]) != "app.log.1.gz" {
+			t.Fatalf("%s: skipped %v", tc.label, answer.SkippedFiles)
+		}
+		// Each line once: nine in the chain, with the line it names as
+		// its chain line, and notes.txt's on its own.
+		seen := map[string]bool{}
+		inChain := 0
+		for _, m := range answer.Matches {
+			text := *m.LineText
+			if seen[text] {
+				t.Fatalf("%s: %q found twice", tc.label, text)
+			}
+			seen[text] = true
+			named, _ := strconv.ParseInt(globalOf.FindStringSubmatch(text)[1], 10, 64)
+			switch {
+			case strings.Contains(text, "notes"):
+				if m.Chain != nil || m.ChainLine != -1 {
+					t.Fatalf("%s: notes.txt's match %+v", tc.label, m)
+				}
+			case m.Chain == nil || *m.Chain != "c1" || m.ChainLine != named:
+				t.Fatalf("%s: match %q in chain %v at chain_line %d", tc.label, text, m.Chain, m.ChainLine)
+			default:
+				inChain++
+			}
+		}
+		if inChain != 9 || len(answer.Matches) != 9+tc.files-3 {
+			t.Fatalf("%s: %d matches, %d in the chain", tc.label, len(answer.Matches), inChain)
+		}
+	}
+
+	// A directory given three times is walked once.
+	paths.Reset()
+	r := newSearchResolver(SearchRequest{Paths: []string{dir, dir, dir}})
+	plan, err := r.resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if !slices.Equal(plan.ScannedDirs, []string{dir}) {
+		t.Fatalf("walked %v, want %s once", plan.ScannedDirs, dir)
+	}
+}

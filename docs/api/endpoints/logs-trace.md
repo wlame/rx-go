@@ -48,6 +48,16 @@ In this order:
 A path that is none of these is `404`; a file named on its own that
 cannot be opened is `403`, as on `GET /v1/trace`.
 
+Whatever the request reaches more than once is searched once: a `path`
+given twice (however it is spelled), a directory and a handle or a file
+in it, a link to a directory. Each chain is described once and has one
+entry in `chains` (a chain is the same when its directory, by device and
+inode, and its name are), each file is searched once under one file id
+(a file is the same when its path with every link resolved is), and so
+each match comes once. A part's own path named beside its chain's handle
+or directory is a part of that chain, whichever comes first. `path` in
+the answer lists the paths as the request gave them.
+
 ## The order of the search
 
 The parts of a chain are searched in the chain's order, as

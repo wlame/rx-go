@@ -355,7 +355,10 @@ pattern in square brackets before the text. Context (`--samples`,
 `--context=`) is shown per file, as `rx trace` shows it, and never
 crosses a part's edge. Another encoding of a part (`syslog.3` beside
 `syslog.3.gz`) is listed under `Files skipped:` as `duplicate_part`. An
-invalid chain is still searched and is named on stderr.
+invalid chain is still searched and is named on stderr. What the paths
+reach more than once (a path given twice, a directory and a chain or a
+part in it, a link to a directory) is searched once, each match printed
+once and in its chain.
 
 `rx logs trace` never waits for background work: it describes each
 chain as `rx logs show` does (a part without a line index is indexed in
