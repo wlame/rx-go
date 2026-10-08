@@ -30,6 +30,11 @@ files in the tens of gigabytes.
   line numbers to byte offsets via sparse checkpoints. Building one for
   a 6.3 GB log took 2.7 s with the file in the page cache; after that,
   line 40,000,000 comes back in 20 ms instead of 2.5 s.
+- **Rotated logs read as one.** `syslog`, `syslog.1`, `syslog.2.gz`, …
+  form a [log chain](concepts/log-chains.md): its parts are ordered by
+  time and numbered as one text, so a line number, a time or a search
+  answers as it would for the parts joined into one file, compressed
+  parts and a growing active file included.
 - **Seekable zstd output.** `rx compress` writes zstd streams as
   independent frames with an appended seek table, trading ~4-5% of
   compression ratio for random-access decompression. Later `rx samples`
@@ -52,6 +57,9 @@ rx samples /var/log/app-2026-03.log --lines=450000-450010 --context=3
 # remain O(1).
 rx compress /var/log/app-2026-03.log
 
+# Read a rotated log (syslog, syslog.1, syslog.2.gz, …) as one file, by time.
+rx logs samples /var/log/syslog --timestamps=2026-10-03T14:00..2026-10-03T14:05
+
 # Start the HTTP API + rx-viewer SPA on port 7777.
 rx serve --search-root=/var/log
 ```
@@ -67,7 +75,7 @@ rx serve --search-root=/var/log
   Install, run your first trace, build an index, launch the API.
 
 - **[CLI reference](cli/index.md)**  
-  All five subcommands with flags, defaults, and realistic examples.
+  Every subcommand with flags, defaults, and realistic examples.
 
 - **[HTTP API reference](api/index.md)**  
   Endpoints, request/response schemas, OpenAPI, webhooks.

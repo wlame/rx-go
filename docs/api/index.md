@@ -89,11 +89,13 @@ See [openapi](openapi.md) for details.
 
 ## Background tasks
 
-Two endpoints are async — they return a task ID instantly and run the
+Three endpoints are async — they return a task ID instantly and run the
 actual work on a background goroutine:
 
 - `POST /v1/index` — build a line index
 - `POST /v1/compress` — encode a file as seekable zstd
+- `POST /v1/logs/index` — build the line index of every part of a log
+  chain (`GET /v1/logs/chain` starts the same task for a pending chain)
 
 Poll `GET /v1/tasks/{task_id}` until `status` is `"completed"` or
 `"failed"`. See [tasks](endpoints/tasks.md).
@@ -141,6 +143,7 @@ See [metrics](endpoints/metrics.md) for the full list.
 - **[Compress](endpoints/compress.md)** — seekable zstd encoding  
 - **[Tasks](endpoints/tasks.md)** — background task polling  
 - **[Tree](endpoints/tree.md)** — file system navigation  
+- **[Log chains](endpoints/logs-chains.md)** — rotated logs read as one: [chains](endpoints/logs-chains.md), [chain](endpoints/logs-chain.md), [index](endpoints/logs-index.md), [samples](endpoints/logs-samples.md), [trace](endpoints/logs-trace.md)  
 - **[Detectors](endpoints/detectors.md)** — anomaly detector metadata  
 - **[Metrics](endpoints/metrics.md)** — Prometheus exposition  
 - **[Webhooks](webhooks.md)** — on_file / on_match / on_complete  
