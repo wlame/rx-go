@@ -541,6 +541,12 @@ func TestDescribe_APartTheListingCouldNotRead(t *testing.T) {
 				!slices.Equal(d.Response.Reasons[0].Parts, []string{locked}) {
 				t.Fatalf("%s locked, scan %v: state %s, reasons %+v", locked, opts.Scan, d.Response.State, d.Response.Reasons)
 			}
+			// The reason is worded with the fixed text a search gives the
+			// same failure, never the error's own text, which names the
+			// path the open failed on.
+			if want := locked + " cannot be read: " + paths.ReasonPermissionDenied; d.Response.Reasons[0].Message != want {
+				t.Fatalf("%s locked, scan %v: message %q, want %q", locked, opts.Scan, d.Response.Reasons[0].Message, want)
+			}
 			if n := counts.indexLoads[locked] + counts.opens[locked] + counts.builds[locked] + counts.timeRanges[locked]; n != 0 {
 				t.Fatalf("%s locked, scan %v: read %d times", locked, opts.Scan, n)
 			}

@@ -466,6 +466,10 @@ func TestSearch_APartThatCannotBeReadIsSkipped(t *testing.T) {
 		if ref.State != rxtypes.ChainStateInvalid || len(ref.Parts) != 2 || ref.Reasons[0].Code != rxtypes.ChainReasonUnreadable {
 			t.Fatalf("%s: chain %+v", p, ref)
 		}
+		// The chain's reason and the skip say the same fixed text.
+		if want := "x.log.2 cannot be read: " + answer.SkipReasons[0].Reason; ref.Reasons[0].Message != want {
+			t.Fatalf("%s: reason %q, want %q", p, ref.Reasons[0].Message, want)
+		}
 		if len(answer.Matches) != 6 {
 			t.Fatalf("%s: %d matches, want the 6 lines of the readable parts", p, len(answer.Matches))
 		}

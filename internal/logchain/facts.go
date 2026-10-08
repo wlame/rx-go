@@ -12,6 +12,7 @@ import (
 	"github.com/wlame/rx-go/internal/paths"
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/timestamps"
+	"github.com/wlame/rx-go/internal/trace"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -19,7 +20,8 @@ import (
 type partFacts struct {
 	// indexed says that a current stored line index describes the part.
 	indexed bool
-	// unreadable says why the part cannot be read; empty when it can.
+	// unreadable says why the part cannot be read, in the fixed words a
+	// search gives the failure (failedRead); empty when it can.
 	unreadable string
 	// lines is the part's line count, nil when not known: a frozen part
 	// without an index (and without Options.Scan), or the active part
@@ -397,6 +399,15 @@ func buildInMemory(part Part) (*rxtypes.UnifiedFileIndex, partFacts, error) {
 // part's name leads to another file or to none (it changed after the
 // listing); and otherwise the facts of an unreadable part, which make
 // the chain invalid.
+//
+// SECURITY: the unreadable part is worded with trace.SkipReason, the
+// fixed text a search gives the same failure in skip_reasons
+// ("permission denied", "cannot be read", …), never with the error's
+// own text: that names the path the read failed on, which for a link
+// is its target, possibly outside every search root. A search of the
+// chain then says the same thing in the chain's reason and in its skip.
+// SkipReason logs an error it can only call "cannot be read" whole, so
+// the operator keeps the detail the answer leaves out.
 func failedRead(ctx context.Context, part Part, err error) (partFacts, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return partFacts{}, ctxErr
@@ -404,5 +415,5 @@ func failedRead(ctx context.Context, part Part, err error) (partFacts, error) {
 	if errors.Is(err, paths.ErrFileChanged) || errors.Is(err, fs.ErrNotExist) {
 		return partFacts{}, fmt.Errorf("%w: %w", ErrPartChanged, err)
 	}
-	return partFacts{unreadable: err.Error()}, nil
+	return partFacts{unreadable: trace.SkipReason(err)}, nil
 }
