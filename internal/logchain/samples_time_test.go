@@ -12,6 +12,7 @@ import (
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/internal/testutil/compressedcopy"
 	"github.com/wlame/rx-go/internal/timestamps"
+	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
 // linesAt is a part's text of one line per time in at, each
@@ -82,6 +83,69 @@ func TestSamples_TimeOfDayOnAChainOfTwoDays(t *testing.T) {
 	_, single := samples.Resolve(context.Background(), samples.Request{Path: c.concat, Timestamps: []string{"01:30"}, IndexLoader: samples.NoIndex})
 	if !errors.Is(single, timestamps.ErrInvalidQuery) {
 		t.Fatalf("the concatenation answers %v", single)
+	}
+}
+
+// SECURITY: the time bounds of a request are searched in one forward
+// sweep over the parts, so each part is read at most once for them and
+// once for the answer's lines. Under file_tz, 100 parts whose lines
+// write two zone offsets each have a highest time known only as an
+// upper bound, 60 seconds above their lines; 100 times that such bounds
+// reach and no line of those parts does move on from part to part in the
+// same sweep, to the active part, rather than reread the parts they
+// passed. The answers equal the concatenation's.
+func TestSamples_TimeBoundsReadEachPartOnce(t *testing.T) {
+	const parts = 100
+	const layout = "2006-01-02T15:04:05.000"
+	var files []chainFile
+	for j := 0; j < parts; j++ {
+		at := chainBase.Add(time.Duration(2*j) * time.Millisecond)
+		name := fmt.Sprintf("app.log.%d", parts-j)
+		text := fmt.Sprintf("%s+00:01 LINE %d part=%s local=1\n%s+00:00 LINE %d part=%s local=2\n",
+			at.Format(layout), 2*j+1, name, at.Add(time.Millisecond).Format(layout), 2*j+2, name)
+		files = append(files, chainFile{name: name, text: []byte(text)})
+	}
+	files = append(files, chainFile{name: "app.log", text: []byte(chainBase.Add(time.Hour).Format(layout) + "+00:00 LINE 201 part=app.log local=1\n")})
+	c := buildChain(t, "app.log", files)
+	utc, err := config.ParseZone("UTC")
+	if err != nil {
+		t.Fatalf("zone: %v", err)
+	}
+	c.zone = utc
+	storeIndexes(t, c.dir, c.order...)
+	d := describe(t, c.dir, c.name, Options{FileZone: utc})
+	if d.Response.State != rxtypes.ChainStateReady || !d.Response.Parts[0].MaxIsBound {
+		t.Fatalf("want a ready chain whose parts' highest times are bounds: %s", jsonOf(t, d.Response.Parts[0]))
+	}
+	// Time i is 1 ms after part i's last line plus a minute: the bound of
+	// part i and of every later part reaches it, and no frozen line does.
+	var queries []string
+	for i := 0; i < parts; i++ {
+		queries = append(queries, chainBase.Add(time.Duration(2*i+1)*time.Millisecond+time.Minute).Format(layout))
+	}
+	reads := map[string]int{}
+	reader := func(ctx context.Context, p Part, req samples.Request) (*rxtypes.SamplesResponse, error) {
+		reads[p.Name]++
+		return samples.Resolve(ctx, req)
+	}
+	req := SamplesRequest{Timestamps: queries, IndexLoader: samples.StoredIndex}
+	resp, err := Samples(context.Background(), d, req, reader)
+	if err != nil {
+		t.Fatalf("samples: %v", err)
+	}
+	total := 0
+	for name, n := range reads {
+		if n > 2 {
+			t.Fatalf("%s read %d times, want at most twice (all reads: %v)", name, n, reads)
+		}
+		total += n
+	}
+	if total > 2*(parts+1) {
+		t.Fatalf("%d part reads for %d parts", total, parts+1)
+	}
+	requireAnswerLike(t, "100 times over 100 parts", resp, concatSamples(t, c, req), true)
+	if resp.Timestamps[queries[0]] != 201 {
+		t.Fatalf("the first time found line %d, want 201", resp.Timestamps[queries[0]])
 	}
 }
 

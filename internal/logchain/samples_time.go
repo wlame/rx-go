@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 
 	"github.com/wlame/rx-go/internal/samples"
 )
@@ -104,42 +103,44 @@ func (s *sampler) timeWindow(q samples.ResolvedQuery, hasStart, hasAfter bool, l
 // searched once the frozen parts are passed: it may have grown since it
 // was described.
 //
-// Each round reads each part at most once, for every bound it may
-// answer (samples searches them in shared passes), and moves every
-// bound it does not answer to a later part, so there are at most as
-// many rounds as parts, and a bound visits each part at most once.
+// SECURITY: the parts are searched in one forward sweep. Each bound
+// waits at its next candidate span (candidate), in waiting. When the
+// sweep reaches a span, it reads that part once for every bound waiting
+// there (samples searches them in shared passes), and a bound the part
+// does not answer waits at its next candidate after that span, which
+// the sweep reaches later in the same pass. So each part is read at most
+// once, however many bounds pass over it, and each bound's candidate
+// walks together cover each span at most once: at most bounds × spans
+// highest times compared, and no read.
 func (s *sampler) linesAt(ctx context.Context, space lineSpace, bounds []samples.TimeBound) ([]int64, error) {
 	found := make([]int64, len(bounds))
-	cursor := make([]int, len(bounds))
-	pending := make([]int, len(bounds))
+	// waiting[j] lists the bounds whose next candidate is span j. A bound
+	// is only ever added to a span after the one being searched, so the
+	// sweep below meets every entry it adds.
+	waiting := make([][]int, len(space.spans))
 	for b := range bounds {
-		found[b], pending[b] = -1, b
+		found[b] = -1
+		if j := s.candidate(space, bounds[b], 0); j >= 0 {
+			waiting[j] = append(waiting[j], b)
+		}
 	}
-	for round := 0; len(pending) > 0 && round <= len(space.spans); round++ {
-		bySpan := map[int][]int{}
-		for _, b := range pending {
-			if j := s.candidate(space, bounds[b], cursor[b]); j >= 0 {
-				bySpan[j] = append(bySpan[j], b)
-			}
+	for j := range space.spans {
+		which := waiting[j]
+		if len(which) == 0 {
+			continue
 		}
-		pending = pending[:0]
-		spans := make([]int, 0, len(bySpan))
-		for j := range bySpan {
-			spans = append(spans, j)
+		waiting[j] = nil
+		lines, err := s.searchSpan(ctx, space.spans[j], bounds, which)
+		if err != nil {
+			return nil, err
 		}
-		slices.Sort(spans)
-		for _, j := range spans {
-			lines, err := s.searchSpan(ctx, space.spans[j], bounds, bySpan[j])
-			if err != nil {
-				return nil, err
+		for i, b := range which {
+			if lines[i] > 0 {
+				found[b] = space.spans[j].first + lines[i] - 1
+				continue
 			}
-			for i, b := range bySpan[j] {
-				if lines[i] > 0 {
-					found[b] = space.spans[j].first + lines[i] - 1
-					continue
-				}
-				cursor[b] = j + 1
-				pending = append(pending, b)
+			if next := s.candidate(space, bounds[b], j+1); next >= 0 {
+				waiting[next] = append(waiting[next], b)
 			}
 		}
 	}
