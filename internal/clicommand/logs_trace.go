@@ -44,7 +44,7 @@ func newLogsTraceCommand(out io.Writer) *cobra.Command {
 			"A match in a part prints as CHAIN:LINE (PART:LINE): TEXT, its line in the chain first; a match " +
 			"in a file of its own as FILE:LINE: TEXT. Chains are described from their parts' stored line " +
 			"indexes, never by reading a part: a chain with a part not indexed yet is pending, its LINE is ?, " +
-			"and stderr names rx logs index CHAIN, which gives the chain lines. --json prints the " +
+			"and stderr names rx logs index -- CHAIN, which gives the chain lines. --json prints the " +
 			"GET /v1/logs/trace body. Another " +
 			"encoding of a part is skipped (duplicate_part). Without a path, the current directory. Exit 3 " +
 			"for a path that is no directory, chain or file, 4 outside the search roots or for a FILE that " +
