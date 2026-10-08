@@ -198,6 +198,14 @@ var cliCommandTable = map[string]CLICommandOperation{
 			{Field: "file_tz", Flag: "file-tz", Kind: ArgFlag, Absent: defaultValue("")},
 		},
 	},
+	// The index task of a log chain is `rx logs index`.
+	"logs_index": {
+		Subcommand: "logs index",
+		Args: []CLIArg{
+			{Field: "path", Kind: ArgPositional},
+			{Field: "force", Flag: "force", Kind: ArgFlag, Absent: defaultValue("false")},
+		},
+	},
 	"compress": {
 		Subcommand: "compress",
 		Args: []CLIArg{

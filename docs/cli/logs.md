@@ -10,6 +10,7 @@ their names.
 rx logs list [DIR...] [--json]
 rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]
 rx logs time-range CHAIN... [--json] [--file-tz=ZONE]
+rx logs index CHAIN... [--json] [--force]
 ```
 
 `CHAIN` is a chain's **handle**: its directory joined with its name,
@@ -130,8 +131,8 @@ line naming absent numbered parts.
 
 `rx logs show` never waits for background work: a part without a line
 index is read in full and indexed in memory, so the answer is the one a
-fully indexed chain gives (with `IDX` `-`). [`rx index`](line-index.md)
-on the parts stores their indexes.
+fully indexed chain gives (with `IDX` `-`).
+[`rx logs index`](#rx-logs-index) stores the parts' indexes.
 
 ### Flags
 
@@ -177,6 +178,57 @@ display_zone, cli_command}` per chain (one object for one chain, an array
 for several); `first_ms` and `last_ms` are UTC instants in milliseconds.
 `--file-tz` works as for `rx logs show`. The exit codes are those of
 `rx logs show`, without 7 from a fingerprint.
+
+## `rx logs index`
+
+Builds and stores the line index of every part of each chain, the
+active file too, in the foreground, one part after the other in the
+chain's order. A part's index is what [`rx index`](line-index.md) stores
+for the file, and each part is reported as `rx index` reports a file;
+then the chain is printed as `rx logs show` prints it, every part `idx`.
+
+```bash
+rx logs index /var/log/kern.log
+```
+
+```text
+Indexed 4 files in 0.0s
+  /var/log/kern.log-20260929-1790640000.gz: 12 lines, 268.00 B
+  /var/log/kern.log-20261003-1790985601.gz: 178 lines, 1.42 KB
+  /var/log/kern.log-20261004-1791072001.gz: 12 lines, 168.00 B
+  /var/log/kern.log: 0 lines, 0.00 B
+/var/log/kern.log: ready, 4 parts, 202 lines, fingerprint 600c143a06fed4df, times in UTC
+#  NAME                             COMPRESSION  LINES  GLOBAL LINES  FIRST TIME               HIGHEST TIME             IDX
+1  kern.log-20260929-1790640000.gz  gzip         12     1-12          2026-09-28 04:10:00.000  2026-09-28 04:10:00.000  idx
+2  kern.log-20261003-1790985601.gz  gzip         178    13-190        2026-10-02 23:58:32.000  2026-10-02 23:58:36.000  idx
+3  kern.log-20261004-1791072001.gz  gzip         12     191-202       2026-10-03 00:00:45.000  2026-10-03 00:00:45.000  idx
+4  kern.log                         -            0      -             ?                        ?                        idx
+```
+
+Every part is indexed whatever its size: `RX_LARGE_FILE_MB`, below
+which `rx index` skips a file, does not apply, because the chain needs
+each part's line count and times. A part whose index is current is kept
+(counted in the first line, not listed under it) unless `--force`. The
+indexes are those `GET /v1/logs/chain` and the other routes read, so a
+chain indexed this way is `ready` over HTTP at once.
+
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--json` | `false` | Per chain `{path, indexed, skipped, skip_reasons, errors, total_time, chain}`: the members of [`rx index --json`](line-index.md) for its parts, and the chain's description after them as `rx logs show --json` prints it (`null` when it could not be described again). One object for one chain, an array for several |
+| `--force` | `false` | Build the index of every part again, current ones too |
+
+### Exit codes
+
+The codes of [`rx index`](line-index.md): 0 when every part was indexed
+(the chain may be invalid: it is printed with its reasons), 1 when a
+part could not be indexed, 4 when a part could not be read, after the
+other parts are indexed; and those of `rx logs show` for a handle that
+cannot be described: 2 for a handle that ends in no name, 3 when it
+names no chain, 4 outside `--search-root`, 7 when the chain's files
+kept changing while they were read. With several chains the exit code
+is the failures' code when they all share one, else 1.
 
 ## Exit codes of the chain commands
 

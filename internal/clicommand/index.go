@@ -287,6 +287,42 @@ func runIndexInfo(out io.Writer, p indexParams) error {
 //   - Directory expansion → collect files under each dir (recursive when --recursive).
 //   - JSON output wraps everything in {indexed, skipped, errors, total_time}.
 func runIndexBuild(out io.Writer, p indexParams) error {
+	// A negative window is a mistake the caller made, not a way to spell
+	// "not set" — 0 already does that — so it is refused rather than
+	// silently replaced by the default. POST /v1/index refuses it too.
+	if p.analyzeWindowLines < 0 {
+		return exitWithError(os.Stderr, ExitUsageError,
+			"--analyze-window-lines must be positive, or 0 to use the default")
+	}
+	result := buildIndexes(p)
+	if p.jsonOutput {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(result); err != nil {
+			return err
+		}
+	} else {
+		writeIndexBuildHuman(out, result, p.analyze)
+	}
+	return multiPathFailure(result.failureCodes(), "one or more files failed to index")
+}
+
+// failureCodes are the exit codes of the files that failed, one each,
+// in order: what multiPathFailure makes the run's exit code from.
+func (r indexBuildResult) failureCodes() []int {
+	codes := make([]int, len(r.Errors))
+	for i, item := range r.Errors {
+		codes[i] = item.exitCode
+	}
+	return codes
+}
+
+// buildIndexes builds, or reuses when current, the line index of every
+// file p.paths names (each file of a directory, recursively with
+// p.recursive), stores it, and returns what happened to each file. It
+// prints nothing; runIndexBuild and `rx logs index` print the result.
+// p.analyzeWindowLines must not be negative.
+func buildIndexes(p indexParams) indexBuildResult {
 	t0 := time.Now()
 	result := indexBuildResult{
 		Indexed:     []map[string]any{},
@@ -378,13 +414,6 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 
 	// Hoisted out of the per-file loop: the window size only depends on
 	// CLI flag and env precedence, not on the path. Compute once.
-	// A negative window is a mistake the caller made, not a way to spell
-	// "not set" — 0 already does that — so it is refused rather than
-	// silently replaced by the default. POST /v1/index refuses it too.
-	if p.analyzeWindowLines < 0 {
-		return exitWithError(os.Stderr, ExitUsageError,
-			"--analyze-window-lines must be positive, or 0 to use the default")
-	}
 	windowLines := analyzer.ResolveWindowLines(p.analyzeWindowLines, 0)
 
 	// Whether the index cache can store an index is checked once, at
@@ -497,22 +526,7 @@ func runIndexBuild(out io.Writer, p indexParams) error {
 	}
 
 	result.TotalTime = time.Since(t0).Seconds()
-
-	if p.jsonOutput {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(result); err != nil {
-			return err
-		}
-	} else {
-		writeIndexBuildHuman(out, result, p.analyze)
-	}
-
-	failureCodes := make([]int, len(result.Errors))
-	for i, item := range result.Errors {
-		failureCodes[i] = item.exitCode
-	}
-	return multiPathFailure(failureCodes, "one or more files failed to index")
+	return result
 }
 
 // indexEntryJSON builds one `indexed` array entry matching Python's
