@@ -122,7 +122,8 @@ var (
 	SamplesHeadMBSetting = IntSetting{Name: "RX_SAMPLES_HEAD_MB", Default: DefaultSamplesHeadMB, Min: 0, Max: 4096}
 
 	// MaxIndexBuildsSetting is RX_MAX_INDEX_BUILDS: how many line-index
-	// builds that GET /v1/samples starts run at once in `rx serve`.
+	// builds that GET /v1/samples and the index tasks of log chains
+	// start run at once in `rx serve`.
 	// Each reads a whole file, so the limit bounds the disk and CPU
 	// that lookups across a tree of large files can set going; a build
 	// past it waits in a queue. Its maximum bounds them whatever the
