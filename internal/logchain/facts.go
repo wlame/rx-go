@@ -39,6 +39,19 @@ type partFacts struct {
 	// upper bound (samples.IndexedTimes).
 	firstMs, lastMs, maxMs *int64
 	maxIsBound             bool
+	// dayFirst and example are how the part writes its timestamps: the
+	// day/month order of a slash date, and its first timestamp as its
+	// line writes it (the index's first_text, or the head's).
+	dayFirst *bool
+	example  *string
+	// textLen is the length in bytes of the part's text (its
+	// decompressed stream for a compressed part), and last the index's
+	// last line with a timestamp of its own (its line and where it
+	// starts in that text): what the read back of line_timestamps needs
+	// to cross into the part after this one without reading this one.
+	// Both come from a line index; nil without one.
+	textLen *int64
+	last    *rxtypes.TimePoint
 	// stamp is what a frozen part's index file looked like before it was
 	// read, and what the index recorded of the part; nil for the active
 	// part, and for a frozen part whose index file could not be stated.
@@ -297,6 +310,7 @@ func activeFacts(ctx context.Context, part Part, opts Options) (partFacts, error
 	}
 	facts.format = samples.TimeFormatOf(detected, opts.FileZone)
 	facts.firstMs, facts.lastMs = tr.FirstMs, tr.LastMs
+	facts.dayFirst, facts.example = tr.DayFirst, tr.Example
 	// A gzip, bzip2, xz or plain zstd active part without an index has
 	// no known first timestamp (TimeRange answers source none): the
 	// chain waits for its index, as it waits for a frozen part's.
@@ -319,12 +333,28 @@ func storedIndex(part Part) *rxtypes.UnifiedFileIndex {
 func factsOfIndex(idx *rxtypes.UnifiedFileIndex, zone config.Zone) partFacts {
 	lines := *idx.LineCount
 	times := samples.TimesOfIndex(idx.TimeIndex, zone)
-	return partFacts{
+	facts := partFacts{
 		lines: &lines, timesKnown: true,
 		noTimestamps: lines > 0 && times.FirstMs == nil,
 		format:       times.Format,
 		firstMs:      times.FirstMs, lastMs: times.LastMs, maxMs: times.MaxMs, maxIsBound: times.MaxIsBound,
+		textLen: textLengthOf(idx),
 	}
+	if ti := idx.TimeIndex; ti != nil {
+		facts.dayFirst, facts.example, facts.last = ti.DayFirst, ti.FirstText, ti.Last
+	}
+	return facts
+}
+
+// textLengthOf is the length of the text an index describes: the
+// decompressed stream of a compressed file, the file itself otherwise.
+func textLengthOf(idx *rxtypes.UnifiedFileIndex) *int64 {
+	if idx.DecompressedSizeBytes != nil {
+		n := *idx.DecompressedSizeBytes
+		return &n
+	}
+	n := idx.SourceSizeBytes
+	return &n
 }
 
 // checkReadable opens a part through its pin and closes it, to learn

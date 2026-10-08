@@ -50,7 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first, last and highest timestamp (`max_ms`, an upper bound marked
   `max_is_bound` under `file_tz` in a part that writes several zone
   offsets), `global_start` (the chain's number of its first line),
-  compression, size, `is_indexed`, time format and duplicates; the
+  compression, size, `is_indexed`, time format, its first timestamp as
+  its line writes it (`example`) and `day_first` (as `GET
+  /v1/time-range` gives them, so a client shows the part's times in its
+  own layout), and duplicates; the
   chain's state (`pending` until every frozen part has a current line
   index, `ready`, or `invalid` with `reasons`: `no_timestamps`,
   `overlap` with `overlap_ms`, `active_not_last`, `unreadable`,

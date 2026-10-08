@@ -230,12 +230,26 @@
               "null"
             ]
           },
+          "day_first": {
+            "description": "For the slash format, whether the day comes before the month, as GET /v1/time-range gives it; null for every other format, and when not known.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "duplicates": {
             "description": "The names of the part's other encodings (the same generation compressed another way), which rx does not read.",
             "items": {
               "type": "string"
             },
             "type": "array"
+          },
+          "example": {
+            "description": "The part's first timestamp as its line writes it, as GET /v1/time-range gives it (printable ASCII, any other byte written as \\xHH, at most 64 bytes), from which a client shows times in the part's own layout; null when not known or when the part has none.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "first_ms": {
             "description": "The part's first timestamp (of the first line, in file order, that has one), as a UTC instant in ms; null when not known or when the part has none.",
@@ -335,6 +349,8 @@
           "max_is_bound",
           "global_start",
           "time_format",
+          "day_first",
+          "example",
           "duplicates"
         ],
         "type": "object"

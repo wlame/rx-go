@@ -181,6 +181,20 @@ func headScopeOf(ctx context.Context) *headScope {
 	return scope
 }
 
+// withoutHeadLimit returns ctx without the head limit it may carry, for
+// a read of another file than the one the limit bounds: the text a log
+// chain reads before a file (Request.Earlier). Canceling ctx still
+// stops it.
+//
+// Go note: a context value cannot be removed, but a nearer value for the
+// same key hides it; a nil *headScope reads as no limit (headScopeOf).
+func withoutHeadLimit(ctx context.Context) context.Context {
+	if headScopeOf(ctx) == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, headLimitKey{}, (*headScope)(nil))
+}
+
 // headLimitOf returns the head limit ctx carries, and false when it
 // carries none.
 func headLimitOf(ctx context.Context) (int64, bool) {

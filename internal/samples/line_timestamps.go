@@ -2,6 +2,7 @@ package samples
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -89,10 +90,62 @@ func (b *lineBudget) keepPerLine() int64 {
 // stampedLine is a line with a timestamp of its own: where it starts in
 // the text and its timestamp in the file's frame. found is false for
 // "no such line".
+//
+// A line of the text a log chain reads before the file (Request.Earlier)
+// starts before the file's first byte, at a negative start, and carries
+// its timestamp as a UTC instant already (isInstant), read in its own
+// file's frame: instant, or none when instantOK is false.
 type stampedLine struct {
 	start int64
 	ms    int64
 	found bool
+
+	isInstant bool
+	instant   int64
+	instantOK bool
+}
+
+// Earlier is the text a log chain reads before a file, for the read back
+// of line_timestamps (Request.Earlier). In the chain read as one text, a
+// line without a timestamp of its own at the start of a part (a
+// traceback continued from the part before) carries the timestamp of a
+// line near the end of the part before it; the read back within the file
+// reaches the file's first byte and continues here.
+//
+// Go note: an interface lets this package call into the chain's reader
+// without importing it; the log chain package implements it.
+type Earlier interface {
+	// LastStamp returns the nearest line before the file with a
+	// timestamp of its own, when it starts at most within bytes before
+	// the file's first byte in the text the files make together (a line
+	// break counted after a file that ends without one), and found false
+	// otherwise. It may return a stamp whose Start is one byte too late
+	// (OneEarlier).
+	LastStamp(ctx context.Context, within int64) (EarlierStamp, error)
+	// Settle returns stamp, from LastStamp, with Start exact and
+	// OneEarlier false: it reads whether the text before the file ends
+	// with a line break. It is called only when a line's distance from
+	// the stamp decides on that byte.
+	Settle(ctx context.Context, stamp EarlierStamp) (EarlierStamp, error)
+}
+
+// EarlierStamp is a line before a file with a timestamp of its own, as
+// Earlier finds it.
+type EarlierStamp struct {
+	// Found says that such a line starts within the distance asked.
+	Found bool
+	// Start is where the line starts, counted from the file's first byte
+	// in the text the files make together: a negative number.
+	Start int64
+	// OneEarlier says that the line may start one byte before Start:
+	// the text before the file may end without a line break, and the
+	// text read as one adds one after it.
+	OneEarlier bool
+	// Instant is the line's own timestamp as a UTC instant, read in its
+	// own file's frame; InstantOK is false when it has none in the years
+	// 1 to 9999.
+	Instant   int64
+	InstantOK bool
 }
 
 // lineTimestamps returns the line_timestamps member of the answer: for
@@ -130,10 +183,11 @@ func (t *fileTimes) lineTimestamps(req Request, kind filekind.Kind, answer *coll
 			asks = append(asks, answer.starts[key][0])
 		}
 	}
-	before, err := t.stampsBefore(req, kind, asks, lookback)
+	before, reachedStart, err := t.stampsBefore(req, kind, asks, lookback)
 	if err != nil {
 		return nil, err
 	}
+	earlier := &earlierCarry{source: req.Earlier, ctx: withoutHeadLimit(req.context())}
 	out := make(map[string][]*int64, len(answer.Samples))
 	for key, sample := range answer.Samples {
 		if sample == nil {
@@ -144,10 +198,92 @@ func (t *fileTimes) lineTimestamps(req Request, kind filekind.Kind, answer *coll
 		var carried stampedLine
 		if len(starts) > 0 {
 			carried = before[starts[0]]
+			if !carried.found && reachedStart[starts[0]] {
+				// The read back within the file reached its first byte
+				// with distance left and found nothing: it goes on into
+				// the text before the file, if there is one.
+				if carried, err = earlier.carry(t, sample, starts, lookback); err != nil {
+					return nil, err
+				}
+			}
 		}
 		out[key] = t.effectiveStamps(sample, starts, carried, lookback)
 	}
 	return out, nil
+}
+
+// earlierCarry fetches the stamp of the text before a file (Earlier) at
+// most once per answer, and settles it at most once: every sample whose
+// read back reaches the file's first byte carries the same line.
+type earlierCarry struct {
+	source Earlier
+	// ctx is the answer's context without its head limit: the earlier
+	// text is another file, which the limit on this file's head does
+	// not bound.
+	ctx context.Context
+
+	fetched, settled bool
+	stamp            EarlierStamp
+}
+
+// carry returns the stamped line a sample whose first lines have no
+// timestamp of their own carries from the text before the file: the
+// nearest earlier line with one, when it starts at most lookback bytes
+// before the sample's first line; none otherwise, or without an
+// earlier text.
+//
+// When the stamp's start may be one byte earlier than it says, and a
+// line of the sample's leading run (the lines before its first own
+// timestamp) lies exactly lookback bytes after the said start, that
+// byte decides whether the line carries the stamp: the stamp is settled
+// first, which reads the end of the earlier text. Any other line is
+// decided either way by the said start.
+func (e *earlierCarry) carry(t *fileTimes, sample []string, starts []int64, lookback int64) (stampedLine, error) {
+	if e.source == nil {
+		return stampedLine{}, nil
+	}
+	if !e.fetched {
+		stamp, err := e.source.LastStamp(e.ctx, lookback)
+		if err != nil {
+			return stampedLine{}, err
+		}
+		e.stamp, e.fetched = stamp, true
+	}
+	if !e.stamp.Found {
+		return stampedLine{}, nil
+	}
+	if e.stamp.OneEarlier && !e.settled && t.leadingRunMeets(sample, starts, e.stamp.Start+lookback) {
+		stamp, err := e.source.Settle(e.ctx, e.stamp)
+		if err != nil {
+			return stampedLine{}, err
+		}
+		e.stamp, e.settled = stamp, true
+	}
+	if starts[0]-e.stamp.Start > lookback {
+		return stampedLine{}, nil
+	}
+	return stampedLine{
+		start: e.stamp.Start, found: true,
+		isInstant: true, instant: e.stamp.Instant, instantOK: e.stamp.InstantOK,
+	}, nil
+}
+
+// leadingRunMeets reports whether a line of the sample's leading run,
+// the lines before its first line with a timestamp of its own, starts
+// exactly at offset.
+func (t *fileTimes) leadingRunMeets(sample []string, starts []int64, offset int64) bool {
+	for i, text := range sample {
+		if starts[i] > offset {
+			return false
+		}
+		if _, ok := index.LineStamp(t.parser, []byte(text)); ok {
+			return false
+		}
+		if starts[i] == offset {
+			return true
+		}
+	}
+	return false
 }
 
 // effectiveStamps returns the effective timestamp of each line of a
@@ -170,12 +306,22 @@ func (t *fileTimes) effectiveStamps(lines []string, starts []int64, carried stam
 		}
 		// A value whose instant falls outside the years 1 to 9999
 		// (a wall clock at either end, read in its zone) has none.
-		if instant, ok := t.frame.instant(last.ms); ok {
+		if instant, ok := last.instantIn(t.frame); ok {
 			values[i] = instant
 			out[i] = &values[i]
 		}
 	}
 	return out
+}
+
+// instantIn returns the line's timestamp as a UTC instant: its value
+// read in frame, or the instant it carries from the text before the
+// file. ok is false when it has none in the years 1 to 9999.
+func (s stampedLine) instantIn(frame timeFrame) (int64, bool) {
+	if s.isInstant {
+		return s.instant, s.instantOK
+	}
+	return frame.instant(s.ms)
 }
 
 // stampsBefore answers, for each line start in asks, the nearest line
@@ -194,14 +340,19 @@ func (t *fileTimes) effectiveStamps(lines []string, starts []int64, carried stam
 // Every line it reads ends before the start it reads for, which is a
 // line start, so each line is in hand whole.
 //
+// reachedStart holds the asked starts less than lookback bytes into the
+// file whose read found no timestamped line: their look back reaches
+// before the file's first byte, where a log chain's earlier parts go on
+// (Request.Earlier).
+//
 // A read that fails (a damaged frame of a seekable file that the lines
 // themselves did not need) leaves its start absent rather than failing
 // the answer: that sample's lines without a timestamp of their own get
 // none, which line_timestamps spells null, "not known". The failure is
 // logged once per answer. A canceled request is the answer's error.
-func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, lookback int64) (map[int64]stampedLine, error) {
+func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, lookback int64) (found map[int64]stampedLine, reachedStart map[int64]bool, err error) {
 	if len(asks) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	asks = slices.Clone(asks)
 	slices.Sort(asks)
@@ -209,11 +360,12 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 
 	text, closeText, err := lookbackTextOf(req, kind)
 	if err != nil {
-		return nil, readBackFailed(req, len(asks), err)
+		return nil, nil, readBackFailed(req, len(asks), err)
 	}
 	defer func() { _ = closeText() }()
 
-	found := make(map[int64]stampedLine, len(asks))
+	found = make(map[int64]stampedLine, len(asks))
+	reachedStart = map[int64]bool{}
 	var (
 		failures  int
 		firstFail error
@@ -225,7 +377,7 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 	var buf []byte
 	for _, start := range asks {
 		if err := req.context().Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		from := max(0, start-lookback)
 		if from <= covered {
@@ -245,13 +397,13 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 			buf = slices.Grow(buf[:0], int(start-readFrom))[:start-readFrom]
 			if err := readTextAt(text, buf, readFrom); err != nil {
 				if ctxErr := req.context().Err(); ctxErr != nil {
-					return nil, ctxErr
+					return nil, nil, ctxErr
 				}
 				if errors.Is(err, errPastHead) {
 					// Under a head limit a read past the head is not a
 					// damaged frame: the answer cannot be given from
 					// the head, so the attempt ends (ResolveFromHead).
-					return nil, err
+					return nil, nil, err
 				}
 				if failures++; firstFail == nil {
 					firstFail = fmt.Errorf("read back from line start %d: %w", start, err)
@@ -264,14 +416,20 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 			carried = t.lastStampedIn(buf, readFrom, atLineStart, carried)
 			covered = start
 		}
-		if carried.found && start-carried.start <= lookback {
+		switch {
+		case carried.found && start-carried.start <= lookback:
 			found[start] = carried
+		case start < lookback:
+			// The look back reaches before the file's first byte, and
+			// the text from there to start was read whole (a failed
+			// read continues above) without a timestamped line.
+			reachedStart[start] = true
 		}
 	}
 	if failures > 0 {
 		_ = readBackFailed(req, failures, firstFail)
 	}
-	return found, nil
+	return found, reachedStart, nil
 }
 
 // readBackFailed logs that the read back for line_timestamps failed for
@@ -351,6 +509,33 @@ func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error,
 		return nil, nil, err
 	}
 	return text, f.Close, nil
+}
+
+// EndsWithLineBreak reports whether the text of req's file, textLen
+// bytes long (its decompressed stream for a compressed file), ends with
+// a line break: a log chain reads its parts as one text and adds one
+// after a part that ends without one. An empty text ends with none. It
+// reads the last byte through the read back's text (lookbackTextOf): by
+// position in a plain or seekable file, and a stream-compressed file
+// decompressed to its end.
+func EndsWithLineBreak(ctx context.Context, req Request, textLen int64) (bool, error) {
+	if textLen <= 0 {
+		return false, nil
+	}
+	req, kind, err := prepare(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	text, closeText, err := lookbackTextOf(req, kind)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = closeText() }()
+	var last [1]byte
+	if err := readTextAt(text, last[:], textLen-1); err != nil {
+		return false, err
+	}
+	return last[0] == '\n', nil
 }
 
 // readsByPosition reports whether a file of this kind can be read at any

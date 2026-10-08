@@ -64,6 +64,13 @@ type Description struct {
 	// waiting says, for each part of Candidate.Parts, whether the chain
 	// waits for its line index (waitsFor); see WaitingParts.
 	waiting []bool
+	// facts are what describing read about each part of
+	// Candidate.Parts, which reading the chain's lines uses (Samples).
+	facts []partFacts
+	// fileZone is the zone the description read every part's
+	// timestamps in (Options.FileZone); reading its lines reads them in
+	// the same zone.
+	fileZone config.Zone
 }
 
 // wireTimestampLayout is how modified_at is written: RFC 3339 in UTC
@@ -101,7 +108,7 @@ const wireTimestampLayout = "2006-01-02T15:04:05.000000Z"
 // a reason of an invalid chain (unreadable), not an error.
 func Describe(ctx context.Context, c Candidate, opts Options) (*Description, error) {
 	fingerprint := Fingerprint(c)
-	d := &Description{Candidate: c, Response: newResponse(c, fingerprint)}
+	d := &Description{Candidate: c, Response: newResponse(c, fingerprint), fileZone: opts.FileZone}
 	if c.TooManyParts {
 		// SECURITY: a chain past MaxParts is refused before any of its
 		// parts is read, so the work of describing one is bounded by
@@ -132,6 +139,7 @@ func Describe(ctx context.Context, c Candidate, opts Options) (*Description, err
 func (d *Description) assemble(facts []partFacts, toleranceMs int64) {
 	c := d.Candidate
 	resp := d.Response
+	d.facts = facts
 	for i, part := range c.Parts {
 		resp.Reasons = append(resp.Reasons, partReasons(part, facts[i])...)
 	}

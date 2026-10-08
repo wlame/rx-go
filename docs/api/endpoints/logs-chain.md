@@ -172,6 +172,8 @@ lists the chain again and answers `409` with the current description.
       "max_is_bound": false,
       "global_start": 1,
       "time_format": {"format": "iso", "has_zone": false, "assumed_zone": "UTC"},
+      "day_first": null,
+      "example": "2026-09-29 00:00:00.000",
       "duplicates": []
     }
   ],
@@ -220,6 +222,7 @@ lists the chain again and answers `409` with the current description.
 | `max_is_bound` | bool | Whether `max_ms` is an upper bound |
 | `global_start` | int64 \| null | The global number of its first line; null unless ready |
 | `time_format` | object \| null | As in a samples answer |
+| `day_first`, `example` | bool \| null, string \| null | As `GET /v1/time-range` gives them for the part: the day/month order of a slash date, and its first timestamp as its line writes it, from which a client shows the part's times in its own layout; null when not known |
 | `duplicates` | string[] | Its other encodings, which rx does not read |
 
 ## Status codes

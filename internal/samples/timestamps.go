@@ -327,27 +327,13 @@ func resolveTimestamps(req Request, kind filekind.Kind, times *fileTimes, resp *
 	if times == nil {
 		return fmt.Errorf("%w of %s", ErrNoTimeFormat, req.Path)
 	}
-	queries := make([]timestamps.Query, len(req.Timestamps))
-	for i, value := range req.Timestamps {
-		q, err := timestamps.ParseQuery(value, times.parser)
-		if err != nil {
-			return err
-		}
-		queries[i] = q
-	}
 	text := textSourceFor(req, kind)
-	fileContext, err := times.resolveContext(req, kind, text, queries)
+	resolved, err := times.resolvedQueries(req, kind, text)
 	if err != nil {
 		return err
 	}
-	resolved := make([]timestamps.Resolved, len(queries))
 	var bounds []int64
-	for i, q := range queries {
-		r, resolveErr := timestamps.Resolve(q, fileContext)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		resolved[i] = r
+	for _, r := range resolved {
 		bounds = append(bounds, searchBoundsOf(r)...)
 	}
 	found, err := times.searchBounds(req.context(), text, bounds)
@@ -369,6 +355,36 @@ func resolveTimestamps(req Request, kind filekind.Kind, times *fileTimes, resp *
 		windows = append(windows, w)
 	}
 	return answerTimeWindows(req, kind, windows, resp)
+}
+
+// resolvedQueries turns the request's time queries into the file's
+// frame: the bounds a caller resolved already (Request.TimeBounds), or
+// else each value parsed and resolved against this file.
+func (t *fileTimes) resolvedQueries(req Request, kind filekind.Kind, text textSource) ([]timestamps.Resolved, error) {
+	if req.TimeBounds != nil {
+		return t.boundsOf(req)
+	}
+	queries := make([]timestamps.Query, len(req.Timestamps))
+	for i, value := range req.Timestamps {
+		q, err := timestamps.ParseQuery(value, t.parser)
+		if err != nil {
+			return nil, err
+		}
+		queries[i] = q
+	}
+	fileContext, err := t.resolveContext(req, kind, text, queries)
+	if err != nil {
+		return nil, err
+	}
+	resolved := make([]timestamps.Resolved, len(queries))
+	for i, q := range queries {
+		r, err := timestamps.Resolve(q, fileContext)
+		if err != nil {
+			return nil, err
+		}
+		resolved[i] = r
+	}
+	return resolved, nil
 }
 
 // searchBoundsOf lists the bounds a resolved query needs searched: the
@@ -475,16 +491,7 @@ func (w timeWindow) position() OffsetOrRange {
 // found by a search from the start and the last by a read back from
 // the end (lastStamp), each only when a query needs it.
 func (t *fileTimes) resolveContext(req Request, kind filekind.Kind, text textSource, queries []timestamps.Query) (timestamps.ResolveContext, error) {
-	queryZone := config.QueryTZ()
-	c := timestamps.ResolveContext{HasZone: t.frame.hasZone, LogZone: t.frame.zone.Location, QueryZone: queryZone.Location}
-
-	needsSpan, needsFirst := false, false
-	for _, q := range queries {
-		needsSpan = needsSpan || q.NeedsSpan()
-		// A zoned file reads a query without a zone at its first
-		// timestamp's offset, unless RX_QUERY_TZ names a zone.
-		needsFirst = needsFirst || (c.HasZone && c.QueryZone == nil && hasWallEndpoint(q))
-	}
+	c, needsSpan, needsFirst := t.baseContext(queries)
 	if !needsSpan && !needsFirst {
 		return c, nil
 	}

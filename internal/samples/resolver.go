@@ -65,6 +65,20 @@ type Request struct {
 	// resolveTimestamps. Each value is one query: a value is never split
 	// on commas, which are part of some timestamp formats.
 	Timestamps []string
+	// TimeBounds, when set, holds a bound already resolved for each
+	// value of Timestamps (ResolveQueries resolves the queries of a log
+	// chain once, for all its parts): the value is answered with the
+	// first line whose own timestamp is at or after its bound, as a
+	// single time query, and is not parsed. A value without a bound in
+	// it is a defect of the caller, and the request fails.
+	TimeBounds map[string]TimeBound
+	// Earlier, when set, is the text a log chain reads before this file:
+	// the read back of line_timestamps continues into it when it
+	// reaches the file's first byte with distance left, so a line
+	// without a timestamp of its own at the start of a part gets the
+	// value it gets when the parts are read as one file. Nil reads the
+	// file as a text of its own.
+	Earlier Earlier
 	// FileZone, when it names a zone, reads every timestamp of the file
 	// as the wall clock its line writes, in that zone: a zone written on
 	// a line is ignored, and the zone takes the place of RX_LOG_TZ for
@@ -189,19 +203,10 @@ const (
 // away), the pass that is reading stops at its next read and Resolve
 // returns ctx's error.
 func Resolve(ctx context.Context, req Request) (*rxtypes.SamplesResponse, error) {
-	req.ctx = ctx
 	if req.modeCount() > 1 {
 		return nil, ErrInvalidRequest
 	}
-	if req.Source.IsZero() {
-		src, err := paths.Pin(req.Path)
-		if err != nil {
-			return nil, err
-		}
-		req.Source = src
-	}
-	req.IndexLoader = loadOnce(onlyIndexesOf(req.Source, req.IndexLoader))
-	kind, err := Classify(req)
+	req, kind, err := prepare(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -247,6 +252,25 @@ func Resolve(ctx context.Context, req Request) (*rxtypes.SamplesResponse, error)
 		return nil, err
 	}
 	return resp, nil
+}
+
+// prepare readies req for reading the file: the call's context (every
+// pass reads through it), a pin of req.Path when the caller made none
+// (the sandbox check, then every read goes through it), the index
+// loader held to the pinned file and called at most once, and the
+// file's kind (Classify).
+func prepare(ctx context.Context, req Request) (Request, filekind.Kind, error) {
+	req.ctx = ctx
+	if req.Source.IsZero() {
+		src, err := paths.Pin(req.Path)
+		if err != nil {
+			return req, filekind.Kind{}, err
+		}
+		req.Source = src
+	}
+	req.IndexLoader = loadOnce(onlyIndexesOf(req.Source, req.IndexLoader))
+	kind, err := Classify(req)
+	return req, kind, err
 }
 
 // Classify decides what req.Source is (filekind.OfPinned), or returns
