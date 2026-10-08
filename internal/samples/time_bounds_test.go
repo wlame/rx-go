@@ -3,6 +3,7 @@ package samples
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/wlame/rx-go/internal/index"
+	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/testutil/seekablefile"
 )
 
 // boundsText is a log of 40 lines a minute apart from 2026-10-01 10:00,
@@ -110,10 +113,57 @@ func TestEndsWithLineBreak(t *testing.T) {
 			t.Fatalf("write: %v", err)
 		}
 		for name, path := range files {
-			got, err := EndsWithLineBreak(context.Background(), Request{Path: path, IndexLoader: NoIndex}, int64(len(text)))
+			got, err := EndsWithLineBreak(context.Background(), Request{Path: path, IndexLoader: NoIndex}, int64(len(text)), 0)
 			if err != nil || got != withBreak {
 				t.Fatalf("%s (break %v): %v, %v", name, withBreak, got, err)
 			}
+		}
+	}
+}
+
+// SECURITY: EndsWithLineBreak decodes at most its read limit of the
+// text. A stream-compressed text longer than the limit is not read at
+// all, a seekable file whose last frame holds more text than the limit
+// is not decoded, and a plain file is read one byte; each refusal is
+// ErrReadLimit. With the limit at the text's length the answer is the
+// one without a limit.
+func TestEndsWithLineBreak_ReadsWithinItsLimit(t *testing.T) {
+	text := boundsText()
+	textLen := int64(len(text))
+	dir := t.TempDir()
+	files := compressedCopiesOf(t, text, dir)
+	delete(files, "app.seekable.zst")
+	files["app.log"] = filepath.Join(dir, "app.log")
+	if err := os.WriteFile(files["app.log"], text, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// A seekable copy whose last frame holds all but 256 bytes.
+	files["app.seekable.zst"] = filepath.Join(dir, "app.seekable.zst")
+	seekablefile.Write(t, files["app.seekable.zst"], seekablefile.SplitAt(text, 256))
+	const limit = 512
+	for name, path := range files {
+		src, err := paths.Pin(path)
+		if err != nil {
+			t.Fatalf("pin %s: %v", name, err)
+		}
+		kind, err := Classify(Request{Source: src})
+		if err != nil {
+			t.Fatalf("classify %s: %v", name, err)
+		}
+		req := Request{Path: path, Source: src, Kind: &kind, IndexLoader: NoIndex}
+		read := withCountingOpen(t)
+		got, err := EndsWithLineBreak(context.Background(), req, textLen, limit)
+		if name == "app.log" {
+			if err != nil || !got || read.Load() != 1 {
+				t.Fatalf("%s: %v, %v after %d bytes; want true after one byte", name, got, err, read.Load())
+			}
+			continue
+		}
+		if !errors.Is(err, ErrReadLimit) || read.Load() != 0 {
+			t.Fatalf("%s with a limit of %d: %v after %d bytes; want ErrReadLimit before any byte", name, limit, err, read.Load())
+		}
+		if got, err := EndsWithLineBreak(context.Background(), req, textLen, textLen); err != nil || !got {
+			t.Fatalf("%s with a limit of its text: %v, %v", name, got, err)
 		}
 	}
 }

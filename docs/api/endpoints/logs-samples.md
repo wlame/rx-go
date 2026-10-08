@@ -102,13 +102,29 @@ one, when that line starts at most `RX_TIMESTAMP_LOOKBACK_KB` before it.
 In a ready chain that look back continues into the parts before: lines
 at the start of a part that continue a record the part before began get
 the value the parts read as one file give them. It is answered from the
-earlier part's line index (its last timestamped line, and the length of
-its text) without reading that part; the part is read only when the
-index cannot answer: its last byte when a line lies exactly at the look
-back's distance and the part may end without a line break (the chain
-counts one there), or its last timestamped line under `file_tz` when
-the index records no zone offsets. Before the chain is ready a part is
-read alone, and the look back stops at its first line.
+earlier part's line index (its last timestamped line with its
+timestamp, and the length of its text) without reading that part.
+
+Two cases differ from the parts read as one file, and give `null`
+("not known") where that file gives a value; neither ever gives a wrong
+value:
+
+- Under `file_tz`, in an earlier part whose written zone offset changes
+  more often than its index records (`zone_offsets` null), the index
+  does not give that line's timestamp in the zone; the part is not read
+  for it, and the lines that would carry it get `null`.
+- The index does not say whether the earlier part ends with a line
+  break (the chain counts one there). When a line lies exactly at the
+  look back's distance, that decides, and the part's last byte is read:
+  one byte of a plain part, but a gzip, bzip2, xz or plain zstd part is
+  decompressed to its end. That read, and every such read of the
+  request together, decodes at most what is left of
+  `RX_SAMPLES_MAX_BYTES` after the answer's lines; a part that does not
+  fit is not read, and that one line gets `null`. `rx logs samples` has
+  no limit and always reads it.
+
+Before the chain is ready a part is read alone, and the look back stops
+at its first line.
 
 ## Before the chain is ready
 

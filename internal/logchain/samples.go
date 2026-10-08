@@ -177,6 +177,32 @@ type sampler struct {
 	// keys and pieces, against MaxLines and MaxBytes.
 	lines int
 	bytes int64
+	// edgeBytes is the most text the read back's reads of earlier parts'
+	// last bytes may have decoded (chargeEdgeRead). It is not part of the
+	// answer, so it does not count against the answer's MaxBytes (take);
+	// it only shrinks what the next such read may decode (edgeReadLimit).
+	edgeBytes int64
+}
+
+// edgeReadLimit is the most text the next read of an earlier part's
+// last byte may decode: what is left of MaxBytes after the answer's line
+// text so far and the edge reads before it, at least 1 (a plain part's
+// one byte); 0, no limit, when the request has no MaxBytes.
+func (s *sampler) edgeReadLimit() int64 {
+	return remaining64(s.req.MaxBytes, s.bytes+s.edgeBytes)
+}
+
+// chargeEdgeRead counts a read of part k's last byte against the
+// request's byte limit: the most text it can have decoded, one byte of a
+// plain part, and the whole text (textLen bytes) of a compressed one: a
+// stream decoded to its end, or a seekable part's last frame, which
+// holds at most that.
+func (s *sampler) chargeEdgeRead(k int, textLen int64) {
+	if s.kinds[k].IsCompressed() {
+		s.edgeBytes += textLen
+		return
+	}
+	s.edgeBytes++
 }
 
 // span is the run of lines one part holds in the line space a request

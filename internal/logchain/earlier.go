@@ -2,21 +2,17 @@ package logchain
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/wlame/rx-go/internal/samples"
 )
 
-// The reads the read back across a part edge makes of an earlier part,
-// when its facts cannot answer. Tests replace them to count the reads;
-// each is the samples function otherwise.
-var (
-	// partEndsWithLineBreak reads the last byte of a part's text.
-	partEndsWithLineBreak = samples.EndsWithLineBreak
-	// resolveEarlierLine reads one line of a part, for its timestamp.
-	resolveEarlierLine = samples.Resolve
-)
+// partEndsWithLineBreak reads the last byte of a part's text, decoding
+// at most its read limit of the text (samples.EndsWithLineBreak): the one
+// read the read back across a part edge makes of an earlier part, when
+// its facts cannot answer. Tests replace it to count the reads.
+var partEndsWithLineBreak = samples.EndsWithLineBreak
 
 // earlierOf is the text a ready chain reads before Response.Parts[k],
 // for the read back of line_timestamps in a piece of part k (see
@@ -39,18 +35,24 @@ func (s *sampler) earlierOf(k int) samples.Earlier {
 //
 // It answers from what describing the chain read of each part, which
 // comes from the part's line index: the length of its text and its last
-// line with a timestamp of its own, with that timestamp. Those say
-// whether that line starts within the read back's distance without a
-// byte of the part being read. A part is read only when they cannot say:
+// line with a timestamp of its own, with that timestamp as an instant.
+// Those say whether that line starts within the read back's distance
+// without a byte of the part being read.
 //
-//   - the timestamp of its last stamped line is not known from the index
-//     (under file_tz, in a part whose zone offsets the index does not
-//     record): that line is read;
-//   - a line's distance from it decides on whether the part ends with a
-//     line break (Settle): the part's last byte is read;
-//   - a part has lines and no timestamp at all (never in a ready chain,
-//     whose every part with lines has one): its last byte is read, and
-//     the read back passes over it.
+// When the index does not give that timestamp as an instant (under
+// file_tz, in a part whose written zone offset changes more often than
+// the index records), the part is not read for it either: the stamp says
+// the instant is not known (InstantOK false), and the lines that carry
+// it get none, null in line_timestamps, where the parts read as one file
+// give them the line's value.
+//
+// No index field records whether a part's text ends with a line break,
+// which the chain adds after a part that ends without one. Its last byte
+// is read, within what is left of the request's byte limit
+// (endsWithLineBreak), only when a line's distance decides on it
+// (Settle), or for a part with lines and no timestamp at all, which the
+// read back passes over (never in a ready chain, whose every part with
+// lines has one).
 //
 // INVARIANT: the read back of part k crosses only into parts before k
 // in a ready chain, every one of which has facts from a line index
@@ -96,13 +98,12 @@ func (e *earlierParts) LastStamp(ctx context.Context, within int64) (samples.Ear
 			return samples.EarlierStamp{}, nil
 		}
 		stamp := samples.EarlierStamp{Found: true, Start: -distance, OneEarlier: true}
+		// SECURITY: the instant comes from the index or is not known; the
+		// part is never read for it. Reading its last timestamped line
+		// meant decompressing a stream-compressed part up to that line,
+		// outside every limit of the request.
 		if f.lastMs != nil {
 			stamp.Instant, stamp.InstantOK = *f.lastMs, true
-		} else {
-			var err error
-			if stamp.Instant, stamp.InstantOK, err = e.stampOfLine(ctx, j, f.last.Line); err != nil {
-				return samples.EarlierStamp{}, err
-			}
 		}
 		e.from = j
 		return stamp, nil
@@ -112,7 +113,9 @@ func (e *earlierParts) LastStamp(ctx context.Context, within int64) (samples.Ear
 
 // Settle implements samples.Earlier: stamp with the line break the
 // chain adds after a part that ends without one counted, which moves the
-// line one byte further back. It reads the last byte of the part's text.
+// line one byte further back. It reads the last byte of the part's text
+// within what is left of the request's byte limit; past it the part is
+// taken to end without one (endsWithLineBreak).
 func (e *earlierParts) Settle(ctx context.Context, stamp samples.EarlierStamp) (samples.EarlierStamp, error) {
 	ends, err := e.endsWithLineBreak(ctx, e.from)
 	if err != nil {
@@ -140,32 +143,34 @@ func (e *earlierParts) chainLength(ctx context.Context, j int) (int64, error) {
 	return *f.textLen + 1, nil
 }
 
-// endsWithLineBreak reads whether part j's text ends with a line break.
+// endsWithLineBreak reads whether part j's text ends with a line break:
+// its last byte, through the part's pin.
+//
+// SECURITY: the read decodes at most what is left of the request's
+// MaxBytes (sampler.edgeReadLimit), at least one byte, and what it may
+// have decoded is counted against that (chargeEdgeRead). So the edge
+// reads of one request together decode at most MaxBytes of text, plus
+// one byte for each read once that is used up. A plain part costs one
+// byte. A stream-compressed part whose text is longer than what is
+// left, or a seekable part whose last frame holds more, is not read
+// (samples.ErrReadLimit), and the part is taken to end without a line
+// break. That puts the text before part j+1 one byte further back, so a
+// line at exactly the read back's distance carries no timestamp (null,
+// not known), never one it would not carry. Without MaxBytes (`rx logs
+// samples`) the byte is always read.
 func (e *earlierParts) endsWithLineBreak(ctx context.Context, j int) (bool, error) {
 	req, err := e.s.partRequest(j)
 	if err != nil {
 		return false, err
 	}
-	return partEndsWithLineBreak(ctx, req, *e.s.d.facts[e.s.d.Order[j]].textLen)
-}
-
-// stampOfLine reads line `line` of part j, a line with a timestamp of
-// its own, and returns that timestamp as a UTC instant, read the way a
-// samples answer reads the part (its zone included); ok is false when it
-// has none in the years 1 to 9999.
-func (e *earlierParts) stampOfLine(ctx context.Context, j int, line int64) (instant int64, ok bool, err error) {
-	req, err := e.s.partRequest(j)
-	if err != nil {
-		return 0, false, err
+	textLen := *e.s.d.facts[e.s.d.Order[j]].textLen
+	ends, err := partEndsWithLineBreak(ctx, req, textLen, e.s.edgeReadLimit())
+	switch {
+	case errors.Is(err, samples.ErrReadLimit):
+		return false, nil
+	case err != nil:
+		return false, err
 	}
-	req.Lines = []samples.OffsetOrRange{{Start: line}}
-	resp, err := resolveEarlierLine(ctx, req)
-	if err != nil {
-		return 0, false, err
-	}
-	stamps := resp.LineTimestamps[strconv.FormatInt(line, 10)]
-	if len(stamps) == 0 || stamps[0] == nil {
-		return 0, false, nil
-	}
-	return *stamps[0], true, nil
+	e.s.chargeEdgeRead(j, textLen)
+	return ends, nil
 }

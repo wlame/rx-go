@@ -358,7 +358,7 @@ func (t *fileTimes) stampsBefore(req Request, kind filekind.Kind, asks []int64, 
 	slices.Sort(asks)
 	asks = slices.Compact(asks)
 
-	text, closeText, err := lookbackTextOf(req, kind)
+	text, closeText, err := lookbackTextOf(req, kind, noDecodeLimit)
 	if err != nil {
 		return nil, nil, readBackFailed(req, len(asks), err)
 	}
@@ -486,7 +486,10 @@ func (t *fileTimes) lastStampedIn(buf []byte, offset int64, atLineStart bool, la
 // file (gzip, bzip2, xz, plain zstd) cannot be entered in the middle:
 // it is decompressed from its first byte, once for the whole sweep,
 // dropping the bytes between the regions the sweep reads.
-func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error, error) {
+//
+// decodeLimit bounds the text a seekable file's frames decode to, in
+// all (textByPosition); noDecodeLimit decodes what the reads need.
+func lookbackTextOf(req Request, kind filekind.Kind, decodeLimit int64) (io.ReaderAt, func() error, error) {
 	if !readsByPosition(kind) {
 		cursor, err := streamedText{src: req.Source, format: kind.Format}.openAt(0)
 		if err != nil {
@@ -503,7 +506,7 @@ func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error,
 		_ = f.Close()
 		return nil, nil, fmt.Errorf("read back in %s: the file cannot be read by position", req.Source.Path())
 	}
-	text, _, err := textByPosition(req.context(), file, kind, noDecodeLimit)
+	text, _, err := textByPosition(req.context(), file, kind, decodeLimit)
 	if err != nil {
 		_ = f.Close()
 		return nil, nil, err
@@ -511,14 +514,29 @@ func lookbackTextOf(req Request, kind filekind.Kind) (io.ReaderAt, func() error,
 	return text, f.Close, nil
 }
 
+// ErrReadLimit is returned by EndsWithLineBreak when the last byte of
+// the text lies past what its read limit lets it decode: a
+// stream-compressed text longer than the limit, or a seekable file whose
+// frame that holds the byte would take the text decoded past it. Nothing
+// of that text was decoded.
+var ErrReadLimit = errors.New("the end of the text lies past what the read may decode")
+
 // EndsWithLineBreak reports whether the text of req's file, textLen
 // bytes long (its decompressed stream for a compressed file), ends with
 // a line break: a log chain reads its parts as one text and adds one
 // after a part that ends without one. An empty text ends with none. It
-// reads the last byte through the read back's text (lookbackTextOf): by
-// position in a plain or seekable file, and a stream-compressed file
-// decompressed to its end.
-func EndsWithLineBreak(ctx context.Context, req Request, textLen int64) (bool, error) {
+// reads the last byte through the read back's text (lookbackTextOf),
+// through req's pin: by position in a plain or seekable file, and a
+// stream-compressed file decompressed to its end.
+//
+// SECURITY: readLimit, when it is above 0, bounds the text the read may
+// decode. A plain file is read one byte. A stream-compressed text longer
+// than the limit is not opened at all, and a seekable file's frame is
+// not decoded when its text would take what was decoded past the limit
+// (textByPosition's decode limit). Either refusal is ErrReadLimit. 0 is
+// no limit: `rx logs samples`, which runs as the user's own process,
+// reads what the answer needs.
+func EndsWithLineBreak(ctx context.Context, req Request, textLen, readLimit int64) (bool, error) {
 	if textLen <= 0 {
 		return false, nil
 	}
@@ -526,13 +544,20 @@ func EndsWithLineBreak(ctx context.Context, req Request, textLen int64) (bool, e
 	if err != nil {
 		return false, err
 	}
-	text, closeText, err := lookbackTextOf(req, kind)
+	if readLimit > 0 && !readsByPosition(kind) && textLen > readLimit {
+		return false, fmt.Errorf("%w: %s is stream-compressed and its text of %d bytes is longer than the limit of %d",
+			ErrReadLimit, req.Path, textLen, readLimit)
+	}
+	text, closeText, err := lookbackTextOf(req, kind, readLimit)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = closeText() }()
 	var last [1]byte
 	if err := readTextAt(text, last[:], textLen-1); err != nil {
+		if errors.Is(err, errDecodeLimit) {
+			return false, fmt.Errorf("%w: %w", ErrReadLimit, err)
+		}
 		return false, err
 	}
 	return last[0] == '\n', nil
