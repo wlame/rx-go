@@ -57,25 +57,34 @@ when its directory, by the device and inode it had when it was listed,
 and its name are; on a filesystem that gives every directory inode 0,
 when its handle is, or when its parts' paths with every link resolved
 are), each part is searched once under one file id (a part is the same
-file under any spelling of its directory, by its device and inode), each
-other file is searched once under one file id (a file is the same when
-its path with every link resolved is), and so each match comes once. A
-part's own path named beside its chain's handle or directory is a part
-of that chain, whichever comes first. Another encoding of a part named
-beside its chain (`syslog.3.gz` beside the handle `syslog`, whose chain
-reads `syslog.3`) is skipped with `duplicate_part` and never searched,
-whichever comes first and under whatever path it is named (by its device
-and inode), so each of its lines comes once, from the part the chain
+under any spelling of its directory: the same directory entry, by the
+directory's device and inode and the part's name, holding the same
+file, by its whole stat), each other file is searched once under one
+file id (a file is the same when its path with every link resolved
+is), and so each match comes once. A part's own path named beside its
+chain's handle or directory is a part of that chain, whichever comes
+first. Another encoding of a part named beside its chain (`syslog.3.gz`
+beside the handle `syslog`, whose chain reads `syslog.3`) is skipped
+with `duplicate_part` and never searched, whichever comes first, under
+its own path, through a link to it, or under another spelling of its
+directory, so each of its lines comes once, from the part the chain
 reads; it is named once in `skipped_files`, under the path its chain
-lists it by. Two chains that still give one identity (an inode reused
-while the request runs) are both searched: the first as its chain, the
-second's parts that are not the first's files as files of their own,
-with `chain` null. `path` in the answer lists the paths as the request
-gave them.
+lists it by. A part of another chain that is a link to that encoding is
+a part of its own chain, searched there, and the encoding is then not
+named as skipped. Two chains that still give one identity (an inode
+reused while the request runs) are both searched: the first as its
+chain, the second's parts that are not the first's as files of their
+own, with `chain` null. `path` in the answer lists the paths as the
+request gave them. Every order of the same paths gives the same answer.
 
-A file of its own, and a part's own path, are known by their paths
-alone: two hard links are two files, and so is one file named under two
-case spellings of its directory, each searched.
+Device and inode alone never make two paths one file: when the search
+cannot tell whether two paths are one file, it searches both, so a line
+may come twice but is never left out. Two hard links are two files: a
+hard link of another encoding named on its own in another directory, or
+under another name, is searched as a file of its own, with `chain`
+null. A file of its own, and a part's own path named on its own, are
+known by their paths alone: one file named under two case spellings of
+its directory is searched under each.
 
 ## The order of the search
 

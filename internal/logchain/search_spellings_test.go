@@ -184,13 +184,15 @@ func TestSearch_OneDirectoryUnderTwoPathsIsSearchedOnce(t *testing.T) {
 	}
 }
 
-// The other encoding of a part named on its own under another path,
-// on any disk: another case of its directory or a bind mount gives the
-// same file under a second path, and a hard link in a second directory
-// stands in for them here. Whichever comes first, it or the chain's
-// handle, the file is skipped once as duplicate_part and never
-// searched, so each line comes once, in the chain.
-func TestSearch_TheOtherEncodingUnderAnotherPathIsSkippedOnce(t *testing.T) {
+// A hard link of the other encoding of a part, named on its own in
+// another directory under the same name, is a file of its own: it is
+// not the same path as the other encoding (another directory, by its
+// device and inode), and two hard links are two files. Whichever comes
+// first, it or the chain's handle or directory, the chain gives each of
+// its nine lines once, the other encoding is skipped once as
+// duplicate_part, and the hard link is searched with no chain, so its
+// three lines come once more, never zero times.
+func TestSearch_AHardLinkOfTheOtherEncodingInAnotherDirectoryIsAFileOfItsOwn(t *testing.T) {
 	root := t.TempDir()
 	dir, elsewhere := filepath.Join(root, "logs"), filepath.Join(root, "elsewhere")
 	for _, d := range []string{dir, elsewhere} {
@@ -209,12 +211,35 @@ func TestSearch_TheOtherEncodingUnderAnotherPathIsSkippedOnce(t *testing.T) {
 		label string
 		paths []string
 	}{
-		{"the other encoding under another path, then the handle", []string{other, handle}},
-		{"the handle, then the other encoding under another path", []string{handle, other}},
-		{"the other encoding under another path, then the directory", []string{other, dir}},
-		{"the directory, then the other encoding under another path", []string{dir, other}},
+		{"the hard link, then the handle", []string{other, handle}},
+		{"the handle, then the hard link", []string{handle, other}},
+		{"the hard link, then the directory", []string{other, dir}},
+		{"the directory, then the hard link", []string{dir, other}},
 	} {
-		requireEachLineOnceInOneChain(t, tc.label, searchFor(t, SearchRequest{Paths: tc.paths, Patterns: []string{"LINE"}}).Answer)
+		answer := searchFor(t, SearchRequest{Paths: tc.paths, Patterns: []string{"LINE"}}).Answer
+		wantSkipped := []string{filepath.Join(dir, otherEncodingName)}
+		if len(answer.Chains) != 1 || !slices.Equal(answer.SkippedFiles, wantSkipped) || len(answer.SkipReasons) != 1 ||
+			!strings.HasPrefix(answer.SkipReasons[0].Reason, ReasonDuplicatePart+":") {
+			t.Fatalf("%s: chains %+v, skipped %v (%+v); want one chain and %v as %s", tc.label, answer.Chains,
+				answer.SkippedFiles, answer.SkipReasons, wantSkipped, ReasonDuplicatePart)
+		}
+		inChain, ofItsOwn := map[string]bool{}, map[string]bool{}
+		for _, m := range answer.Matches {
+			text := *m.LineText
+			named, _ := strconv.ParseInt(globalOf.FindStringSubmatch(text)[1], 10, 64)
+			switch {
+			case m.Chain != nil && *m.Chain == "c1" && m.ChainLine == named && !inChain[text]:
+				inChain[text] = true
+			case m.Chain == nil && answer.Files[m.File] == other && !ofItsOwn[text]:
+				ofItsOwn[text] = true
+			default:
+				t.Fatalf("%s: match %q of %s in chain %v at chain_line %d", tc.label, text, answer.Files[m.File], m.Chain, m.ChainLine)
+			}
+		}
+		if len(inChain) != 9 || len(ofItsOwn) != 3 || len(answer.Matches) != 12 {
+			t.Fatalf("%s: %d matches, %d lines in the chain, %d in the hard link; want 9 and 3 once each",
+				tc.label, len(answer.Matches), len(inChain), len(ofItsOwn))
+		}
 	}
 }
 
