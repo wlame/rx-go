@@ -63,8 +63,8 @@ type Pinned struct {
 	// resolved. The walk uses it to recognize a directory it has
 	// already searched.
 	canonical string
-	// info is the file's stat at the check. Its device and inode are the
-	// identity os.SameFile compares.
+	// info is the file's stat at the check. Its device, inode and file
+	// type are the identity sameFile compares.
 	info os.FileInfo
 }
 
@@ -99,8 +99,9 @@ func (p Pinned) Open() (*os.File, error) {
 	// SECURITY: O_NONBLOCK makes the open return at once even when the
 	// path was swapped for a named pipe since the check, where a plain
 	// open would wait for a writer for ever. The fstat below then finds
-	// another file and refuses it. On a regular file or a directory the
-	// flag changes nothing: their reads never block.
+	// another file, or at least another file type, and refuses it. On a
+	// regular file or a directory the flag changes nothing: their reads
+	// never block.
 	f, err := os.OpenFile(p.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
@@ -113,11 +114,33 @@ func (p Pinned) Open() (*os.File, error) {
 		_ = f.Close()
 		return nil, err
 	}
-	if !os.SameFile(p.info, opened) {
+	if !sameFile(p.info, opened) {
 		_ = f.Close()
 		return nil, p.changed()
 	}
 	return f, nil
+}
+
+// sameFile reports whether checked and current describe the same file:
+// the same device and inode (what os.SameFile compares) and the same
+// file type.
+//
+// The type is part of the identity because an inode number names a
+// file only while that file exists. Linux file systems (ext4, overlay,
+// tmpfs) hand a removed file's inode number to the next file created,
+// so a path whose file was removed and replaced by a named pipe right
+// after the check leads to a pipe with the old device and inode, and
+// os.SameFile alone would accept it. A regular file replaced by another
+// regular file that reuses the inode still passes: its size and times
+// cannot tell it apart, because a log that is being written changes
+// those too.
+//
+// Go note: Mode().Type() keeps only the type bits of the mode (regular
+// file, directory, named pipe, socket, device, link), not the
+// permissions, so a chmod of the checked file does not count as a
+// change.
+func sameFile(checked, current os.FileInfo) bool {
+	return checked.Mode().Type() == current.Mode().Type() && os.SameFile(checked, current)
 }
 
 // isRegularOrDir reports whether info describes a regular file or a
@@ -138,7 +161,7 @@ func (p Pinned) Stat() (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !os.SameFile(p.info, info) {
+	if !sameFile(p.info, info) {
 		return nil, p.changed()
 	}
 	return info, nil
@@ -344,8 +367,8 @@ func OpenDir(dir string) (*os.Root, error) {
 // name is a real directory rather than a symbolic link.
 //
 // The check and the open are two look-ups, so the open itself is
-// checked too: the directory opened must be the very one (device and
-// inode) the Lstat saw under name. A name swapped for a link between
+// checked too: the directory opened must be the very one (device,
+// inode and type, see sameFile) the Lstat saw under name. A name swapped for a link between
 // the two look-ups opens the link's target, which is not that
 // directory, and is refused.
 func openRealSubdir(parent *os.Root, name string) (*os.Root, error) {
@@ -365,7 +388,7 @@ func openRealSubdir(parent *os.Root, name string) (*os.Root, error) {
 		_ = child.Close()
 		return nil, err
 	}
-	if !os.SameFile(entry, opened) {
+	if !sameFile(entry, opened) {
 		_ = child.Close()
 		return nil, ErrFileChanged
 	}

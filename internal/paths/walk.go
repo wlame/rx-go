@@ -135,7 +135,7 @@ func ListDir(dir Pinned) ([]ListedEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !os.SameFile(dir.info, opened) {
+	if !sameFile(dir.info, opened) {
 		return nil, dir.changed()
 	}
 	names, err := readNames(r)

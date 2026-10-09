@@ -83,6 +83,31 @@ func TestOpenOfAFileSwappedForANamedPipeDoesNotBlock(t *testing.T) {
 	})
 }
 
+// The file type is part of a pinned file's identity, its permissions
+// are not: a file whose mode was changed since the check is still the
+// checked file and opens.
+func TestOpenOfAFileWhosePermissionsChangedReadsIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.log")
+	if err := os.WriteFile(path, []byte("LINE 1\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	src, err := Pin(path)
+	if err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	f, err := src.Open()
+	if err != nil {
+		t.Fatalf("Open after a chmod: %v", err)
+	}
+	_ = f.Close()
+	if _, err := src.Stat(); err != nil {
+		t.Errorf("Stat after a chmod: %v", err)
+	}
+}
+
 // A directory walk refuses a named pipe it meets, with the reason, and
 // never reports it as a file to read.
 func TestWalkRefusesANamedPipe(t *testing.T) {
