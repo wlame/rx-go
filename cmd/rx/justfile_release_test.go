@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -207,23 +208,49 @@ func TestJustfileReleaseNotes_RefusesAVersionThatIsNotXYZAndRunsNoPartOfIt(t *te
 	}
 }
 
+// gitIdentity names the author of the commits and annotated tags the
+// tests make, since git reads no configuration of the developer's.
+var gitIdentity = []string{"-c", "user.name=rx test", "-c", "user.email=rx-test@example.invalid"}
+
+// runGit runs git with args in dir with env, and fails the test when git
+// fails.
+func runGit(t *testing.T, gitPath, dir string, env []string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(gitPath, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+}
+
 // commitAndTag makes dir a git repository with one commit of its
 // justfile and puts the lightweight tag on that commit, so
 // `git describe --tags --dirty --always` prints exactly tag.
 func commitAndTag(t *testing.T, gitPath, dir string, env []string, tag string) {
 	t.Helper()
-	steps := [][]string{
-		{"init", "--quiet"},
-		{"add", "justfile"},
-		{"-c", "user.name=rx test", "-c", "user.email=rx-test@example.invalid", "commit", "--quiet", "--no-verify", "--message=Add the justfile."},
-		{"tag", tag},
+	runGit(t, gitPath, dir, env, "init", "--quiet")
+	runGit(t, gitPath, dir, env, "add", "justfile")
+	runGit(t, gitPath, dir, env, append(slices.Clone(gitIdentity), "commit", "--quiet", "--no-verify", "--message=Add the justfile.")...)
+	runGit(t, gitPath, dir, env, "tag", tag)
+}
+
+// requireStamps fails the test unless the go stub logged to logPath
+// exactly wantBuilds builds, each stamped with version.
+func requireStamps(t *testing.T, logPath, version string, wantBuilds int) {
+	t.Helper()
+	logged, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read what go build was given: %v", err)
 	}
-	for _, args := range steps {
-		cmd := exec.Command(gitPath, args...)
-		cmd.Dir = dir
-		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	stamps := strings.Split(strings.TrimSuffix(string(logged), "\n"), "\n")
+	if len(stamps) != wantBuilds {
+		t.Errorf("go build ran %d times, want %d: %q", len(stamps), wantBuilds, stamps)
+	}
+	wantStamp := "-s -w -X main.appVersion=" + version
+	for i, stamp := range stamps {
+		if stamp != wantStamp {
+			t.Errorf("go build %d got -ldflags %q, want %q", i+1, stamp, wantStamp)
 		}
 	}
 }
@@ -282,22 +309,51 @@ func TestJustfileBuildRecipes_StampTheTagNameAndRunNoPartOfIt(t *testing.T) {
 					t.Errorf("just %s: %v: %s", recipe, run.err, run.stderr)
 				}
 			}
-			logged, err := os.ReadFile(stubLog)
-			if err != nil {
-				t.Fatalf("read what go build was given: %v", err)
-			}
 			// One build for `build`, four targets for `build-all`.
-			const wantBuilds = 5
-			stamps := strings.Split(strings.TrimSuffix(string(logged), "\n"), "\n")
-			if len(stamps) != wantBuilds {
-				t.Errorf("go build ran %d times, want %d: %q", len(stamps), wantBuilds, stamps)
-			}
-			wantStamp := "-s -w -X main.appVersion=" + tc.tag
-			for i, stamp := range stamps {
-				if stamp != wantStamp {
-					t.Errorf("go build %d got -ldflags %q, want %q", i+1, stamp, wantStamp)
-				}
-			}
+			requireStamps(t, stubLog, tc.tag, 1+buildAllTargets)
 		})
 	}
+}
+
+// buildAllTargets is the number of binaries `just build-all` builds.
+const buildAllTargets = 4
+
+// release.yml builds with `just --set version "$GITHUB_REF_NAME"
+// build-all`, so every binary stamps the tag the job was started for,
+// whatever other tag is on the same commit. `git describe`, the
+// justfile's default version, prints an annotated tag in preference to
+// the lightweight one scripts/release.sh makes: a second, annotated tag
+// whose name ends in the release tag starts no job of its own, and
+// without --set its name is what the release binaries would stamp. The
+// test holds the justfile to what release.yml relies on: the build
+// recipes stamp the variable version, so --set reaches every binary.
+func TestJustfileBuildAll_StampsTheVersionSetOnTheCommandLineOverAnAnnotatedTag(t *testing.T) {
+	justPath := lookPathOrSkip(t, "just")
+	gitPath := lookPathOrSkip(t, "git")
+	const releaseTag = "v1.0.0"
+	annotatedTag := "a';touch${IFS}" + markerName + ";'" + releaseTag
+	dir := t.TempDir()
+	home := t.TempDir()
+	copyJustfile(t, dir)
+	writeStubTools(t, home)
+	env := justEnviron(home)
+	commitAndTag(t, gitPath, dir, env, releaseTag)
+	runGit(t, gitPath, dir, env, append(slices.Clone(gitIdentity), "tag", "--annotate", "--message=Another tag on the release commit.", annotatedTag)...)
+	describedLog := filepath.Join(home, "described.log")
+	setLog := filepath.Join(home, "set.log")
+
+	described := runJust(t, justPath, dir, justEnviron(home, "STUB_GO_LOG="+describedLog), "build-all")
+	set := runJust(t, justPath, dir, justEnviron(home, "STUB_GO_LOG="+setLog), "--set", "version", releaseTag, "build-all")
+
+	requireNoMarker(t, dir)
+	if described.err != nil {
+		t.Fatalf("just build-all: %v: %s", described.err, described.stderr)
+	}
+	// Without --set the binaries stamp the annotated tag: the case --set
+	// is there for.
+	requireStamps(t, describedLog, annotatedTag, buildAllTargets)
+	if set.err != nil {
+		t.Fatalf("just --set version %s build-all: %v: %s", releaseTag, set.err, set.stderr)
+	}
+	requireStamps(t, setLog, releaseTag, buildAllTargets)
 }
