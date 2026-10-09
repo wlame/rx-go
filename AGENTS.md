@@ -425,6 +425,11 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
   `RX_CACHE_DIR` at a temporary directory. The `just` test recipes run under
   a throwaway `HOME` (`scripts/test-isolated-home.sh`) and fail when a cache
   file appears there, so a package that misses this turns `just ci` red.
+- No test sends data to a hook of the developer's shell. The `just` test
+  recipes drop every `RX_HOOK_*` variable from the environment, and the
+  tests in `cmd/rx` start the binary through `rxCommand`, whose
+  environment leaves them out too (`testEnviron`). A test that needs a
+  hook sets its own URL.
 - Tests must be deterministic. Do not assert on wall-clock speed or on how far
   a race got before a cancel fired.
 - Tests that need an external tool (`rg`, `zstd`) skip with a reason when it is

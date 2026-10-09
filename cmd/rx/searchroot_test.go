@@ -21,8 +21,7 @@ import (
 // returns its exit code, stdout and stderr.
 func runRxEnv(t *testing.T, env []string, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(rxBinary(t), args...)
-	cmd.Env = append(os.Environ(), env...)
+	cmd := rxCommand(t, env, args...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

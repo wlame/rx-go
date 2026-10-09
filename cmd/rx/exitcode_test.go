@@ -50,7 +50,7 @@ func rxBinary(t *testing.T) string {
 // runRx runs the built binary and returns its exit code, stdout and stderr.
 func runRx(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
-	cmd := exec.Command(rxBinary(t), args...)
+	cmd := rxCommand(t, nil, args...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -290,7 +290,7 @@ func TestExitCode_InterruptedIsFive(t *testing.T) {
 		t.Fatalf("write log: %v", err)
 	}
 
-	cmd := exec.Command(rxBinary(t), "trace", "line", path, "--json")
+	cmd := rxCommand(t, nil, "trace", "line", path, "--json")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
