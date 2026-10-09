@@ -15,34 +15,23 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/wlame/rx-go/internal/testutil/isolatedcache"
 )
 
-// outboundEnvPrefixes are the prefixes of the environment variables a
-// test never passes on to the binaries it starts: the variables that
-// make rx send data out. RX_HOOK_ covers the webhook URLs
-// (RX_HOOK_ON_FILE_URL, RX_HOOK_ON_MATCH_URL, RX_HOOK_ON_COMPLETE_URL)
-// and the other hook settings. A test that wants a hook passes its URL
-// as an extra variable or a flag, which testEnviron keeps.
-var outboundEnvPrefixes = []string{"RX_HOOK_"}
-
 // testEnviron is the environment for a binary a test starts: this
-// process's environment without the variables of outboundEnvPrefixes,
-// then extra, so a variable in extra wins over the inherited one.
+// process's environment without the webhook variables (RX_HOOK_*), then
+// extra, so a variable in extra wins over the inherited one. A test that
+// wants a hook passes its URL as an extra variable or a flag.
+//
+// The webhook variables are the ones isolatedcache.WithoutHookVariables
+// drops. One test inside isolatedcache decides them for that function,
+// for the variables TestMain's isolatedcache.Main removes from this test
+// process and for the environment the parity runners give the binaries
+// they start, so the three cannot disagree on which variables send data
+// out.
 func testEnviron(extra ...string) []string {
-	env := slices.DeleteFunc(os.Environ(), isOutboundVariable)
-	return append(env, extra...)
-}
-
-// isOutboundVariable reports whether entry, a NAME=value entry of the
-// environment, names a variable of outboundEnvPrefixes.
-func isOutboundVariable(entry string) bool {
-	name, _, _ := strings.Cut(entry, "=")
-	for _, prefix := range outboundEnvPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
+	return append(isolatedcache.WithoutHookVariables(os.Environ()), extra...)
 }
 
 // rxCommand is the command that runs the built binary with args, in the
@@ -100,7 +89,7 @@ func TestTestEnviron_DropsTheWebhookVariablesOnly(t *testing.T) {
 	env := testEnviron("RX_CACHE_DIR=/tmp/a-cache", "RX_HOOK_ON_FILE_URL=https://hooks.example.invalid/file")
 
 	for _, entry := range env[:len(env)-2] {
-		if isOutboundVariable(entry) {
+		if strings.HasPrefix(entry, "RX_HOOK_") {
 			t.Errorf("the inherited %s was passed on", entry)
 		}
 	}
