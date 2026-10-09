@@ -231,17 +231,82 @@ func TestSearch_AHardLinkOfAnotherEncodingNamedOnItsOwnIsAFileOfItsOwn(t *testin
 }
 
 // A symbolic link to another encoding, named on its own, is the same
-// path as that encoding once every link is resolved: it is skipped as
-// that encoding, named once, in either order.
+// path as that encoding once every link is resolved: it is not
+// searched, and it is named in skipped_files as duplicate_part under
+// its own path, beside the encoding, in either order.
 func TestSearch_ALinkToAnotherEncodingNamedOnItsOwnIsThatEncoding(t *testing.T) {
 	base := twoChainsSharingAFile(t, os.Symlink)
 	want := orderFreeAnswer{
 		matches: slices.Sorted(slices.Values(rowsOf("A/app.log", "A/app.log.1", "A/app.log"))),
-		skipped: []string{"A/app.log.1.gz " + ReasonDuplicatePart},
+		skipped: []string{"A/app.log.1.gz " + ReasonDuplicatePart, "B/y.log.1.gz " + ReasonDuplicatePart},
 		chains:  []string{"A/app.log: A/app.log.1, A/app.log"},
 	}
 	orders := [][]string{{"A", "Bpart"}, {"Bpart", "A"}, {"Adir", "Bpart"}, {"Bpart", "Adir"}}
 	requireOrderFreeAnswer(t, base, sharedFilePaths(base), orders, want)
+}
+
+// anEncodingThatIsALink writes the chain app.log into each directory
+// of chainDirs (A when none is given) of a new base directory, whose
+// other encoding of a part is a symbolic link to a file of the
+// directory B, and returns the base:
+//
+//	A/app.log.1     a part of the chain app.log
+//	A/app.log.1.gz  a symbolic link to B/z.gz: another encoding of A/app.log.1
+//	A/app.log       the active file of app.log
+//	B/z.gz          a gzip file of a line of its own, in no chain
+//
+// Each chain is indexed, so it is ready.
+func anEncodingThatIsALink(t *testing.T, chainDirs ...string) string {
+	t.Helper()
+	if len(chainDirs) == 0 {
+		chainDirs = []string{"A"}
+	}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range append([]string{"B"}, chainDirs...) {
+		if err := os.Mkdir(filepath.Join(base, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeChainFiles(t, filepath.Join(base, "B"), []chainFile{
+		{name: "z.gz", text: sharedFileLines["A/app.log.1.gz"], codec: compressedcopy.Gzip},
+	})
+	for _, d := range chainDirs {
+		dir := filepath.Join(base, d)
+		writeChainFiles(t, dir, []chainFile{
+			{name: "app.log.1", text: sharedFileLines["A/app.log.1"]},
+			{name: "app.log", text: sharedFileLines["A/app.log"]},
+		})
+		if err := os.Symlink(filepath.Join(base, "B", "z.gz"), filepath.Join(dir, "app.log.1.gz")); err != nil {
+			t.Fatal(err)
+		}
+		storeIndexes(t, dir, "app.log.1")
+	}
+	return base
+}
+
+// When another encoding of a part is a symbolic link to a file the
+// request names on its own, or that a walk of its directory lists, that
+// file is the encoding once every link is resolved: it is not searched,
+// and it is named in skipped_files as duplicate_part under its own
+// path, beside the encoding's, so no path the request reaches is left
+// out unnamed. The answer is the same in every order.
+func TestSearch_TheTargetOfAnEncodingThatIsALinkIsNamedAsSkipped(t *testing.T) {
+	base := anEncodingThatIsALink(t)
+	named := map[string]string{
+		"A": filepath.Join(base, "A", "app.log"), "Adir": filepath.Join(base, "A"),
+		"Bz": filepath.Join(base, "B", "z.gz"), "Bdir": filepath.Join(base, "B"),
+	}
+	want := orderFreeAnswer{
+		matches: slices.Sorted(slices.Values(rowsOf("A/app.log", "A/app.log.1", "A/app.log"))),
+		skipped: []string{"A/app.log.1.gz " + ReasonDuplicatePart, "B/z.gz " + ReasonDuplicatePart},
+		chains:  []string{"A/app.log: A/app.log.1, A/app.log"},
+	}
+	orders := slices.Concat(permutations([]string{"A", "Bz"}), permutations([]string{"Adir", "Bz"}),
+		permutations([]string{"A", "Bdir"}), permutations([]string{"A", "Bz", "Bdir"}))
+	requireOrderFreeAnswer(t, base, named, orders, want)
 }
 
 // statWithSize is a stat whose size is replaced and whose other fields,
@@ -292,4 +357,28 @@ func TestSearch_APartThatTookTheInodeOfTheHoldersPartIsAFileOfItsOwn(t *testing.
 		t.Fatalf("chains %d, planned %v, skipped %v; want 1 chain and every part of both planned %v",
 			len(r.chains), plannedPaths(r), r.plan.Skipped, want)
 	}
+}
+
+// When the other encodings of two chains are links to one file named
+// on its own, that file is named in skipped_files once, beside each
+// encoding, whichever chain comes first.
+func TestSearch_AFileTwoEncodingsLinkToIsNamedAsSkippedOnce(t *testing.T) {
+	base := anEncodingThatIsALink(t, "A", "C")
+	named := map[string]string{
+		"A": filepath.Join(base, "A", "app.log"), "C": filepath.Join(base, "C", "app.log"),
+		"Bz": filepath.Join(base, "B", "z.gz"),
+	}
+	chainRows := func(d string) []string {
+		return []string{
+			matchRow(d+"/app.log.1", string(sharedFileLines["A/app.log.1"]), d+"/app.log", 1),
+			matchRow(d+"/app.log", string(sharedFileLines["A/app.log"]), d+"/app.log", 2),
+		}
+	}
+	want := orderFreeAnswer{
+		matches: slices.Sorted(slices.Values(slices.Concat(chainRows("A"), chainRows("C")))),
+		skipped: []string{"A/app.log.1.gz " + ReasonDuplicatePart, "B/z.gz " + ReasonDuplicatePart,
+			"C/app.log.1.gz " + ReasonDuplicatePart},
+		chains: []string{"A/app.log: A/app.log.1, A/app.log", "C/app.log: C/app.log.1, C/app.log"},
+	}
+	requireOrderFreeAnswer(t, base, named, permutations([]string{"A", "C", "Bz"}), want)
 }
