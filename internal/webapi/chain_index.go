@@ -59,7 +59,10 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 // outlives the task's place in the task table, which a burst of other
 // tasks can take; it is dropped RX_TASK_TTL_MINUTES after the end (as
 // the sweeper drops a finished task), or once the chain's files have
-// another fingerprint, since the end no longer describes them.
+// another fingerprint, since the end no longer describes them. A task
+// whose goroutine panicked records no end; each pruning takes its end
+// from the task table, or drops its record once the table has dropped
+// the task (settleLocked).
 //
 // A pending chain whose last task failed for the same files does not
 // start another on describe: the same files would fail the same way, on
@@ -68,9 +71,11 @@ func chainTaskKey(handle string) string { return "chain:" + handle }
 //
 // # Locks
 //
-// Lock order: mu, then the task manager's lock (CreateKeyed, Get). The
-// task goroutine takes mu once, alone, to record its end (recordEnd),
-// and never while it holds the task manager's lock or chainIndexRun.mu.
+// Lock order: mu, then the task manager's lock (CreateKeyed, Get, and
+// the Get of each record without an end when the records are pruned).
+// The task goroutine takes mu once, alone, to record its end
+// (recordEnd), and never while it holds the task manager's lock or
+// chainIndexRun.mu.
 type chainIndexTasks struct {
 	tasks  *tasks.Manager
 	builds *samplesIndexBuilds
@@ -237,20 +242,29 @@ func (c *chainIndexTasks) recordEnd(key, taskID string, status tasks.Status, err
 	c.pruneLocked()
 }
 
-// pruneLocked drops the records of tasks that ended more than the task
-// TTL ago, then, while more than maxEndedChainRecords ended records
-// remain, the ones that ended first. The caller holds c.mu.
+// pruneLocked brings the records without an end up to date with the
+// task table (settleLocked), drops the records of tasks that ended more
+// than the task TTL ago, then, while more than maxEndedChainRecords
+// ended records remain, the ones that ended first. The caller holds
+// c.mu; settleLocked takes the task manager's lock under it.
 //
 // SECURITY: the records are bounded whatever clients describe: one per
 // chain whose task runs (the task holds the chain's key, so a chain has
 // at most one), plus at most maxEndedChainRecords ended ones, each a few
-// short strings. Each call costs one pass over them.
+// short strings. A task whose goroutine panicked never records its end,
+// so without settleLocked its record would stay, uncapped, for as long
+// as the server runs. Each call costs one pass over the records and one
+// look into the task table per record without an end.
 func (c *chainIndexTasks) pruneLocked() {
 	now := c.now()
 	ended := make([]string, 0, len(c.records))
 	for key, record := range c.records {
 		if record.end == nil {
-			continue
+			settled, running, kept := c.settleLocked(key, record)
+			if running != nil || !kept {
+				continue
+			}
+			record = settled
 		}
 		if c.expired(record, now) {
 			delete(c.records, key)
@@ -268,6 +282,37 @@ func (c *chainIndexTasks) pruneLocked() {
 	for _, key := range ended[:excess] {
 		delete(c.records, key)
 	}
+}
+
+// settleLocked brings record, the record of the chain key without an
+// end, up to date with the task table, and returns what it found:
+//
+//   - the task still runs: the record as it is, and the task (a copy);
+//   - the task has ended in the table: that is a task whose goroutine
+//     panicked (runDetached failed it before its run could record the
+//     end). Its end is taken from the table now and kept in the record,
+//     which is returned, so that it outlives the task's place there and
+//     is capped and expired like any ended record;
+//   - the table no longer holds the task: its end is lost, and the
+//     record is dropped (kept is false).
+//
+// The caller holds c.mu; the task manager's lock is taken under it
+// (Get), in the order the Locks section of chainIndexTasks gives.
+func (c *chainIndexTasks) settleLocked(key string, record chainTaskRecord) (settled chainTaskRecord, running *tasks.Task, kept bool) {
+	task, known := c.tasks.Get(record.taskID)
+	switch {
+	case !known:
+		delete(c.records, key)
+		return record, nil, false
+	case !task.IsTerminal():
+		return record, task, true
+	}
+	record.end = &chainTaskEnd{status: task.Status, err: task.Error, at: c.now()}
+	// Go note: assigning to a key that is already in the map is allowed
+	// while the caller ranges over the map (pruneLocked does); it neither
+	// adds an entry nor makes the range visit one twice.
+	c.records[key] = record
+	return record, nil, true
 }
 
 // expired reports whether an ended record is older than the task TTL at
@@ -324,28 +369,22 @@ func (c *chainIndexTasks) last(d *logchain.Description) *rxtypes.SamplesIndexBui
 // that are no longer the chain's. A running task is kept whatever its
 // fingerprint: it holds the chain's key, so a start joins it anyway.
 //
-// A record without an end whose task has ended in the table is a task
-// whose goroutine panicked (runDetached failed it before its run could
-// record the end): its end is taken from the table now, so that it too
-// outlives the task's place there. When that task has left the table
-// already, its end is lost and the record is dropped. The caller holds
-// c.mu.
+// A record without an end is settled against the table first
+// (settleLocked). The caller holds c.mu.
 func (c *chainIndexTasks) lastLocked(key, fingerprint string) *tasks.Task {
 	record, recorded := c.records[key]
 	if !recorded {
 		return nil
 	}
 	if record.end == nil {
-		task, known := c.tasks.Get(record.taskID)
+		settled, running, kept := c.settleLocked(key, record)
 		switch {
-		case !known:
-			delete(c.records, key)
+		case running != nil:
+			return running
+		case !kept:
 			return nil
-		case !task.IsTerminal():
-			return task
 		}
-		record.end = &chainTaskEnd{status: task.Status, err: task.Error, at: c.now()}
-		c.records[key] = record
+		record = settled
 	}
 	if c.expired(record, c.now()) || record.fingerprint != fingerprint {
 		delete(c.records, key)
