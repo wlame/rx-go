@@ -141,9 +141,10 @@ test-race:
 test-repeat pkg='./...':
     ./scripts/test-isolated-home.sh go test -race -count=10 {{pkg}}
 
-# Benchmarks. Not a CI gate; for local before/after comparison.
+# Benchmarks, not a CI gate; each argument reaches go test as one word (-bench='A|B')
+[positional-arguments]
 bench *args:
-    ./scripts/test-isolated-home.sh go test -run='^$' -bench=. -benchmem {{args}} ./...
+    ./scripts/test-isolated-home.sh go test -run='^$' -bench=. -benchmem "$@" ./...
 
 # Tests with the coverage floor. No -race here: `just ci` runs the race tests,
 # and race plus atomic coverage pushes slow tests past their own time limits.
