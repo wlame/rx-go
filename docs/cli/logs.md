@@ -234,9 +234,9 @@ write them, as for `rx logs show`) with their zone, and the context;
 then one block per position, in the order of the lines (a time by the
 line it found), headed `=== HANDLE:KEY ===` (`=== HANDLE PART:KEY ===`
 for a part's own numbers, `=== HANDLE:LINE @ TIME ===` for a time).
-Each line is printed with its global number (`?` before the chain is
-ready), the part it comes from and its number in that part; a
-`-- NAME --` line marks where a part's lines start. A position the
+Each line is printed with its global number, the part it comes from
+and its number in that part; a `-- NAME --` line marks where a part's
+lines start. A position the
 chain has no line for is named on stderr, as `rx samples` names one.
 
 `rx logs samples` never waits for background work: it describes the

@@ -101,9 +101,11 @@ answer shows:
 | `too_many_parts` | bool | Whether the chain has more than 10,000 parts |
 
 A chain may have at most 10,000 parts. A larger one is still listed,
-with `too_many_parts` true, and is read no further: `parts` and
-`missing` are empty, `missing_count` is 0, `size` is 0 and `is_indexed`
-is false. The routes that read a chain as one text refuse it.
+with `too_many_parts` true, but not as one text: `parts` and `missing`
+are empty, `missing_count` is 0, `size` is 0 and `is_indexed` is
+false. The routes that read a chain as one text refuse it (`GET
+/v1/logs/chain` describes it invalid); a search
+([`GET /v1/logs/trace`](logs-trace.md)) searches its files one by one.
 
 ## Status codes
 
