@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// Text gives the timestamp of a line as the line writes it, for the
-// playground's shapes and every family.
+// Text gives the timestamp of a line as the line writes it, for common
+// log shapes and every family.
 func TestText_GivesTheTimestampAsWritten(t *testing.T) {
 	cases := []struct {
 		name   string

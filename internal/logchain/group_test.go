@@ -154,13 +154,13 @@ func TestGroup_MissingNamesStopAtTheirLimit(t *testing.T) {
 func TestGroup_BinaryFilesAreExcludedAndEmptyFilesAreText(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string][]byte{
-		"wtmp":              binaryBytes,
-		"wtmp.1":            binaryBytes,
-		"kern.log":          textLines("kern.log"),
-		"kern.log.1":        binaryBytes,
-		"kern.log.2.gz":     compressedcopy.Encode(t, compressedcopy.Gzip, textLines("kern.log.2")),
-		"kern.log.3.gz":     compressedcopy.Encode(t, compressedcopy.Gzip, binaryBytes),
-		"edge-agent.log": nil, "edge-agent.log.1": nil, "edge-agent.log.2": nil,
+		"wtmp":          binaryBytes,
+		"wtmp.1":        binaryBytes,
+		"kern.log":      textLines("kern.log"),
+		"kern.log.1":    binaryBytes,
+		"kern.log.2.gz": compressedcopy.Encode(t, compressedcopy.Gzip, textLines("kern.log.2")),
+		"kern.log.3.gz": compressedcopy.Encode(t, compressedcopy.Gzip, binaryBytes),
+		"agent.log":     nil, "agent.log.1": nil, "agent.log.2": nil,
 	})
 	var classified []string
 	classify := func(e Entry) (filekind.Kind, error) {
@@ -169,15 +169,15 @@ func TestGroup_BinaryFilesAreExcludedAndEmptyFilesAreText(t *testing.T) {
 	}
 	got := chainsByName(Group(dir, listedEntries(t, dir), classify))
 	want := map[string][]string{
-		"kern.log":          {"kern.log.2.gz", "kern.log"},
-		"edge-agent.log": {"edge-agent.log.2", "edge-agent.log.1", "edge-agent.log"},
+		"kern.log":  {"kern.log.2.gz", "kern.log"},
+		"agent.log": {"agent.log.2", "agent.log.1", "agent.log"},
 	}
 	if len(got) != len(want) || !slices.Equal(got["kern.log"], want["kern.log"]) ||
-		!slices.Equal(got["edge-agent.log"], want["edge-agent.log"]) {
+		!slices.Equal(got["agent.log"], want["agent.log"]) {
 		t.Fatalf("chains %v, want %v", got, want)
 	}
 	for _, name := range classified {
-		if strings.HasPrefix(name, "edge-agent") {
+		if strings.HasPrefix(name, "agent.log") {
 			t.Fatalf("an empty file was opened for the text check: %v", classified)
 		}
 	}
@@ -241,9 +241,10 @@ func TestGroup_NumbersBeforeTheExtensionNeedATextActiveFile(t *testing.T) {
 	}
 }
 
-// The names and kinds of a real /var/log (the playground's log-fb):
-// exactly the rotated logs are chains, and every other file is in none.
-func TestGroup_RealLogDirectoryLayout(t *testing.T) {
+// A /var/log with rotated, empty and binary files, files of one
+// generation only and subdirectories: exactly the rotated logs are
+// chains, and every other file is in none.
+func TestGroup_LogDirectoryWithRotatedEmptyAndBinaryFiles(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string][]byte{}
 	text := func(name string) { files[name] = textLines(name) }
@@ -257,8 +258,8 @@ func TestGroup_RealLogDirectoryLayout(t *testing.T) {
 		gz(fmt.Sprintf("alternatives.log.%d.gz", n))
 	}
 	text("auth.log")
-	for _, d := range []string{"20260930-1790726400", "20261001-1790812801", "20261002-1790899201",
-		"20261003-1790985601", "20261004-1791072001", "20261005-1791158401", "20261006-1791244800"} {
+	for _, d := range []string{"20260309-1773014400", "20260310-1773100801", "20260311-1773187201",
+		"20260312-1773273601", "20260313-1773360001", "20260314-1773446401", "20260315-1773532800"} {
 		gz("auth.log-" + d + ".gz")
 		gz("syslog-" + d + ".gz")
 	}
@@ -269,29 +270,29 @@ func TestGroup_RealLogDirectoryLayout(t *testing.T) {
 	text("dmesg.0")
 	gz("dmesg.1.gz")
 	gz("dmesg.2.gz")
-	text("dnslogs")
+	text("bootnotes")
 	empty("dpkg.log")
 	text("dpkg.log.1")
 	for n := 2; n <= 11; n++ {
 		gz(fmt.Sprintf("dpkg.log.%d.gz", n))
 	}
-	text("edge-bpf.log")
-	empty("edge-agent.log")
+	text("agent-bpf.log")
+	empty("agent.log")
 	for n := 1; n <= 7; n++ {
-		empty(fmt.Sprintf("edge-agent.log.%d", n))
+		empty(fmt.Sprintf("agent.log.%d", n))
 	}
-	text("edgectl.log")
-	empty("edged.log")
+	text("agentctl.log")
+	empty("agentd.log")
 	text("fontconfig.log")
 	empty("kern.log")
-	gz("kern.log-20260929-1790640000.gz")
-	gz("kern.log-20261003-1790985601.gz")
-	gz("kern.log-20261004-1791072001.gz")
+	gz("kern.log-20260308-1772928000.gz")
+	gz("kern.log-20260312-1773273601.gz")
+	gz("kern.log-20260313-1773360001.gz")
 	binary("lastlog")
 	binary("wtmp")
 	binary("wtmp.1")
 	writeFiles(t, dir, files)
-	for _, sub := range []string{"apt", "atop", "probe-agent", "ntpstats", "openvswitch", "private", "prometheus", "redis", "subd"} {
+	for _, sub := range []string{"apt", "cache", "db", "installer", "journal", "metrics", "monitor", "private", "web"} {
 		if err := os.Mkdir(filepath.Join(dir, sub), 0o750); err != nil {
 			t.Fatal(err)
 		}
@@ -299,8 +300,8 @@ func TestGroup_RealLogDirectoryLayout(t *testing.T) {
 
 	got := Group(dir, listedEntries(t, dir), ClassifyPinned)
 	wantCounts := map[string]int{
-		"alternatives.log": 7, "auth.log": 8, "dmesg": 4, "dpkg.log": 12,
-		"edge-agent.log": 8, "kern.log": 4, "syslog": 8,
+		"agent.log": 8, "alternatives.log": 7, "auth.log": 8, "dmesg": 4, "dpkg.log": 12,
+		"kern.log": 4, "syslog": 8,
 	}
 	inChain := map[string]bool{}
 	var names []string
@@ -316,7 +317,7 @@ func TestGroup_RealLogDirectoryLayout(t *testing.T) {
 			inChain[p.Name] = true
 		}
 	}
-	if !slices.Equal(names, []string{"alternatives.log", "auth.log", "dmesg", "dpkg.log", "edge-agent.log", "kern.log", "syslog"}) {
+	if !slices.Equal(names, []string{"agent.log", "alternatives.log", "auth.log", "dmesg", "dpkg.log", "kern.log", "syslog"}) {
 		t.Fatalf("chains %v", names)
 	}
 	parts := 0

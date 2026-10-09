@@ -171,8 +171,8 @@ func intPtr(v int) *int { return &v }
 
 func strPtr(s string) *string { return &s }
 
-// logShape is one way the real logs of the playground write their
-// lines, reproduced in a few dozen generated lines.
+// logShape is one way real logs write their lines, reproduced in a few
+// dozen generated lines.
 type logShape struct {
 	name string
 	// first is the moment of the first line; each later timestamped
