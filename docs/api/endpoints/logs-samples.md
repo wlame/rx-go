@@ -142,7 +142,8 @@ the same files answers `500` with the task's message
 ([`POST /v1/logs/index`](logs-index.md) starts it again). A chain whose
 task does not run and cannot start, because 128 chains' index tasks run
 or wait already ([`POST /v1/logs/index`](logs-index.md#the-task)),
-answers `503`: ask again once one of them has ended.
+answers `503` with `Retry-After: 5`: ask again in that many seconds,
+once one of them may have ended.
 
 ## What it reads
 
@@ -211,7 +212,7 @@ what the answer has room for still. Over them, `400`.
 | `409 Conflict` | The body is the current description: `fingerprint` differs from it, or a part was renamed or replaced while the request read it |
 | `422 Unprocessable Entity` | The chain is invalid (the detail lists the reasons, as `GET /v1/logs/chain` describes them); or `path` is missing, or `fingerprint` is not 16 hex digits |
 | `500 Internal Server Error` | The chain's last index task failed for these files, or its files kept changing |
-| `503 Service Unavailable` | A request by global line or by time on a pending chain whose index task does not run and cannot start now: 128 chains' index tasks run or wait already |
+| `503 Service Unavailable` | A request by global line or by time on a pending chain whose index task does not run and cannot start now: 128 chains' index tasks run or wait already. The header `Retry-After: 5` gives the seconds to wait before asking again |
 
 ## Examples
 

@@ -3,9 +3,13 @@ package webapi
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/wlame/rx-go/internal/index"
 	"github.com/wlame/rx-go/internal/logchain"
@@ -413,12 +417,34 @@ func (c *chainIndexTasks) forDescription(d *logchain.Description) (build *rxtype
 	return chainIndexBuildOf(*task, handle), false
 }
 
+// chainTasksFullRetryAfterSeconds is the Retry-After of the 503 answer
+// for a pending chain whose index task cannot start: how long a client
+// waits before it asks again. A place frees when any chain index task
+// ends, which a client cannot see, so the answer names a short wait
+// rather than the length of a build.
+const chainTasksFullRetryAfterSeconds = 5
+
 // chainTasksFullDetail is the detail of the 503 answer for a pending
 // chain, handle, whose index task cannot start: limit chain index tasks
 // are unfinished already.
 func chainTasksFullDetail(handle string, limit int) string {
 	return fmt.Sprintf("The log chain %s is pending, and its index task cannot start now: the most log chain index "+
 		"tasks the server runs at once (%d) are running or waiting; ask again once one of them has ended", handle, limit)
+}
+
+// chainTasksFullError is the 503 answer for a pending chain, handle,
+// whose index task cannot start because limit chain index tasks are
+// unfinished already: the error envelope with chainTasksFullDetail, and
+// a Retry-After header that tells the client when to ask again.
+//
+// Go note: huma.ErrorWithHeaders wraps the error in a type that carries
+// the headers and unwraps to the apiError inside it. huma copies the
+// headers onto the response, then finds the status through errors.As,
+// which follows that Unwrap, so the status and the body stay those of
+// ErrServiceUnavailable.
+func chainTasksFullError(handle string, limit int) error {
+	return huma.ErrorWithHeaders(ErrServiceUnavailable(chainTasksFullDetail(handle, limit)),
+		http.Header{"Retry-After": {strconv.Itoa(chainTasksFullRetryAfterSeconds)}})
 }
 
 // last names the last index task started for the chain d describes, as

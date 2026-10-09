@@ -50,7 +50,8 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
 - **At most 128 chain tasks at once.** As many chains' index tasks run
   or wait at once as the part builds of all chains may take places in
   the build queue (half of it, 128), so each can hold one. Past that, no
-  task starts: the request answers `503` and starts nothing, and a
+  task starts: the request answers `503` with `Retry-After: 5` (the
+  seconds to wait before asking again) and starts nothing, and a
   describe of a pending chain names no task (`index_build` null) until
   one of them ends. A request for a chain whose task runs still joins
   it.
@@ -135,7 +136,7 @@ A request that joins a running task says so in `message`.
 | `409 Conflict` | The body is the current description (as `GET /v1/logs/chain` gives it): `fingerprint` differs from it, or a part was replaced while the request read it. No task starts |
 | `422 Unprocessable Entity` | `path` is missing, or `fingerprint` is not 16 hex digits |
 | `500 Internal Server Error` | The chain's files kept changing on every attempt to read them (three) |
-| `503 Service Unavailable` | No task runs for the chain, and none can start: 128 chains' index tasks run or wait already. No task started; ask again once one of them has ended |
+| `503 Service Unavailable` | No task runs for the chain, and none can start: 128 chains' index tasks run or wait already. No task started; ask again once one of them has ended. The header `Retry-After: 5` gives the seconds to wait before asking again |
 
 ## Examples
 

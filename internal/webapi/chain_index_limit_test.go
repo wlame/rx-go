@@ -1,10 +1,12 @@
 package webapi
 
 import (
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,34 @@ import (
 	"github.com/wlame/rx-go/internal/samples"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
+
+// chainRouteAnswer is one answer of a chain route: its status, body and
+// headers.
+type chainRouteAnswer struct {
+	route  string
+	status int
+	body   []byte
+	header http.Header
+}
+
+// askChainRoute sends one request without a body and returns its answer.
+func askChainRoute(t *testing.T, method, base, route string, query url.Values) chainRouteAnswer {
+	t.Helper()
+	req, err := http.NewRequest(method, base+route+"?"+query.Encode(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, route, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return chainRouteAnswer{route: method + " " + route, status: resp.StatusCode, body: body, header: resp.Header}
+}
 
 // unfinishedChainTasksOf reads how many index tasks of log chains hold
 // a place among the unfinished ones.
@@ -25,9 +55,10 @@ func unfinishedChainTasksOf(c *chainIndexTasks) int {
 // With as many chain index tasks unfinished as the limit allows (the
 // chains' share of the build queue, here 2), one more pending chain gets
 // no task: its describe answers pending with no index_build, and
-// POST /v1/logs/index and a samples request by global line answer 503.
-// A chain whose task runs is still joined at the limit. Once a task
-// ends, a describe of the chain past the limit starts its task.
+// POST /v1/logs/index and a samples request by global line answer 503
+// with a Retry-After of a few seconds. A chain whose task runs is still
+// joined at the limit. Once a task ends, a describe of the chain past
+// the limit starts its task.
 func TestChainIndex_APendingChainPastTheLimitStartsNoTask(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
@@ -55,20 +86,19 @@ func TestChainIndex_APendingChainPastTheLimitStartsNoTask(t *testing.T) {
 	}
 
 	past := describeChainAt(t, f.base, handle("c"))
-	posted, postBody := postChainIndex(t, f.base, url.Values{"path": {handle("c")}})
-	read, readBody := getLogSamples(t, f.base, url.Values{"path": {handle("c")}, "lines": {"1"}}, nil)
+	posted := askChainRoute(t, http.MethodPost, f.base, "/v1/logs/index", url.Values{"path": {handle("c")}})
+	read := askChainRoute(t, http.MethodGet, f.base, "/v1/logs/samples", url.Values{"path": {handle("c")}, "lines": {"1"}})
 	joined := describeChainAt(t, f.base, handle("a")).IndexBuild
 
 	if past.State != rxtypes.ChainStatePending || past.IndexBuild != nil {
 		t.Errorf("past the limit: state %s, index_build %+v; want pending with none", past.State, past.IndexBuild)
 	}
-	for _, answer := range []struct {
-		route  string
-		status int
-		body   []byte
-	}{{"POST /v1/logs/index", posted, postBody}, {"GET /v1/logs/samples", read, readBody}} {
+	for _, answer := range []chainRouteAnswer{posted, read} {
 		if answer.status != http.StatusServiceUnavailable || !strings.Contains(string(answer.body), "tasks the server runs at once (2) are running or waiting") {
 			t.Errorf("%s past the limit: status %d, %s; want 503 naming the limit", answer.route, answer.status, answer.body)
+		}
+		if got := answer.header.Get("Retry-After"); got != strconv.Itoa(chainTasksFullRetryAfterSeconds) {
+			t.Errorf("%s past the limit: Retry-After %q, want %d", answer.route, got, chainTasksFullRetryAfterSeconds)
 		}
 	}
 	if joined == nil || joined.TaskID != first.TaskID {
