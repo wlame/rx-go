@@ -20,10 +20,13 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -142,16 +145,20 @@ func appendVariablesRead(names []string, node any) []string {
 	return names
 }
 
-// readJustfileDump returns the repository justfile as
-// `just --dump --dump-format=json` describes it. The test skips when just
-// is not on PATH.
-func readJustfileDump(t *testing.T) justDump {
+// repositoryJustfile is the repository's justfile, seen from this
+// package's directory, where go test runs the tests.
+var repositoryJustfile = filepath.Join("..", "..", "justfile")
+
+// readJustfileDump returns the justfile as
+// `just --dump --dump-format=json` describes it. The dump only parses the
+// file: it runs no backtick and no recipe. The test skips when just is
+// not on PATH.
+func readJustfileDump(t *testing.T, justfile string) justDump {
 	t.Helper()
 	justPath, err := exec.LookPath("just")
 	if err != nil {
 		t.Skip("just is not on PATH; the justfile's recipes cannot be read")
 	}
-	justfile := filepath.Join("..", "..", "justfile")
 	out, err := exec.Command(justPath, "--justfile="+justfile, "--dump", "--dump-format=json").Output()
 	if err != nil {
 		// Output keeps the command's stderr in the *exec.ExitError it
@@ -174,7 +181,7 @@ func readJustfileDump(t *testing.T) justDump {
 // its command line, so each word a developer types reaches go test or
 // rx as one word.
 func TestJustfile_VariadicRecipesPassEachArgumentAsOneWord(t *testing.T) {
-	dump := readJustfileDump(t)
+	dump := readJustfileDump(t, repositoryJustfile)
 
 	checked := 0
 	// Sorted names give the failures in the same order on every run.
@@ -200,35 +207,154 @@ func TestJustfile_VariadicRecipesPassEachArgumentAsOneWord(t *testing.T) {
 	}
 }
 
-// Every {{…}} expression in a recipe's body reads only string literals of
-// the justfile. A recipe parameter reaches the shell as "$1" (with
-// [positional-arguments]) and a value just computes, such as the version
-// from `git describe`, as an exported variable read as "$NAME": either
-// way the shell sees it as one word and never reads it as code.
+// Every {{…}} expression in a recipe's body is exactly one top-level
+// variable assigned a string literal of the justfile. A recipe parameter
+// reaches the shell as "$1" (with [positional-arguments]) and a value
+// just computes, such as the version from `git describe`, as an exported
+// variable read as "$NAME": either way the shell sees it as one word and
+// never reads it as code.
 func TestJustfile_RecipesPasteOnlyLiteralsIntoTheirCommandLines(t *testing.T) {
-	dump := readJustfileDump(t)
+	violations, checked := literalPasteViolations(readJustfileDump(t, repositoryJustfile))
 
-	checked := 0
-	// Sorted names give the failures in the same order on every run.
-	for _, name := range slices.Sorted(maps.Keys(dump.Recipes)) {
-		recipe := dump.Recipes[name]
-		for _, variable := range recipe.interpolatedVariables() {
-			checked++
-			// A parameter hides the top-level variable of its name, so
-			// it is looked up first.
-			if recipe.hasParameter(variable) {
-				t.Errorf("recipe %s pastes its parameter {{%s}} into its command line; give the recipe [positional-arguments] and read \"$1\"", name, variable)
-				continue
-			}
-			assignment, found := dump.Assignments[variable]
-			if !found || !assignment.isLiteral() {
-				t.Errorf("recipe %s pastes {{%s}}, a value just computes when it runs, into its command line; export it and read it as \"$NAME\"", name, variable)
-			}
-		}
+	for _, violation := range violations {
+		t.Error(violation)
 	}
 	// The test recipes have pasted {{test_timeout}} from the start: none
 	// found means the dump's format changed under the test.
 	if checked == 0 {
 		t.Fatal("the dump shows no {{…}} expression in any recipe; did the format of just --dump change?")
+	}
+}
+
+// interpolations returns the {{…}} fragments of the recipe's body, in
+// order, each as the dump gives it: a JSON array that holds the
+// expression between {{ and }}. The text around them is left out.
+func (r justRecipe) interpolations() []json.RawMessage {
+	var found []json.RawMessage
+	for _, line := range r.Body {
+		for _, fragment := range line {
+			var text string
+			if json.Unmarshal(fragment, &text) == nil {
+				continue
+			}
+			found = append(found, fragment)
+		}
+	}
+	return found
+}
+
+// pastedVariable returns the name of the variable an interpolation
+// fragment reads when its expression is exactly one variable,
+// ["variable", name]. Any other expression gives false: a backtick
+// (["evaluate", …]), a function call, a concatenation, a path join, a
+// condition or a string literal, even one whose only variables are
+// literals, and any shape a later just may dump.
+func pastedVariable(fragment json.RawMessage) (string, bool) {
+	var expressions []json.RawMessage
+	if json.Unmarshal(fragment, &expressions) != nil || len(expressions) != 1 {
+		return "", false
+	}
+	// A node with a nested array, such as ["call", "env_var",
+	// ["variable", "x"]], does not decode into []string.
+	var node []string
+	if json.Unmarshal(expressions[0], &node) != nil || len(node) != 2 || node[0] != "variable" {
+		return "", false
+	}
+	return node[1], true
+}
+
+// pasteViolation returns why the interpolation fragment in the recipe
+// called name may not be pasted into a shell line, or "" when it reads
+// exactly a top-level variable assigned a string literal.
+func pasteViolation(name string, recipe justRecipe, assignments map[string]justAssignment, fragment json.RawMessage) string {
+	variable, isVariable := pastedVariable(fragment)
+	if !isVariable {
+		return fmt.Sprintf("recipe %s pastes the expression %s into its command line; only a variable assigned a string literal may be pasted: export the value and read it as \"$NAME\"", name, fragment)
+	}
+	// A parameter hides the top-level variable of its name, so it is
+	// looked up first.
+	if recipe.hasParameter(variable) {
+		return fmt.Sprintf("recipe %s pastes its parameter {{%s}} into its command line; give the recipe [positional-arguments] and read \"$1\"", name, variable)
+	}
+	if assignment, found := assignments[variable]; !found || !assignment.isLiteral() {
+		return fmt.Sprintf("recipe %s pastes {{%s}}, a value just computes when it runs, into its command line; export it and read it as \"$NAME\"", name, variable)
+	}
+	return ""
+}
+
+// literalPasteViolations checks every {{…}} expression in the recipes of
+// dump and returns one message for each that pastes anything but a
+// top-level variable assigned a string literal, in the order of the
+// recipes' names, with the number of expressions it checked.
+func literalPasteViolations(dump justDump) (violations []string, checked int) {
+	// Sorted names give the messages in the same order on every run.
+	for _, name := range slices.Sorted(maps.Keys(dump.Recipes)) {
+		recipe := dump.Recipes[name]
+		for _, fragment := range recipe.interpolations() {
+			checked++
+			if violation := pasteViolation(name, recipe, dump.Assignments, fragment); violation != "" {
+				violations = append(violations, violation)
+			}
+		}
+	}
+	return violations, checked
+}
+
+// appendToJustfile appends text to the justfile at path.
+func appendToJustfile(t *testing.T, path, text string) {
+	t.Helper()
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	if _, err := file.WriteString(text); err != nil {
+		_ = file.Close() // the write error is the one to report
+		t.Fatalf("append to %s: %v", path, err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close %s: %v", path, err)
+	}
+}
+
+// The guard refuses every {{…}} expression but one that reads exactly a
+// variable assigned a string literal. A value just computes reaches the
+// shell as code whatever else the expression holds: a backtick or a
+// function needs no variable at all, and env_var of a literal variable
+// reads the environment variable the literal names. Each case appends one
+// recipe, with the variables it needs, to a copy of the repository
+// justfile, which itself passes the guard.
+func TestJustfilePasteGuard_RefusesEveryExpressionButALiteralVariable(t *testing.T) {
+	cases := []struct {
+		name        string
+		text        string
+		wantRefused bool
+	}{
+		{"a backtick", "crafted:\n    echo '{{`git describe --tags`}}'\n", true},
+		{"a function that reads no variable", "crafted:\n    echo '{{env_var_or_default(\"GITHUB_REF_NAME\", \"x\")}}'\n", true},
+		{"a function of a literal variable", "crafted_name := \"GITHUB_REF_NAME\"\n\ncrafted:\n    echo '{{env_var(crafted_name)}}'\n", true},
+		{"a literal variable joined to a backtick", "crafted_literal := \"v\"\n\ncrafted:\n    echo '{{crafted_literal + `git describe --tags`}}'\n", true},
+		{"a condition on a literal variable", "crafted_literal := \"v\"\n\ncrafted:\n    echo '{{ if crafted_literal == \"v\" { `git describe --tags` } else { \"\" } }}'\n", true},
+		{"a string literal", "crafted:\n    echo '{{\"text\"}}'\n", true},
+		{"a variable just computes", "crafted_computed := `git describe --tags`\n\ncrafted:\n    echo '{{crafted_computed}}'\n", true},
+		{"a recipe parameter", "crafted tag:\n    echo '{{tag}}'\n", true},
+		{"a literal variable", "crafted_literal := \"v\"\n\ncrafted:\n    echo '{{crafted_literal}}'\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			justfile := copyJustfile(t, t.TempDir())
+			appendToJustfile(t, justfile, "\n"+tc.text)
+
+			violations, _ := literalPasteViolations(readJustfileDump(t, justfile))
+
+			if !tc.wantRefused {
+				if len(violations) != 0 {
+					t.Errorf("the guard refused %q: %q", tc.text, violations)
+				}
+				return
+			}
+			if len(violations) != 1 || !strings.HasPrefix(violations[0], "recipe crafted ") {
+				t.Errorf("the guard gave %q for %q; want one message about the recipe crafted", violations, tc.text)
+			}
+		})
 	}
 }
