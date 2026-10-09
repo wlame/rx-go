@@ -134,8 +134,16 @@ build green.
 
 A recipe that forwards its arguments carries `[positional-arguments]` and
 passes them as `"$@"` (or `"$1"`), never as `{{args}}`, which the shell
-splits again at spaces and at `|`. `cmd/rx/justfile_args_test.go` fails on
-a variadic recipe that does not.
+splits again at spaces and at `|`. The same holds for every value that
+does not come from the justfile's own text. just pastes a `{{…}}` value
+into the recipe line before the shell reads it, so a quote, `;`, `$(` or
+backtick in the value runs as code. The version from `git describe` holds
+a tag name, which may contain all of them: the recipes read it as
+`"$BUILD_VERSION"`, which the justfile exports. Only string literals of
+the justfile (`test_timeout`, `coverage_min`) are pasted.
+`cmd/rx/justfile_args_test.go` fails on a recipe that pastes anything
+else, and `cmd/rx/justfile_release_test.go` runs `release-notes`,
+`version`, `build` and `build-all` on crafted tag names.
 
 Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it); CI runs
 1.25 and 1.26. `golangci-lint` v2.x and `govulncheck` are needed for `just
@@ -482,7 +490,9 @@ Paste the output. Do not summarize it.
   tree. `just release-dry patch` previews, `just release patch` runs the CI
   gate, promotes the changelog, commits and tags — and then prints the `git
   push` commands rather than running them. Pushing the tag is what triggers
-  `release.yml`, which builds the binaries and their sha256 sidecars.
+  `release.yml`, which builds the binaries and their sha256 sidecars. Its
+  first step stops the job unless the tag is exactly `vX.Y.Z`, and
+  `just release-notes` accepts only `X.Y.Z`.
 - Never push. Never `git reset`, `stash`, `rebase` or discard changes.
 - Working files (plans, audits, notes) go in the gitignored `.claude/`.
 
