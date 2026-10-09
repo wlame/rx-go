@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -43,11 +44,29 @@ var commandPrefixWords = map[string]bool{"time": true}
 // paths relative to this package's directory.
 func docPages(t *testing.T) []string {
 	t.Helper()
-	repoRoot := filepath.Join("..", "..")
+	return docPagesUnder(t, filepath.Join("..", ".."))
+}
+
+// unpublishedDocDirs are the directories right under docs/ that
+// .gitignore leaves out: working material that exists on one machine
+// only, which mkdocs does not publish either. A page there is no doc
+// page, and the docs tests do not read it.
+var unpublishedDocDirs = map[string]bool{"plans": true, "superpowers": true}
+
+// docPagesUnder returns README.md and every Markdown page under docs/
+// of the repository at repoRoot, outside unpublishedDocDirs.
+func docPagesUnder(t *testing.T, repoRoot string) []string {
+	t.Helper()
+	docsDir := filepath.Join(repoRoot, "docs")
 	pages := []string{filepath.Join(repoRoot, "README.md")}
-	err := filepath.WalkDir(filepath.Join(repoRoot, "docs"), func(path string, entry fs.DirEntry, err error) error {
+	err := filepath.WalkDir(docsDir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// filepath.SkipDir, returned for a directory, makes WalkDir
+		// leave out everything below it.
+		if entry.IsDir() && filepath.Dir(path) == docsDir && unpublishedDocDirs[entry.Name()] {
+			return filepath.SkipDir
 		}
 		if !entry.IsDir() && strings.HasSuffix(path, ".md") {
 			pages = append(pages, path)
@@ -300,5 +319,38 @@ func TestDocCommands_SplitsLikeAShellWithoutRunningAnything(t *testing.T) {
 		if strings.Join(got, "\x00") != strings.Join(tc.want, "\x00") || (got == nil) != (tc.want == nil) {
 			t.Errorf("rxCommandWords(%q) = %q, want %q", tc.line, got, tc.want)
 		}
+	}
+}
+
+// The pages the docs tests read are the published ones: README.md and
+// the Markdown pages under docs/, without the gitignored working
+// directories there (docs/plans, docs/superpowers), whose files exist
+// on one machine only.
+func TestDocPages_LeaveOutTheGitignoredWorkingDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, page := range []string{
+		"README.md", "docs/index.md", "docs/cli/logs.md", "docs/notes.txt",
+		"docs/plans/a-plan.md", "docs/superpowers/specs/a-spec.md", "docs/cli/plans/kept.md",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(page))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# page\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	for _, page := range docPagesUnder(t, root) {
+		rel, err := filepath.Rel(root, page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, filepath.ToSlash(rel))
+	}
+	slices.Sort(got)
+	want := []string{"README.md", "docs/cli/logs.md", "docs/cli/plans/kept.md", "docs/index.md"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("pages %v, want %v", got, want)
 	}
 }
