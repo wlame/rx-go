@@ -734,6 +734,13 @@
             "$ref": "#/components/schemas/SamplesIndexBuild",
             "description": "The background index build this answer started or joined, to follow at GET /v1/tasks/{task_id}: for a pending chain, its index task (operation chain_index), as GET /v1/logs/chain starts it; for a ready chain, the build of a part whose piece came from the head of its text (the active file, as GET /v1/samples starts one). Null when there is none. It says how the answer was produced; the lines are the same without it."
           },
+          "index_build_refused": {
+            "description": "Why a pending chain has no index task (index_build is null), in words, as GET /v1/logs/chain gives it: as many log chain index tasks as the server runs at once (128) are running or waiting, so none could start for this chain. A request after one of them has ended starts it. Null otherwise: for a ready chain, and for a pending chain whose task runs or was started or joined, that waits for no part, or whose last task failed for the same files (index_build names that task). rx logs samples gives null.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "lines": {
             "additionalProperties": {
               "format": "int64",
@@ -800,6 +807,7 @@
           "timestamps",
           "samples",
           "index_build",
+          "index_build_refused",
           "cli_command"
         ],
         "type": "object"

@@ -149,7 +149,10 @@ type ChainSamplesResponse struct {
 	Timestamps    map[string]int64        `json:"timestamps" doc:"Each time query of a timestamps request mapped to the global line it found: the first line whose own timestamp is at or after the time, or a range's first line; -1 when there is none. Empty for a lines request."`
 	Samples       map[string][]ChainPiece `json:"samples" doc:"Each key of lines or timestamps mapped to its lines, as pieces in the chain's order, one per part its window touches: the line with its context for a single line or time, or a range's lines. Null when the chain has no line of it."`
 	IndexBuild    *SamplesIndexBuild      `json:"index_build" doc:"The background index build this answer started or joined, to follow at GET /v1/tasks/{task_id}: for a pending chain, its index task (operation chain_index), as GET /v1/logs/chain starts it; for a ready chain, the build of a part whose piece came from the head of its text (the active file, as GET /v1/samples starts one). Null when there is none. It says how the answer was produced; the lines are the same without it."`
-	CLICommand    string                  `json:"cli_command" doc:"The rx command that gives this answer: rx logs samples."`
+	// IndexBuildRefused says why a pending chain has no index task, when
+	// the server could not start one for it; null in every other case.
+	IndexBuildRefused *string `json:"index_build_refused" doc:"Why a pending chain has no index task (index_build is null), in words, as GET /v1/logs/chain gives it: as many log chain index tasks as the server runs at once (128) are running or waiting, so none could start for this chain. A request after one of them has ended starts it. Null otherwise: for a ready chain, and for a pending chain whose task runs or was started or joined, that waits for no part, or whose last task failed for the same files (index_build names that task). rx logs samples gives null."`
+	CLICommand        string  `json:"cli_command" doc:"The rx command that gives this answer: rx logs samples."`
 }
 
 // ChainPiece is the lines one part gives to one key of a chain samples

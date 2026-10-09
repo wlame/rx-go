@@ -181,15 +181,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     carries none when the earlier part's last byte decides and reading it
     would decode more than is left of `RX_SAMPLES_MAX_BYTES`. Before the
     chain is ready a part is read alone (`part` and `lines`, global numbers
-    -1), and a request by global line or by time waits for the chain's
-    index task, `202` with the task under `Prefer: respond-async` once
-    `RX_SAMPLES_WAIT_SECONDS` has passed, `503` with `Retry-After: 5`
-    when the task does not run and cannot start because 128 chains'
-    index tasks run or wait. Parts are read through the
-    path of `GET /v1/samples` (their index, an answer from the head while
-    a part's index builds, `202` for a part build that outlasts the
-    wait). `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` bound the
-    whole answer. 409 with the current description when `fingerprint`
+    -1; `index_build_refused` says why the chain has no index task when
+    none could start), and a request by global line or by time waits for
+    the chain's index task, `202` with the task under
+    `Prefer: respond-async` once `RX_SAMPLES_WAIT_SECONDS` has passed,
+    `503` with `Retry-After: 5` when the task does not run and cannot
+    start because 128 chains' index tasks run or wait. Parts are read
+    through the path of `GET /v1/samples` (their index, an answer from
+    the head while a part's index builds, `202` for a part build that
+    outlasts the wait). `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES`
+    bound the whole answer. 409 with the current description when `fingerprint`
     differs or a part changed while it was read; 422 for an invalid
     chain (the detail lists the reasons); 404 when the handle names fewer
     than two parts; 400 for a part that is not a member and the samples

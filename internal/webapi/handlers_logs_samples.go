@@ -203,7 +203,7 @@ func registerLogSamplesHandler(s *Server, api huma.API) {
 				return waited, err
 			}
 		}
-		chainBuild, _ := s.chainIndex.forDescription(d)
+		chainBuild, chainRefused := s.chainIndex.forDescription(d)
 		reader := s.chainPartReader(limit)
 		parsed.samples.MaxLines, parsed.samples.MaxBytes = config.SamplesMaxLines(), config.SamplesMaxBytes()
 		parsed.samples.IndexLoader = samples.StoredIndex
@@ -216,7 +216,14 @@ func registerLogSamplesHandler(s *Server, api huma.API) {
 		}
 		resp.IndexBuild = reader.built
 		if d.Response.State == rxtypes.ChainStatePending {
+			// A request addressed to a part of a pending chain is answered
+			// without the chain's index task. When no task could start for
+			// the chain, the answer says why, as its description does.
 			resp.IndexBuild = chainBuild
+			if chainRefused {
+				reason := chainTasksFullReason(s.chainIndex.maxUnfinished())
+				resp.IndexBuildRefused = &reason
+			}
 		}
 		FillChainSamplesCommands(resp, in.FileTZ, map[string]any{
 			"path": resp.Path, "lines": in.Lines, "part": in.Part, "timestamps": in.Timestamps, "file_tz": in.FileTZ,

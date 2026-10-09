@@ -132,7 +132,9 @@ A request addressed to a part (`part` and `lines`) is answered at once
 from that part alone: its context and its look back stop at the part's
 edges (`part_start`, `part_end` say so), the global numbers are `-1`,
 and `index_build` names the chain's index task, which the request
-starts or joins as `GET /v1/logs/chain` does.
+starts or joins as `GET /v1/logs/chain` does. When no task can start,
+because 128 chains' index tasks run or wait already, `index_build` is
+`null` and `index_build_refused` says why, as in the description.
 
 A request by global line or by time waits for the chain's index task,
 up to `RX_SAMPLES_WAIT_SECONDS` with `Prefer: respond-async` (then
@@ -186,6 +188,7 @@ what the answer has room for still. Over them, `400`.
     ]
   },
   "index_build": null,
+  "index_build_refused": null,
   "cli_command": "rx logs samples /var/log/syslog --lines=8214 --context=1"
 }
 ```
@@ -198,6 +201,7 @@ what the answer has room for still. Over them, `400`.
 | `timestamps` | object | Each time query to the global line it found (a range's first); `-1` when none |
 | `samples` | object | Each key to its pieces; `null` when the chain has no line of it, `[]` for a range that ends at 0 |
 | `index_build` | object \| null | The background index build this answer started or joined: the chain's index task for a pending chain; for a ready chain the build of a part read from its head; `null` otherwise |
+| `index_build_refused` | string \| null | For a pending chain that has no index task because 128 chains' index tasks run or wait already, why, in words, as `GET /v1/logs/chain` gives it; `null` otherwise. `rx logs samples` gives `null` |
 | `cli_command` | string | The equivalent `rx logs samples` command |
 
 ## Status codes
