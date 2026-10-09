@@ -20,7 +20,7 @@ import (
 // maxBase is the moment the generated logs of these tests start at.
 var maxBase = time.Date(2025, 12, 10, 7, 0, 0, 0, time.UTC)
 
-// isoAt is a line of the app.log shape written d after maxBase,
+// isoAt is a zone-less ISO line with milliseconds written d after maxBase,
 // followed by rest.
 func isoAt(d time.Duration, rest string) timedLine {
 	at := maxBase.Add(d)
@@ -249,7 +249,7 @@ func TestBuild_MaxIsInTheFrameOfFirstAndLast(t *testing.T) {
 	}
 	gcAt := maxBase.Add(59 * time.Minute)
 	walls = append(walls, timedLine{
-		text: "[" + gcAt.Format("2006-01-02T15:04:05.000") + "-0700][512.004s][info][gc] Pause Young",
+		text: "[" + gcAt.Format("2006-01-02T15:04:05.000") + "-0700][812.406s][info][gc] Pause Young",
 		ms:   gcAt.UnixMilli(), has: true,
 	})
 	walls = append(walls, isoAt(time.Hour+30*time.Second, "INFO served"))

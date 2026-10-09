@@ -122,7 +122,7 @@ func TestOwn_ISO(t *testing.T) {
 // reading the zoned ones as instants would put them seven hours after
 // their neighbors. Zoned and OffsetMinutes still say what was written.
 func TestOwn_OneFramePerFile(t *testing.T) {
-	gcLine := "[2025-12-10T07:00:07.953-0700][512.004s][info][gc] GC(57) Pause Young"
+	gcLine := "[2025-12-10T07:00:07.953-0700][812.406s][info][gc] GC(57) Pause Young"
 	runOwnCases(t, []ownCase{
 		{"zoned line, zone-less file", isoAnchored, gcLine,
 			Stamp{Ms: utcMs(2025, 12, 10, 7, 0, 7, 953), Zoned: true, OffsetMinutes: -420}, true},
@@ -161,7 +161,7 @@ func TestOwn_Ctime(t *testing.T) {
 
 func TestOwn_Syslog(t *testing.T) {
 	runOwnCases(t, []ownCase{
-		{"core.log shape", syslogAnchored, "Dec 10 07:49:50.123 7A3F09C21B5E I      job.scheduler.retry", wall(utcMs(2025, 12, 10, 7, 49, 50, 123)), true},
+		{"milliseconds and a thread id", syslogAnchored, "Dec 10 07:49:50.123 7A3F09C21B5E I      job.scheduler.retry", wall(utcMs(2025, 12, 10, 7, 49, 50, 123)), true},
 		{"space-padded day", syslogAnchored, "Oct  6 12:34:56 host sshd[1]: x", wall(utcMs(2025, 10, 6, 12, 34, 56, 0)), true},
 		{"upper-case month", syslogAnchored, "DEC 10 07:49:50 x", wall(utcMs(2025, 12, 10, 7, 49, 50, 0)), true},
 		{"full month name", syslogAnchored, "December 10 07:49:50 x", Stamp{}, false},

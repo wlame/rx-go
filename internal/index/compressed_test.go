@@ -16,7 +16,7 @@ import (
 // The line index maps line numbers to byte offsets. Built straight off
 // a .gz those offsets addressed compressed bytes, so the checkpoints
 // pointed at noise and the statistics described the container instead
-// of the log — a 600 MB text file came back as 209,365 lines with a
+// of the log — a gzipped log came back with four times its lines and a
 // "mixed" line ending. rx-python indexes the decompressed content, and
 // this must agree with it.
 func TestBuildIndexesTheTextInsideACompressedFile(t *testing.T) {

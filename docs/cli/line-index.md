@@ -132,15 +132,15 @@ Output:
 ```text
 Index for: /var/log/app.log-2025121008
   file_type: text
-  size_bytes: 487561499
+  size_bytes: 487603212
   created_at: 2026-10-06T02:07:47.806161Z
   analysis_performed: false
-  line_count: 1436842
-  index_entries: 429
+  line_count: 1418377
+  index_entries: 431
   time_format: iso, at the start of each line, no zone, read as UTC
   first_timestamp: 2025-12-10 07:00:04.574 (line 1)
-  last_timestamp: 2025-12-10 08:00:04.390 (line 1436842)
-  timestamped_lines: 1387928
+  last_timestamp: 2025-12-10 08:00:04.390 (line 1418377)
+  timestamped_lines: 1372906
   backward_steps: 0
 ```
 

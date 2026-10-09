@@ -152,7 +152,7 @@ Produces `/var/log/audit-2026-03.log.zst` with 4 MiB frames at zstd
 level 3, and its index. Stdout, for a 465 MB application log:
 
 ```text
-wrote /var/log/audit-2026-03.log.zst (487561499 bytes → 47808474 bytes, 10.19x) in 114 frames
+wrote /var/log/audit-2026-03.log.zst (487603212 bytes → 47851149 bytes, 10.19x) in 114 frames
 ```
 
 The 10.19x ratio reads as "source-size / compressed-size" — i.e., the

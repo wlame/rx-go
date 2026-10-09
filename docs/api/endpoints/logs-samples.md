@@ -167,26 +167,26 @@ what the answer has room for still. Over them, `400`.
   "path": "/var/log/syslog",
   "name": "syslog",
   "state": "ready",
-  "fingerprint": "e8ed018e0ff41f34",
+  "fingerprint": "5b07d2e9a1c4f386",
   "parts": [ … as GET /v1/logs/chain … ],
   "before_context": 1,
   "after_context": 1,
-  "lines": {"15641": 15641},
+  "lines": {"8214": 8214},
   "timestamps": {},
   "samples": {
-    "15641": [
-      {"part": "syslog-20260930-1790726400.gz", "first_local_line": 15640, "first_global_line": 15640,
-       "lines": ["…", "…"], "line_timestamps": [1790726399000, 1790726400000],
+    "8214": [
+      {"part": "syslog-20260331-1774915200.gz", "first_local_line": 8213, "first_global_line": 8213,
+       "lines": ["…", "…"], "line_timestamps": [1774915199000, 1774915200000],
        "part_start": false, "part_end": true,
-       "cli_command": "rx samples /var/log/syslog-20260930-1790726400.gz --lines=15640-15641"},
-      {"part": "syslog-20261001-1790812801.gz", "first_local_line": 1, "first_global_line": 15642,
-       "lines": ["…"], "line_timestamps": [1790726400000],
+       "cli_command": "rx samples /var/log/syslog-20260331-1774915200.gz --lines=8213-8214"},
+      {"part": "syslog-20260401-1775001601.gz", "first_local_line": 1, "first_global_line": 8215,
+       "lines": ["…"], "line_timestamps": [1774915200000],
        "part_start": true, "part_end": false,
-       "cli_command": "rx samples /var/log/syslog-20261001-1790812801.gz --lines=1-1"}
+       "cli_command": "rx samples /var/log/syslog-20260401-1775001601.gz --lines=1-1"}
     ]
   },
   "index_build": null,
-  "cli_command": "rx logs samples /var/log/syslog --lines=15641 --context=1"
+  "cli_command": "rx logs samples /var/log/syslog --lines=8214 --context=1"
 }
 ```
 

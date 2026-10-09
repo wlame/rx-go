@@ -57,8 +57,8 @@ a missing cache directory gracefully return "no cache".
 For example, after a trace and an index of one log:
 
 ```text
-rx/indexes/app.log-2025121008_7d075e46bc77f062.json
-rx/trace_cache/65744821eb30e352/7d075e46bc77f062_app.log-2025121008.json
+rx/indexes/app.log-2025121008_3f9c1e07a2b45d18.json
+rx/trace_cache/c41a8e2f90d7b356/3f9c1e07a2b45d18_app.log-2025121008.json
 ```
 
 ### `indexes/`

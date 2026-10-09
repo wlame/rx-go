@@ -89,9 +89,9 @@ Some names and what the templates make of them:
 | `my app (1).log.2.gz` | `numbered` | `my app (1).log` | `2` | number |
 | `report.2023` | `numbered` | `report` | `2023` | date (a year) |
 | `auth.log-20261001.gz` | `dated` | `auth.log` | `20261001` | date |
-| `syslog-20261001-1790812801.gz` | `dated` | `syslog` | `20261001-1790812801` | date |
+| `syslog-20260401-1775001601.gz` | `dated` | `syslog` | `20260401-1775001601` | date |
 | `app.log.2026-10-01_12` | `dated` | `app.log` | `2026-10-01_12` | date |
-| `access_log.1790726400` | `dated` | `access_log` | `1790726400` | date |
+| `access_log.1774915200` | `dated` | `access_log` | `1774915200` | date |
 | `app-2026-10-01.3.log.gz` | `dated-ext` | `app.log` | `2026-10-01.3` | date |
 | `postgresql-2026-10-01_000000.log` | `dated-ext` | `postgresql.log` | `2026-10-01_000000` | date |
 | `app.1.log.gz` | `numbered-ext` | `app.log` | `1` | number |

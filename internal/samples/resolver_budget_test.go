@@ -90,9 +90,8 @@ func (f *countingOSFile) ReadAt(p []byte, off int64) (int, error) {
 }
 
 // makeLargeFixture writes a text file with a fixed number of ~150-byte
-// lines. Mimics the user's real-world fixture (posts_1m.txt: 1.3 GB
-// = 10M lines, avg ~130 bytes/line) on a smaller scale. Returns path
-// and total bytes.
+// lines. Mimics a large real-world text file of about 130 bytes per
+// line on a smaller scale. Returns path and total bytes.
 func makeLargeFixture(t *testing.T, numLines int) (path string, totalBytes int64) {
 	t.Helper()
 	path = filepath.Join(t.TempDir(), "fixture.txt")

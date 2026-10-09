@@ -351,7 +351,7 @@
             "type": "boolean"
           },
           "key": {
-            "description": "The number or date in the part's name as the name writes it (3, 20261001-1790812801, 2026-10-01.3); null for the active file.",
+            "description": "The number or date in the part's name as the name writes it (3, 20260401-1775001601, 2026-10-01.3); null for the active file.",
             "type": [
               "string",
               "null"

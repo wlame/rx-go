@@ -17,31 +17,31 @@ other members trimmed; `rx index --info --json` prints all of them):
 {
   "version": 10,
   "source_path": "/var/log/app.log-2025121008",
-  "source_modified_at": "2025-12-27T17:30:57.775888",
-  "source_size_bytes": 487561499,
+  "source_modified_at": "2025-12-11T09:14:22.418305",
+  "source_size_bytes": 487603212,
   "created_at": "2026-10-03T04:04:39.896939Z",
   "build_time_seconds": 0.123523083,
-  "source_inode": 121515888,
-  "source_changed_at": "2026-04-18T20:43:30.904417",
-  "source_fingerprint": "8bace9b40fccf36b77b65e88908e85458cf74ea44324c4aaff8b374adb8ddfe8",
-  "source_mtime_ns": 1766853057775888000,
-  "source_ctime_ns": 1776534210904417000,
-  "source_device": 16777232,
+  "source_inode": 48213377,
+  "source_changed_at": "2026-03-02T11:05:48.227160",
+  "source_fingerprint": "5d2a91c4e07b38f6a1c90d4e7b2f58a3c61e0f9d84b7a2e5c3f19d06b8e4a7c2",
+  "source_mtime_ns": 1765440862418305000,
+  "source_ctime_ns": 1772445948227160000,
+  "source_device": 16777229,
   "file_type": "text",
   "index_step_bytes": 1048576,
   "analysis_performed": false,
-  "line_count": 1436842,
-  "line_index": [[1, 0], [4713, 1048616], [7382, 2097336], [10118, 3157429]],
+  "line_count": 1418377,
+  "line_index": [[1, 0], [3561, 1048703], [6894, 2097412], [10236, 3146190]],
   "time_index": {
     "format": "iso",
     "anchored": true,
     "day_first": null,
     "has_zone": false,
     "year_from_mtime": false,
-    "timestamped_lines": 1387928,
+    "timestamped_lines": 1372906,
     "first": {"ms": 1765350004574, "line": 1, "offset": 0},
-    "last": {"ms": 1765353604390, "line": 1436842, "offset": 487561376},
-    "max": {"ms": 1765353604390, "line": 1436841, "offset": 487561120},
+    "last": {"ms": 1765353604390, "line": 1418377, "offset": 487603089},
+    "max": {"ms": 1765353604390, "line": 1418376, "offset": 487602833},
     "first_zone_offset_minutes": null,
     "backward_steps": 0,
     "max_backward_ms": 0,
@@ -52,11 +52,11 @@ other members trimmed; `rx index --info --json` prints all of them):
 }
 ```
 
-The real `line_index` has 429 entries. Each checkpoint is a
+The real `line_index` has 431 entries. Each checkpoint is a
 `[line_number, byte_offset]` pair; a seekable zstd index adds the frame
 as a third element, `[line_number, byte_offset, frame_index]`. Between
 checkpoints, no data is recorded — to find line 6000 you seek to the
-checkpoint for line 4713 and scan forward.
+checkpoint for line 3561 and scan forward.
 
 Every checkpoint names a line the file has: the first is `[1, 0]`, and
 each one is at the byte where its line starts (in a seekable zstd

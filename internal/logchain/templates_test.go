@@ -44,9 +44,9 @@ func TestGroup_EachTemplateFindsItsChainInProvisionalOrder(t *testing.T) {
 		},
 		{
 			label: "dated with an epoch suffix",
-			files: []string{"syslog-20261001-1790812801.gz", "syslog-20260930-1790726400.gz", "syslog"},
-			chain: "syslog", parts: []string{"syslog-20260930-1790726400.gz", "syslog-20261001-1790812801.gz", "syslog"},
-			template: "dated", key: "20260930-1790726400",
+			files: []string{"syslog-20260401-1775001601.gz", "syslog-20260331-1774915200.gz", "syslog"},
+			chain: "syslog", parts: []string{"syslog-20260331-1774915200.gz", "syslog-20260401-1775001601.gz", "syslog"},
+			template: "dated", key: "20260331-1774915200",
 		},
 		{
 			label: "dated by the hour", files: []string{"app.log.2026-10-01_12", "app.log.2026-10-01_11"},
@@ -59,9 +59,9 @@ func TestGroup_EachTemplateFindsItsChainInProvisionalOrder(t *testing.T) {
 			template: "dated", key: "20261001-120000",
 		},
 		{
-			label: "dated by epoch", files: []string{"access_log.1790812800", "access_log.1790726400"},
-			chain: "access_log", parts: []string{"access_log.1790726400", "access_log.1790812800"},
-			template: "dated", key: "1790726400",
+			label: "dated by epoch", files: []string{"access_log.1775001600", "access_log.1774915200"},
+			chain: "access_log", parts: []string{"access_log.1774915200", "access_log.1775001600"},
+			template: "dated", key: "1774915200",
 		},
 		{
 			label: "dated by yyyymmddhh", files: []string{"x.log.2026100112", "x.log.2026100111.gz", "x.log"},
@@ -311,14 +311,14 @@ func TestMatchName_Keys(t *testing.T) {
 		{"syslog.1", "syslog", KeyNumber, 1, 0, "numbered"},
 		{"dpkg.log.11.gz", "dpkg.log", KeyNumber, 11, 0, "numbered"},
 		{"dmesg.0", "dmesg", KeyNumber, 0, 0, "numbered"},
-		{"syslog-20261001-1790812801.gz", "syslog", KeyDate, 1790812801, ms(2026, 10, 1, 0, 0, 0, 0), "dated"},
+		{"syslog-20260401-1775001601.gz", "syslog", KeyDate, 1775001601, ms(2026, 4, 1, 0, 0, 0, 0), "dated"},
 		{"app.log.2026-10-01_12", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 0, 0, 0), "dated"},
 		{"app.log.2026-10-01_12-30", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 30, 0, 0), "dated"},
 		{"app.log.2026-10-01_1230", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 30, 0, 0), "dated"},
 		{"app.log.2026-10-01_12-30-15", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 30, 15, 0), "dated"},
 		{"app.log.2026-10-01T123015", "app.log", KeyDate, 0, ms(2026, 10, 1, 12, 30, 15, 0), "dated"},
 		{"0.log.20261001-120000", "0.log", KeyDate, 0, ms(2026, 10, 1, 12, 0, 0, 0), "dated"},
-		{"access_log.1790726400", "access_log", KeyDate, 0, 1790726400 * 1000, "dated"},
+		{"access_log.1774915200", "access_log", KeyDate, 0, 1774915200 * 1000, "dated"},
 		{"x.log.2026100112", "x.log", KeyDate, 0, ms(2026, 10, 1, 12, 0, 0, 0), "dated"},
 		{"x.log.20261001.bz2", "x.log", KeyDate, 0, ms(2026, 10, 1, 0, 0, 0, 0), "dated"},
 		{"app.1.log.gz", "app.log", KeyNumber, 1, 0, "numbered-ext"},
@@ -384,8 +384,8 @@ func TestTemplates_TableIsWellFormed(t *testing.T) {
 // is a non-empty name different from the part's, without a separator.
 func FuzzMatchName(f *testing.F) {
 	for _, seed := range []string{
-		"syslog.1", "dpkg.log.11.gz", "syslog-20261001-1790812801.gz", "app.log.2026-10-01_12",
-		"0.log.20261001-120000", "access_log.1790726400", "app.1.log.gz", "app-2026-10-01.3.log.gz",
+		"syslog.1", "dpkg.log.11.gz", "syslog-20260401-1775001601.gz", "app.log.2026-10-01_12",
+		"0.log.20261001-120000", "access_log.1774915200", "app.1.log.gz", "app-2026-10-01.3.log.gz",
 		"app-2026-10-01T12-00-00.000.log.gz", "postgresql-2026-10-01_000000.log", "my app (1).log.2.gz",
 		"журнал.log.1", "x.99999", "x.2026-13-45_99", "x.9999999999", ".1", "-20261001",
 	} {

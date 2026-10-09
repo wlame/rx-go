@@ -17,16 +17,16 @@ import (
 // and its own number in the part, and a `-- NAME --` line where a piece
 // starts.
 //
-//	Chain: /var/log/syslog  ready  8 parts  fingerprint e8ed018e0ff41f34
-//	Times: 2026-09-29 00:00:01 .. 2026-10-06 22:11:00  UTC
+//	Chain: /var/log/syslog  ready  8 parts  fingerprint 5b07d2e9a1c4f386
+//	Times: 2026-03-30 00:00:01 .. 2026-04-06 22:11:00  UTC
 //	Context: 3 before, 3 after
 //
-//	=== /var/log/syslog:43418 ===
-//	-- syslog-20261002-1790899200.gz --
-//	43415  syslog-20261002-1790899200.gz:10711  …
-//	43418  syslog-20261002-1790899200.gz:10714  …
-//	-- syslog-20261003-1790985600.gz --
-//	43419  syslog-20261003-1790985600.gz:1  …
+//	=== /var/log/syslog:31207 ===
+//	-- syslog-20260402-1775088000.gz --
+//	31204  syslog-20260402-1775088000.gz:7690  …
+//	31207  syslog-20260402-1775088000.gz:7693  …
+//	-- syslog-20260403-1775174400.gz --
+//	31208  syslog-20260403-1775174400.gz:1  …
 //
 // part is the request's part, "" for global lines: a key then numbers
 // that part's lines, and its head says so (`=== HANDLE PART:500 ===`).

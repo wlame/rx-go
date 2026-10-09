@@ -165,13 +165,13 @@ func TestTimeRange_DisplayZoneAndExampleOfEachShape(t *testing.T) {
 		displayZone string
 		firstMs     int64
 	}{
-		{"middleware", "", "2025-12-10 07:00:04.574 [1765375204574] INFO a\n2025-12-10 07:00:05.000 INFO b\n2025-12-10 07:00:06.000 INFO c\n",
+		{"iso with milliseconds", "", "2025-12-10 07:00:04.574 [1765375204574] INFO a\n2025-12-10 07:00:05.000 INFO b\n2025-12-10 07:00:06.000 INFO c\n",
 			"2025-12-10 07:00:04.574", "UTC", time.Date(2025, 12, 10, 7, 0, 4, 574e6, time.UTC).UnixMilli()},
-		{"middleware read in Tokyo", "Asia/Tokyo", "2025-12-10 07:00:04.574 INFO a\n2025-12-10 07:00:05.000 INFO b\n2025-12-10 07:00:06.000 INFO c\n",
+		{"iso read in Tokyo", "Asia/Tokyo", "2025-12-10 07:00:04.574 INFO a\n2025-12-10 07:00:05.000 INFO b\n2025-12-10 07:00:06.000 INFO c\n",
 			"2025-12-10 07:00:04.574", "Asia/Tokyo", time.Date(2025, 12, 9, 22, 0, 4, 574e6, time.UTC).UnixMilli()},
 		{"a fixed RX_LOG_TZ", "-07:00", "2025-12-10 07:00:04.574 INFO a\n2025-12-10 07:00:05.000 INFO b\n2025-12-10 07:00:06.000 INFO c\n",
 			"2025-12-10 07:00:04.574", "-07:00", time.Date(2025, 12, 10, 14, 0, 4, 574e6, time.UTC).UnixMilli()},
-		{"APPLOG", "", "2025-2-15 18:16:22:397 (scheduler.cc:120): a\n2025-2-15 18:16:22:5 b\n2025-2-15 18:16:23:12 c\n",
+		{"one-digit fields and colon milliseconds", "", "2025-2-15 18:16:22:397 (scheduler.cc:120): a\n2025-2-15 18:16:22:5 b\n2025-2-15 18:16:23:12 c\n",
 			"2025-2-15 18:16:22:397", "UTC", time.Date(2025, 2, 15, 18, 16, 22, 397e6, time.UTC).UnixMilli()},
 		{"postgresql", "", "2025-12-10 07:49:50 UTC [123]: LOG a\n\tplan line\n2025-12-10 07:49:51 UTC [123]: LOG b\n2025-12-10 07:49:52 UTC [123]: LOG c\n",
 			"2025-12-10 07:49:50 UTC", "+00:00", time.Date(2025, 12, 10, 7, 49, 50, 0, time.UTC).UnixMilli()},

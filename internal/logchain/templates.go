@@ -15,7 +15,7 @@ const (
 	// KeyNumber is a rotation number: `syslog.3`, `app.3.log`.
 	KeyNumber
 	// KeyDate is a date, optionally followed by a number:
-	// `syslog-20261001-1790812801`, `app-2026-10-01.3.log`; or a year
+	// `syslog-20260401-1775001601`, `app-2026-10-01.3.log`; or a year
 	// written where a rotation number goes (`report.2023`, see
 	// yearKey).
 	KeyDate
@@ -29,7 +29,7 @@ const (
 type Key struct {
 	// Kind is what the key is; KeyNone for the active part.
 	Kind KeyKind
-	// Text is the key as the name writes it: "3", "20261001-1790812801",
+	// Text is the key as the name writes it: "3", "20260401-1775001601",
 	// "2026-10-01.3".
 	Text string
 	// Number is the rotation number of a numbered part, and the number
@@ -80,8 +80,8 @@ const (
 	// ((?s) makes `.` match it), so a name is matched as the bytes it
 	// is. The `?` makes it as short as possible, so the first number or
 	// date that ends the name in the row's shape is the key:
-	// `syslog-20261001-1790812801` is `syslog` dated 20261001 with the
-	// suffix 1790812801, not `syslog-20261001` dated 1790812801.
+	// `syslog-20260401-1775001601` is `syslog` dated 20260401 with the
+	// suffix 1775001601, not `syslog-20260401` dated 1775001601.
 	anyName = `(?s:.+?)`
 	// separator stands between a name and its key.
 	separator = `[._-]`
@@ -110,8 +110,8 @@ var (
 	// `dpkg.log.11.gz`, `dmesg.0`).
 	numberedPattern = regexp.MustCompile(`^(?P<name>(?s:.+))\.(?P<n>\d{1,5})` + compressionSuffix + `$`)
 	// datedPattern: `{name}{sep}{DATE}`, optionally `{sep}{digits}`
-	// (`syslog-20261001-1790812801.gz`, `app.log.2026-10-01_12`,
-	// `access_log.1790726400`).
+	// (`syslog-20260401-1775001601.gz`, `app.log.2026-10-01_12`,
+	// `access_log.1774915200`).
 	datedPattern = regexp.MustCompile(`^(?P<name>` + anyName + `)` + separator + `(?P<date>` + datePattern + `)` +
 		`(?:` + separator + `(?P<n>\d{1,18}))?` + compressionSuffix + `$`)
 	// datedExtPattern: `{stem}{sep}{DATE}`, optionally `{sep}{N}`, then

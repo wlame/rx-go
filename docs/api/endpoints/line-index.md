@@ -56,7 +56,7 @@ GET /v1/index?path=<file>
     "has_zone":          false,
     "first_ms":          1765350004574,
     "last_ms":           1765353604390,
-    "timestamped_lines": 1387928,
+    "timestamped_lines": 3402771,
     "backward_steps":    0,
     "max_backward_ms":   0
   },

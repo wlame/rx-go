@@ -198,27 +198,27 @@ func unpadded(t time.Time) string {
 
 var logShapes = []logShape{
 	{
-		name:  "middleware iso with milliseconds",
+		name:  "iso with milliseconds",
 		first: time.Date(2025, 12, 10, 7, 0, 4, 574e6, time.UTC),
 		line:  func(t time.Time) string { return t.Format("2006-01-02 15:04:05.000") + " INFO [main] request served" },
 		ms:    wallMs,
 		want:  rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-12-10 07:00:04.574")},
 	},
 	{
-		// app.log is written on a -07:00 host: its own lines carry
-		// no zone, and the JVM's GC lines between them carry -0700. One
-		// clock, so the GC lines read as the wall clock they show.
-		name:  "middleware with zoned GC lines in a zone-less file",
+		// A JVM application on a -07:00 host: its own lines carry no zone,
+		// and the JVM's GC lines between them carry -0700. One clock, so the
+		// GC lines read as the wall clock they show.
+		name:  "zoned GC lines in a zone-less file",
 		first: time.Date(2025, 12, 10, 7, 0, 4, 574e6, time.UTC),
 		line:  func(t time.Time) string { return t.Format("2006-01-02 15:04:05.000") + " INFO [main] request served" },
 		other: func(t time.Time) string {
-			return "[" + t.Format("2006-01-02T15:04:05.000") + "-0700][512.004s][info][gc] GC(57) Pause Young"
+			return "[" + t.Format("2006-01-02T15:04:05.000") + "-0700][812.406s][info][gc] GC(57) Pause Young"
 		},
 		ms:   wallMs,
 		want: rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-12-10 07:00:04.574")},
 	},
 	{
-		name:  "APPLOG one-digit fields and milliseconds after a colon",
+		name:  "one-digit fields and milliseconds after a colon",
 		first: time.Date(2025, 2, 5, 8, 6, 2, 7e6, time.UTC),
 		line:  func(t time.Time) string { return unpadded(t) + " [worker] tick" },
 		ms:    wallMs,
@@ -226,7 +226,7 @@ var logShapes = []logShape{
 	},
 	{
 		// MST is one of the zone words that name no single offset, so the
-		// lines stay zone-less, as the real file's do.
+		// lines stay zone-less.
 		name:  "postgresql zone word and tab-led continuation lines",
 		first: time.Date(2025, 12, 10, 7, 0, 0, 0, time.UTC),
 		line: func(t time.Time) string {
@@ -237,7 +237,7 @@ var logShapes = []logShape{
 		want:         rxtypes.TimeIndex{Format: "iso", Anchored: true, FirstText: strPtr("2025-12-10 07:00:00")},
 	},
 	{
-		name:  "core syslog without a year",
+		name:  "syslog without a year",
 		first: time.Date(2025, 12, 10, 7, 49, 50, 123e6, time.UTC),
 		line:  func(t time.Time) string { return t.Format("Jan _2 15:04:05.000") + " host app[17]: handled" },
 		ms:    wallMs,
