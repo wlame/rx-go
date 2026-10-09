@@ -56,8 +56,8 @@ it runs at once, and why a part fails it.
 
 At most 128 chains' index tasks run or wait at once. A pending chain
 past that gets no task: its description is `pending` with `index_build`
-null, and the next request after one of those tasks has ended starts
-its task.
+null and says why in `index_build_refused`, and the next request after
+one of those tasks has ended starts its task.
 
 A pending chain whose last index task failed for the same files (the
 same fingerprint) does not start it again: its description names the
@@ -192,6 +192,7 @@ lists the chain again and answers `409` with the current description.
   "frozen_line_count": 1205,
   "line_count": null,
   "index_build": null,
+  "index_build_refused": null,
   "cli_command": "rx logs show /var/log/syslog"
 }
 ```
@@ -212,6 +213,7 @@ lists the chain again and answers `409` with the current description.
 | `frozen_line_count` | int64 \| null | The lines of every part but the active file; null unless ready |
 | `line_count` | int64 \| null | All lines, when the active file's count is known (its current index); null unless ready |
 | `index_build` | object \| null | `{task_id, status, message, path, started_at}` of the chain's index task: for a pending chain the task this request started or joined (see above); otherwise the chain's last index task, running or ended (an ended one for `RX_TASK_TTL_MINUTES` after its end, while the chain's files keep the fingerprint it ended for; a failed one's `message` names the part and the error); null when there is none, and for a pending chain whose task cannot start because 128 chains' index tasks run or wait already. The description is the same with a task and without |
+| `index_build_refused` | string \| null | Why a pending chain has no index task, in words: 128 chains' index tasks run or wait already, so none could start for it; a request after one of them has ended starts it. Null otherwise: a task runs or was started or joined, the chain waits for no part, or its last task failed for the same files (`index_build` names it) |
 | `cli_command` | string | The equivalent `rx logs show` command |
 
 ### `parts[]` fields

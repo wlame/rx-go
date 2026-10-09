@@ -93,7 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     request whose listing could not open a frozen part.
     A pending chain starts its index task in the background (or joins the
     running one) and names it in `index_build`, unless 128 chains' index
-    tasks run or wait already, when it names none; otherwise
+    tasks run or wait already, when it names none and says why in
+    `index_build_refused` (null in every other case); otherwise
     `index_build` names the chain's last index task. How that task ended is kept with
     the chain for `RX_TASK_TTL_MINUTES` after its end while the chain's
     files keep their fingerprint, even once the task table has dropped

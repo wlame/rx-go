@@ -52,9 +52,9 @@ its `path` at [`GET /v1/tasks/{id}`](tasks.md).
   the build queue (half of it, 128), so each can hold one. Past that, no
   task starts: the request answers `503` with `Retry-After: 5` (the
   seconds to wait before asking again) and starts nothing, and a
-  describe of a pending chain names no task (`index_build` null) until
-  one of them ends. A request for a chain whose task runs still joins
-  it.
+  describe of a pending chain names no task (`index_build` null, with
+  the reason in `index_build_refused`) until one of them ends. A
+  request for a chain whose task runs still joins it.
 - **Every part, whatever its size.** `RX_LARGE_FILE_MB`, below which
   `rx index` and `POST /v1/index` skip a file, does not apply: the chain
   needs each part's line count and times, and rotated parts are often

@@ -166,8 +166,9 @@ func registerLogChainHandler(s *Server, api huma.API) {
 			"path": resp.Path, "file_tz": in.FileTZ, "fingerprint": in.Fingerprint,
 		})
 		// A pending chain past the limit on chain index tasks is described
-		// as pending with no task; a later describe starts it.
-		resp.IndexBuild, _ = s.chainIndex.forDescription(d)
+		// as pending with no task, and index_build_refused says why; a
+		// later describe starts it.
+		s.chainIndex.fillIndexBuild(d)
 		return &logChainOutput{Status: logChainStatus(changed, in.Fingerprint, resp.Fingerprint), Body: resp}, nil
 	})
 }
