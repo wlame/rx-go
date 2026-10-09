@@ -149,7 +149,7 @@ one variable — a backtick, a function such as `env_var`, a `+`, an
 `build` and `build-all` on crafted tag names.
 
 Go 1.25+ is required (`go.mod` says `go 1.25.0`; huma v2 needs it); CI runs
-1.25 and 1.26. `golangci-lint` v2.x and `govulncheck` are needed for `just
+1.25, 1.26 and 1.27. `golangci-lint` v2.x and `govulncheck` are needed for `just
 lint` and `just vuln` — install them with `go install`. `just docs-build`
 needs `uv`.
 
