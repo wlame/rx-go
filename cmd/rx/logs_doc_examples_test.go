@@ -3,16 +3,16 @@ package main
 // The rx logs examples of the docs run here, against a generated host
 // whose /var/log and /srv/app/logs hold rotated logs of the kinds the
 // pages show. Every `rx logs` command in a shell fence of the README or
-// a page under docs/ must exit 0 there, and may name no absolute path
-// outside those two directories (toHost). The commands of one fence
-// run in order on one cache of their own, so a fence can index a chain
-// and then read it. Where a fence ends with an rx logs command and a
-// ```text fence follows it, that text is what the last command prints:
-// the test compares it with the real output, line by line, after
-// normalize (spacing, fingerprints, sizes, times taken and request ids
-// vary). A doc line `...` stands for any number of lines, and `…` inside
-// a line for any text. A `--json` command's output must decode into its
-// wire type with no unknown field.
+// a page under docs/ must exit 0 there, and may name no path outside
+// those two directories, absolute or relative (toHost). The commands of
+// one fence run in order on one cache of their own, so a fence can
+// index a chain and then read it. Where a fence ends with an rx logs
+// command and a ```text fence follows it, that text is what the last
+// command prints: the test compares it with the real output, line by
+// line, after normalize (spacing, fingerprints, sizes, times taken and
+// request ids vary). A doc line `...` stands for any number of lines,
+// and `…` inside a line for any text. A `--json` command's output must
+// decode into its wire type with no unknown field.
 
 import (
 	"bytes"
@@ -87,28 +87,63 @@ func docFences(t *testing.T, page string) []docFence {
 // directory of the generated host that stands for it.
 type logsDocDirs map[string]string
 
+// docRunDir is the documented directory the commands of the pages run
+// in: rx runs in the directory that stands for it, so a relative word
+// names a path from there.
+const docRunDir = "/var/log"
+
 // toHost rewrites one word of a documented command onto the generated
 // host: a path under one of the documented directories, written as the
 // word or as the value of a long flag (`--search-root=/var/log`), moves
-// to the directory that stands for it. Any other absolute path is
-// refused with an error, so a doc example never runs on the real
-// filesystem; a pattern that starts with `/` is refused too, which a
-// page avoids by writing it another way.
+// to the directory that stands for it, and any other word stays as it
+// is. Every word is then read as the path it would name, cleaned, an
+// absolute one as it is and a relative one from the run directory
+// (docRunDir), and refused with an error unless that path lies in a
+// generated directory: no doc example runs on the real filesystem,
+// neither through another absolute path nor through `..`. A pattern
+// that would name a path outside is refused too, which a page avoids
+// by writing it another way. The words come with their quotes removed
+// (rxCommandWords), so a quoted path is checked as the shell passes it.
 func (d logsDocDirs) toHost(word string) (string, error) {
 	flag, value := "", word
 	if name, flagValue, isFlag := strings.Cut(word, "="); isFlag && strings.HasPrefix(name, "-") {
 		flag, value = name+"=", flagValue
 	}
-	for doc, real := range d {
-		if value == doc || strings.HasPrefix(value, doc+"/") {
-			return flag + real + strings.TrimPrefix(value, doc), nil
-		}
-	}
-	if filepath.IsAbs(value) {
+	moved, named := value, filepath.Join(d[docRunDir], value)
+	if doc, real, found := d.documentedDirOf(value); found {
+		moved = real + strings.TrimPrefix(value, doc)
+		named = filepath.Clean(moved)
+	} else if filepath.IsAbs(value) {
 		return "", fmt.Errorf("the absolute path %s in %q is not on the generated host: write it under one of %v",
 			value, word, slices.Sorted(maps.Keys(d)))
 	}
-	return word, nil
+	if !d.holds(named) {
+		return "", fmt.Errorf("%q names %s, which is not on the generated host: write a path under one of %v",
+			word, named, slices.Sorted(maps.Keys(d)))
+	}
+	return flag + moved, nil
+}
+
+// documentedDirOf returns the documented directory value is in, or is,
+// and the generated directory that stands for it.
+func (d logsDocDirs) documentedDirOf(value string) (doc, real string, found bool) {
+	for doc, real := range d {
+		if value == doc || strings.HasPrefix(value, doc+"/") {
+			return doc, real, true
+		}
+	}
+	return "", "", false
+}
+
+// holds reports whether path, a clean absolute path, is one of the
+// generated directories or lies inside one.
+func (d logsDocDirs) holds(path string) bool {
+	for _, real := range d {
+		if path == real || strings.HasPrefix(path, real+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // fromHost writes the generated host's directories in text back as the
@@ -532,7 +567,7 @@ func runDocumentedLogsCommand(t *testing.T, dirs logsDocDirs, cache []string, co
 		args = append(args, moved)
 	}
 	shownAs := strings.Join(command.words, " ")
-	code, stdout, stderr := runRxIn(t, dirs["/var/log"], cache, args...)
+	code, stdout, stderr := runRxIn(t, dirs[docRunDir], cache, args...)
 	stdout = dirs.fromHost(stdout)
 	if code != 0 {
 		t.Errorf("%s: %s exited %d\n%s", command.location, shownAs, code, dirs.fromHost(stderr))
@@ -571,9 +606,12 @@ func TestLogsDocExamples_TheComparisonRejectsAnotherOutput(t *testing.T) {
 }
 
 // A documented command runs on the generated host only: a path under
-// a documented directory moves onto it, as a word or as a flag's value,
-// and any other absolute path is refused, so no example can read or
-// write the real filesystem.
+// a documented directory moves onto it, as a word or as a flag's value;
+// any other absolute path is refused; and a word that would name a path
+// outside the generated directories is refused too, with `..` in an
+// absolute path, as a relative path from the directory rx runs in, as
+// a flag's value, as the word after a flag and inside quotes, so no
+// example can read or write the real filesystem.
 func TestLogsDocExamples_RefusesAnAbsolutePathItCannotMove(t *testing.T) {
 	dirs := logsDocDirs{"/var/log": "/host/var-log", "/srv/app/logs": "/host/app-logs"}
 	for word, want := range map[string]string{
@@ -584,16 +622,40 @@ func TestLogsDocExamples_RefusesAnAbsolutePathItCannotMove(t *testing.T) {
 		"--search-root=/srv/app/logs": "--search-root=/host/app-logs",
 		"--part=syslog.3.gz":          "--part=syslog.3.gz",
 		"--timestamps=2026-10-03T14:00..2026-10-03T15:00": "--timestamps=2026-10-03T14:00..2026-10-03T15:00",
-		"syslog": "syslog",
-		"-e":     "-e",
+		"syslog":   "syslog",
+		"./syslog": "./syslog",
+		"error..x": "error..x",
+		"-e":       "-e",
 	} {
 		if got, err := dirs.toHost(word); err != nil || got != want {
 			t.Errorf("toHost(%q) = %q, %v; want %q", word, got, err, want)
 		}
 	}
-	for _, word := range []string{"/etc/passwd", "/var/logs/x", "/srv/app", "--search-root=/x", "--file=/var/log2"} {
+	for _, word := range []string{
+		"/etc/passwd", "/var/logs/x", "/srv/app", "--search-root=/x", "--file=/var/log2",
+		"/var/log/../../../../../private/var/log", "/srv/app/logs/../../../etc", "--search-root=/var/log/..",
+		"../../../../private/var/log", "..", "../x", "--part=../x", "syslog/../../x",
+	} {
 		if got, err := dirs.toHost(word); err == nil {
 			t.Errorf("toHost(%q) = %q with no error; want it refused", word, got)
+		}
+	}
+	// The words of a documented line reach toHost with their quotes
+	// removed, as the shell passes them, and a flag's value may be the
+	// next word.
+	for _, line := range []string{
+		`rx logs list '/var/log/../../../etc'`,
+		`rx logs list "../../../../private/var/log"`,
+		`rx logs samples /var/log/syslog --part ../x --lines=1`,
+	} {
+		refused := false
+		for _, word := range rxCommandWords(line)[1:] {
+			if _, err := dirs.toHost(word); err != nil {
+				refused = true
+			}
+		}
+		if !refused {
+			t.Errorf("%s: no word refused; want the path that leaves the generated host refused", line)
 		}
 	}
 }
