@@ -28,6 +28,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/wlame/rx-go/internal/testutil/isolatedcache"
 )
 
 // FixturesDir returns the absolute path to rx-go/testdata/fixtures. Uses
@@ -95,12 +97,22 @@ func BuildGoBinary(t *testing.T) string {
 	return path
 }
 
+// runnerEnviron is the environment of a binary RunGoRx or RunPythonRx
+// starts: this process's environment without the webhook variables
+// (RX_HOOK_*). A parity test runs a trace, and a developer's webhook
+// would otherwise receive its paths and matches, even when the caller's
+// package has no TestMain that removes them.
+func runnerEnviron() []string {
+	return isolatedcache.WithoutHookVariables(os.Environ())
+}
+
 // RunGoRx executes the pre-built rx-go binary with the given args and
 // returns stdout. stderr is captured into t.Log on non-zero exit.
 func RunGoRx(t *testing.T, args ...string) ([]byte, error) {
 	t.Helper()
 	path := BuildGoBinary(t)
 	cmd := exec.Command(path, args...)
+	cmd.Env = runnerEnviron()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -148,6 +160,7 @@ func RunPythonRx(t *testing.T, args ...string) ([]byte, error) {
 	// #nosec G702 -- same rationale: venvPython is developer-controlled.
 	cmd := exec.Command(venvPython, fullArgs...)
 	cmd.Dir = pyRoot
+	cmd.Env = runnerEnviron()
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

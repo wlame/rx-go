@@ -1,8 +1,13 @@
 package testparity
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -125,5 +130,60 @@ func TestPythonRunner_SkipsWhenPathIsUnsetAndTreeIsAbsent(t *testing.T) {
 
 	if !IsPythonUnavailable(err) {
 		t.Errorf("expected the skip sentinel, got %v", err)
+	}
+}
+
+// A webhook URL in the environment of the test run reaches no binary
+// RunGoRx starts: a trace that would call it on completion calls
+// nothing. The same binary started with the inherited environment calls
+// it once, which shows that the listener sees a call that is made.
+func TestRunGoRx_CallsNoHookOfTheTestRun(t *testing.T) {
+	// calls counts the requests the hook receives. The handler runs on
+	// the test server's goroutines, so the count is atomic.
+	var calls atomic.Int32
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(hook.Close)
+	// The hook listens on loopback, which the URL guard refuses unless
+	// internal targets are allowed: without this, a leaked URL would be
+	// refused rather than called, and the test would prove nothing.
+	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "true")
+	t.Setenv("RX_HOOK_ON_COMPLETE_URL", hook.URL)
+	args := []string{"trace", "error", FixturePath("medium.log"), "--json"}
+
+	if err := exec.Command(BuildGoBinary(t), args...).Run(); err != nil {
+		t.Fatalf("rx-go with the inherited environment: %v", err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("rx-go with the inherited environment called the hook %d times; want 1", n)
+	}
+	calls.Store(0)
+	if _, err := RunGoRx(t, args...); err != nil {
+		t.Fatalf("RunGoRx: %v", err)
+	}
+
+	if n := calls.Load(); n != 0 {
+		t.Errorf("the hook of the test run received %d calls from RunGoRx; want none", n)
+	}
+}
+
+// The runners pass on every variable of the test run but the webhook
+// variables, rx-python's runner too.
+func TestRunnerEnviron_DropsTheWebhookVariables(t *testing.T) {
+	t.Setenv("RX_HOOK_ON_MATCH_URL", "https://hooks.example.invalid/match")
+	t.Setenv("RX_HOOK_STRICT_IP_ONLY", "true")
+	t.Setenv("RX_LARGE_FILE_MB", "7")
+
+	env := runnerEnviron()
+
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "RX_HOOK_") {
+			t.Errorf("the runners pass on %s", entry)
+		}
+	}
+	if !slices.Contains(env, "RX_LARGE_FILE_MB=7") {
+		t.Error("the runners drop RX_LARGE_FILE_MB=7")
 	}
 }
