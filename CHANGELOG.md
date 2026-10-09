@@ -355,6 +355,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The task table of `rx serve` counts only finished tasks against its
+  cap of 256. Queued and running tasks used to count too, so with more
+  than 256 of them unfinished at once (a full queue of samples index
+  builds, many log chains waiting to be indexed), starting any task
+  dropped every finished one, and `GET /v1/tasks/{id}` answered `404`
+  for a task a client was still following. A queued or running task is
+  still never dropped.
 - `rx trace` and `GET /v1/trace` order files and patterns by the number
   in their id, not as text: the matches of the tenth file given (`f10`)
   come after those of the second (`f2`), and on one line `p10` comes

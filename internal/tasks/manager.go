@@ -17,8 +17,9 @@
 //     `chain:`, its directory's device and inode, and its name.
 //   - Sweeper goroutine: every 5 minutes, removes completed/failed
 //     tasks older than RX_TASK_TTL_MINUTES (default 60).
-//   - A cap on the table (DefaultMaxTasks): past it, creating a task
-//     drops the oldest finished ones. Subtasks (CreateSubtask), the
+//   - A cap on the finished tasks (DefaultMaxTasks): past it, creating a
+//     task drops the oldest finished ones; unfinished tasks are not
+//     counted. Subtasks (CreateSubtask), the
 //     part builds of a log chain's index task, are capped apart, so a
 //     task that makes thousands of them never drops another one.
 //   - A watch (Watch) that keeps how a task ended, for a caller that
@@ -54,15 +55,17 @@ import (
 // Override via RX_TASK_TTL_MINUTES.
 const DefaultTTL = 60 * time.Minute
 
-// DefaultMaxTasks is how many tasks of one class the manager keeps at
-// most: tasks a client asked for, and subtasks (CreateSubtask). A
-// finished task keeps its whole result, the line index included, until
-// the sweeper removes it after the TTL; without a cap, a burst of
-// requests inside one TTL would grow the table without bound. Past the
-// cap, creating a task drops the oldest finished tasks of its own
-// class. Running and queued tasks are never dropped, so a class can
-// exceed the cap only while more than this many of its tasks are
-// unfinished at once.
+// DefaultMaxTasks is how many finished tasks of one class the manager
+// keeps at most: tasks a client asked for, and subtasks
+// (CreateSubtask). A finished task keeps its whole result, the line
+// index included, until the sweeper removes it after the TTL; without a
+// cap, a burst of requests inside one TTL would grow the table without
+// bound. Past the cap, creating a task drops the oldest finished tasks
+// of its own class. Running and queued tasks are never dropped and do
+// not count toward the cap: their number is bounded where they are
+// started (one per path, the samples build queue), and counting them
+// would let a burst of them push out every finished task a client still
+// polls.
 const DefaultMaxTasks = 256
 
 // DefaultSweepInterval is how often the sweeper goroutine wakes up.
@@ -213,7 +216,7 @@ type Manager struct {
 	// Locks are released when a task transitions to Terminal.
 	pathLocks map[string]string
 
-	// maxTasks caps the table; see DefaultMaxTasks.
+	// maxTasks caps the finished tasks of each class; see DefaultMaxTasks.
 	maxTasks int
 
 	// Sweeper control.
@@ -237,7 +240,7 @@ type Manager struct {
 type Config struct {
 	TTL           time.Duration // finished task retention; 0 = env/default
 	SweepInterval time.Duration // sweeper interval; 0 = default
-	MaxTasks      int           // table cap; 0 = DefaultMaxTasks
+	MaxTasks      int           // finished tasks kept per class; 0 = DefaultMaxTasks
 	Logger        *slog.Logger
 }
 
@@ -447,34 +450,34 @@ func uniquePaths(paths []string) []string {
 	return unique
 }
 
-// dropOldestFinishedLocked brings the tasks of one class (subtasks, or
-// the tasks a client asked for) back to the cap: it removes as many of
-// that class's finished tasks as the class holds past m.maxTasks,
-// oldest completion first. The other class is not touched, and neither
-// are unfinished tasks: their workers still report to them. The caller
-// holds m.mu.
+// dropOldestFinishedLocked brings the finished tasks of one class
+// (subtasks, or the tasks a client asked for) back to the cap, the task
+// just created counted as one more to finish: it removes the oldest
+// finished tasks of the class (oldest completion first) until, with the
+// new task, there are at most m.maxTasks of them. So a class whose tasks
+// end one after another never keeps more than m.maxTasks finished ones.
+// The other class is not touched.
+//
+// INVARIANT: the other unfinished tasks are neither dropped nor counted.
+// Their workers still report to them, and however many there are (a
+// full samples build queue, many log chains waiting to be indexed), they
+// never push a finished task out. The caller holds m.mu, and the new
+// task is in m.tasks, unfinished.
 func (m *Manager) dropOldestFinishedLocked(subtask bool) {
 	finished := make([]*Task, 0, len(m.tasks))
-	inClass := 0
 	for _, task := range m.tasks {
-		if task.subtask != subtask {
-			continue
-		}
-		inClass++
-		if task.IsTerminal() && task.CompletedAt != nil {
+		if task.subtask == subtask && task.IsTerminal() && task.CompletedAt != nil {
 			finished = append(finished, task)
 		}
 	}
-	n := inClass - m.maxTasks
+	// The + 1 is the place the new task will take once it ends.
+	n := len(finished) + 1 - m.maxTasks
 	if n <= 0 {
 		return
 	}
 	sort.Slice(finished, func(i, j int) bool {
 		return finished[i].CompletedAt.Before(*finished[j].CompletedAt)
 	})
-	if n > len(finished) {
-		n = len(finished)
-	}
 	for _, task := range finished[:n] {
 		delete(m.tasks, task.TaskID)
 	}

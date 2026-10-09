@@ -66,3 +66,37 @@ func TestChainIndex_ManyChainsLeaveHalfTheQueueToOtherFiles(t *testing.T) {
 		t.Fatalf("the samples build: %+v known=%v, want queued for %s", task, known, other)
 	}
 }
+
+// More chains pending at once than the task table keeps finished tasks
+// (257, every build held): a task another client follows is still known
+// after it ends and one more task starts. Unfinished chain tasks are not
+// counted against the cap of finished tasks.
+func TestChainIndex_ManyPendingChainsLeaveAFollowedTaskInTheTable(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	held := func(path string, progress *index.Progress) (*rxtypes.UnifiedFileIndex, string, error) {
+		<-release
+		return samples.BuildIndex(path, progress)
+	}
+	f := newChainIndexFixture(t, 1, held)
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	const chains = tasks.DefaultMaxTasks + 1
+	for c := 0; c < chains; c++ {
+		dir := filepath.Join(f.root, fmt.Sprintf("d%03d", c))
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeIndexChain(t, dir, []chainPartFile{{name: "app.log.1"}, {name: "app.log"}}, 2, chainStart)
+		describeChainAt(t, f.base, filepath.Join(dir, "app.log"))
+	}
+	followed, _ := f.manager.Create(filepath.Join(f.root, "followed.log"), "compress")
+	f.manager.Complete(followed.TaskID, nil)
+
+	other, _ := f.manager.Create(filepath.Join(f.root, "other.log"), "compress")
+	f.manager.Complete(other.TaskID, nil)
+
+	if _, known := f.manager.Get(followed.TaskID); !known {
+		t.Fatalf("after %d pending chains, one more task dropped the finished task a client follows (table of %d)",
+			chains, f.manager.Size())
+	}
+}
