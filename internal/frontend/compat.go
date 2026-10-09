@@ -25,7 +25,7 @@ import (
 // Both backends and the viewer's release checklist carry the same rule.
 const (
 	MinViewerVersion          = "0.2.0"
-	MaxViewerVersionExclusive = "0.8.0"
+	MaxViewerVersionExclusive = "0.9.0"
 )
 
 // viewerVersionCompatible reports whether a viewer release may be
@@ -51,7 +51,7 @@ func semverInRange(v semver) bool {
 	return compareSemver(v, minV) >= 0 && compareSemver(v, maxV) < 0
 }
 
-// supportedRange renders the range for messages: "0.2.0 <= v < 0.8.0".
+// supportedRange renders the range for messages: "0.2.0 <= v < 0.9.0".
 func supportedRange() string {
 	return MinViewerVersion + " <= v < " + MaxViewerVersionExclusive
 }
