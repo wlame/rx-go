@@ -64,9 +64,10 @@ install: build
         fi
     done
 
-# Run rx from source (e.g. just run trace error app.log)
+# Run rx from source; each argument reaches rx as one word (just run trace 'a b' app.log)
+[positional-arguments]
 run *args:
-    go run ./cmd/rx {{args}}
+    go run ./cmd/rx "$@"
 
 # Remove build and coverage artifacts
 clean:
@@ -129,17 +130,19 @@ vuln:
 # machine, and CI runners have 3 to 4 cores.
 test_timeout := "30m"
 
-# Run the unit tests (e.g. just test -run TestTrace ./internal/trace/)
+# Run the unit tests; each argument reaches go test as one word (-run='A|B')
+[positional-arguments]
 test *args:
-    ./scripts/test-isolated-home.sh go test -timeout={{test_timeout}} {{args}} ./...
+    ./scripts/test-isolated-home.sh go test -timeout={{test_timeout}} "$@" ./...
 
 # Run the tests with the race detector — mandatory before merge
 test-race:
     ./scripts/test-isolated-home.sh go test -race -count=1 -timeout={{test_timeout}} ./...
 
 # Hunt flaky tests by repeating a package (e.g. just test-repeat ./internal/trace/)
+[positional-arguments]
 test-repeat pkg='./...':
-    ./scripts/test-isolated-home.sh go test -race -count=10 {{pkg}}
+    ./scripts/test-isolated-home.sh go test -race -count=10 "$1"
 
 # Benchmarks, not a CI gate; each argument reaches go test as one word (-bench='A|B')
 [positional-arguments]
@@ -182,15 +185,17 @@ version:
     @echo {{version}}
 
 # Cut a release (major|minor|patch): gates, changelog, commit, tag. Never pushes.
+[positional-arguments]
 release part='patch':
     #!/usr/bin/env bash
     set -euo pipefail
     just ci
-    ./scripts/release.sh {{part}}
+    ./scripts/release.sh "$1"
 
 # Show what a release would do, changing nothing
+[positional-arguments]
 release-dry part='patch':
-    @./scripts/release.sh {{part}} --dry-run
+    @./scripts/release.sh "$1" --dry-run
 
 # Print one version's changelog section (e.g. just release-notes 0.1.0)
 release-notes version:
@@ -198,18 +203,20 @@ release-notes version:
 
 # ── product ──────────────────────────────────────────────────────────────
 
-# Start the API server with the viewer (e.g. just serve --search-root=/var/log)
+# Start the API server with the viewer; each argument reaches rx serve as one word
+[positional-arguments]
 serve *args:
-    go run ./cmd/rx serve {{args}}
+    go run ./cmd/rx serve "$@"
 
 # List the anomaly detectors this build registers
 detectors:
     @go run ./cmd/rx index --help | sed -n '/analyze/,$p'
 
-# Diff CLI output against rx-python for the same arguments
+# Diff CLI output against rx-python for the same arguments, each passed as one word
+[positional-arguments]
 parity *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    go run ./cmd/rx {{args}} --json > /tmp/rx-go.json
-    ( cd ../rx-python && uv run rx {{args}} --json ) > /tmp/rx-python.json
+    go run ./cmd/rx "$@" --json > /tmp/rx-go.json
+    ( cd ../rx-python && uv run rx "$@" --json ) > /tmp/rx-python.json
     diff /tmp/rx-go.json /tmp/rx-python.json && echo "identical"

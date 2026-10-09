@@ -442,6 +442,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   releases it accepts is now `0.2.0 <= v < 0.8.0`. Release 0.5.0 refused 0.6.0 and
   came up without the viewer unless one was already cached or
   `RX_FRONTEND_VERSION` pinned an older one.
+- The `just` recipes that take arguments (`run`, `test`, `test-repeat`,
+  `bench`, `serve`, `parity`, `release`, `release-dry`) pass each one on
+  as one word. They used to paste the arguments into a shell line, so
+  `just run trace 'a b' app.log` searched for `a` in the files `b` and
+  `app.log`, and `just test -run='A|B'` ran `B` as a command.
 
 ## [0.5.0] - 2026-10-06
 
