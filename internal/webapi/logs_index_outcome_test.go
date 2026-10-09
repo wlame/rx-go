@@ -120,9 +120,10 @@ func TestChainIndexTasks_ARecordOfOtherFilesIsDropped(t *testing.T) {
 	c := newChainIndexTasks(manager, nil, newSamplesIndexBuilds(manager, nil, nil, 1))
 	handle := "/logs/app.log"
 	describe := func(fingerprint string) *rxtypes.SamplesIndexBuild {
-		return c.forDescription(&logchain.Description{Response: &rxtypes.ChainResponse{
+		build, _ := c.forDescription(&logchain.Description{Response: &rxtypes.ChainResponse{
 			Path: handle, Fingerprint: fingerprint, State: rxtypes.ChainStateReady,
 		}})
+		return build
 	}
 	c.records[chainTaskKey(handle)] = chainTaskRecord{
 		taskID: "ended-task", fingerprint: "00000000000000aa", startedAt: time.Now(),

@@ -334,7 +334,13 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
    share `RX_MAX_INDEX_BUILDS`: a task submits at most that many parts at
    once, the part builds of all chains together take at most half of
    the queue, and each part build is a subtask whose finished entries
-   are capped apart from other tasks. `GET /v1/logs/samples` reads each
+   are capped apart from other tasks. At most as many chain tasks run
+   or wait as that half has places (128): past it a pending chain gets
+   no task (`index_build` null, 503 from `POST /v1/logs/index` and from
+   a samples request that needs the chain ready). A chain task that
+   finds no room waits in line, and each build's end wakes one of them
+   (`samplesIndexBuilds.awaitChainRoom`). The task table's cap counts
+   finished tasks only, so tasks that run or wait never push one out. `GET /v1/logs/samples` reads each
    part a window touches once per request through the `GET /v1/samples`
    path, with the answer's limits summed over every piece; time bounds
    are searched in one forward pass, at most two reads per part.

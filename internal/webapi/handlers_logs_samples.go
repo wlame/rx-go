@@ -77,6 +77,10 @@ func logSamplesResponses(api huma.API) map[string]*huma.Response {
 		"request sent differs from the current one, or a part was renamed or replaced while the request read it. "+
 		"The body is the current description.",
 		registry.Schema(reflect.TypeOf(rxtypes.ChainResponse{}), true, "ChainResponse"))
+	responses[strconv.Itoa(http.StatusServiceUnavailable)] = chainTasksFullResponse(api,
+		"A request by global line or by time on a pending chain whose index task does not run and cannot start "+
+			"now: as many log chain index tasks as the server runs at once are running or waiting. Ask again once "+
+			"one of them has ended.")
 	return responses
 }
 
@@ -199,7 +203,7 @@ func registerLogSamplesHandler(s *Server, api huma.API) {
 				return waited, err
 			}
 		}
-		chainBuild := s.chainIndex.forDescription(d)
+		chainBuild, _ := s.chainIndex.forDescription(d)
 		reader := s.chainPartReader(limit)
 		parsed.samples.MaxLines, parsed.samples.MaxBytes = config.SamplesMaxLines(), config.SamplesMaxBytes()
 		parsed.samples.IndexLoader = samples.StoredIndex
@@ -253,7 +257,7 @@ func (s *Server) chainConflict(d *logchain.Description, in *logSamplesInput) *lo
 	resp.CLICommand = BuildCLICommand("log_chain", map[string]any{
 		"path": resp.Path, "file_tz": in.FileTZ, "fingerprint": in.Fingerprint,
 	})
-	resp.IndexBuild = s.chainIndex.forDescription(d)
+	resp.IndexBuild, _ = s.chainIndex.forDescription(d)
 	return &logSamplesOutput{Status: http.StatusConflict, Body: resp}
 }
 
@@ -271,7 +275,9 @@ const maxChainWaits = 3
 // 409 when the files changed under a fingerprint the client sent. It
 // fails (500) when the chain's last index task failed for these files,
 // which no wait mends (POST /v1/logs/index starts another), and when the
-// chain is still pending after maxChainWaits tasks.
+// chain is still pending after maxChainWaits tasks; and with 503 when no
+// task runs for the chain and none can start, as many chain index tasks
+// as the server runs at once being unfinished (chainIndexTasks.start).
 //
 // The task goroutine builds the parts; this request goroutine only
 // waits in a select on the task's done channel, its own context and the
@@ -280,7 +286,10 @@ const maxChainWaits = 3
 func (s *Server) awaitChainReady(ctx context.Context, in *logSamplesInput, opts logchain.Options,
 	d *logchain.Description, limit waitLimit) (*logchain.Description, *logSamplesOutput, error) {
 	for wait := 0; d.Response.State == rxtypes.ChainStatePending; wait++ {
-		build := s.chainIndex.forDescription(d)
+		build, refused := s.chainIndex.forDescription(d)
+		if refused {
+			return nil, nil, ErrServiceUnavailable(chainTasksFullDetail(d.Response.Path, s.chainIndex.maxUnfinished()))
+		}
 		if build == nil || build.Status == string(tasks.StatusFailed) || wait == maxChainWaits {
 			return nil, nil, ErrInternal(chainNotReadyDetail(d, build))
 		}

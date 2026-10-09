@@ -713,7 +713,10 @@ happens at all.
   every file at once. The index tasks of log chains build their parts
   through the same queue, a few parts per chain at a time and at most
   128 for all chains together, so pending chains, however many, leave
-  half the queue to lookups.
+  half the queue to lookups. At most 128 chains' index tasks run or
+  wait at once (a request for another pending chain answers `503`, or
+  names no task), and a build's end wakes one waiting chain, not all
+  of them.
 - **Exposure to an untrusted network** — there is no TLS, and the
   optional token travels in clear text. This is the scope decision at
   the top of the page, not a bug. Put `rx` behind a perimeter.

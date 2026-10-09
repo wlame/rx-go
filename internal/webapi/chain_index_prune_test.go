@@ -48,6 +48,18 @@ func TestChainIndexTasks_APanickedTaskTakesItsEndFromTheTable(t *testing.T) {
 	}
 }
 
+// A chain index task whose goroutine panicked gives back its place
+// among the unfinished chain tasks, as one that ends does: the limit on
+// them is not worn down by panics.
+func TestChainIndexTasks_APanickedTaskGivesItsPlaceBack(t *testing.T) {
+	f := newChainIndexFixture(t, 1, nil)
+	startPanickingChainTask(t, f)
+
+	if n := unfinishedChainTasksOf(f.server.chainIndex); n != 0 {
+		t.Fatalf("%d chain index tasks hold a place after the only one panicked, want 0", n)
+	}
+}
+
 // Once the task table has dropped a panicked chain task, its end is
 // lost: pruning drops its record, whether or not the chain is ever
 // described again.

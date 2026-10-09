@@ -54,6 +54,11 @@ parts done. Once it completes, the next request finds the chain `ready`
 active file's too, and has the details: one task per chain, the builds
 it runs at once, and why a part fails it.
 
+At most 128 chains' index tasks run or wait at once. A pending chain
+past that gets no task: its description is `pending` with `index_build`
+null, and the next request after one of those tasks has ended starts
+its task.
+
 A pending chain whose last index task failed for the same files (the
 same fingerprint) does not start it again: its description names the
 failed task, and the `message` of `index_build` says which part failed
@@ -206,7 +211,7 @@ lists the chain again and answers `409` with the current description.
 | `first_ms`, `last_ms` | int64 \| null | The chain's first and last timestamp; null unless ready (and `last_ms` when the active file's last timestamped line is more than 16 MiB from its end) |
 | `frozen_line_count` | int64 \| null | The lines of every part but the active file; null unless ready |
 | `line_count` | int64 \| null | All lines, when the active file's count is known (its current index); null unless ready |
-| `index_build` | object \| null | `{task_id, status, message, path, started_at}` of the chain's index task: for a pending chain the task this request started or joined (see above); otherwise the chain's last index task, running or ended (an ended one for `RX_TASK_TTL_MINUTES` after its end, while the chain's files keep the fingerprint it ended for; a failed one's `message` names the part and the error); null when there is none. The description is the same with a task and without |
+| `index_build` | object \| null | `{task_id, status, message, path, started_at}` of the chain's index task: for a pending chain the task this request started or joined (see above); otherwise the chain's last index task, running or ended (an ended one for `RX_TASK_TTL_MINUTES` after its end, while the chain's files keep the fingerprint it ended for; a failed one's `message` names the part and the error); null when there is none, and for a pending chain whose task cannot start because 128 chains' index tasks run or wait already. The description is the same with a task and without |
 | `cli_command` | string | The equivalent `rx logs show` command |
 
 ### `parts[]` fields

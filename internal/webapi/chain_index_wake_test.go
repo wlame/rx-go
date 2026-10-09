@@ -108,48 +108,59 @@ func awaitChainWaiters(t *testing.T, builds *samplesIndexBuilds, n int) {
 
 // A chain's task woken for room its part does not need (a compression
 // holds the part by then) passes the wake-up on: the next chain in line
-// builds its part, although no other build is left to end and wake it.
+// submits its part, although every other build is held and no other
+// build's end would wake it.
 func TestChainIndex_AWakeUpThePartDoesNotNeedGoesToTheNextChain(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
-	started := make(chan string, 8)
 	held := func(path string, progress *index.Progress) (*rxtypes.UnifiedFileIndex, string, error) {
-		started <- filepath.Base(filepath.Dir(path))
 		<-release
 		return samples.BuildIndex(path, progress)
 	}
 	f := newChainIndexFixture(t, 1, held)
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	builds := f.server.samplesIndex
-	// The chains' part builds take at most one place.
-	builds.maxQueued = 2
-	handle := func(chain string) string { return filepath.Join(f.root, chain, "app.log") }
-	for _, chain := range []string{"a", "b", "c"} {
-		if err := os.Mkdir(filepath.Join(f.root, chain), 0o700); err != nil {
+	// Room for two chain index tasks; one build running and a full queue
+	// of other files' builds behind it.
+	builds.maxQueued = 4
+	for i := 0; i <= builds.maxQueued; i++ {
+		path := filepath.Join(f.root, fmt.Sprintf("other%d.log.gz", i))
+		writeGzipLog(t, path, "LINE")
+		info, err := os.Stat(path)
+		if err != nil {
 			t.Fatal(err)
 		}
-		writeIndexChain(t, filepath.Join(f.root, chain), []chainPartFile{{name: "app.log.1"}, {name: "app.log"}}, 2, chainStart)
+		if builds.start(path, info) == nil {
+			t.Fatalf("no build of %s", path)
+		}
 	}
-	describeChainAt(t, f.base, handle("a"))
-	if got := <-started; got != "a" {
-		t.Fatalf("the first build is chain %s's, want a's", got)
+	for _, chain := range []string{"b", "c"} {
+		dir := filepath.Join(f.root, chain)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeIndexChain(t, dir, []chainPartFile{{name: "app.log.1"}, {name: "app.log"}}, 2, chainStart)
 	}
-	describeChainAt(t, f.base, handle("b"))
+	describeChainAt(t, f.base, filepath.Join(f.root, "b", "app.log"))
 	awaitChainWaiters(t, builds, 1)
-	describeChainAt(t, f.base, handle("c"))
+	describeChainAt(t, f.base, filepath.Join(f.root, "c", "app.log"))
 	awaitChainWaiters(t, builds, 2)
 	compression, _, _ := f.manager.CreateHolding("compress", filepath.Join(f.root, "b", "app.log.1"))
 	t.Cleanup(func() { f.manager.Fail(compression.TaskID, "released by the test") })
 
-	// Chain a's build ends: b is woken first and joins the compression.
+	// The running build ends and frees one place: b, first in line, is
+	// woken and joins the compression.
 	release <- struct{}{}
 
-	select {
-	case got := <-started:
-		if got != "c" {
-			t.Fatalf("the next build is chain %s's, want c's", got)
+	partOfC := filepath.Join(f.root, "c", "app.log.1")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if task, held := f.manager.Holder(partOfC); held && task.Operation == indexOperation {
+			break
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("chain c's part was never built; %d chains still wait in line", chainWaitersOf(builds))
+		if time.Now().After(deadline) {
+			t.Fatalf("chain c's part was never submitted; %d chains still wait in line", chainWaitersOf(builds))
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
