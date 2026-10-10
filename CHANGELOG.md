@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
 ### Changed
 
 - `rx serve` installs viewer releases up to 0.8.x: the range of viewer
