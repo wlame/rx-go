@@ -11,7 +11,8 @@ import (
 )
 
 // TestViewerVersionCompatible pins the range this backend was built
-// against. The rule and the numbers must match rx-python's.
+// against. rx-python keeps its own window while it is paused, so these
+// numbers may differ from its.
 func TestViewerVersionCompatible(t *testing.T) {
 	cases := []struct {
 		version string
