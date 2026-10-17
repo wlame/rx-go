@@ -209,13 +209,12 @@ func TestFetchReleases_Good(t *testing.T) {
 // Ensure — end-to-end
 // ============================================================================
 
-// TestEnsure_DirectURL_Override exercises the RX_FRONTEND_URL path.
-func TestEnsure_DirectURL_Override(t *testing.T) {
+// TestEnsure_DirectURL_RefusesABundleWithoutSidecar: an RX_FRONTEND_URL
+// host that publishes no .sha256 sidecar (404) gets no viewer installed.
+func TestEnsure_DirectURL_RefusesABundleWithoutSidecar(t *testing.T) {
 	tarball := buildFakeTarballV("1.2.3")
-	// Serve the bundle only at its own path and 404 everything else, the
-	// way a release host does. The manager asks for a .sha256 sidecar
-	// beside the asset, and answering that with the tarball itself would
-	// be a broken host, not a missing sidecar.
+	// Serve the bundle only at its own path and 404 everything else,
+	// the sidecar beside it included.
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/dist.tar.gz" {
 			w.WriteHeader(http.StatusNotFound)
@@ -228,11 +227,12 @@ func TestEnsure_DirectURL_Override(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("RX_FRONTEND_URL", backend.URL+"/dist.tar.gz")
 	m := NewManager(Config{CacheDir: dir})
-	if _, err := m.Ensure(context.Background()); err != nil {
-		t.Fatalf("Ensure: %v", err)
+	_, err := m.Ensure(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "frontend checksum: sidecar returned 404") {
+		t.Fatalf("Ensure: err = %v, want the bundle refused for its missing sidecar", err)
 	}
-	if !m.IsAvailable() {
-		t.Errorf("cache should be available after Ensure")
+	if m.IsAvailable() {
+		t.Errorf("no viewer should be available after the refusal")
 	}
 }
 

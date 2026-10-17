@@ -613,8 +613,11 @@ Paste the output. Do not summarize it.
   can run any operation inside the sandbox.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
   dash cannot become a flag. Keep it that way.
-- The viewer bundle is downloaded from GitHub Releases; verify its checksum
-  when the sidecar exists.
+- The viewer bundle is downloaded from GitHub Releases and verified against
+  its `.sha256` sidecar before it is unpacked (`frontend.verifyBundle`).
+  Nothing is installed unverified: a missing sidecar (`404`), any other
+  answer but `200`, a failed request, a body that is not a digest and a
+  mismatch refuse the bundle and keep the cached viewer.
 - Webhook targets are checked against internal address ranges twice: when the
   URL is validated, and again in the HTTP client's dialer against the literal
   IP it is about to connect to. The second check is the one that survives DNS

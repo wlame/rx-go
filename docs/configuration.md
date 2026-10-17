@@ -156,7 +156,7 @@ See [concepts/security](concepts/security.md).
 | Variable | Default | Description |
 |---|---|---|
 | `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag of `wlame/rx-ui` (e.g. `v0.8.0`), with no range check and no daily check. When unset, `rx serve` installs the newest published release inside the range it supports and checks for a newer one once a day (see [`rx serve`](cli/serve.md#viewer-updates)). |
-| `RX_FRONTEND_URL` | unset | Direct URL to a `dist.tar.gz` of the SPA. When set, `rx serve` downloads from this URL on every start. |
+| `RX_FRONTEND_URL` | unset | Direct URL to a `dist.tar.gz` of the SPA. When set, `rx serve` downloads from this URL on every start. The host must publish the bundle's `.sha256` sidecar at the same URL plus `.sha256`, or the bundle is refused (see [Viewer bundle integrity](concepts/security.md#the-bundle-is-verified-before-it-is-unpacked)). |
 | `RX_FRONTEND_PATH` | — | A directory holding a viewer build you manage, such as a local `rx-viewer` build. `rx serve` serves it as it is: no check, no download, no write, no range check, and `RX_FRONTEND_URL` and `RX_FRONTEND_VERSION` are ignored beside it. A directory without `index.html` and `assets/` serves no viewer. Tilde expansion supported. To move the cache `rx` manages, set `RX_CACHE_DIR` (see [`rx serve`](cli/serve.md#serve-a-viewer-build-you-manage)). |
 
 ## Webhooks

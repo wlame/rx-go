@@ -560,10 +560,17 @@ download, `rx` fetches that sidecar and checks the digest:
 |---|---|
 | Present and matching | Extracted; the digest is stored in `.metadata.json` |
 | Present and not matching | Refused. Nothing is unpacked, the cached bundle is untouched, and `rx serve` prints `Warning: <error>. Viewer: <the viewer it serves instead>.`, where the error ends in `frontend checksum: checksum mismatch: expected …, got …` |
-| Absent: any answer other than `200`, or a request that fails | Installed unverified, with a `frontend_checksum_missing` warning — releases published before the sidecar existed are still installable |
-| Present but not a digest | Refused. A release host answering with something that is not a digest is broken, not sidecar-less |
+| Present but not a digest | Refused, the same way. A release host answering with something that is not a digest is broken, not sidecar-less |
+| Absent or unreadable: any answer other than `200` (a `404` included), or a request that fails | Refused, the same way; the error ends in `frontend checksum: sidecar returned <status>` or `frontend checksum: fetch sidecar: <cause>` |
 
-rx-python behaves identically.
+No bundle is installed unverified. The viewer's release workflow has
+published the sidecar since viewer 0.3.0, before the oldest release in
+the supported range, so a release without one was made some other way.
+A host that `RX_FRONTEND_URL` names must publish `<URL>.sha256` beside
+the bundle.
+
+rx-python keeps the older rule: it installs unverified on any answer
+other than `200` and on a request that fails.
 
 ### A failed download never costs the working bundle
 

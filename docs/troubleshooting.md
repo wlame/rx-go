@@ -148,6 +148,9 @@ The SPA download failed or was skipped:
 - Rate limited on first fetch
 - `--skip-frontend` was passed and no viewer is in the cache
 - `RX_FRONTEND_URL` or `RX_FRONTEND_VERSION` points at a bad source
+- The bundle's `.sha256` sidecar did not match, or could not be read:
+  the warning ends in `frontend checksum: …`
+  (see [Viewer bundle integrity](concepts/security.md#the-bundle-is-verified-before-it-is-unpacked))
 - No published `rx-viewer` release lies inside the range this `rx`
   supports, or the cached viewer lies outside it and could not be
   replaced
@@ -167,7 +170,9 @@ Either:
 - Connect the host to GitHub and restart
 - Pre-populate `~/.cache/rx/frontend/` from another machine:
   `scp -r machineA:~/.cache/rx/frontend ~/.cache/rx/`
-- Set `RX_FRONTEND_URL` to a mirror you control
+- Set `RX_FRONTEND_URL` to a mirror you control, with the release's
+  `dist.tar.gz.sha256` beside the bundle: without the sidecar the
+  bundle is refused
 - Live with Swagger UI at `/docs` — all API functionality works
   without the SPA
 

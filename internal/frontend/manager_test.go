@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -171,6 +173,11 @@ func TestEnsure_NoCacheInstallsARelease(t *testing.T) {
 	mux.HandleFunc("/dist.tar.gz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(tarball)
 	})
+	sum := sha256.Sum256(tarball)
+	digest := hex.EncodeToString(sum[:])
+	mux.HandleFunc("/dist.tar.gz.sha256", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(digest + "  dist.tar.gz\n"))
+	})
 	srv = httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -202,16 +209,18 @@ func TestEnsure_NoCacheInstallsARelease(t *testing.T) {
 	if md.Version.Version != "1.2.3" {
 		t.Errorf("metadata version = %q, want 1.2.3", md.Version.Version)
 	}
+	if md.SHA256 != digest {
+		t.Errorf("metadata sha256 = %q, want the verified digest %s", md.SHA256, digest)
+	}
 }
 
 // TestEnsure_EnvURLForcesDownload exercises the RX_FRONTEND_URL
-// fast-path — no GitHub API hit, just go fetch the URL and extract.
+// fast-path — no GitHub API hit, just go fetch the URL, verify it
+// against its sidecar and extract.
 func TestEnsure_EnvURLForcesDownload(t *testing.T) {
 	tarball := makeFakeTarball(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write(tarball)
-	}))
-	t.Cleanup(srv.Close)
+	sum := sha256.Sum256(tarball)
+	srv := bundleServer(t, tarball, hex.EncodeToString(sum[:])+"  dist.tar.gz\n")
 
 	dest := t.TempDir()
 	m := NewManager(Config{
@@ -220,7 +229,7 @@ func TestEnsure_EnvURLForcesDownload(t *testing.T) {
 		APIBase:  "http://127.0.0.1:0", // should never be hit
 		Logger:   silentLog(),
 	})
-	m.envURL = srv.URL
+	m.envURL = srv.URL + "/dist.tar.gz"
 	if _, err := m.Ensure(context.Background()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}

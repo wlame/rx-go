@@ -31,8 +31,9 @@
 // Any entry whose resolved path would escape the destination
 // directory (`..`, absolute paths, symlink traversal) is rejected,
 // the tarball is abandoned, and an error is returned. A bundle is
-// checked against its release's .sha256 sidecar before it is unpacked,
-// and every redirect of a download is checked against the same address
+// unpacked only after it matches its release's .sha256 sidecar, and a
+// bundle whose sidecar cannot be read is refused (verifyBundle).
+// Every redirect of a download is checked against the same address
 // policy the webhook guard uses.
 package frontend
 
@@ -124,8 +125,9 @@ type CacheMetadata struct {
 	DownloadedAt string  `json:"downloaded_at"`
 	LastCheck    string  `json:"last_check"`
 	ReleaseURL   string  `json:"release_url"`
-	// SHA256 is the digest this bundle was verified against, or "" when
-	// the release published no sidecar. Written by both backends.
+	// SHA256 is the digest this bundle was verified against. It is ""
+	// only in a cache that rx-python or an earlier rx-go filled from a
+	// release without a sidecar. Written by both backends.
 	SHA256 string `json:"sha256"`
 }
 
@@ -415,21 +417,11 @@ func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) 
 		return err
 	}
 
-	// SECURITY: verify the bundle against the release's .sha256 sidecar
-	// before unpacking anything. A missing sidecar is accepted with a
-	// warning, because releases published before the sidecar existed are
-	// still installable; a sidecar that does not match is always fatal.
-	var verifiedDigest string
-	sidecar, sidecarErr := m.fetchSHA256Sidecar(ctx, downloadURL)
-	if sidecarErr != nil {
-		m.Logger.Warn("frontend_checksum_missing", "url", downloadURL, "reason", sidecarErr.Error())
-	} else {
-		if err := verifySHA256(tmpPath, sidecar); err != nil {
-			_ = os.Remove(tmpPath)
-			return fmt.Errorf("frontend checksum: %w", err)
-		}
-		verifiedDigest = strings.ToLower(strings.Fields(sidecar)[0])
-		m.Logger.Info("frontend_checksum_verified", "sha256", verifiedDigest)
+	// SECURITY: nothing is unpacked before verifyBundle accepts the bytes.
+	verifiedDigest, verifyErr := m.verifyBundle(ctx, downloadURL, tmpPath)
+	if verifyErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("frontend checksum: %w", verifyErr)
 	}
 
 	// Unpack into a staging directory first, so a bundle that turns out
@@ -479,9 +471,30 @@ func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) 
 	return nil
 }
 
+// verifyBundle checks the bundle downloaded to bundlePath against the
+// `.sha256` sidecar published beside downloadURL and returns the digest
+// the bundle matched; an error refuses the bundle.
+//
+// SECURITY: a bundle is installed only when its sidecar is read and holds
+// the bundle's digest. A missing sidecar (404), any other answer but 200,
+// a request that fails, a body that is not a digest and a digest that
+// does not match are all errors, so no host can turn a verified install
+// into an unverified one by withholding the sidecar.
+func (m *Manager) verifyBundle(ctx context.Context, downloadURL, bundlePath string) (string, error) {
+	sidecar, err := m.fetchSHA256Sidecar(ctx, downloadURL)
+	if err != nil {
+		return "", err
+	}
+	if err := verifySHA256(bundlePath, sidecar); err != nil {
+		return "", err
+	}
+	digest := strings.ToLower(strings.Fields(sidecar)[0])
+	m.Logger.Info("frontend_checksum_verified", "sha256", digest)
+	return digest, nil
+}
+
 // fetchSHA256Sidecar retrieves the `.sha256` file published beside a
-// bundle. An error means the release has no sidecar, which the caller
-// treats as "unverified" rather than "invalid".
+// bundle. Any answer but 200 and a request that fails are errors.
 func (m *Manager) fetchSHA256Sidecar(ctx context.Context, downloadURL string) (string, error) {
 	sidecarURL := downloadURL + sha256SidecarSuffix
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sidecarURL, nil)

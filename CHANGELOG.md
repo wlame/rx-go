@@ -143,6 +143,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file it could have read every compressed byte before the stop, and
   the build then ran to its end.
 
+### Security
+
+- `rx serve` installs a viewer bundle only when its `.sha256` sidecar
+  is read and matches. A missing sidecar (`404`), any other answer but
+  `200` (a `403`, a `500`), a request that fails (a dropped connection,
+  a sidecar URL that cannot be built from `RX_FRONTEND_URL`) and a body
+  that is not a digest refuse the bundle and keep the cached viewer,
+  with the `Warning: … Viewer: …` line a checksum mismatch prints. Each
+  of the first three used to install the bundle unverified with a
+  `frontend_checksum_missing` warning, which is gone. A host that
+  `RX_FRONTEND_URL` names must now publish `<URL>.sha256` beside the
+  bundle.
+
 ## [0.8.0] - 2026-10-12
 
 Signatures replace the index analysis: rx finds tracebacks, crashes,

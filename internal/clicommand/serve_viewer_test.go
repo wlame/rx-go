@@ -1,12 +1,16 @@
 package clicommand
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -68,6 +72,94 @@ func TestPrepareViewer_FailedCheckWarnsOnceAndServesTheCache(t *testing.T) {
 	}
 	if !fm.IsAvailable() {
 		t.Error("the cached viewer must still be served")
+	}
+}
+
+// viewerTarball builds a dist.tar.gz that installs as viewer version.
+func viewerTarball(t *testing.T, version string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, f := range []struct{ name, body string }{
+		{"index.html", "<html>" + version + "</html>"},
+		{"assets/app.js", "console.log(1)"},
+		{"version.json", `{"version":"` + version + `"}`},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(f.body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(f.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// nextPatch returns version with its patch number one higher: a release
+// newer than version and, for MinViewerVersion, inside the range.
+func nextPatch(t *testing.T, version string) string {
+	t.Helper()
+	parts := strings.Split(version, ".")
+	patch, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		t.Fatalf("version %q: %v", version, err)
+	}
+	parts[len(parts)-1] = strconv.Itoa(patch + 1)
+	return strings.Join(parts, ".")
+}
+
+// releaseWithForbiddenSidecar answers like GitHub for one release, tag,
+// whose bundle is a valid viewer and whose .sha256 sidecar answers 403.
+func releaseWithForbiddenSidecar(t *testing.T, tag string) *httptest.Server {
+	t.Helper()
+	bundle := viewerTarball(t, strings.TrimPrefix(tag, "v"))
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/" + frontend.GitHubRepo + "/releases":
+			_, _ = fmt.Fprintf(w, `[{"tag_name":%q,"assets":[{"name":"dist.tar.gz","browser_download_url":%q}]}]`,
+				tag, srv.URL+"/dist.tar.gz")
+		case "/dist.tar.gz":
+			_, _ = w.Write(bundle)
+		case "/dist.tar.gz.sha256":
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestPrepareViewer_UnreadableSidecarKeepsTheCachedViewer: a newer
+// release whose sidecar answers 403 is not installed unverified; the
+// cached viewer stays, and one warning line says why.
+func TestPrepareViewer_UnreadableSidecarKeepsTheCachedViewer(t *testing.T) {
+	newer := nextPatch(t, frontend.MinViewerVersion)
+	releases := releaseWithForbiddenSidecar(t, "v"+newer)
+	fm := cachedViewerManager(t, releases.URL, time.Now().Add(-48*time.Hour))
+	var stderr bytes.Buffer
+
+	served := prepareViewer(fm, viewerCheckDaily, &stderr)
+
+	if served.Reason != frontend.ServedFromCache || served.Version != frontend.MinViewerVersion {
+		t.Errorf("served = %+v, want the cached %s, not %s", served, frontend.MinViewerVersion, newer)
+	}
+	want := "frontend checksum: sidecar returned 403. Viewer: v" + frontend.MinViewerVersion + " (cached)."
+	lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Warning: ") || !strings.HasSuffix(lines[0], want) {
+		t.Errorf("stderr = %q, want one warning line ending in %q", stderr.String(), want)
+	}
+	index, err := os.ReadFile(fm.IndexHTMLPath())
+	if err != nil || string(index) != "<html>"+frontend.MinViewerVersion+"</html>" {
+		t.Errorf("index.html = %q (%v), want the cached viewer's", index, err)
 	}
 }
 
