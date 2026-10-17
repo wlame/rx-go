@@ -33,7 +33,7 @@ jobs:
           printf 'tag name %s is vX.Y.Z\n' "$GITHUB_REF_NAME"
 
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: setup-go
         uses: actions/setup-go@v7

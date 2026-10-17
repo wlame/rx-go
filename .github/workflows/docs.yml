@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # fetch-depth: 0 is required for the git-revision-date-localized
           # plugin to read commit history and render "last updated" dates.
