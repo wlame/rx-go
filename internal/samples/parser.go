@@ -8,36 +8,66 @@ import (
 
 // OffsetOrRange represents one item in a comma-separated samples spec.
 // A single value has End == nil (negative allowed). A range has both
-// ends non-negative with Start <= End.
+// ends 0 or more with Start <= End, or, for lines, both ends negative
+// with Start <= End: a range counted from the end (-100--1 is the last
+// hundred lines). A range never mixes the two.
 //
-// Examples produced by Parse("100,200-350,-5"):
+// Examples produced by ParseLines("100,200-350,-5,-3--1"):
 //
 //	{Start: 100}
 //	{Start: 200, End: &350}
 //	{Start: -5}
+//	{Start: -3, End: &-1}
 type OffsetOrRange struct {
 	Start int64
 	End   *int64
 }
 
-// ParseCSV parses a comma-separated spec into a slice of OffsetOrRange
+// specGrammar is what the positions of a spec are: the noun its errors
+// name, and whether a range may count from the end. The two grammars
+// differ in nothing else, so the data decides and the parser is one.
+type specGrammar struct {
+	noun           string
+	negativeRanges bool
+}
+
+var (
+	lineGrammar   = specGrammar{noun: "line", negativeRanges: true}
+	offsetGrammar = specGrammar{noun: "offset", negativeRanges: false}
+)
+
+// ParseLines parses a comma-separated spec of line numbers and ranges
+// (the --lines flag, the lines query parameter) into OffsetOrRange
 // values. Empty or whitespace-only entries are rejected. A single
 // request can contain any mix of singles and ranges.
 //
 // Syntax:
 //
-//	"100"        → single, start=100
-//	"-5"         → single, start=-5
-//	"100-200"    → range [100, 200] (both >= 0, start <= end)
+//	"100"         → single, start=100
+//	"-5"          → single, start=-5 (the fifth line from the end)
+//	"100-200"     → range [100, 200] (both >= 0, start <= end)
+//	"-100--1"     → range counted from the end (both < 0, start <= end)
 //	"100,200-300" → multi
-func ParseCSV(spec string) ([]OffsetOrRange, error) {
+func ParseLines(spec string) ([]OffsetOrRange, error) {
+	return parseSpec(spec, lineGrammar)
+}
+
+// ParseOffsets parses a comma-separated spec of byte offsets and ranges
+// (the --offsets flag, the offsets query parameter): the grammar of
+// ParseLines, except that a range cannot count from the end.
+func ParseOffsets(spec string) ([]OffsetOrRange, error) {
+	return parseSpec(spec, offsetGrammar)
+}
+
+// parseSpec is the parser behind ParseLines and ParseOffsets.
+func parseSpec(spec string, g specGrammar) ([]OffsetOrRange, error) {
 	if strings.TrimSpace(spec) == "" {
 		return nil, fmt.Errorf("empty spec")
 	}
 	parts := strings.Split(spec, ",")
 	out := make([]OffsetOrRange, 0, len(parts))
 	for _, p := range parts {
-		v, err := parseOne(strings.TrimSpace(p))
+		v, err := parseOne(strings.TrimSpace(p), g)
 		if err != nil {
 			return nil, err
 		}
@@ -46,44 +76,63 @@ func ParseCSV(spec string) ([]OffsetOrRange, error) {
 	return out, nil
 }
 
-// parseOne parses a single "100", "-5", or "100-200" token. Mirrors
-// rx-python/src/rx/cli/samples.py::parse_offset_or_range semantics.
-func parseOne(value string) (OffsetOrRange, error) {
+// parseOne parses a single "100", "-5", "100-200" or "-100--1" token.
+// Every error names the grammar's noun, so a user who typed --lines is
+// never told about an offset.
+func parseOne(value string, g specGrammar) (OffsetOrRange, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return OffsetOrRange{}, fmt.Errorf("empty value")
 	}
-	// Try parsing as a single integer first (covers positive AND
-	// negative singles).
+	// A single integer first: it covers positive and negative singles.
 	if n, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return OffsetOrRange{Start: n}, nil
 	}
-	// Range format requires the value to contain a '-' but NOT start
-	// with '-' (that would be a negative single). Pythonic check.
-	if strings.Contains(value, "-") && !strings.HasPrefix(value, "-") {
-		parts := strings.SplitN(value, "-", 2)
-		if len(parts) != 2 {
-			return OffsetOrRange{}, fmt.Errorf(
-				"invalid range format: %s. Expected START-END", value)
-		}
-		start, e1 := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-		end, e2 := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-		if e1 != nil || e2 != nil {
-			return OffsetOrRange{}, fmt.Errorf(
-				"invalid range format: %s. Both values must be integers", value)
-		}
-		if start < 0 || end < 0 {
-			return OffsetOrRange{}, fmt.Errorf(
-				"invalid range: %s. Ranges cannot contain negative values", value)
-		}
-		if start > end {
-			return OffsetOrRange{}, fmt.Errorf(
-				"invalid range: %s. Start must be <= end", value)
-		}
-		return OffsetOrRange{Start: start, End: &end}, nil
+	sep := rangeSeparator(value)
+	if sep < 0 {
+		return OffsetOrRange{}, fmt.Errorf(
+			"invalid %s: %s. Must be an integer or range (e.g., 100-200)", g.noun, value)
 	}
-	return OffsetOrRange{}, fmt.Errorf(
-		"invalid offset: %s. Must be an integer or range (e.g., 100-200)", value)
+	start, e1 := strconv.ParseInt(strings.TrimSpace(value[:sep]), 10, 64)
+	end, e2 := strconv.ParseInt(strings.TrimSpace(value[sep+1:]), 10, 64)
+	if e1 != nil || e2 != nil {
+		return OffsetOrRange{}, fmt.Errorf(
+			"invalid %s range: %s. Both values must be integers", g.noun, value)
+	}
+	if start < 0 || end < 0 {
+		if !g.negativeRanges {
+			return OffsetOrRange{}, fmt.Errorf(
+				"invalid %s range: %s. Ranges cannot contain negative values", g.noun, value)
+		}
+		if (start < 0) != (end < 0) {
+			return OffsetOrRange{}, fmt.Errorf(
+				"invalid %s range: %s. Both ends count from the start (100-200) or both from the end (-100--1)", g.noun, value)
+		}
+	}
+	if start > end {
+		return OffsetOrRange{}, fmt.Errorf(
+			"invalid %s range: %s. Start must be <= end", g.noun, value)
+	}
+	return OffsetOrRange{Start: start, End: &end}, nil
+}
+
+// rangeSeparator returns the index of the '-' that parts a range's two
+// ends: the first '-' whose nearest non-space character before it is a
+// digit. A leading '-' and the '-' of a negative end (-100--1) are
+// signs, not separators. -1 when the value has none.
+func rangeSeparator(value string) int {
+	lastWasDigit := false
+	for i := 0; i < len(value); i++ {
+		switch c := value[i]; {
+		case c == '-' && lastWasDigit:
+			return i
+		case c == ' ':
+			// Spaces around the separator are tolerated; skip them.
+		default:
+			lastWasDigit = c >= '0' && c <= '9'
+		}
+	}
+	return -1
 }
 
 // Key returns the string key the samples response uses for this value.
@@ -100,5 +149,30 @@ func (o OffsetOrRange) Key() string {
 }
 
 // IsRange reports whether this value represents a range (vs a single
-// value). Single values can be negative; ranges cannot.
+// value).
 func (o OffsetOrRange) IsRange() bool { return o.End != nil }
+
+// LinesFromStart returns o with a line counted from the end resolved to
+// the line it names in a text of total lines: -1 is the last line,
+// -total the first, and a position before the first line is line 1 (the
+// text has no line before it). A single and both ends of a range follow
+// the one rule, so -3--1 on 300 lines is 298-300, and a position
+// counted from the start is returned as it is. The answer's key for a
+// position counted from the end is the Key of what this returns.
+func (o OffsetOrRange) LinesFromStart(total int64) OffsetOrRange {
+	if o.Start >= 0 {
+		return o
+	}
+	resolved := OffsetOrRange{Start: lineFromEnd(o.Start, total)}
+	if o.End != nil {
+		end := lineFromEnd(*o.End, total)
+		resolved.End = &end
+	}
+	return resolved
+}
+
+// lineFromEnd is the line a position counted from the end names: -1 is
+// line total, and a position before line 1 is line 1.
+func lineFromEnd(position, total int64) int64 {
+	return max(1, total+position+1)
+}

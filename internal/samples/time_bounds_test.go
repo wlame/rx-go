@@ -259,7 +259,7 @@ func storeIndex(t *testing.T, path string) {
 // lineRanges parses a lines spec.
 func lineRanges(t *testing.T, spec string) []OffsetOrRange {
 	t.Helper()
-	parsed, err := ParseCSV(spec)
+	parsed, err := ParseLines(spec)
 	if err != nil {
 		t.Fatalf("parse %q: %v", spec, err)
 	}

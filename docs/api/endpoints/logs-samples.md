@@ -27,7 +27,7 @@ GET /v1/logs/samples?path=<handle>&timestamps=<T>[&timestamps=<T>...][&context=<
 | Parameter | Type | Required | Description |
 |---|---|:-:|---|
 | `path` | string | yes | The chain's handle, as `GET /v1/logs/chains` gives it in `path` |
-| `lines` | string | one of | Comma-separated line numbers and ranges, as `GET /v1/samples` takes them (`100,200-300,-1`): the chain's global numbers, or with `part` the part's own. `-N` counts back from the end of the chain (or of the part) |
+| `lines` | string | one of | Comma-separated line numbers and ranges, as `GET /v1/samples` takes them (`100,200-300,-1`): the chain's global numbers, or with `part` the part's own. `-N` counts back from the end of the chain (or of the part), and so does a range of two negative numbers (`-100--1`) |
 | `part` | string | no | The bare name of a part, as `GET /v1/logs/chain` lists it (`syslog.3.gz`): `lines` then numbers that part as `GET /v1/samples` numbers it on its own. Only with `lines` |
 | `timestamps` | string | one of | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`), as `GET /v1/samples` takes it; repeat the parameter for several, at most 1,000 |
 | `context` | int | no | Lines of context before and after each single line or time (default `-1`, which means 3; at most 100) |
@@ -202,7 +202,7 @@ what the answer has room for still. Over them, `400`.
 |---|---|---|
 | `path`, `name`, `state`, `fingerprint`, `parts` | | As `GET /v1/logs/chain` gives them |
 | `before_context`, `after_context` | int | The context of each single line or time |
-| `lines` | object | Each key of a lines request (`-N` keyed by the line it names) to its global target: the line itself, a range's first line; `-1` when the chain has no such line, and before the chain is ready |
+| `lines` | object | Each key of a lines request (`-N` keyed by the line it names, `-N--M` by the lines) to its global target: the line itself, a range's first line; `-1` when the chain has no such line, and before the chain is ready |
 | `timestamps` | object | Each time query to the global line it found (a range's first); `-1` when none |
 | `samples` | object | Each key to its pieces; `null` when the chain has no line of it, `[]` for a range that ends at 0 |
 | `index_build` | object \| null | The background index build this answer started or joined: the chain's index task for a pending chain; for a ready chain the build of a part read from its head; `null` otherwise |

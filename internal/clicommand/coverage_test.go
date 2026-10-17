@@ -989,7 +989,7 @@ func TestStdinIsPipe(t *testing.T) {
 }
 
 // parseRangeOrSingle was retired in favor of
-// internal/samples.ParseCSV / parseOne. Equivalent test coverage lives
+// internal/samples.ParseLines / parseOne. Equivalent test coverage lives
 // in internal/samples/parser_test.go. This stub is kept only to
 // acknowledge the rename and document the relocation.
 

@@ -192,9 +192,9 @@ func runSamples(out io.Writer, p samplesParams) error {
 	)
 	switch {
 	case len(p.offsets) > 0:
-		parsedOffsets, err = samples.ParseCSV(strings.Join(p.offsets, ","))
+		parsedOffsets, err = samples.ParseOffsets(strings.Join(p.offsets, ","))
 	case len(p.lines) > 0:
-		parsedLines, err = samples.ParseCSV(strings.Join(p.lines, ","))
+		parsedLines, err = samples.ParseLines(strings.Join(p.lines, ","))
 	}
 	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())

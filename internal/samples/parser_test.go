@@ -1,12 +1,13 @@
 package samples
 
 import (
+	"strings"
 	"testing"
 )
 
-// TestParseCSV_SingleValues covers the happy path for plain integers
+// TestParseLines_SingleValues covers the happy path for plain integers
 // (positive and negative singles).
-func TestParseCSV_SingleValues(t *testing.T) {
+func TestParseLines_SingleValues(t *testing.T) {
 	cases := []struct {
 		in    string
 		want  int64
@@ -19,12 +20,12 @@ func TestParseCSV_SingleValues(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
-			got, err := ParseCSV(tc.in)
+			got, err := ParseLines(tc.in)
 			if err != nil {
-				t.Fatalf("ParseCSV(%q): %v", tc.in, err)
+				t.Fatalf("ParseLines(%q): %v", tc.in, err)
 			}
 			if len(got) != 1 {
-				t.Fatalf("ParseCSV(%q): got %d items, want 1", tc.in, len(got))
+				t.Fatalf("ParseLines(%q): got %d items, want 1", tc.in, len(got))
 			}
 			if got[0].Start != tc.want {
 				t.Errorf("Start: got %d, want %d", got[0].Start, tc.want)
@@ -36,11 +37,11 @@ func TestParseCSV_SingleValues(t *testing.T) {
 	}
 }
 
-// TestParseCSV_Ranges covers "100-200" style input.
-func TestParseCSV_Ranges(t *testing.T) {
-	got, err := ParseCSV("100-200,300-301,0-0")
+// TestParseLines_Ranges covers "100-200" style input.
+func TestParseLines_Ranges(t *testing.T) {
+	got, err := ParseLines("100-200,300-301,0-0")
 	if err != nil {
-		t.Fatalf("ParseCSV: %v", err)
+		t.Fatalf("ParseLines: %v", err)
 	}
 	if len(got) != 3 {
 		t.Fatalf("got %d items, want 3", len(got))
@@ -62,12 +63,12 @@ func TestParseCSV_Ranges(t *testing.T) {
 	}
 }
 
-// TestParseCSV_MultiRangeMixed
+// TestParseLines_MultiRangeMixed
 // a single call can mix singles and ranges like "200-350,450-600,1000".
-func TestParseCSV_MultiRangeMixed(t *testing.T) {
-	got, err := ParseCSV("200-350,450-600,1000")
+func TestParseLines_MultiRangeMixed(t *testing.T) {
+	got, err := ParseLines("200-350,450-600,1000")
 	if err != nil {
-		t.Fatalf("ParseCSV: %v", err)
+		t.Fatalf("ParseLines: %v", err)
 	}
 	if len(got) != 3 {
 		t.Fatalf("got %d items, want 3", len(got))
@@ -83,26 +84,92 @@ func TestParseCSV_MultiRangeMixed(t *testing.T) {
 	}
 }
 
-// TestParseCSV_Errors covers rejected inputs.
-func TestParseCSV_Errors(t *testing.T) {
+// TestParseLines_Errors covers rejected inputs: a mixed range (one end
+// counted from the start, the other from the end), a reversed one, and
+// text that is no position. Each error names a line, never an offset.
+func TestParseLines_Errors(t *testing.T) {
 	cases := []string{
 		"",
 		"   ",
 		"abc",
 		"1-2-3",
 		"1-abc",
-		"-1-5",     // negative range
-		"5--10",    // malformed
+		"-1-5",     // mixed: from the end, then from the start
+		"5--10",    // mixed: from the start, then from the end
 		"10-5",     // start > end
+		"-1--3",    // reversed: -3 is before -1
 		"100,,200", // empty middle token
 	}
 	for _, in := range cases {
 		t.Run(in, func(t *testing.T) {
-			_, err := ParseCSV(in)
+			_, err := ParseLines(in)
 			if err == nil {
-				t.Errorf("ParseCSV(%q): expected error, got nil", in)
+				t.Fatalf("ParseLines(%q): expected error, got nil", in)
+			}
+			if strings.Contains(err.Error(), "offset") {
+				t.Errorf("ParseLines(%q): error names an offset: %v", in, err)
 			}
 		})
+	}
+}
+
+// A range of lines counted from the end (-100--1: the last hundred
+// lines) is accepted in lines mode; both ends are negative and the
+// start is before the end, as in a positive range.
+func TestParseLines_NegativeRanges(t *testing.T) {
+	got, err := ParseLines("-100--1,-3--3,5-9")
+	if err != nil {
+		t.Fatalf("ParseLines: %v", err)
+	}
+	want := []struct{ start, end int64 }{{-100, -1}, {-3, -3}, {5, 9}}
+	if len(got) != len(want) {
+		t.Fatalf("got %d items, want %d", len(got), len(want))
+	}
+	for i, w := range want {
+		if !got[i].IsRange() || got[i].Start != w.start || *got[i].End != w.end {
+			t.Errorf("got[%d] = %+v, want %d-%d", i, got[i], w.start, w.end)
+		}
+	}
+}
+
+// The error for a bad line names a line; the error for a bad offset
+// names an offset: the two flags of rx samples are inverses, and a user
+// who typed --lines must not be told about offsets.
+func TestParseLines_ErrorsNameLines(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"abc", "invalid line: abc"},
+		{"1-abc", "invalid line range: 1-abc"},
+		{"-1--3", "invalid line range: -1--3"},
+		{"5--1", "invalid line range: 5--1"},
+	}
+	for _, tc := range cases {
+		_, err := ParseLines(tc.in)
+		if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+			t.Errorf("ParseLines(%q) = %v, want a prefix %q", tc.in, err, tc.want)
+		}
+	}
+}
+
+// Offsets keep their grammar: a single negative offset counts from the
+// end, a negative range is refused, and every error names an offset.
+func TestParseOffsets_RefusesNegativeRangesAndNamesOffsets(t *testing.T) {
+	if got, err := ParseOffsets("100-200,-5"); err != nil || len(got) != 2 || got[1].Start != -5 {
+		t.Fatalf("ParseOffsets(100-200,-5) = %+v, %v", got, err)
+	}
+	cases := []struct{ in, want string }{
+		{"abc", "invalid offset: abc"},
+		{"-3--1", "invalid offset range: -3--1"},
+		{"-1-5", "invalid offset range: -1-5"},
+		{"10-5", "invalid offset range: 10-5"},
+	}
+	for _, tc := range cases {
+		_, err := ParseOffsets(tc.in)
+		if err == nil || !strings.HasPrefix(err.Error(), tc.want) {
+			t.Errorf("ParseOffsets(%q) = %v, want a prefix %q", tc.in, err, tc.want)
+		}
+		if err != nil && strings.Contains(err.Error(), "line") {
+			t.Errorf("ParseOffsets(%q): error names a line: %v", tc.in, err)
+		}
 	}
 }
 

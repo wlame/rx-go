@@ -237,7 +237,7 @@ func keysOf[V any](m map[string]V) []string {
 // lines parses a lines spec for a request.
 func lines(t *testing.T, spec string) []samples.OffsetOrRange {
 	t.Helper()
-	parsed, err := samples.ParseCSV(spec)
+	parsed, err := samples.ParseLines(spec)
 	if err != nil {
 		t.Fatalf("parse %q: %v", spec, err)
 	}

@@ -37,7 +37,7 @@ var ErrSamplesRequest = errors.New("invalid chain samples request")
 // SamplesRequest is a samples request on a chain: lines by global
 // number, lines of one part by the part's own numbers, or times.
 type SamplesRequest struct {
-	// Lines are line numbers and ranges, as samples.ParseCSV gives them:
+	// Lines are line numbers and ranges, as samples.ParseLines gives them:
 	// global numbers, or the numbers of Part when it is set. A single
 	// line -N counts back from the end (of the chain, or of Part).
 	Lines []samples.OffsetOrRange
@@ -319,29 +319,27 @@ func (s *sampler) knownCount(k int) int64 {
 }
 
 // lineWindows turns line positions in space into windows: a single line
-// with the request's context around it, -N counted back from the
-// space's end and keyed by the line it names, line 0 (no line), and a
-// range as asked.
+// with the request's context around it, line 0 (no line), a range as
+// asked, and a position counted from the space's end (-N, -N--M)
+// resolved and keyed as one file resolves it (samples.OffsetOrRange.
+// LinesFromStart).
 func (s *sampler) lineWindows(ctx context.Context, space lineSpace, positions []samples.OffsetOrRange) ([]window, error) {
 	windows := make([]window, 0, len(positions))
 	for _, v := range positions {
-		if v.IsRange() {
-			windows = append(windows, window{key: v.Key(), first: v.Start, last: *v.End, isRange: true, emptyList: *v.End == 0})
-			continue
-		}
-		line := v.Start
-		if line < 0 {
+		if v.Start < 0 {
 			// spaceEnd reads the last part's count at most once per call
 			// (countOf), however many positions count back.
 			total, err := s.spaceEnd(ctx, space)
 			if err != nil {
 				return nil, err
 			}
-			// As one file resolves -N (samples.wantedLinesOf): the line
-			// it names, at least line 1.
-			line = max(1, total+line+1)
+			v = v.LinesFromStart(total)
 		}
-		windows = append(windows, s.around(strconv.FormatInt(line, 10), line))
+		if v.IsRange() {
+			windows = append(windows, window{key: v.Key(), first: v.Start, last: *v.End, isRange: true, emptyList: *v.End == 0})
+			continue
+		}
+		windows = append(windows, s.around(v.Key(), v.Start))
 	}
 	return windows, nil
 }
@@ -447,6 +445,13 @@ func (s *sampler) partWindows(ctx context.Context, space lineSpace, k int) ([]wi
 	globalOf := func(n int64) int64 { return addWithin(start-1, n) }
 	windows := make([]window, 0, len(s.req.Lines))
 	for _, v := range s.req.Lines {
+		if v.Start < 0 {
+			n, err := s.countOf(ctx, k)
+			if err != nil {
+				return nil, err
+			}
+			v = v.LinesFromStart(n)
+		}
 		if v.IsRange() {
 			w := window{key: v.Key(), first: globalOf(max(1, v.Start)), last: globalOf(*v.End), isRange: true, emptyList: *v.End == 0}
 			if *v.End == 0 {
@@ -459,14 +464,7 @@ func (s *sampler) partWindows(ctx context.Context, space lineSpace, k int) ([]wi
 			continue
 		}
 		line := v.Start
-		if line < 0 {
-			n, err := s.countOf(ctx, k)
-			if err != nil {
-				return nil, err
-			}
-			line = max(1, n+line+1)
-		}
-		key := strconv.FormatInt(line, 10)
+		key := v.Key()
 		switch {
 		case line == 0:
 			windows = append(windows, window{key: key, first: 1, last: 0})

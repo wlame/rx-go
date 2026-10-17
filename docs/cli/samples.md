@@ -228,7 +228,11 @@ has its own, above):
 
 - Single: `100`
 - Range: `100-200`
-- Negative (line mode only): `-1` means "last line", `-10` means "10th from the end"
+- Negative (line mode only): `-1` means "last line", `-10` means "10th
+  from the end", and a range of two negative numbers counts from the
+  end as well: `-100--1` is the last hundred lines. A single negative
+  byte offset counts back from the end of the text; a negative offset
+  range is refused
 - Multiple, comma-separated: `100,500,1000-1050,-5`
 - Multiple, by repeating the flag: `-b 100 -b 500`, which may be mixed
   with the comma form
@@ -289,15 +293,19 @@ nearest checkpoint.
 ### Negative line numbers
 
 ```bash
-rx samples /var/log/audit-2026-03.log --lines=-1 --before=99 --after=0
+rx samples /var/log/audit-2026-03.log --lines=-100--1 --context=0
 ```
 
-The last 100 lines of the file, like `tail -n 100`: `-1` is the last
-line, and `--before=99` adds the 99 lines before it. A range of negative
-numbers (`--lines=-100--1`) is not accepted and exits 2. On a plain file
-this is fast with or without an index.<!-- TODO: re-measure the last 50 lines (`--lines=-1 --before=49 --after=0`) on the 465 MB log, with and without an index --> On a gzip, bzip2, xz or plain zstd file
-without an index it costs a second pass over the stream, to count the
-lines first.
+The last 100 lines of the file, like `tail -n 100`: both ends of the
+range count back from the end, `-1` being the last line. The answer is
+keyed by the lines the range resolves to (`"901-1000"` on a 1,000-line
+file), as a single negative line is keyed by the line it names. The
+same lines come from `--lines=-1 --before=99 --after=0`, keyed `"1000"`.
+A range that mixes the two directions (`5--1`) or runs backwards
+(`-1--100`) is refused with exit 2. On a plain file a position counted
+from the end is fast with or without an index. On a gzip, bzip2, xz or
+plain zstd file without an index it costs a second pass over the
+stream, to count the lines first.
 
 ### Highlight matches within context
 

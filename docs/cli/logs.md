@@ -255,7 +255,7 @@ stores nothing; [`rx logs index`](#rx-logs-index) stores the indexes.
 
 | Flag | Default | Description |
 |---|---|---|
-| `-l`, `--lines` | — | Line numbers and ranges, comma-separated or repeated: the chain's global numbers, or with `--part` the part's own. `-N` counts back from the end |
+| `-l`, `--lines` | — | Line numbers and ranges, comma-separated or repeated: the chain's global numbers, or with `--part` the part's own. `-N` counts back from the end, and so does `-N--M` |
 | `--part` | — | The bare name of a part (`syslog.3.gz`): `--lines` then numbers that part as `rx samples` numbers it on its own. Context still crosses its edges |
 | `-t`, `--timestamps` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`), as `rx samples` takes it; repeat the flag for several |
 | `-c`, `--context` | `3` | Lines of context before and after each single line or time |

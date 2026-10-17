@@ -151,7 +151,7 @@ func logsSamplesRequestOf(p logsSamplesParams) (logchain.SamplesRequest, config.
 		return req, config.Zone{}, err
 	}
 	if len(p.lines) > 0 {
-		parsed, parseErr := samples.ParseCSV(strings.Join(p.lines, ","))
+		parsed, parseErr := samples.ParseLines(strings.Join(p.lines, ","))
 		if parseErr != nil {
 			return req, config.Zone{}, exitWithError(os.Stderr, ExitUsageError, "%s", parseErr.Error())
 		}

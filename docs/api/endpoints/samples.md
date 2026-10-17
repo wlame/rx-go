@@ -87,10 +87,11 @@ Both `offsets` and `lines` accept the same grammar:
 
 - Single: `100`
 - Range: `100-200`
-- Negative (a single value, in either mode): counts back from the end —
-  `-1` in `lines` is the last line, and `-10` in `offsets` is the byte
-  10 bytes before the end of the text. Both ends of a range are 0 or
-  more
+- Negative: counts back from the end — `-1` in `lines` is the last
+  line, and `-10` in `offsets` is the byte 10 bytes before the end of
+  the text. In `lines` a range may count back too: `-100--1` is the
+  last hundred lines (both ends negative, the start before the end). An
+  `offsets` range has both ends 0 or more
 - Multiple: `100,500,1000-1050,-5`
 
 No whitespace. Max practical length is limited by the URL length cap
@@ -329,7 +330,7 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 |---|---|---|
 | `path` | string | The validated absolute file path |
 | `offsets` | `{key: lineNumber}` | Byte-offset mode: key is the request spec, except that a negative single offset is keyed by the offset it resolves to (`-10` on a text of 11984 bytes is `"11974"`; 0 when it reaches past the start), value is the 1-based number of the line holding that byte (for a range, its first byte); `-1` past the end of the file |
-| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, except that a negative single line is keyed by the line it resolves to (`-1` on a text of 200 lines is `"200"`; 1 when it reaches past the first line), value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
+| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, except that a negative line is keyed by the line it resolves to (`-1` on a text of 200 lines is `"200"`, `-3--1` is `"198-200"`; 1 when it reaches past the first line), value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
 | `before_context`, `after_context` | int | The context the request asked for (or the default 3), echoed; see [context defaults](#context-defaults) |
 | `samples` | `{key: lines[] \| null}` | Retrieved content, keyed identically to `offsets` / `lines`; `null` for a position the file does not have |
 | `is_compressed` | bool | Whether the file was compressed |

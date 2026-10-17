@@ -61,9 +61,9 @@ func TestResolveReadsLinesOutOfACompressedFile(t *testing.T) {
 		{name: "counted from the end", lines: "-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spec, err := ParseCSV(tc.lines)
+			spec, err := ParseLines(tc.lines)
 			if err != nil {
-				t.Fatalf("ParseCSV: %v", err)
+				t.Fatalf("ParseLines: %v", err)
 			}
 			req := func(path string) Request {
 				return Request{
@@ -113,9 +113,9 @@ func TestResolveReadsLinesOutOfACompressedFile(t *testing.T) {
 // offset by one cannot pass.
 func TestResolveNumbersTheLinesItReadsFromACompressedFile(t *testing.T) {
 	_, compressed := writeGzipFixture(t, 100)
-	spec, err := ParseCSV("42")
+	spec, err := ParseLines("42")
 	if err != nil {
-		t.Fatalf("ParseCSV: %v", err)
+		t.Fatalf("ParseLines: %v", err)
 	}
 	resp, err := Resolve(t.Context(), Request{
 		Path: compressed, Lines: spec, BeforeContext: 1, AfterContext: 1, IndexLoader: NoIndex,
@@ -140,9 +140,9 @@ func TestResolveNumbersTheLinesItReadsFromACompressedFile(t *testing.T) {
 func TestResolveCountsLinesFromTheEndOfACompressedFile(t *testing.T) {
 	const lines = 300
 	_, compressed := writeGzipFixture(t, lines)
-	spec, err := ParseCSV("-1")
+	spec, err := ParseLines("-1")
 	if err != nil {
-		t.Fatalf("ParseCSV: %v", err)
+		t.Fatalf("ParseLines: %v", err)
 	}
 	resp, err := Resolve(t.Context(), Request{Path: compressed, Lines: spec, IndexLoader: NoIndex})
 	if err != nil {
@@ -208,9 +208,9 @@ func TestResolveAnswersALineAskedForTwiceOnce(t *testing.T) {
 		"a line inside another's run": "9,10,9",
 	}
 	for what, csv := range positions {
-		spec, err := ParseCSV(csv)
+		spec, err := ParseLines(csv)
 		if err != nil {
-			t.Fatalf("ParseCSV(%q): %v", csv, err)
+			t.Fatalf("ParseLines(%q): %v", csv, err)
 		}
 		request := func(path string, loader IndexLoader) Request {
 			return Request{Path: path, Lines: spec, BeforeContext: 1, AfterContext: 1, IndexLoader: loader}
@@ -245,9 +245,9 @@ func TestResolveAnswersALineAskedForTwiceOnce(t *testing.T) {
 // unable to talk about the same place in the file.
 func TestResolveReportsTheByteOffsetOfACompressedLine(t *testing.T) {
 	plain, compressed := writeGzipFixture(t, 500)
-	spec, err := ParseCSV("250")
+	spec, err := ParseLines("250")
 	if err != nil {
-		t.Fatalf("ParseCSV: %v", err)
+		t.Fatalf("ParseLines: %v", err)
 	}
 
 	fromPlain, err := Resolve(t.Context(), Request{Path: plain, Lines: spec, IndexLoader: NoIndex})

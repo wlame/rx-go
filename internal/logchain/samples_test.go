@@ -78,6 +78,8 @@ func TestSamples_FromTheEnd(t *testing.T) {
 		SamplesRequest{Lines: lines(t, "300-310")},
 		SamplesRequest{Lines: lines(t, "-1"), BeforeContext: 8, AfterContext: 3},
 		SamplesRequest{Lines: lines(t, "-310,-311")},
+		SamplesRequest{Lines: lines(t, "-3--1")},
+		SamplesRequest{Lines: lines(t, "-311--300,-1--1")},
 	)
 	requireLikeConcatenation(t, windowChain(t, false),
 		SamplesRequest{Lines: lines(t, "-1"), BeforeContext: 4, AfterContext: 4},

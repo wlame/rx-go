@@ -30,7 +30,7 @@ import (
 // parameters.
 type logSamplesInput struct {
 	Path          string   `query:"path" required:"true" example:"/var/log/syslog" doc:"The chain's handle: its directory joined with its name, as GET /v1/logs/chains gives it in path."`
-	Lines         string   `query:"lines" example:"123456,100-200,-1" doc:"Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part)."`
+	Lines         string   `query:"lines" example:"123456,100-200,-1" doc:"Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part); a range may too (-100--1)."`
 	Part          string   `query:"part" example:"syslog.3.gz" doc:"The bare name of a part, as GET /v1/logs/chain lists it: lines then number that part as GET /v1/samples numbers it on its own. Only with lines. Before the chain is ready, this is the only way to read it: the part is read alone."`
 	Timestamps    []string `query:"timestamps,explode" example:"2026-10-03T14:00:00" doc:"A time or time range (T, T1..T2, ..T2, T1..), as GET /v1/samples takes it; repeat the parameter for several, at most 1000. Each answers the first line, in the chain's order, whose own timestamp is at or after the time, with context, or a range's lines without context. A time of day without a date takes its date from the chain's first and last timestamps, which must fall on one day."`
 	Context       int      `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each single line or time (-1 = default 3)"`
@@ -118,7 +118,7 @@ func parseLogSamplesInput(in *logSamplesInput) (logSamplesRequest, error) {
 	}
 	out.fileZone = zone
 	if in.Lines != "" {
-		parsed, err := samples.ParseCSV(in.Lines)
+		parsed, err := samples.ParseLines(in.Lines)
 		if err != nil {
 			return out, ErrBadRequest(fmt.Sprintf("Invalid lines format: %s", err.Error()))
 		}

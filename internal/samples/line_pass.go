@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"sort"
-	"strconv"
 
 	"github.com/wlame/rx-go/internal/compression"
 	"github.com/wlame/rx-go/internal/filekind"
@@ -128,38 +127,37 @@ func resolveLineWindows(req Request, kind filekind.Kind, resp *collected) error 
 // has when the file holds none of its lines: -1, and a null sample (or
 // the source's empty range).
 //
-// A line counted back from the last one (-N) is resolved against the
-// file's line count and keyed by the line it resolves to; line 0 is not
-// a line. Two positions with the same key ask for the same window,
-// which is read once.
+// A position counted from the end (-N, or the range -N--M) is resolved
+// against the file's line count and keyed by the lines it resolves to
+// (OffsetOrRange.LinesFromStart); line 0 is not a line. Two positions
+// with the same key ask for the same window, which is read once.
 func wantedLinesOf(req Request, source lineSource, resp *collected) ([]*wantedLines, error) {
 	wants := make([]*wantedLines, 0, len(req.Lines))
 	seen := make(map[string]bool, len(req.Lines))
 	totalLines := int64(-1)
 	for _, v := range req.Lines {
-		w := &wantedLines{targetOffset: -1}
+		if v.Start < 0 {
+			if totalLines < 0 {
+				n, err := source.lineCount(req.context())
+				if err != nil {
+					return nil, err
+				}
+				totalLines = n
+			}
+			v = v.LinesFromStart(totalLines)
+		}
+		w := &wantedLines{key: v.Key(), targetOffset: -1}
 		switch {
 		case v.IsRange():
-			w.key, w.first, w.last = v.Key(), v.Start, *v.End
+			w.first, w.last = v.Start, *v.End
 			resp.Samples[w.key] = source.emptyRange(w.last)
 		case v.Start == 0:
 			resp.Samples["0"] = nil
 			resp.Lines["0"] = -1
 			continue
 		default:
-			line := v.Start
-			if line < 0 {
-				if totalLines < 0 {
-					n, err := source.lineCount(req.context())
-					if err != nil {
-						return nil, err
-					}
-					totalLines = n
-				}
-				line = max(1, totalLines+line+1)
-			}
-			w.key, w.target = strconv.FormatInt(line, 10), line
-			w.first, w.last = contextWindow(line, req)
+			w.target = v.Start
+			w.first, w.last = contextWindow(v.Start, req)
 			resp.Samples[w.key] = nil
 		}
 		resp.Lines[w.key] = -1

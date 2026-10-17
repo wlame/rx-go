@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rx samples --lines`, `rx logs samples --lines` and the `lines`
+  parameter of `GET /v1/samples` and `GET /v1/logs/samples` accept a
+  range counted from the end: `--lines=-100--1` returns the last hundred
+  lines, like `tail -n 100`, on every format. Both ends are negative
+  and the start comes before the end (`-1--100` and the mixed `5--1`
+  are refused, exit 2 / 400). The answer is keyed by the lines the
+  range resolves to (`"901-1000"` on a 1,000-line file), as a single
+  negative line is keyed by the line it names. The docs had shown the
+  form for a long time; the parser refused it.
+
+### Changed
+
+- A bad `--lines` value is reported as a line, not an offset:
+  `rx samples a.log --lines=abc` says `Invalid line: abc. Must be an
+  integer or range (e.g., 100-200)`, a bad range `Invalid line range:
+  …`; `--offsets` keeps `Invalid offset: …` and gains `Invalid offset
+  range: …`. The 400 bodies of `GET /v1/samples` and
+  `GET /v1/logs/samples` carry the same wording.
+
 ## [0.9.0] - 2026-10-17
 
 ### Added

@@ -124,7 +124,7 @@ func piecesText(t *testing.T, pieces []rxtypes.ChainPiece) string {
 // mustLines parses a lines spec.
 func mustLines(t *testing.T, spec string) []samples.OffsetOrRange {
 	t.Helper()
-	parsed, err := samples.ParseCSV(spec)
+	parsed, err := samples.ParseLines(spec)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ import (
 type samplesInput struct {
 	Path          string   `query:"path" required:"true" example:"/var/log/app.log" doc:"File path to read from"`
 	Offsets       string   `query:"offsets" example:"100,200,300" doc:"Comma-separated byte offsets or ranges"`
-	Lines         string   `query:"lines" example:"100,200-205,-1" doc:"Comma-separated 1-based line numbers or ranges"`
+	Lines         string   `query:"lines" example:"100,200-205,-1" doc:"Comma-separated 1-based line numbers or ranges. A negative value counts back from the end: -1 is the last line, -100--1 the last hundred"`
 	Timestamps    []string `query:"timestamps,explode" example:"2025-12-10T07:30:00" doc:"A time or time range (T, T1..T2, ..T2, T1..); repeat the parameter for several, at most 1000. Each answers the first line whose own timestamp is at or after the time, with context, or a range's lines without context. A value is never split at commas."`
 	Context       int      `query:"context" minimum:"-1" maximum:"100" default:"-1" example:"3" doc:"Context lines before AND after each offset (-1 = default 3)"`
 	BeforeContext int      `query:"before_context" minimum:"-1" maximum:"100" default:"-1" doc:"Context lines before each offset (-1 = default 3)"`
@@ -191,7 +191,7 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		}
 
 		// Parse the offsets/lines spec via the shared parser: both CLI
-		// and HTTP delegate to internal/samples.ParseCSV so the range
+		// and HTTP delegate to internal/samples.ParseLines so the range
 		// syntax (100,200-300,-5) stays identical across entry points.
 		var (
 			parsedOffsets []samples.OffsetOrRange
@@ -199,12 +199,12 @@ func registerSamplesHandlers(s *Server, api huma.API) {
 		)
 		switch {
 		case in.Offsets != "":
-			parsedOffsets, err = samples.ParseCSV(in.Offsets)
+			parsedOffsets, err = samples.ParseOffsets(in.Offsets)
 			if err != nil {
 				return nil, ErrBadRequest(fmt.Sprintf("Invalid offsets format: %s", err.Error()))
 			}
 		case in.Lines != "":
-			parsedLines, err = samples.ParseCSV(in.Lines)
+			parsedLines, err = samples.ParseLines(in.Lines)
 			if err != nil {
 				return nil, ErrBadRequest(fmt.Sprintf("Invalid lines format: %s", err.Error()))
 			}

@@ -78,10 +78,10 @@ func (r headRequest) request(t testing.TB, path string) Request {
 	}
 	var err error
 	if r.lines != "" {
-		req.Lines, err = ParseCSV(r.lines)
+		req.Lines, err = ParseLines(r.lines)
 	}
 	if r.offsets != "" {
-		req.Offsets, err = ParseCSV(r.offsets)
+		req.Offsets, err = ParseOffsets(r.offsets)
 	}
 	if err != nil {
 		t.Fatalf("%s: %v", r, err)
