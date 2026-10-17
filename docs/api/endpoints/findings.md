@@ -42,10 +42,10 @@ GET /v1/findings?path=/var/log/app.log&group=severity&text=true&before=1&limit=2
 | Parameter | Required | Description |
 |---|---|---|
 | `path` | yes | The file. Checked against the search roots like every path; a directory or a file that is not text answers `400` |
-| `signatures` | no | The selection the summary describes, as [`--signatures=`](../../concepts/signatures.md#selection) takes it: ids, groups, tags, `all`, `default`, `-word`. Empty or absent: the default set. A word that names an unknown, refused or disabled signature answers `400` with the reason and the load error |
+| `signatures` | no | The selection the summary describes, as [`--signatures=`](../../concepts/signatures.md#selection) takes it: ids, groups, tags, `all`, `default`, `-word`; at most 4096 bytes. Empty or absent: the default set. A word that names an unknown, refused or disabled signature answers `400` with the reason and the load error |
 | `signature` | no | Only the findings of these signatures; repeatable, at most 256 |
 | `group` | no | Only the findings of signatures of these groups; repeatable, at most 256 |
-| `q` | no | Only the findings whose excerpt or signature name holds this text, compared without case; at most 1024 bytes. On a server that masks secrets the excerpt is masked already, so a masked value never matches |
+| `q` | no | Only the findings whose excerpt or signature name holds this text, compared without case; at most 1024 characters. On a server that masks secrets the excerpt is masked already, so a masked value never matches |
 | `lines` | no | `A-B` (or one line `N`): only the findings that overlap those lines |
 | `after_line` | no | Only the findings whose first line is after `N` |
 | `before_line` | no | Only the findings whose first line is before `N`, listed from the nearest down (the reverse order) |
@@ -54,7 +54,7 @@ GET /v1/findings?path=/var/log/app.log&group=severity&text=true&before=1&limit=2
 | `text` | no | `true` fills `lines` (and `before`) of the page's findings |
 | `before` | no | With `text`: lines before each finding, 0 to 5 |
 | `max_bytes` | no | With `text`: the most bytes of text the page holds; 0 or absent is `RX_FINDINGS_TEXT_MAX_BYTES`, which also bounds a larger value |
-| `ticks` | no | `W`, 1 to 4,000: place the filtered findings on a timeline of `W` columns ([Ticks](#ticks)) |
+| `ticks` | no | `W`, 0 to 4,000: place the filtered findings on a timeline of `W` columns ([Ticks](#ticks)); 0 or absent: no ticks |
 | `file_tz` | no | Read the file's times in this zone, as [`GET /v1/samples`](samples.md) and [`GET /v1/time-range`](time-range.md) do ([Times](#times)) |
 
 Every filter applies before the page is cut, so `offset` and `limit`
@@ -141,7 +141,7 @@ set is not.
 | `total` | int | The stored findings of the checked signatures that pass the filters |
 | `findings` | array | The page, in the one order (first line, last line, signature id), or the reverse with `before_line`. The finding shape of [`GET /v1/trace`](trace.md) without `file` |
 | `ticks` | object \| null | With `ticks=W`; `null` without |
-| `cli_command` | string | The rx command that gives the same findings: `rx trace PATH --signatures=SELECTION`, with `--mask-secrets` on a server that masks |
+| `cli_command` | string | The rx command that gives the same findings: `rx trace PATH --signatures=SELECTION`, with `--before=N` when `text` is set and `before` is above 0, and `--mask-secrets` on a server that masks |
 
 ### Text
 
@@ -231,6 +231,7 @@ see [Times](#times) for the other cases), what it lacks is `null` and
 |---:|---|
 | 200 | The answer, `none` included |
 | 400 | A directory, a file that is not text, a selection that cannot be resolved, a bad `lines` or `file_tz` |
+| 401 | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | 403 | The path is outside every search root (`SandboxError`), hidden, or cannot be read |
 | 404 | The file does not exist |
 | 422 | `path` missing, a value out of its range (`limit`, `before`, `ticks`), more than 256 `signature` or `group` values, or a `signatures` or `q` value over its length |
@@ -281,8 +282,9 @@ it.
 
 `cli_command` is the [`rx scan`](../../cli/scan.md) command that does
 what the task does, the same in every status of the task: the
-selection spelled out, `--force` when the request forced, and
-`--mask-secrets` when the server masks secrets. A request that joined
+selection spelled out, `--hidden` when the server serves hidden
+entries, `--force` when the request forced, and `--mask-secrets` when
+the server masks secrets. A request that joined
 a running task gets that task's command. (The task's result, a
 `FindingsResponse`, keeps the `cli_command` of `GET /v1/findings`, an
 `rx trace --signatures=…` command that prints the findings.)
@@ -327,6 +329,7 @@ rather than joining a task that is ending. See
 |---:|---|
 | 202 | The task, started or joined |
 | 400 | A file that is not text, a selection that cannot be resolved, or a body that is not valid JSON |
+| 401 | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | 403 | The path is outside every search root, hidden, or cannot be read |
 | 404 | The file does not exist |
 | 409 | A task over the same directory is `cancelling`: its worker has not stopped yet. The body is `{"detail", "task_id"}`; ask again once it has ended |

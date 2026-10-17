@@ -39,15 +39,15 @@ where this table says otherwise:
 | `rx samples --lines=START-END` (plain file) | with an index, from the nearest checkpoint before START to END; without one, from byte 0 to END |
 | `rx samples --lines=N --context=K` (plain file) | the same, for the window `N-K` to `N+K` |
 | `rx samples --offsets=A-B` (plain file) | from the nearest checkpoint before A (or byte 0 without an index) to about B, to number the lines |
-| First `rx samples` lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in any compressed file, with no cached index | the whole file, once, to build and store the index — an index build, as `rx index` does. Over HTTP it runs as a background `index` task shared by every request for the file, so no request reads the whole file itself; a request with `Prefer: respond-async` waits for it up to `RX_SAMPLES_WAIT_SECONDS` (5 s) and then answers `202` with the task, any other waits for the build. `rx samples` waits for the build. `--no-index` or `RX_NO_INDEX` turns it off |
+| First `rx samples` lookup in a plain file of `RX_LARGE_FILE_MB` (50 MB) or more, or in any compressed file, with no cached index | the whole file, once, to build and store the index — an index build, as `rx index` does — unless the lookup's lines lie in the first `RX_SAMPLES_HEAD_MB` (64 MiB) of the text: then `rx samples` answers from that head and builds nothing, and `GET /v1/samples` answers from it at once and starts the build in the background. Over HTTP the build runs as a background `index` task shared by every request for the file, so no request reads the whole file itself; a request the head cannot answer with `Prefer: respond-async` waits for it up to `RX_SAMPLES_WAIT_SECONDS` (5 s) and then answers `202` with the task, any other waits for the build. `rx samples` waits for the build. `--no-index` or `RX_NO_INDEX` turns it off |
 | `rx samples --lines` on a gzip, bzip2, xz or plain zstd file | the decompressed stream from its first byte up to the last wanted line (and up to one decoder block past it); a negative line needs the line count, which an index gives, and without one costs a first pass over the whole stream |
 | `rx samples --lines` on a seekable zstd file with an index | the frames holding the wanted lines |
 | `rx trace --max-results=M` | **early-cancel**: as soon as the collector has M matches, in-flight ripgrep subprocesses are killed and queued chunks are skipped; numbering a match the cap left unnumbered reads from the nearest index checkpoint, or nothing without an index (or from byte 0 with `--no-index`) |
 | `rx trace` (no cap) | full file — this is the design |
 | `rx index` | full file — this is the design (builds the checkpoint map) |
 | `rx compress` | full file — this is the design (output is the file) |
-| `GET /v1/tree` | `os.Stat` per entry; 512-byte peek for text-file detection; no full-file reads |
-| `GET /v1/index` (cached) | the cached JSON index file only; no source-file access |
+| `GET /v1/tree` | `os.Stat` per entry; the first 8 KiB of each file's text for text-file detection (decompressed for a compressed file, with a decode window of at most 16 MiB); for a file with a cached index, the index file, and a stat of the file plus its first and last 64 KiB to check that the index still describes it; no full-file reads |
+| `GET /v1/index` (cached) | the cached JSON index file, and a stat of the source plus its first and last 64 KiB to check that the index still describes it; no other source-file access |
 | Webhook dispatch | non-blocking fire-and-forget; full queue = drop with metric, never blocks trace |
 
 No row is an exception to "no more than the result requires": the
@@ -116,7 +116,7 @@ If you're hitting OOM on scans with many matches:
 
 ## Binary size and startup
 
-- Statically-linked binary: **13.9 MB** (`-ldflags '-s -w'`,
+- Statically-linked binary: **17.5 MB** (`-ldflags '-s -w'`,
   `CGO_ENABLED=0`, darwin/arm64)
 - Start-up: **11 ms** (`rx --version`)
 - No runtime dependencies except `ripgrep`
@@ -235,9 +235,11 @@ Build an index when:
 - You'll run line-number lookups or range queries (`--lines=...`) AND
 - The file is queried more than once
 
-`rx samples` builds one by itself on the first lookup in such a file,
-and `GET /v1/samples` starts one as a background task, so an explicit
-`rx index` moves that cost to a time you choose.
+`rx samples` builds one by itself on the first lookup in such a file
+whose lines lie past the first `RX_SAMPLES_HEAD_MB` (64 MiB) of its
+text, and `GET /v1/samples` starts one as a background task on the
+first lookup, so an explicit `rx index` moves that cost to a time you
+choose.
 
 Skip the index when:
 
@@ -250,7 +252,7 @@ Skip the index when:
 | Operation (6.3 GB log) | Without index | With index |
 |---|---|---|
 | `rx samples --lines=40000000` | 2.46 s (reads to line 40 000 000) | 20 ms (seek to the nearest checkpoint) |
-| `rx samples --lines=-50--1` | 11 ms | 11 ms |
+| `rx samples --lines=-1 --before=49 --after=0` (the last 50 lines) | <!-- TODO: re-measure the last-50-lines lookup on the 6.3 GB log without an index --> | <!-- TODO: re-measure the last-50-lines lookup on the 6.3 GB log with an index --> |
 | `rx trace --max-results=N` line numbers | `-1` for matches the cap left unnumbered | counted from the nearest checkpoint |
 
 ## I/O patterns

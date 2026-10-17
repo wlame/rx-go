@@ -120,7 +120,8 @@ Shortened to one signature and four of the groups:
 
 | Code | When |
 |---:|---|
-| 200 | Always: load errors are in `errors`, not a failed request |
+| 200 | The catalogue: load errors are in `errors`, not a failed request |
+| 401 | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 
 ## See also
 

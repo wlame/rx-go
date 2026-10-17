@@ -14,14 +14,17 @@ rx logs show CHAIN... [--json] [--file-tz=ZONE] [--fingerprint=FP]
 rx logs time-range CHAIN... [--json] [--file-tz=ZONE]
 rx logs index CHAIN... [--json] [--force]
 rx logs samples CHAIN (--lines=SPEC [--part=NAME] | --timestamps=T...) [--context=N] [--json] [--file-tz=ZONE] [--fingerprint=FP]
-rx logs trace PATTERN [CHAIN|DIR|FILE ...] [the flags of rx trace]
+rx logs trace PATTERN [CHAIN|DIR|FILE ...] [the flags of rx trace except --signatures and --mask-secrets]
 ```
 
 `CHAIN` is a chain's **handle**: its directory joined with its name,
 `/var/log/syslog`, as `rx logs list --json` gives it in `path`.
 
 Each subcommand calls the same function as its `/v1/logs` route, and
-its `--json` output is that route's body.
+its `--json` output is that route's body, except for `rx logs index`:
+its `--json` prints the result of the build, while
+`POST /v1/logs/index` answers with a background task (see
+[`rx logs index`](#rx-logs-index)).
 
 ## `rx logs list`
 
@@ -128,7 +131,7 @@ one row per part in the chain's order:
 |---|---|
 | `#` | The part's place in the chain |
 | `NAME` | The part's file name |
-| `COMPRESSION` | `gzip`, `bz2`, `xz` or `zstd`, or `-` for a plain file |
+| `COMPRESSION` | `gzip`, `bz2`, `xz`, `zstd` or `journal`, or `-` for a plain file |
 | `LINES` | The part's line count, or `?` when not known |
 | `GLOBAL LINES` | The chain's line numbers the part holds (`110-246`); `-` for an empty part, `?` before the chain is ready |
 | `FIRST TIME` | The part's first timestamp, or `?` |
@@ -412,7 +415,8 @@ as they need its line count to answer at all.) `--json` prints the
 
 ### Flags
 
-Every flag of [`rx trace`](trace.md#flags), with the same meaning:
+Every flag of [`rx trace`](trace.md#flags) except `--signatures` and
+`--mask-secrets`, with the same meaning:
 `-e`/`--regexp`, `--path`, `--max-results`, `--samples`, `--context`,
 `-B`/`--before`, `-A`/`--after`, the matching flags (`-i`, `-w`, `-x`,
 `-F`, `-P`), `--json`, `--color`, `--no-cache`, `--no-index` (for the

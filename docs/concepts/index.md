@@ -21,7 +21,8 @@ performance trade-offs, operational behavior, and how to extend the tool.
   Structure, invalidation, when to build one.
 
 - **[Caching](caching.md)**  
-  On-disk cache layout, cache key scheme, mtime-based invalidation,
+  On-disk cache layout, cache key scheme, invalidation by source
+  identity (size, mtime, inode, device, ctime, fingerprint),
   and the `--no-cache` / `--no-index` escape hatches.
 
 - **[Log chains](log-chains.md)**  

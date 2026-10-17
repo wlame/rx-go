@@ -356,9 +356,10 @@ rx-python reads the files `rx compress` writes now as plain zstd. See
 - **Output size**: larger than monolithic zstd, because each frame
   restarts the compression context; how much depends on the frame size
   (see [frame size trade-offs](../concepts/compression.md#frame-size-trade-offs)).
-- **Parallelism**: scales near-linearly to the physical core count;
-  beyond that the output serialization and disk bandwidth become the
-  bottleneck.
+- **Parallelism**: not linear. On the 465 MB log, `--workers=4` took
+  the default level from 0.71 s with one worker to 0.29 s, and levels
+  10-22 from 4.84 s to 1.71 s; see
+  [Seekable zstd encoding](../performance.md#seekable-zstd-encoding).
 
 ## Tips and gotchas
 
@@ -409,7 +410,9 @@ written, and the JSON reports what was built:
 The index is a frame table: which lines each zstd frame holds. That is
 what lets `rx samples big.log.zst --lines=25000` decompress one frame
 rather than the whole stream, and it is written to the shared cache under
-`~/.cache/rx/indexes/`, so rx-python reads it and the other way round.
+`~/.cache/rx/indexes/`. rx-python uses the same directory but another
+index format version, so each backend treats the other's index as absent
+and builds its own.
 
 A failure to index is reported as `index_error` and does not fail the
 command: the compressed file is correct and usable, and `rx index` can

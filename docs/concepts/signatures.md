@@ -518,7 +518,7 @@ stays exact past it.
 **Masking is opt-in.** rx is meant for a trusted network, so by default
 it shows the text of a finding as the file holds it, secrets included.
 Turn masking on with `--mask-secrets` on `rx` and `rx trace` (with
-`--signatures`) and on `rx serve`, or with `RX_MASK_SECRETS=1` in the
+`--signatures`), on `rx scan` and on `rx serve`, or with `RX_MASK_SECRETS=1` in the
 environment (the boolean forms of [Boolean
 parsing](../configuration.md#boolean-parsing)); the flag wins over the
 variable, so `--mask-secrets=false` turns it off for one run. For the

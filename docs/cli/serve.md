@@ -31,7 +31,7 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 |------|------|---------|-------------|
 | `--host` | `string` | `127.0.0.1` | Interface to bind |
 | `--port` | `int` | `7777` | TCP port to bind |
-| `--search-root` | `string[]` | current directory | Restrict file access to this directory (repeatable) |
+| `--search-root` | `string[]` | `RX_SEARCH_ROOTS`, else current directory | Restrict file access to this directory (repeatable) |
 | `--skip-frontend` | `bool` | `false` | Don't attempt to download or check the `rx-viewer` SPA; serve what is cached |
 | `--update-viewer` | `bool` | `false` | Check GitHub for a newer `rx-viewer` release inside the supported range now, instead of once a day. Exits 2 with `--skip-frontend`, and when `RX_FRONTEND_PATH` is set |
 | `--mask-secrets` | `bool` | `RX_MASK_SECRETS`, else `false` | Mask what the signatures with `redact: true` match in every findings answer the server gives and in the findings cache ([Masking](../concepts/signatures.md#masking)). The mode is the server's, for every request, until it stops; the banner names it |
@@ -42,7 +42,8 @@ The server accepts `SIGINT` and `SIGTERM` for graceful shutdown with a
 - **`--host=127.0.0.1`** — binds to loopback only. Use `0.0.0.0` to accept
   external connections (combine with a reverse proxy for TLS).
 - **`--port=7777`** — arbitrary default. Any non-privileged port works.
-- **`--search-root`** — if omitted, the current working directory becomes
+- **`--search-root`** — if omitted, the roots in `RX_SEARCH_ROOTS` apply;
+  without that variable, the current working directory becomes
   the only allowed root. Every file-accepting endpoint rejects paths
   outside configured roots with `403 path_outside_search_root`.
 - **Secrets shown** — the text of findings (`excerpt`, `lines`,
@@ -87,6 +88,10 @@ rx serve --mask-secrets
 
 `Tree refresh:` says how often the viewer reads its open folders again,
 or `Tree refresh: off`.
+
+With `RX_API_TOKEN` set, the banner adds
+`API token: required on /v1 (RX_API_TOKEN is set)` after the
+`Tree refresh:` line (see [Authentication](../api/index.md#authentication)).
 
 ### The files list refresh
 
@@ -212,17 +217,22 @@ set. See [api/webhooks](../api/webhooks.md).
 
 ### Startup sequence
 
-1. Resolve `RX_LOG_LEVEL` and configure the slog level
-2. Validate every `--search-root`; abort with exit code 2 on failure
-3. Export `RX_SEARCH_ROOTS` to the process environment (propagates to
+1. Read `RX_LOG_LEVEL` for the `LOG_LEVEL` that `/health` reports; it
+   does not change what the server logs
+2. Check the `RX_HOOK_ON_FILE_URL`, `RX_HOOK_ON_MATCH_URL` and
+   `RX_HOOK_ON_COMPLETE_URL` webhooks with the
+   [SSRF guard](../concepts/security.md#webhook-ssrf-protection); abort
+   with exit code 2 (`Invalid hook URL: …`) on a URL it refuses
+3. Validate every `--search-root`; abort with exit code 2 on failure
+4. Export `RX_SEARCH_ROOTS` to the process environment (propagates to
    any child processes like `ripgrep` — though currently unused)
-4. Print a warning to stderr for a bind other machines can reach, and
+5. Print a warning to stderr for a bind other machines can reach, and
    for a search root that is `/` or your home directory (see below)
-5. Look up `ripgrep` on `PATH`; remember the result for `/health`
-6. Best-effort install or check of the `rx-viewer` SPA (see
+6. Look up `ripgrep` on `PATH`; remember the result for `/health`
+7. Best-effort install or check of the `rx-viewer` SPA (see
    [Viewer updates](#viewer-updates); 60-second budget, failure is
    non-fatal), then the banner names the viewer served and why
-7. Load the [signatures](../concepts/signatures.md) once: the built-ins
+8. Load the [signatures](../concepts/signatures.md) once: the built-ins
    and the user's files (`RX_SIGNATURES_PATH`, or the configuration
    directory), every example checked. Each load error is logged as a
    `signature_load_error` warning with its file, line and id, and listed
@@ -235,10 +245,12 @@ set. See [api/webhooks](../api/webhooks.md).
    files list refresh (`--tree-refresh`, else `RX_TREE_REFRESH_SECONDS`)
    are read here too; a change to them or to a signature file takes a
    restart
-8. Register HTTP middleware (request ID, structured logging, panic
-   recovery, Prometheus metrics middleware)
-9. Register every endpoint and the static-file catch-all
-10. Bind the listening socket and begin serving
+9. Register HTTP middleware (security headers, request ID, structured
+   logging, panic recovery, Prometheus metrics middleware, and last the
+   `RX_API_TOKEN` Bearer check on `/v1`; see
+   [Authentication](../api/index.md#authentication))
+10. Register every endpoint and the static-file catch-all
+11. Bind the listening socket and begin serving
 
 If the socket bind fails (port in use, permission denied), the server
 returns immediately with a non-zero exit code.
@@ -301,13 +313,15 @@ Running and queued tasks are never dropped.
 
 ### Graceful shutdown
 
-On `SIGINT` or `SIGTERM`:
+On `SIGINT` or `SIGTERM`, `rx serve` prints
+`Received interrupt, shutting down...` (for `SIGTERM`,
+`Received terminated, shutting down...`), then:
 
 1. The server stops accepting new connections
 2. In-flight requests get up to 10 seconds to finish
 3. The task manager stops its sweeper
 4. The webhook dispatcher drains its queue
-5. The process exits 0
+5. The process exits 5 (interrupted; see [exit codes](index.md#exit-codes))
 
 Requests not completed within 10 seconds are terminated. Set a longer
 timeout by modifying the shutdown constant in source (not currently

@@ -2,17 +2,19 @@
 
 Common problems and how to resolve them.
 
-## `ripgrep (rg) is not installed or not on PATH`
+## `Ripgrep (rg) is not installed or not on PATH`
 
 ### Symptom
 
 ```text
-Error: ripgrep (rg) is not installed or not on PATH
+Error: Ripgrep (rg) is not installed or not on PATH
 ```
 
-Exit code 1 on any `rx trace` call; `503 Service Unavailable` on
-`/v1/trace`. `rx samples` and `/v1/samples` do not use `ripgrep` and
-keep working.
+Exit code 1 on any `rx trace` call with a pattern and on
+`rx logs trace`; `503 Service Unavailable` on `/v1/trace` and
+`/v1/logs/trace`. `rx trace --signatures PATH` without a pattern runs
+no `ripgrep` and keeps working. `rx samples` and `/v1/samples` do not
+use `ripgrep` and keep working.
 
 ### Cause
 
@@ -144,7 +146,7 @@ The SPA download failed or was skipped:
 
 - Network firewalled from GitHub
 - Rate limited on first fetch
-- `--skip-frontend` was passed
+- `--skip-frontend` was passed and no viewer is in the cache
 - `RX_FRONTEND_URL` or `RX_FRONTEND_VERSION` points at a bad source
 - No published `rx-viewer` release lies inside the range this `rx`
   supports, or the cached viewer lies outside it and could not be
@@ -249,8 +251,9 @@ Check cache validity:
 rx index /var/log/huge.log --info
 ```
 
-If it reports `no index exists` or the `created_at` predates the
-file's mtime, rebuild:
+If it prints `Error: No index found for /var/log/huge.log` and exits
+3, rebuild. `--info` shows only an index that still describes the
+file, so an index built before the file changed gives this error too:
 
 ```bash
 rx index /var/log/huge.log --force
@@ -276,8 +279,7 @@ patterns and 8 workers, peak RSS can reach several GB.
 
 ### Fix
 
-- Reduce `RX_WORKERS` (or `--workers` on encode): fewer parallel
-  automatons
+- Reduce `RX_WORKERS`: fewer parallel automatons
 - Split into multiple invocations (one pattern at a time)
 - Use `--max-results` to cap result memory
 
@@ -381,8 +383,9 @@ For future requests:
 
 ### Symptom
 
-`rx index /path --force` reports "using cached index" or completes
-suspiciously fast.
+`rx index /path --force` prints only its `Indexed N files in Xs` line,
+without the `path: N lines, SIZE` line it prints for each index it
+builds, or completes suspiciously fast.
 
 ### Cause
 
@@ -390,8 +393,8 @@ This shouldn't happen — `--force` explicitly bypasses the cache-check
 step. If it does:
 
 - Make sure you're running the intended `rx` binary (`which rx`)
-- The output `cache=<path>` line prints the actual file. Check its
-  mtime.
+- `rx index /path --force --json` gives the stored file as
+  `index_path`. Check its mtime.
 
 ### Fix
 
@@ -413,11 +416,15 @@ rx index /path
 The OpenAPI JSON isn't loading. Usually a reverse proxy stripping
 `/openapi.json` or a browser-side network error.
 
+The page loads Swagger UI itself, its script and its stylesheet, from
+`unpkg.com` (the `swagger-ui-dist` package). A browser that cannot
+reach `unpkg.com` shows a blank page at `/docs`.
+
 ### Diagnosis
 
 ```bash
-curl -sI http://127.0.0.1:7777/openapi.json
-# Expect: 200 OK, Content-Type: application/json
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' http://127.0.0.1:7777/openapi.json
+# Expect: 200 application/openapi+json
 ```
 
 Open browser DevTools → Network tab → reload `/docs`. Check the
@@ -430,6 +437,8 @@ request to `openapi.json`.
 - If the request is going to a different origin: set a `Host`
   rewrite or configure Swagger UI with the right `spec-url` (this
   requires modifying the embedded UI, not trivial)
+- If `/docs` stays blank: let the browser reach `unpkg.com`. The API
+  and `/openapi.json` work without the page
 
 ## CGO errors on older Linux distros
 
@@ -493,8 +502,9 @@ Error: The signature files have 1 error
 ```
 
 It exits 1 while an error is left. Fix each one at its file and line,
-then restart `rx serve`. `rx signatures` ends with the search path and
-the number of files it found there, in case the files are not where rx
+then restart `rx serve`. `rx signatures` prints the search path and
+the number of files it found there just before its last line, which
+says whether secrets are masked, in case the files are not where rx
 looks ([where rx finds signature files](concepts/signatures.md#where-rx-finds-signature-files)).
 
 ## Debug output
@@ -503,8 +513,9 @@ looks ([where rx finds signature files](concepts/signatures.md#where-rx-finds-si
 accepted so old scripts keep working, but it does nothing and prints a
 deprecation note on stderr. For a trace answer you doubt, capture
 `rx trace … --json` and run the same search with `--no-cache` and
-`--no-index`: the answers must be equal. For `rx serve`, set
-`RX_LOG_LEVEL=DEBUG` for more detailed logs.
+`--no-index`: the answers must be equal. `rx serve` has no log-level
+switch: `RX_LOG_LEVEL` only sets the `LOG_LEVEL` that `/health`
+reports.
 
 ## Capturing logs from `rx serve`
 

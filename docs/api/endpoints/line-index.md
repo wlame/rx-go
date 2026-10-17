@@ -9,7 +9,8 @@ Both are HTTP counterparts to [`rx index`](../../cli/line-index.md).
 
 ## `GET /v1/index`
 
-Return the cached `UnifiedFileIndex` for a file, or `404` if no cache
+Return the cached line index for a file as an `IndexResponse`, a
+projection of the stored `UnifiedFileIndex`, or `404` if no cache
 entry exists.
 
 ### Request
@@ -31,7 +32,7 @@ GET /v1/index?path=<file>
   "path":               "/var/log/audit-2026-03.log",
   "file_type":          "text",
   "size_bytes":         582137856,
-  "created_at":         "2026-04-18T14:22:03.501729",
+  "created_at":         "2026-04-18T14:22:03.501729318Z",
   "build_time_seconds": 1.234,
   "line_index": [
     [1,     0],
@@ -93,7 +94,7 @@ entry 3 is damaged and whose entry list breaks off after entry 4):
 | `path` | string | Source file path |
 | `file_type` | string | `"text"`, `"compressed"`, `"seekable_zstd"`, or `"binary"` |
 | `size_bytes` | int64 | Source file size when the index was built |
-| `created_at` | string | ISO 8601 UTC with microsecond precision |
+| `created_at` | string | RFC 3339 UTC, always ending in `Z`, with up to nine fractional digits (trailing zeros dropped) |
 | `build_time_seconds` | number | Wall-clock build time |
 | `line_index` | array | Sparse checkpoints, each an array (`LineIndexEntry`): `[line_number, byte_offset]`, or `[line_number, byte_offset, frame_index]` in a seekable-zstd index, where the third element is the 0-based frame holding the line |
 | `index_entries` | int | `len(line_index)` |
@@ -101,7 +102,7 @@ entry 3 is damaged and whose entry list breaks off after entry 4):
 | `empty_line_count`, `line_ending` | int64, string \| null | Lines with no character other than white space; `LF`, `CRLF`, `CR` or `mixed`. `null` for a seekable zstd file |
 | `line_length` | object \| null | `{max, avg, median, p95, p99, stddev}`; `null` for a seekable zstd file |
 | `longest_line` | object \| null | `{line_number, byte_offset}` of the longest line; `null` for a seekable zstd file |
-| `compression_format` | string \| null | For compressed inputs only |
+| `compression_format` | string \| null | For compressed inputs only. A systemd journal is indexed with `file_type` `"compressed"` and `compression_format` `"journal"` |
 | `time_summary` | object \| null | The timestamps of the file's lines, from the index's [time section](../../concepts/line-indexes.md#the-time-section): `format` (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted` or `epoch`), `has_zone`, `first_ms` and `last_ms` (the first and the last timestamped line, `null` when no line carries one), `timestamped_lines`, `backward_steps` and `max_backward_ms`. Values are milliseconds since the Unix epoch: UTC instants when `has_zone` is true, the wall-clock time as written, read as if it were UTC, when it is false. `null` when no timestamp format is recognized in the first mebibyte of the text. The per-checkpoint `max_before` array and the `max` line of the stored index are not included; `rx index --json` gives them. Since contract 1.5 |
 | `journal` | object \| null | For a systemd journal, what the build found reading its text: `entries` (the entries the header counts), `shown` (the entries in the text), `without_message` (entries with no `MESSAGE` field, which journalctl does not show either), `left_out` (damaged entries left out of the text), `not_reached` (the entries after the place where the entry list breaks off), with `entries` = `shown` + `without_message` + `left_out` + `not_reached`; `first_damaged_entry` (the 1-based number, in the order of the entry list, of the first entry left out or not reached) and `damage_reason`, both `null` when nothing was damaged; and from the header `state` (`online`, `offline` or `archived`), `compact`, `seqnum_id` (32 lowercase hex digits) and `head_seqnum` and `tail_seqnum`. A damaged journal is indexed all the same: its text, and every line number, is a fixed function of its bytes. `null` for a file that is not a journal. A `POST /v1/index` task's result carries it too. Since contract 2.1 |
 | `cli_command` | string | Equivalent CLI command; see below |
@@ -124,7 +125,9 @@ projection:
   `source_device`, `source_ctime_ns`, `source_fingerprint`) and their
   readable copies (`source_modified_at`, `source_changed_at`), `is_text`, `permissions`,
   `owner`, `index_step_bytes`, the seekable-zstd `frame_count`,
-  `frame_size_target` and `frames`, and the `prefix_*` members.
+  `frame_size_target` and `frames`, the `prefix_*` members, and
+  `time_index`.
+- `time_summary` is derived from `time_index` there.
 
 The other members have the same name and value in both.
 
@@ -133,8 +136,10 @@ The other members have the same name and value in both.
 | Code | When |
 |---:|---|
 | `200 OK` | Cache exists and is returned |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Path outside `--search-root` |
 | `404 Not Found` | No cached index (use `POST /v1/index` to build one) |
+| `422 Unprocessable Entity` | `path` missing |
 
 ### Example
 
@@ -169,7 +174,7 @@ Content-Type: application/json
 |---|---|:-:|---|---|
 | `path` | string | yes | — | A file, or a directory: every file under it is indexed ([Tasks over a directory](tasks.md#tasks-over-a-directory)) |
 | `force` | bool | no | `false` | Rebuild even if a valid cache exists; under a directory, for every file |
-| `threshold` | int \| null | no | `RX_LARGE_FILE_MB` (default 50) | Min file size in MB; under a directory, a smaller file is skipped with the reason |
+| `threshold` | int | no | `RX_LARGE_FILE_MB` (default 50) | Min file size in MB; under a directory, a smaller file is skipped with the reason |
 
 The body allows no other member. `analyze` and `analyze_window_lines`
 were removed in contract 2.0 with the index analysis, and a body that
@@ -220,6 +225,7 @@ while a cancelled one is `cancelling` (its worker has not stopped).
 |---:|---|
 | `200 OK` | Task queued. Poll `GET /v1/tasks/{task_id}` |
 | `400 Bad Request` | A file below the size threshold; a file that is not text (`not a text file: …: <path>`) |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`) |
 | `404 Not Found` | File doesn't exist |
 | `409 Conflict` | A task for the same path is already running — an index or a compress task, or the index task of the same directory, running or `cancelling` |

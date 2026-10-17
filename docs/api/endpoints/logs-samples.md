@@ -30,8 +30,8 @@ GET /v1/logs/samples?path=<handle>&timestamps=<T>[&timestamps=<T>...][&context=<
 | `lines` | string | one of | Comma-separated line numbers and ranges, as `GET /v1/samples` takes them (`100,200-300,-1`): the chain's global numbers, or with `part` the part's own. `-N` counts back from the end of the chain (or of the part) |
 | `part` | string | no | The bare name of a part, as `GET /v1/logs/chain` lists it (`syslog.3.gz`): `lines` then numbers that part as `GET /v1/samples` numbers it on its own. Only with `lines` |
 | `timestamps` | string | one of | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`), as `GET /v1/samples` takes it; repeat the parameter for several, at most 1,000 |
-| `context` | int | no | Lines of context before and after each single line or time (default 3, at most 100) |
-| `before_context`, `after_context` | int | no | Override `context` on one side |
+| `context` | int | no | Lines of context before and after each single line or time (default `-1`, which means 3; at most 100) |
+| `before_context`, `after_context` | int | no | Override `context` on one side, at most 100 (default `-1`, which leaves that side to `context`) |
 | `file_tz` | string | no | Read every part's timestamps as the wall clock each line writes, in this zone, as `GET /v1/samples` reads one file |
 | `fingerprint` | string | no | The fingerprint of a description the client holds (16 hex digits): `409` with the current description when the chain's files changed since |
 
@@ -89,7 +89,7 @@ gives none.
 | `first_local_line` | int64 | The part's own number of the piece's first line |
 | `first_global_line` | int64 | Its global number: the part's `global_start` + `first_local_line` − 1; `-1` before the chain is ready |
 | `lines` | string[] | The lines, without their line breaks |
-| `line_timestamps` | (int64 \| null)[] \| null | Each line's effective timestamp, as `GET /v1/samples` gives `line_timestamps`; see below |
+| `line_timestamps` | (int64 \| null)[] \| null | Each line's effective timestamp, as `GET /v1/samples` gives `line_timestamps`; see below. `null` for the whole piece when the part has no timestamp format |
 | `part_start` | bool | The piece begins at the part's first line |
 | `part_end` | bool | The piece ends at the part's last line: its line count when known, or the end of its text, which the read reached before the window's end |
 | `cli_command` | string | The `rx samples` command that gives exactly the piece's lines from the part: `rx samples PART --lines=A-B` |
@@ -157,6 +157,11 @@ active file, usually; its index build starts in the background and is
 named in `index_build`), or a wait for that build (`202` with its task
 under `Prefer: respond-async`). Every read goes through the part's pin:
 a part renamed or replaced after the description answers `409`.
+`RX_NO_INDEX=true` on the server applies to the reads of the parts, as
+on `GET /v1/samples`: no part's index is read or built for them. It
+does not apply to the description, which still reads each part's
+stored index (the active file's too), nor to the chain's index task a pending chain starts,
+which still builds and stores the parts' indexes.
 
 `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` bound the whole
 answer, summed over its keys and pieces; each part's read is limited to
@@ -209,8 +214,9 @@ what the answer has room for still. Over them, `400`.
 | Code | When |
 |---:|---|
 | `200 OK` | The answer |
-| `202 Accepted` | Only with `Prefer: respond-async`: the chain's index task, or a part's index build, did not end within `RX_SAMPLES_WAIT_SECONDS`. The body is that task; poll [`GET /v1/tasks/{id}`](tasks.md), then ask again |
-| `400 Bad Request` | Neither or both of `lines` and `timestamps`; `part` without `lines` or not the bare name of a part of the chain; a bad lines spec, time or `file_tz`; more than 1,000 times; an answer over `RX_SAMPLES_MAX_LINES` or `RX_SAMPLES_MAX_BYTES` |
+| `202 Accepted` | Only with `Prefer: respond-async`: the chain's index task, or a part's index build, did not end within `RX_SAMPLES_WAIT_SECONDS`. The body is that task, with the header `Preference-Applied: respond-async`; poll [`GET /v1/tasks/{id}`](tasks.md), then ask again |
+| `400 Bad Request` | Neither or both of `lines` and `timestamps`; `part` without `lines` or not the bare name of a part of the chain; a bad lines spec, time or `file_tz`; more than 1,000 times; an answer over `RX_SAMPLES_MAX_LINES` or `RX_SAMPLES_MAX_BYTES`; a part rx refuses to decompress (a zstd frame's window or an xz block's dictionary above 128 MiB) |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | The handle's directory is outside `--search-root`, or hidden |
 | `404 Not Found` | The handle names fewer than two parts, or its directory does not exist |
 | `409 Conflict` | The body is the current description: `fingerprint` differs from it, or a part was renamed or replaced while the request read it |

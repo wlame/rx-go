@@ -41,15 +41,33 @@ GET /v1/tree?path=<dir>            # list dir contents
       "name":        "log",
       "path":        "/var/log",
       "type":        "directory",
-      "modified_at": "2026-04-18T14:00:00Z",
-      "children_count": 47
+      "size":        null,
+      "size_human":  null,
+      "modified_at": "2026-04-18T14:00:00.000000Z",
+      "is_compressed":      null,
+      "compression_format": null,
+      "is_text":            null,
+      "not_text_reason":    null,
+      "is_indexed":         null,
+      "line_count":         null,
+      "children_count":     47,
+      "findings":           null
     },
     {
-      "name":        "data",
+      "name":        "exports",
       "path":        "/var/data/exports",
       "type":        "directory",
-      "modified_at": "2026-04-17T08:12:34Z",
-      "children_count": 12
+      "size":        null,
+      "size_human":  null,
+      "modified_at": "2026-04-17T08:12:34.207415Z",
+      "is_compressed":      null,
+      "compression_format": null,
+      "is_text":            null,
+      "not_text_reason":    null,
+      "is_indexed":         null,
+      "line_count":         null,
+      "children_count":     12,
+      "findings":           null
     }
   ]
 }
@@ -64,55 +82,71 @@ GET /v1/tree?path=<dir>            # list dir contents
   "is_search_root": false,
   "total_entries": 4,
   "total_size":    623190208,
-  "total_size_human": "594.3 MiB",
+  "total_size_human": "594.32 MB",
   "entries": [
     {
       "name":        "nginx",
       "path":        "/var/log/nginx",
       "type":        "directory",
-      "modified_at": "2026-04-18T13:59:00Z",
-      "children_count": 4
-    },
-    {
-      "name":        "audit-2026-03.log",
-      "path":        "/var/log/audit-2026-03.log",
-      "type":        "file",
-      "size":        582137856,
-      "size_human":  "555.2 MiB",
-      "modified_at": "2026-04-18T13:42:10Z",
-      "is_compressed": false,
-      "is_text":       true,
-      "not_text_reason": null,
-      "is_indexed":    true,
-      "line_count":    3528914,
-      "findings":      {"state": "full", "count": 412}
+      "size":        null,
+      "size_human":  null,
+      "modified_at": "2026-04-18T13:59:00.000000Z",
+      "is_compressed":      null,
+      "compression_format": null,
+      "is_text":            null,
+      "not_text_reason":    null,
+      "is_indexed":         null,
+      "line_count":         null,
+      "children_count":     4,
+      "findings":           null
     },
     {
       "name":        "audit-2026-02.log.zst",
       "path":        "/var/log/audit-2026-02.log.zst",
       "type":        "file",
       "size":        41048256,
-      "size_human":  "39.1 MiB",
-      "modified_at": "2026-04-01T00:05:12Z",
+      "size_human":  "39.15 MB",
+      "modified_at": "2026-04-01T00:05:12.940117Z",
       "is_compressed":      true,
       "compression_format": "zstd",
       "is_text":            true,
       "not_text_reason":    null,
       "is_indexed":         false,
+      "line_count":         null,
+      "children_count":     null,
       "findings":           null
+    },
+    {
+      "name":        "audit-2026-03.log",
+      "path":        "/var/log/audit-2026-03.log",
+      "type":        "file",
+      "size":        582137856,
+      "size_human":  "555.17 MB",
+      "modified_at": "2026-04-18T13:42:10.381526Z",
+      "is_compressed":      false,
+      "compression_format": null,
+      "is_text":            true,
+      "not_text_reason":    null,
+      "is_indexed":         true,
+      "line_count":         3528914,
+      "children_count":     null,
+      "findings":           {"state": "full", "count": 412}
     },
     {
       "name":        "dump.bin",
       "path":        "/var/log/dump.bin",
       "type":        "file",
       "size":        4096,
-      "size_human":  "4.0 KiB",
-      "modified_at": "2026-04-02T10:00:00Z",
-      "is_compressed":   false,
-      "is_text":         false,
-      "not_text_reason": "not a text file: a NUL byte in its first 8 KiB",
-      "is_indexed":      false,
-      "findings":        null
+      "size_human":  "4.00 KB",
+      "modified_at": "2026-04-02T10:00:00.000000Z",
+      "is_compressed":      false,
+      "compression_format": null,
+      "is_text":            false,
+      "not_text_reason":    "not a text file: a NUL byte in its first 8 KiB",
+      "is_indexed":         false,
+      "line_count":         null,
+      "children_count":     null,
+      "findings":           null
     }
   ]
 }
@@ -126,18 +160,18 @@ GET /v1/tree?path=<dir>            # list dir contents
 | `parent` | string \| null | Parent directory, or `null` for search roots |
 | `is_search_root` | bool | `true` when `path` equals a configured search root |
 | `total_entries` | int | Number of `entries` |
-| `total_size` | int64 \| null | Sum of all file sizes under `path` (top-level only) |
+| `total_size` | int64 \| null | Sum of all file sizes under `path` (top-level only); `null` when the sum is 0 |
 | `total_size_human` | string \| null | Human-readable total size |
 | `entries` | array | One `TreeEntry` per child |
 
 ### `entries[]` fields
 
-| Field | Type | When present |
+| Field | Type | When not `null` |
 |---|---|---|
 | `name` | string | Always — the basename |
 | `path` | string | Always — absolute path |
 | `type` | string | Always — `"file"` or `"directory"` |
-| `modified_at` | string | When available (RFC 3339 nanosec) |
+| `modified_at` | string | When available — UTC with exactly six fractional digits (`2026-04-18T14:00:00.000000Z`) |
 | `size` | int64 | Files only |
 | `size_human` | string | Files only |
 | `children_count` | int | Directories only — non-recursive entry count |
@@ -149,8 +183,10 @@ GET /v1/tree?path=<dir>            # list dir contents
 | `line_count` | int64 | Files with an index that has a line count |
 | `findings` | object \| null | Text files only: what the findings cache holds for the file, `{"state": "full" \| "partial", "count": N}` (`count` sums the findings of every current entry, opt-in signatures included); `null` for a directory, a file that is not text, and a file the cache holds nothing current for. Read from the file's `meta.json` alone, its identity compared by the stat the listing already holds, so a listing reads nothing more of the file. Since contract 2.0 |
 
-All fields except `name`, `path`, and `type` are pointer types in Go
-and may appear as `null` in JSON when the underlying stat failed.
+Every entry carries all 14 fields. A field that does not apply to the
+entry is `null` (`size` on a directory, `children_count` on a file),
+and every field except `name`, `path` and `type` is `null` when the
+underlying stat failed.
 
 ### Sort order
 
@@ -177,6 +213,7 @@ listing shows one level, and each link is a way to browse into it. See
 |---:|---|
 | `200 OK` | Listing returned |
 | `400 Bad Request` | Path is a file, not a directory |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Path outside `--search-root`, or permission denied |
 | `404 Not Found` | Directory doesn't exist |
 
@@ -225,7 +262,8 @@ walk /var/log
 
 ## Performance notes
 
-- One `os.ReadDir` call per request
+- One listing of the directory per request, plus one listing of each
+  subdirectory for its `children_count`
 - Per-entry metadata costs one `os.Stat`, one `os.Open` (for text
   probe), one index-cache lookup, and one read of the file's findings
   `meta.json` (for `findings`)

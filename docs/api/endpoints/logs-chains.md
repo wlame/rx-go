@@ -26,10 +26,12 @@ GET /v1/logs/chains?path=<dir>
 
 ## Which files form a chain
 
-A file is a part of a chain when its name has the shape of one of four
+A file is a part of a chain when its name has the shape of one of five
 name templates: numbered (`syslog.1`, `dpkg.log.11.gz`), dated
-(`auth.log-20261001.gz`), and both with the number or date before the
-extension (`app.1.log.gz`, `app-2026-10-01.3.log.gz`). The chain's name
+(`auth.log-20261001.gz`), both with the number or date before the
+extension (`app.1.log.gz`, `app-2026-10-01.3.log.gz`), and the name
+systemd-journald gives an archived journal (`system@….journal`, a part
+of `system.journal`). The chain's name
 is the name its active file has, or would have.
 [Log chains](../../concepts/log-chains.md#which-files-form-a-chain)
 gives the templates, examples of names and the rules; the ones this
@@ -118,6 +120,7 @@ The same as [`GET /v1/tree`](tree.md) for the same path:
 |---:|---|
 | `200 OK` | Listing returned, possibly with no chains |
 | `400 Bad Request` | The path is a file, not a directory |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | The path is outside `--search-root`, reaches a hidden entry, or cannot be read |
 | `404 Not Found` | The directory does not exist |
 | `422 Unprocessable Entity` | `path` is missing |

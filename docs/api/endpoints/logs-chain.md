@@ -67,7 +67,10 @@ last task ended for `RX_TASK_TTL_MINUTES` after its end, as long as the
 chain's files keep that fingerprint, even when the task table has
 dropped the task to make room for others; `GET /v1/tasks/{id}` may then
 answer `404` while the description still names it. `POST
-/v1/logs/index` starts a new one.
+/v1/logs/index` starts a new one. At most 1,024 records of ended tasks
+are kept: past that, the record of the task that ended first is
+dropped, and the next request that finds that chain pending starts its
+task again.
 
 The frozen parts' data of a chain whose frozen parts are all indexed
 (or empty) is kept in memory: at most 64 chains and 40,000 parts in
@@ -109,7 +112,8 @@ its checks need no index:
 - two neighboring parts that one counter numbers hold no entry in
   common (`entries_overlap`, naming both: the earlier part's last
   sequence number is not below the later part's first, as when a copy
-  of a part is left beside it);
+  of a part is left beside it; the reason is new in contract 2.1, so a
+  client of 2.0 may not know it);
 - the active journal, when it has entries, comes last
   (`active_not_last`);
 - every part can be read as a journal (`unreadable`; for a part whose
@@ -266,6 +270,7 @@ lists the chain again and answers `409` with the current description.
 |---:|---|
 | `200 OK` | The description, whatever the state, invalid included |
 | `400 Bad Request` | The handle ends in no name (`/var/log/`), or `file_tz` names no zone |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | The handle's directory is outside `--search-root`, or the directory or the name is hidden |
 | `404 Not Found` | The handle names fewer than two parts, or its directory does not exist |
 | `409 Conflict` | The body is the current description: `fingerprint` differs from it, or a part was replaced while the request read it |

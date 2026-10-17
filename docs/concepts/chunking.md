@@ -46,7 +46,15 @@ This guarantees:
   next line)
 - No overlap between chunks
 
-When ripgrep scans a chunk, every match is fully inside the chunk. No
+Without context lines, ripgrep reads exactly the chunk's bytes, so every
+match it reports is the chunk's own. With context lines, a chunk's
+input is extended by a lead-in of `--before` lines before the chunk and
+a tail of `--after` lines after it (`--context=N` sets both), so a
+match near a chunk's edge still gets its whole window. A match on a
+line of the lead-in or the tail belongs to the neighbouring chunk: a worker keeps a
+match only when its line starts inside the chunk's own byte range
+`[offset, offset + count)`, and keeps any other match only as a context
+line. Each match is reported by exactly one chunk, so no
 post-processing is needed to deduplicate boundary matches.
 
 ### Pseudo-code
@@ -84,12 +92,13 @@ workers would dominate.
 
 - A goroutine pool of size `RX_WORKERS` (default: the smaller of
   `NumCPU` and `RX_MAX_SUBPROCESSES`) consumes chunks from a channel
-- Each worker opens the file, seeks to its chunk start, and spawns a
-  `ripgrep` subprocess bounded to the chunk byte range
+- Each worker opens the file and spawns a `ripgrep` subprocess, which
+  reads the chunk's byte range on stdin, with the lead-in and the tail
+  around it when context lines are asked for
 - `ripgrep` outputs JSON; the worker parses it and appends matches to
   its own per-worker result slice (no shared lock)
 - After all workers finish, results are merged and sorted by
-  `(file, offset)`
+  `(file, offset, pattern)`
 
 The "no shared lock" point matters. An earlier design used a single
 shared result slice guarded by a mutex; every chunk's append serialized
@@ -100,20 +109,28 @@ the same worker count.
 ## Line number resolution
 
 `ripgrep` reports line numbers relative to the start of its input
-(i.e. the chunk start). `rx` needs **absolute** line numbers. Two
-strategies:
+(i.e. the chunk start, or the start of the lead-in when context lines
+are asked for; `rx` subtracts the lead-in's lines). `rx` needs
+**absolute** line numbers.
 
-1. **With a cached line index**: look up the chunk's start offset in
-   the index to find the absolute line number of the chunk's first
-   line. Add ripgrep's relative number. O(log N) lookup, O(1) math.
+Each worker counts the newlines of the chunk's own bytes as it feeds
+them to `ripgrep`; the lead-in and the tail are not counted. When
+every chunk was read to its end, a chunk's first line is 1 plus the
+newlines of the chunks before it, and `rx` adds ripgrep's relative
+number to it. The count costs nothing extra: the bytes are read once,
+for ripgrep, and no index is needed.
 
-2. **Without an index**: either use the line count that chunk
-   boundaries naturally produce (each chunk knows how many `\n` bytes
-   it read), or compute line numbers across chunks by summing prior
-   chunk line counts. O(N) overall, but only runs once per trace.
+A scan cut short — a `--max-results` cap fired, or the request was
+aborted — leaves the chunks after the one that stopped early without a
+count. Only the matches in those chunks need more:
 
-With an index, absolute line numbers are effectively free. Without
-one, they cost a linear pass.
+1. **With a cached line index**: find the nearest checkpoint at or
+   before the match's offset and count newlines from there.
+
+2. **Without an index**: the match keeps `absolute_line_number: -1`
+   (`?` in human output); no pass from byte 0 runs. With
+   `--no-index`, `rx trace` counts from byte 0 up to the last
+   unnumbered match instead.
 
 ## Performance characteristics
 

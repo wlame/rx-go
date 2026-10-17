@@ -27,8 +27,9 @@ it downloads is the one it expected. Those are the surfaces below.
 
 - **The path sandbox** — `--search-root` prevents reading arbitrary
   files
-- **Tarball extraction** — the `rx-viewer` SPA is downloaded from
-  GitHub and extracted; extraction rejects traversal attacks
+- **Tarball extraction** — the `rx-viewer` SPA is downloaded from the
+  GitHub releases of `wlame/rx-ui` and extracted; extraction rejects
+  traversal attacks
 - **Webhook SSRF protection** — outbound webhook URLs are validated
   to prevent probing internal services
 
@@ -400,7 +401,8 @@ curl "http://localhost:7777/v1/trace?path=/etc/passwd&regexp=root"
 ## Hidden files and directories
 
 Entries whose name starts with a dot are **not served by default**, in
-either backend.
+either backend. The CLI refuses them by name only when a search root is
+set (see [below](#it-is-enforced-in-the-sandbox-not-the-listing)).
 
 The case this exists for: `rx serve` with no `--search-root` serves the
 current directory. Started from a home directory, that includes `~/.ssh`,
@@ -421,7 +423,9 @@ RX_HIDDEN=true rx "token" ~/  # same, from the environment
 Omitting hidden entries from a directory listing hides them from someone
 browsing. It does nothing about a caller who already knows the path and
 asks for the file directly. So the check lives in the path validator that
-every endpoint and every CLI command already goes through:
+every endpoint and every CLI command already goes through. The validator
+applies it when search roots are configured, which `rx serve` always
+has (its root defaults to the current directory):
 
 ```bash
 # Hidden entries do not appear in the tree...
@@ -432,6 +436,12 @@ curl -s "$RX/v1/tree?path=/home/u" | jq '.entries[].name'
 curl -si "$RX/v1/samples?path=/home/u/.ssh/id_rsa&lines=1" | head -1
 # HTTP/1.1 403 Forbidden
 ```
+
+The CLI with no search root runs no validation (see [When validation
+runs](#when-validation-runs)), so it reads a dot-file you name; a
+directory walk still skips dot-entries unless `--hidden`. Set
+`--search-root` or `RX_SEARCH_ROOTS` and the CLI refuses a named
+dot-file too, with exit code 4.
 
 The refusal names the rule and the way out, because "access denied" alone
 sends people looking for a permissions problem they do not have:
@@ -459,8 +469,8 @@ rx serve --search-root=/home/u/.local/share/logs   # works, no --hidden needed
 
 ## Tarball extraction defenses
 
-`rx serve` downloads the `rx-viewer` SPA from GitHub on first start
-and extracts it to `~/.cache/rx/frontend/`. Tarball extraction
+`rx serve` downloads the `rx-viewer` SPA from the GitHub releases of
+`wlame/rx-ui` on first start and extracts it to `~/.cache/rx/frontend/`. Tarball extraction
 anywhere is a traditional source of "zip slip" vulnerabilities —
 malicious archives with entries like `../../etc/passwd`.
 
@@ -549,9 +559,9 @@ download, `rx` fetches that sidecar and checks the digest:
 | Sidecar | Result |
 |---|---|
 | Present and matching | Extracted; the digest is stored in `.metadata.json` |
-| Present and not matching | Refused. Nothing is unpacked, the cached bundle is untouched, and the failure is logged as `frontend_checksum_mismatch` |
-| Absent (HTTP 404) | Accepted with a `frontend_checksum_missing` warning — releases published before the sidecar existed are still installable |
-| Present but unreadable | Refused. A release host answering with something that is not a digest is broken, not sidecar-less |
+| Present and not matching | Refused. Nothing is unpacked, the cached bundle is untouched, and `rx serve` prints `Warning: <error>. Viewer: <the viewer it serves instead>.`, where the error ends in `frontend checksum: checksum mismatch: expected …, got …` |
+| Absent: any answer other than `200`, or a request that fails | Installed unverified, with a `frontend_checksum_missing` warning — releases published before the sidecar existed are still installable |
+| Present but not a digest | Refused. A release host answering with something that is not a digest is broken, not sidecar-less |
 
 rx-python behaves identically.
 
@@ -586,7 +596,8 @@ for an operator who knows what they are doing.
 
 ### The threat
 
-`rx` fires outbound HTTP POSTs on trace events when configured via
+`rx` sends one outbound HTTP `GET` per trace event, with the event's
+data in query parameters, when configured via
 `hook_on_*` query params or the corresponding env vars. If the
 webhook URL is user-controlled (e.g. a per-request query param in a
 shared `rx serve` instance), a malicious user could:
@@ -634,7 +645,7 @@ shouldn't false-positive-reject every validation.
 
 | Variable | Effect |
 |---|---|
-| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks. Use only when you explicitly need an internal destination. |
+| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks, `RX_HOOK_STRICT_IP_ONLY` included: with both set, a hostname is accepted. The rule against credentials in the URL still applies. Use only when you explicitly need an internal destination. |
 | `RX_HOOK_STRICT_IP_ONLY=true` | Reject every hostname; accept only IP literals. Strongest mitigation against DNS rebinding. |
 
 ### Redirects are refused
@@ -784,8 +795,12 @@ happens at all.
 - **DoS** — no built-in rate limiting. A single client can
   simultaneously launch N traces and exhaust CPU. Each line costs a
   bounded amount of memory, but an uncapped trace still holds every
-  match it returns. Use a reverse proxy or a process supervisor that
-  caps concurrent requests, and `max_results`. The line-index builds
+  match it returns. `rx serve` limits only the time to read a request's
+  headers (10 seconds); it sets no read, write or idle timeout, so a
+  client that reads an answer slowly, or keeps an idle connection
+  open, holds the connection as long as it wants. Use a reverse proxy
+  or a process supervisor that caps concurrent requests, and
+  `max_results`. The line-index builds
   that `GET /v1/samples` starts in the background are the exception:
   at most `RX_MAX_INDEX_BUILDS` run at once and at most 256 wait, so
   lookups across a tree of large files cannot set a build going on
@@ -807,9 +822,12 @@ happens at all.
   matches of a pattern (`rx trace -e`) show the file as it is: whoever
   may read a file reads its secrets. A secret of a shape no loaded
   redacting signature describes is neither found nor masked.
-- **Cache poisoning** — multi-user cache directories share entries;
-  a user who writes a bad cache entry affects other users. Use
-  per-user `RX_CACHE_DIR`.
+- **Cache poisoning** — rx writes its cache files with mode `0600` and
+  its cache directories with `0700` or `0750`, so in a cache it created
+  another user can neither read nor add entries (see
+  [caching](caching.md#multi-tenant-caches)). A cache directory that
+  another user can write is not covered: a user who writes a bad cache
+  entry there affects whoever reads it. Use per-user `RX_CACHE_DIR`.
 - **Regex DoS** — user-supplied regex patterns are compiled by
   `ripgrep`. `ripgrep` uses the Rust `regex` crate, which rejects
   exponential backtracking patterns by design. Still, a bad regex
@@ -834,16 +852,21 @@ happens at all.
    beyond loopback without one.
 6. **Disable per-request hook overrides** where more than one person can
    reach the server: `RX_DISABLE_CUSTOM_HOOKS=true`.
-7. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if webhook destinations are
-   internal — and on rx-python, if DNS rebinding is in your threat model
-   at all.
+7. **Enable `RX_HOOK_STRICT_IP_ONLY=true`** if every webhook destination
+   is a public address you can write as an IP literal: hostnames are
+   refused, so nothing is resolved — and on rx-python, if DNS rebinding
+   is in your threat model at all. It does not allow an internal
+   destination: an internal address is refused either way, and only
+   `RX_ALLOW_INTERNAL_HOOKS=true` allows it, which turns every address
+   check off.
 8. **Monitor `/metrics`** — `rx_errors_total{error_type="access_denied"}`
    and `rx_hook_calls_total{status="failure"}` flag misbehavior. The full
    `error_type` set is `access_denied`, `file_not_found`,
    `invalid_params`, `invalid_regex`, `service_unavailable` and
    `internal_error`.
 9. **Use separate per-user `RX_CACHE_DIR`** if several people share a
-   host. Cache entries are not isolated between users.
+   host. Only the user who wrote a cache entry can read it, so a cache
+   directory shared between users gives the others no benefit.
 
 ## Related concepts
 

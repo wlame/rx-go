@@ -50,7 +50,7 @@ masking mode answers from what `rx scan` cached.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--signatures` | `string` | the default set | The signatures to scan for: ids, groups, tags, `all`, `default`, `-word` to remove (`--signatures=traceback,sql`); a bare `--signatures` is the default set |
+| `--signatures` | `string` | the default set | The signatures to scan for: ids, groups, tags, `all`, `default`, `-word` to remove (`--signatures=traceback,sql`); a bare `--signatures` is the default set. A selection needs `=`: in `--signatures traceback` the word `traceback` is a path |
 | `-f`, `--force` | `bool` | `false` | Scan every selected signature again, those with current findings too |
 | `-r`, `--recursive` | `bool` | `false` | Scan every file below a directory, in its subdirectories too; without it, the files directly inside it |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |

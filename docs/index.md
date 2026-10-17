@@ -13,19 +13,23 @@ files in the tens of gigabytes.
     `rx` is built for **internal use on a trusted network. It is not
     intended to be exposed to the internet.**
 
-    `rx serve` has no authentication: anyone who can reach the port can
-    read any file under `--search-root`. Bind to loopback, reach it over
-    a VPN or an SSH tunnel, or front it with an authenticating reverse
-    proxy. See [Security](concepts/security.md) for what `rx` does and
-    does not take responsibility for.
+    `rx serve` has no authentication by default: anyone who can reach the
+    port can read any file under `--search-root`. Setting `RX_API_TOKEN`
+    requires a bearer token on every `/v1` request (see
+    [Authentication](api/index.md#authentication)), but the token is one
+    shared secret and crosses plain HTTP in clear text. Bind to loopback,
+    reach it over a VPN or an SSH tunnel, or front it with an
+    authenticating reverse proxy. See [Security](concepts/security.md)
+    for what `rx` does and does not take responsibility for.
 
 ## What makes `rx` different
 
 - **Parallel chunking with newline-aligned boundaries.** A single file is
   split into byte ranges across a goroutine pool; each worker scans its
   range independently. No match is missed or duplicated at chunk seams.
-  Scales near-linearly up to physical core count on literal-dense
-  patterns.
+  On a 6.3 GB log, 8 workers searched 3.18× faster than one; gains
+  flatten past 4-8 workers (see
+  [worker scaling](performance.md#worker-scaling)).
 - **Line-offset indexes with on-disk caching.** Once built, an index maps
   line numbers to byte offsets via sparse checkpoints. Building one for
   a 6.3 GB log took 2.7 s with the file in the page cache; after that,
@@ -47,10 +51,12 @@ files in the tens of gigabytes.
   signature. With `--mask-secrets`, secrets are masked in every
   finding's text.
 - **Seekable zstd output.** `rx compress` writes zstd streams as
-  independent frames with an appended seek table, trading ~4-5% of
-  compression ratio for random-access decompression. Later `rx samples`
-  calls can read any line from the compressed file without sequentially
-  scanning earlier bytes.
+  independent frames with an appended seek table, trading a larger
+  output for random-access decompression: on a 465 MB log, the default
+  4 MiB frames gave 47.8 MB where one-frame `zstd -3` gave 41.6 MB (15%
+  more; see [frame size trade-off](performance.md#frame-size-trade-off)).
+  Later `rx samples` calls can read any line from the compressed file
+  without sequentially scanning earlier bytes.
 
 ## Quick look
 

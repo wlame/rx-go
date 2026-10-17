@@ -61,7 +61,7 @@ rx "duration: [0-9]{4}\.[0-9]+ ms" /var/log/postgresql/postgresql.log --json > m
 ```
 
 The JSON has `request_id`, `path`, `time`, `patterns`, `files`,
-`matches`, `scanned_files`, `skipped_files`, `file_chunks`,
+`matches`, `scanned_files`, `skipped_files`, `skip_reasons`, `file_chunks`,
 `context_lines`, `before_context`, `after_context`, `max_results` and
 `cli_command`. `cli_command` is `null` from the CLI; over HTTP it holds
 the `rx` command that gives the same answer. See
@@ -135,6 +135,10 @@ With an index in place, `rx` seeks to the nearest checkpoint before the
 line and reads forward from there. Without one, `rx samples` builds and
 stores the index first when the file is compressed or 50 MB or more —
 the first call pays for a full read of the file, later calls are fast.
+A lookup whose lines all lie in the first 64 MiB of the file's text
+(`RX_SAMPLES_HEAD_MB`), such as line 4127 above, is the exception: it
+reads only that head and builds no index (see
+[the first lookup of a large file](concepts/line-indexes.md#the-first-lookup-of-a-large-file)).
 A smaller plain file is read from the start. `--no-index` (or
 `RX_NO_INDEX=true`) reads the file without building or using an index;
 the answer is the same.
@@ -147,20 +151,30 @@ Start the server:
 rx serve --search-root=/var/log --port=7777
 ```
 
-The startup banner lists the bind address, search roots, docs URL, and
-metrics URL:
+The startup banner lists the bind address, search roots, the viewer it
+serves, whether secrets are masked, how often the viewer's files list
+refreshes, docs URL, and metrics URL:
 
 ```text
 Starting RX API server on http://127.0.0.1:7777
 Search root: /var/log
+Viewer: v0.8.0 (cached)
+Secrets: shown; start with --mask-secrets or RX_MASK_SECRETS=1 to mask them
+Tree refresh: every 5 s
 API docs available at http://127.0.0.1:7777/docs
 Metrics available at http://127.0.0.1:7777/metrics
 ```
 
+When `RX_API_TOKEN` is set, the line
+`API token: required on /v1 (RX_API_TOKEN is set)` comes before the
+docs URL.
+
 Open <http://127.0.0.1:7777/docs> in a browser — you'll see the full
 Swagger UI for every endpoint, generated from the OpenAPI 3.1 spec at
-`/openapi.json`. Without `--skip-frontend`, `/` serves the rx-viewer
-web app.
+`/openapi.json`. `/` serves the rx-viewer web app once `rx serve` has
+downloaded it, or from the cache; `--skip-frontend` downloads nothing
+and still serves a cached one. With no viewer to serve, `/` redirects
+to `/docs`.
 
 The `--search-root` flag is the sandbox: all path-accepting endpoints will
 reject paths that resolve outside `/var/log`. Pass the flag multiple times

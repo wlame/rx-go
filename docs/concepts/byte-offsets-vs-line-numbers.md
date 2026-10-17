@@ -22,7 +22,6 @@ Throughout `rx`, byte offsets are the primary unit:
 - `rx trace` output reports match byte offsets
 - `rx samples` prefers byte-offset mode (`--offsets`)
 - `/v1/trace` responses include `offset` in every match
-- Cache keys are computed with byte offsets
 
 This is because every reported offset can be fed straight back into
 another seek, regardless of file size. A 100 GB file has the same
@@ -66,8 +65,8 @@ a 6.3 GB log, it took 2.46 s.
 
 ### With an index
 
-`rx` builds sparse checkpoints: "line 12500 is at byte 2097152", "line
-25000 is at byte 4194304", etc. To find the byte offset of line
+`rx` builds sparse checkpoints: "line 6250 is at byte 1048576", "line
+12500 is at byte 2097152", etc. To find the byte offset of line
 N = 13217:
 
 1. Binary-search the index: find the largest checkpoint where
@@ -76,9 +75,9 @@ N = 13217:
 3. Read forward counting newlines until we pass line 13217 - 12500 = 717
    newlines.
 
-Step 3 scans at most a few hundred KB — the distance between
-checkpoints. On warm cache, this is milliseconds regardless of file
-size.
+Step 3 scans at most about one checkpoint step — the distance between
+checkpoints, 1 MB by default. On warm cache, this is milliseconds
+regardless of file size.
 
 See [line indexes](line-indexes.md) for the full index format.
 
@@ -118,10 +117,18 @@ Human-facing inputs — "show me line 10000" — are line-native.
 ### When you want the last N lines
 
 "The last 50 lines of the file" can't be expressed in byte offsets.
-`rx samples --lines=-50--1` asks for them directly. On a plain file it
-is cheap with or without an index (11 ms on a 465 MB log either way);
-on a gzip, bzip2, xz or plain zstd file it streams the file twice, once
-to count the lines.
+`rx samples --lines=-1 --before=49 --after=0` asks for them: the last
+line and the 49 before it. With an index it is cheap on a plain file,
+which takes the line count from the index and starts reading at the
+checkpoint before those lines; a gzip, bzip2, xz or plain zstd file is
+streamed once, since the index holds the line count. Without an index
+(`--no-index`), every format is read twice, once to count the lines. A
+large plain file or a compressed file that has no index gets one
+first: a position counted from the end lies past the head, so the
+first such lookup builds the index (see
+[line indexes](line-indexes.md#the-first-lookup-of-a-large-file)).
+
+<!-- TODO: re-measure the last 50 lines of the 465 MB log (--lines=-1 --before=49 --after=0) with an index and with --no-index. The old figure, 11 ms either way, came from --lines=-50--1, which rx rejects with exit 2, so it timed the error. -->
 
 ### When presenting to users
 
@@ -160,13 +167,16 @@ the wanted offsets.
   you need to display them.
 
 - **Line lookups deep into a large file want an index.** `rx samples`
-  builds one by itself on the first lookup in a plain file of 50 MB or
+  builds one by itself on the first lookup past the head (the first
+  `RX_SAMPLES_HEAD_MB` MiB, 64 by default) of a plain file of 50 MB or
   more; after that, line 700000 of a 465 MB log took 13 ms against
   90 ms without one.
 
 - **On compressed files, prefer seekable zstd.** A gzip, bzip2, xz or
-  plain zstd file is streamed in full for every line lookup, twice for
-  `--lines=-N`, and up to the last offset for an offset lookup.
+  plain zstd file is decompressed from its first byte for every lookup:
+  up to the last wanted line for a line lookup (twice for `--lines=-N`
+  without an index, once to count the lines), and up to the last offset
+  for an offset lookup.
 
 ## Related
 

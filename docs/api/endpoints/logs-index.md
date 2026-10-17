@@ -119,11 +119,14 @@ The task, as `POST /v1/index` gives one:
   "status": "queued",
   "message": "Indexing 3 parts of the log chain /var/log/syslog; follow GET /v1/tasks/8f6c1a52-3e0a-4c1e-9a67-2d6c3f1b9e10",
   "path": "/var/log/syslog",
-  "started_at": "2026-10-08T09:12:44.103254Z"
+  "started_at": "2026-10-08T09:12:44.103254Z",
+  "cli_command": ""
 }
 ```
 
 A request that joins a running task says so in `message`.
+`cli_command` is empty here; the task's `result` gives the
+`rx logs index` command.
 
 ## Status codes
 
@@ -131,6 +134,7 @@ A request that joins a running task says so in `message`.
 |---:|---|
 | `200 OK` | The chain's index task, started or joined |
 | `400 Bad Request` | The handle ends in no name (`/var/log/`) |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | The handle's directory is outside `--search-root`, or the directory or the name is hidden |
 | `404 Not Found` | The handle names fewer than two parts, or its directory does not exist |
 | `409 Conflict` | The body is the current description (as `GET /v1/logs/chain` gives it): `fingerprint` differs from it, or a part was replaced while the request read it. No task starts |

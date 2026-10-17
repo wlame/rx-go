@@ -8,9 +8,10 @@ regex search.
 
 - **Operating system:** Linux (amd64, arm64) or macOS (arm64, amd64). Windows
   is not an officially supported target.
-- **`ripgrep` (`rg`):** required for `rx trace` and the HTTP `/v1/trace`
-  endpoint. Must be reachable via `$PATH`. `samples`, `index`, `compress`
-  and the other endpoints work without it.
+- **`ripgrep` (`rg`):** required for `rx trace`, `rx logs trace` and the
+  HTTP `/v1/trace` and `/v1/logs/trace` endpoints. Must be reachable via
+  `$PATH`. `rx trace --signatures` without a pattern, `samples`, `index`,
+  `compress` and the other endpoints work without it.
 - **Disk:** an index is about one checkpoint per MB of source (9.3 KB
   for a 465 MB log); a cached trace answer grows with its match count
   (4.3 MB for 51,817 matches).
@@ -20,10 +21,16 @@ regex search.
   with the file size: a rare pattern over a 6.3 GB log peaked at 22 MB
   RSS, a pattern with 894,264 matches at 5.9 GB. See
   [performance](performance.md#memory-profile).
+- **Network (`rx serve` only):** `rx serve` downloads the `rx-viewer`
+  web app at run time from the GitHub releases of `wlame/rx-ui` and
+  caches it under `~/.cache/rx/frontend/`. On a host that cannot reach
+  GitHub, `--skip-frontend` skips the download, and `RX_FRONTEND_PATH`
+  serves a viewer build you copied there. The API works either way. See
+  [`rx serve`](cli/serve.md#air-gapped-offline).
 
 `rx` itself has no shared-library dependencies and no bundled
-`libzstd`. The statically-linked binary is about 14 MB (13.9 MB for
-darwin/arm64).
+`libzstd`. The statically-linked binary is about 18 MB (17.5 MB for
+darwin/arm64, 18.5 MB for linux/amd64).
 
 ### What `rx` does *not* need
 
@@ -76,9 +83,10 @@ Verify:
 rg --version
 ```
 
-`rx serve` will report `ripgrep_available: false` on `GET /health` if `rg`
-isn't reachable, and will return `503 Service Unavailable` on `/v1/trace`
-until one is installed.
+`rx serve` looks for `rg` once, when it starts. If `rg` isn't reachable
+then, it will report `ripgrep_available: false` on `GET /health` and
+return `503 Service Unavailable` on `/v1/trace` and `/v1/logs/trace`
+until it is restarted with `rg` installed.
 
 ## Install `rx`
 
@@ -99,7 +107,7 @@ sha256sum -c rx-linux-amd64.sha256      # on macOS: shasum -a 256 -c
 sudo install -m 0755 rx-linux-amd64 /usr/local/bin/rx
 
 rx --version
-# rx version v0.2.0  (the release tag)
+# rx version v0.8.0  (the release tag)
 ```
 
 ### Build from source
@@ -120,7 +128,8 @@ rx --version
 ```
 
 The `-s -w` flags strip debug symbols and the DWARF table, producing a
-~14 MB binary. Omit them if you need a symbolized build for debugging.
+~18 MB binary (17.5 MB for darwin/arm64, 18.5 MB for linux/amd64).
+Omit them if you need a symbolized build for debugging.
 
 ### Verify installation
 
@@ -128,7 +137,9 @@ The `-s -w` flags strip debug symbols and the DWARF table, producing a
 # Should print the version string.
 rx --version
 
-# Should print the top-level help with five subcommands.
+# Should print the top-level help with eleven commands: compress, index,
+# logs, samples, scan, serve, signatures, time-range and trace, plus
+# completion and help.
 rx --help
 ```
 

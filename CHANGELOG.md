@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries left out, M not reached; the other entries are searched`,
   keeps its matches with their line numbers, and logs a
   `journal_damaged` warning.
-- `GET /v1/tree` (and `GET /v1/search-roots`) gives each file that is
+- `GET /v1/tree` gives each file that is
   not text a `not_text_reason`: the words every command refuses it with
   (`not a text file: a NUL byte in its first 8 KiB`, `… UTF-16 text …`,
   `… a systemd journal rx cannot read: <why>`); `null` for a text file

@@ -6,7 +6,7 @@ archived data.
 
 ## Supported read formats
 
-| Format | Extension | Random access | Works with `--offsets` | Works with `--lines` | Parallel trace |
+| Format | Usual extension | Random access | Works with `--offsets` | Works with `--lines` | Parallel trace |
 |---|---|:-:|:-:|:-:|:-:|
 | gzip | `.gz` | no | yes (slow for high offsets) | yes (slow for high lines) | no |
 | bzip2 | `.bz2` | no | yes (slow) | yes (slow) | no |
@@ -18,6 +18,8 @@ archived data.
 "Slow" means the read starts at the first byte of the text and goes on
 to the wanted line or offset; "fast" means it starts at the frame that
 holds it. Offsets are positions in the decompressed text in every row.
+The extension is only the usual one: rx never reads the name to decide
+the format (see [How rx decides what a file is](#how-rx-decides-what-a-file-is)).
 
 ## How rx decides what a file is
 
@@ -164,9 +166,9 @@ frame, not the whole file.
 
 ### When rx trusts a seek table
 
-A file is seekable for rx when it is named `.zst` and ends with a seek
-table that describes it: the table's skippable frame runs to the end of
-the file, the frames it lists, laid end to end, end where the table
+A file is seekable for rx when it ends with a seek table that
+describes it, whatever its name: the table's skippable frame runs to
+the end of the file, the frames it lists, laid end to end, end where the table
 starts, and each starts with a zstd frame header whose content size,
 when the header records one, is the table's decompressed size for it.
 Checking that reads the table and one frame header (at most 18 bytes)
@@ -308,18 +310,26 @@ The output is the same whatever the worker count.
 - Opens the decompressor
 - Streams through decompressed output, counting `\n`
 - Captures lines in the window `[N-C, N+C]`
-- Reads on to the end of the stream
+- Stops once line N+C, the last line of the window, is read
 
-So the cost is one full decompression whatever the line: on the 113 MB
-`.gz` of a 465 MB log, line 5 and line 1,191,541 both took 1.55 s.
+So the cost is the decompression from the first byte up to that line:
+a line near the start decompresses only the start of the file, and a
+line near the end decompresses nearly all of it.
 
 `rx samples` builds and stores a line index for a compressed file the
-first time it is asked about one (unless `--no-index` or `RX_NO_INDEX`
-is set), so that call reads the whole file once. Only a seekable zstd
-file uses it; a gzip, bzip2, xz or plain zstd lookup streams whether
-an index exists or not. On the 113 MB `.gz` of a 465 MB log, line
-1191541 took 3.0 s the first time (stream plus index build) and 1.6 s
-after.
+first time a lookup in it reaches past the head of its text, the first
+`RX_SAMPLES_HEAD_MB` MiB of decompressed text (64 by default), unless
+`--no-index` or `RX_NO_INDEX` is set; the build reads the whole file
+once, and the lookup then decompresses from the first byte to the
+wanted line. A lookup the head answers builds none (see
+[line indexes](line-indexes.md#the-first-lookup-of-a-large-file)). A
+gzip, bzip2, xz or plain zstd lookup uses the index too: decompression
+still starts at the first byte, but the bytes before the nearest
+checkpoint are dropped without being split into lines, line counting
+starts at the checkpoint's line, and `--lines=-N` takes the line count
+from the index, so the file is read once instead of twice.
+
+<!-- TODO: re-measure line 1191541 of the 113 MB .gz of the 465 MB log: the first lookup (head, index build, lookup) and a later one with the index. The old figures, 3.0 s and 1.6 s, were measured when every lookup read to the end of the stream. -->
 
 For seekable zstd with a built index, the seek is much faster —
 `rx` jumps to the relevant frame via the seek table, decompresses only

@@ -247,10 +247,18 @@ instead. See [line number resolution](../cli/trace.md#line-number-resolution).
 
 ### Negative line numbers
 
-`rx samples --lines=-5` means "5 lines from the end". On a plain file
-this is cheap with or without an index (`--lines=-50--1` on the 465 MB
-log: 11 ms either way). On a gzip, bzip2, xz or plain zstd file, `rx`
-streams the file once to count its lines first.
+`rx samples --lines=-5` means "5 lines from the end", and
+`--lines=-1 --before=49 --after=0` gives the last 50 lines. With an
+index this is cheap on a plain file: the line count comes from the
+index, and the read starts at the checkpoint before the line. On a
+gzip, bzip2, xz or plain zstd file, `rx` takes the line count from the
+index too. Without an index — with `--no-index`, or in a plain file
+below the large-file size — `rx` reads the file once to count its
+lines first, whatever the format. A large plain file or a compressed
+file that has no index gets one first, since a position counted from
+the end lies past [the head](#the-first-lookup-of-a-large-file).
+
+<!-- TODO: re-measure the last 50 lines of the 465 MB log (--lines=-1 --before=49 --after=0) with an index and with --no-index. The old figure, 11 ms either way, came from --lines=-50--1, which rx rejects with exit 2, so it timed the error. -->
 
 ## Building an index
 
@@ -304,8 +312,11 @@ and reads the same variable — there is no query parameter for it, because
 the decision belongs to whoever runs the server rather than to a caller.
 
 A plain file is only indexed once it reaches the large-file threshold. A
-compressed one is indexed whatever its size, because without an index
-every lookup in it decompresses from the start.
+compressed one is indexed whatever its size: a lookup in it decompresses
+from the start with an index or without one, but with one it starts
+counting lines at the nearest checkpoint, and a position counted from
+the end takes the line count from the index instead of decompressing
+the whole file first.
 
 rx-python does the same on both surfaces.
 
@@ -328,7 +339,7 @@ Don't bother when:
 ## Cache invalidation
 
 An index is valid as long as its format version is the current one
-(7) and the source file hasn't changed. `rx` checks:
+(12) and the source file hasn't changed. `rx` checks:
 
 1. `version` equals the current format version; an index of another
    version is treated as absent
@@ -420,10 +431,11 @@ An index has about one checkpoint per MB of source: 9.3 KB for the
 For compressed files, the `line_index` entries point into the
 **decompressed** content, but seeking in a compressed stream requires
 decompressing up to the byte offset. For `.gz`, `.bz2`, `.xz`, and
-plain `.zst`, `rx samples --lines` streams the whole file for every
-lookup and does not use the index. `rx samples --offsets` decompresses
-up to the last offset and uses the index only to start counting lines
-at the nearest checkpoint.
+plain `.zst`, `rx samples --lines` decompresses from the first byte and
+stops after the last wanted line; the index gives the checkpoint where
+line counting starts and, for `--lines=-N`, the file's line count.
+`rx samples --offsets` decompresses up to the last offset and uses the
+index only to start counting lines at the nearest checkpoint.
 
 For **seekable zstd** (produced by `rx compress`, or by another
 seekable encoder), each checkpoint also names its frame, so a lookup

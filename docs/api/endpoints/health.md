@@ -6,7 +6,7 @@ Readiness probe plus comprehensive system introspection.
 
 - Confirm the server is up and responsive
 - Report whether `ripgrep` is available (affects `/v1/trace` and
-  `/v1/samples`)
+  `/v1/logs/trace`)
 - Expose runtime constants, env vars, hook configuration, and search
   roots for operator dashboards
 - Drive the `rx-viewer` SPA's "status" panel
@@ -99,7 +99,7 @@ because rx reads it: nothing does. `RX_SEARCH_ROOTS` is there because
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | Always `"ok"` when the server returns a response |
-| `ripgrep_available` | bool | `true` if `rg` is on `PATH`. When `false`, `/v1/trace` returns `503`; the other endpoints do not need it |
+| `ripgrep_available` | bool | `true` if `rg` is on `PATH`. When `false`, `/v1/trace` and `/v1/logs/trace` return `503`; the other endpoints do not need it |
 | `app_version` | string | The release tag the binary was built from, or `"dev"` for a build without one |
 | `contract_version` | string | HTTP wire contract version, `MAJOR.MINOR`. A higher minor adds fields or parameters; a different major means a client written for another major cannot read this server |
 | `features` | string[] | The features this build serves, sorted; see [below](#features-field-detail). Never `null` |
@@ -162,7 +162,7 @@ counts always work.
 
 | Code | Meaning |
 |---:|---|
-| `200 OK` | Server is running. `ripgrep_available` tells you whether `/v1/trace` works. |
+| `200 OK` | Server is running. `ripgrep_available` tells you whether `/v1/trace` and `/v1/logs/trace` work. |
 
 `GET /health` never returns non-200 — if the server is up, the response
 is 200; if down, the request fails to connect.

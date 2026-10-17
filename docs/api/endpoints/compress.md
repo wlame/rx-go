@@ -21,7 +21,7 @@ Content-Type: application/json
 | Field | Type | Required | Default | Description |
 |---|---|:-:|---|---|
 | `input_path` | string | yes | — | Source file path |
-| `output_path` | string \| null | no | beside the input, the default name of `rx compress` | Output file path. Validated against `--search-root` like the input. The default name replaces a compression suffix by `.zst` (`app.log.gz` gives `app.log.zst`) and otherwise appends `.zst` (`app.log` gives `app.log.zst`) |
+| `output_path` | string | no | beside the input, the default name of `rx compress` | Output file path. Validated against `--search-root` like the input. The default name replaces a compression suffix by `.zst` (`app.log.gz` gives `app.log.zst`) and otherwise appends `.zst` (`app.log` gives `app.log.zst`) |
 | `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`) |
 | `compression_level` | int | no | `3` | zstd level: 1-22 |
 | `build_index` | bool | no | `true` | Build the line index of the compressed file after compressing it |
@@ -80,7 +80,8 @@ for measured sizes and times.
   "status":     "queued",
   "message":    "Compression task started for /var/log/audit-2026-03.log",
   "path":       "/var/log/audit-2026-03.log",
-  "started_at": "2026-04-18T14:25:11.872345Z"
+  "started_at": "2026-04-18T14:25:11.872345Z",
+  "cli_command": ""
 }
 ```
 
@@ -93,6 +94,7 @@ for measured sizes and times.
 | `message` | string | Human-readable status text |
 | `path` | string | The validated absolute input path |
 | `started_at` | string | ISO 8601 UTC timestamp |
+| `cli_command` | string | Always `""` for a compress task; the task's `result` carries the `rx compress` command |
 
 ## Status codes
 
@@ -100,6 +102,7 @@ for measured sizes and times.
 |---:|---|
 | `200 OK` | Task queued |
 | `400 Bad Request` | Output file exists and `force=false`; the input is not text, or seekable zstd and `force=false`; `output_path` is the input file; bad `frame_size`; body is not valid JSON |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
 | `409 Conflict` | A task that holds the input path or the output path is already running: a compress or an index task of the input, or a compress task writing the same output |
@@ -247,7 +250,7 @@ Status: `422`. Use a valid zstd level.
 ### Invalid frame size
 
 ```json
-{ "detail": "frame_size \"4MX\": invalid syntax" }
+{ "detail": "frame_size \"4MX\": strconv.ParseInt: parsing \"4MX\": invalid syntax" }
 ```
 
 Status: `400`. See [frame size syntax](#frame-size-syntax).

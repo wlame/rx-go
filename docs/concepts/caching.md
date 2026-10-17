@@ -3,7 +3,8 @@
 `rx` caches three kinds of artifacts on disk:
 
 - **Line indexes** — produced by `rx index`, `rx compress`, and by the
-  first `rx samples` lookup in a large or compressed file; consumed by
+  first `rx samples` lookup past the head (the first
+  `RX_SAMPLES_HEAD_MB` MiB of text) of a large or compressed file; consumed by
   `rx trace`, `rx samples`, and the HTTP endpoints
 - **Trace results** — produced by `rx trace`, consumed by subsequent
   `rx trace` calls with the same file, patterns and matching flags
@@ -23,7 +24,9 @@ Resolution order:
 1. `$RX_CACHE_DIR/rx` — explicit override (note: `rx` is always
    appended, so `RX_CACHE_DIR=/tmp` yields `/tmp/rx`)
 2. `$XDG_CACHE_HOME/rx` — follows the freedesktop spec
-3. `~/.cache/rx` — ultimate fallback
+3. `~/.cache/rx` — the usual default
+4. `$TMPDIR/rx` (`/tmp/rx` when `TMPDIR` is unset) — when no home
+   directory is known (`HOME` is unset)
 
 A relative `RX_CACHE_DIR` or `XDG_CACHE_HOME` is taken against the
 directory `rx` starts in and used as that absolute path for the whole
@@ -39,7 +42,7 @@ curl -s http://127.0.0.1:7777/health | jq '.constants.CACHE_DIR'
 ```
 
 The directory this order resolves to — `$RX_CACHE_DIR/rx`,
-`$XDG_CACHE_HOME/rx` or `~/.cache/rx` — is the *cache base*, which
+`$XDG_CACHE_HOME/rx`, `~/.cache/rx` or `$TMPDIR/rx` — is the *cache base*, which
 `/health` reports as `CACHE_DIR`. It is **not created automatically** —
 callers that write to it do their own `mkdir` as needed. Read attempts against
 a missing cache directory gracefully return "no cache".
@@ -561,9 +564,18 @@ fresh scan's (see the rule above). This is useful for:
 
 ### Multi-tenant caches
 
-Multiple users sharing a single cache directory works, but each user
-sees the other's cache entries. If isolation matters, set per-user
-`RX_CACHE_DIR`:
+Every cache file is written with mode `0600`. `trace_cache/`,
+`frontend/` and the directories inside them get mode `0700`;
+`indexes/`, `findings/` and the directories inside them get `0750`. A
+cache base that rx creates takes the mode of the first of these it
+creates in it. So users cannot share one cache directory: another user
+can neither read the entries one user wrote nor add entries beside
+them. An entry rx cannot read is treated as absent and logged, a line
+index as `index_unreadable` (see [Atomic writes](#atomic-writes)); the
+answer is the same, but the other user gets nothing from the cache and
+can store nothing in it (see [When the cache cannot be
+written](#when-the-cache-cannot-be-written)). Give each user a cache
+directory of their own with `RX_CACHE_DIR`:
 
 ```bash
 # In /etc/profile.d/rx.sh

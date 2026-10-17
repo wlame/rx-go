@@ -87,7 +87,10 @@ Both `offsets` and `lines` accept the same grammar:
 
 - Single: `100`
 - Range: `100-200`
-- Negative (line mode only): `-1` = last line
+- Negative (a single value, in either mode): counts back from the end —
+  `-1` in `lines` is the last line, and `-10` in `offsets` is the byte
+  10 bytes before the end of the text. Both ends of a range are 0 or
+  more
 - Multiple: `100,500,1000-1050,-5`
 
 No whitespace. Max practical length is limited by the URL length cap
@@ -280,7 +283,8 @@ the build's task instead of the lines, with the header
   "status": "running",
   "message": "Building the line index of /var/log/big.log; poll GET /v1/tasks/1b9e4c1e-3f7a-4c55-9a2e-6d0f7b1c2a10 and ask again when it completes",
   "path": "/var/log/big.log",
-  "started_at": "2026-10-03T18:12:04.512330Z"
+  "started_at": "2026-10-03T18:12:04.512330Z",
+  "cli_command": ""
 }
 ```
 
@@ -324,12 +328,12 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 | Field | Type | Description |
 |---|---|---|
 | `path` | string | The validated absolute file path |
-| `offsets` | `{key: lineNumber}` | Byte-offset mode: key is the request spec, value is the 1-based number of the line holding that byte (for a range, its first byte); `-1` past the end of the file |
-| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
+| `offsets` | `{key: lineNumber}` | Byte-offset mode: key is the request spec, except that a negative single offset is keyed by the offset it resolves to (`-10` on a text of 11984 bytes is `"11974"`; 0 when it reaches past the start), value is the 1-based number of the line holding that byte (for a range, its first byte); `-1` past the end of the file |
+| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, except that a negative single line is keyed by the line it resolves to (`-1` on a text of 200 lines is `"200"`; 1 when it reaches past the first line), value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
 | `before_context`, `after_context` | int | The context the request asked for (or the default 3), echoed; see [context defaults](#context-defaults) |
 | `samples` | `{key: lines[] \| null}` | Retrieved content, keyed identically to `offsets` / `lines`; `null` for a position the file does not have |
 | `is_compressed` | bool | Whether the file was compressed |
-| `compression_format` | `string \| null` | `"gzip"`, `"bzip2"`, `"xz"`, `"zstd"`, `"seekable_zstd"`, `"journal"` (a systemd journal: the lines are its text, see [Journal files](../../concepts/journal-files.md)), or `null` |
+| `compression_format` | `string \| null` | `"gzip"`, `"bz2"`, `"xz"`, `"zstd"` (a seekable zstd file reports `"zstd"`), `"journal"` (a systemd journal: the lines are its text, see [Journal files](../../concepts/journal-files.md)), or `null` |
 | `cli_command` | string | Equivalent CLI invocation |
 | `timestamps` | `{query: lineNumber}` | Time mode: key is the query, value is the line it found (a range's first line); `-1` when no line is at the time, or the range holds none. `{}` in the other modes |
 | `time_format` | `{format, has_zone, assumed_zone} \| null` | The file's timestamp format, in every mode: the family (`iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted`, `epoch`), whether most timestamps carry a zone, and the zone a timestamp without one is read in (`RX_LOG_TZ` for a zone-less file, `UTC` otherwise). `null` when no format is recognized in the first mebibyte of the text. Costs no read with an index, at most a mebibyte without |
@@ -350,6 +354,7 @@ client-side and iterate accordingly.
 | `200 OK` | Success; a position the file does not have answers `-1` in `lines`/`offsets` and `null` in `samples` |
 | `202 Accepted` | Only with `Prefer: respond-async`: the head of the file cannot answer the request, the file's index is being built and did not finish within `RX_SAMPLES_WAIT_SECONDS`; the body names the task (see [above](#response-202-accepted)) |
 | `400 Bad Request` | None of `offsets`, `lines` and `timestamps`; more than one; bad spec syntax; a value of `timestamps` that is not a time, a time of day on a file of two dates, a time query on a file without timestamps, more than 1,000 values; `path` is a directory; the file is not text; the file needs more than 128 MiB at once to decompress; an answer of more lines than `RX_SAMPLES_MAX_LINES` (100,000 by default) or more bytes of line text than `RX_SAMPLES_MAX_BYTES` (256 MiB by default) allows; a `file_tz` that names no zone |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Path outside `--search-root`; a file the server may not read (`Permission denied: <path>`, as `rx samples` exits 4) |
 | `404 Not Found` | File doesn't exist |
 | `422 Unprocessable Entity` | A context count above 100, or a missing `path` |

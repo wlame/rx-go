@@ -46,9 +46,12 @@ In addition, these routes serve the auto-generated docs and the SPA:
 | `/redoc` | ReDoc UI |
 | `/openapi.json` | OpenAPI 3.1 spec (JSON) |
 | `/openapi.yaml` | OpenAPI 3.1 spec (YAML) |
+| `/openapi-3.0.json`, `/openapi-3.0.yaml` | The same spec as OpenAPI 3.0, for tools that do not read 3.1 |
+| `/schemas/{schema}` | One schema of the spec as JSON Schema, such as `/schemas/ApiError.json` |
 | `/` | `rx-viewer` SPA (or 307 → `/docs` if unavailable) |
 | `/assets/*` | Static SPA assets |
-| `/favicon.ico`, `/favicon.svg` | Embedded favicon |
+| `/favicon.ico` | Embedded favicon (SVG) |
+| Any other path | A file of the viewer bundle (such as `/favicon.svg`), or the SPA's `index.html` so the viewer's router handles the URL; 307 → `/docs` without a viewer. An unknown path under `/v1/`, `/health`, `/metrics`, `/docs`, `/redoc`, `/openapi` or `/schemas/` answers 404 instead |
 
 ## Request & response conventions
 
@@ -58,25 +61,51 @@ IDs, error envelope, HTTP status codes, content types. See
 
 Key facts:
 
-- JSON bodies use `application/json; charset=utf-8`
+- JSON bodies use `application/json`
 - Error bodies have shape `{"detail": "message"}` (path-sandbox errors
   have an extended shape — see [conventions](conventions.md))
 - Every response includes an `X-Request-ID` header: the client's own,
   or a generated UUID v7. A trace body's `request_id` is a separate ID
-- Every endpoint returns explicit `null` for unset schema fields (not
-  omitted keys)
+- Every field a response schema marks required is present, as `null`
+  when it is unset (not an omitted key); the few optional fields, such
+  as a trace answer's `signatures`, `findings` and `finding_summary`,
+  are left out when the request does not ask for them
 
 ## Authentication
 
-None built in. `rx serve` is designed to sit behind a reverse proxy
-that handles TLS, auth, rate limiting, and IP allowlisting. On an
-internal network, the `--search-root` sandbox is the primary defense.
+One opt-in shared token, and nothing more: no users, no roles, no TLS.
+When `RX_API_TOKEN` is set in the environment of `rx serve`, every path
+that is `/v1` or starts with `/v1/` requires the header
+`Authorization: Bearer <token>`. The scheme name is case-insensitive,
+and the token is compared in constant time. A request without the
+header, or with another token, gets `401` with
+`WWW-Authenticate: Bearer realm="rx"` and the usual error body:
+
+```json
+{
+  "detail": "an API token is required: send the header Authorization: Bearer <token>, with the token this server's RX_API_TOKEN holds"
+}
+```
+
+`/health`, `/metrics`, `/docs`, `/redoc`, `/openapi.json` and the other
+spec files, `/schemas/…`, `/favicon.ico` and the viewer's files stay
+open without a token. When `RX_API_TOKEN` is unset or empty, no request
+is checked. The spec declares the token as the `bearerAuth` scheme,
+optional on every `/v1` operation. See
+[security](../concepts/security.md#opt-in-api-token).
+
+The token crosses plain HTTP in clear text: anyone who can read the
+traffic can read it, and `rx serve` says so when it binds an address
+other machines can reach. `rx serve` is designed to sit behind a
+reverse proxy that handles TLS, auth, rate limiting, and IP
+allowlisting. On an internal network, the `--search-root` sandbox is
+the primary defense.
 
 !!! warning "Do not expose `rx serve` to the public internet without a reverse proxy"
-    There's no built-in auth. Anyone who can reach the socket can run
-    traces against any file within `--search-root`. Use a reverse
-    proxy with auth (OAuth, mTLS, basic auth, etc.) for public
-    deployments.
+    The token is the only built-in check, and it travels in clear
+    text. Without it, anyone who can reach the socket can run traces
+    against any file within `--search-root`. Use a reverse proxy with
+    auth (OAuth, mTLS, basic auth, etc.) for public deployments.
 
 ## OpenAPI integration
 
@@ -111,7 +140,7 @@ directory reports `files_done` of `files_total`. See
 
 ## Webhooks
 
-`rx` can fire HTTP POSTs to external URLs on three events:
+`rx` can call external URLs with an HTTP `GET` on three events:
 
 - `on_file` — per file after its scan completes
 - `on_match` — per match (requires `max_results`)

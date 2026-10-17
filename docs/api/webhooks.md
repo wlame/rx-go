@@ -6,8 +6,9 @@ body. Webhooks are fire-and-forget (no retry, no acknowledgment) and
 protected by SSRF validation.
 
 The same protocol is used whether the trace runs as `rx trace` or as
-`GET /v1/trace`, and rx-python sends the same calls, so one webhook
-target serves both backends.
+`GET /v1/trace`, or as the log chain search `rx logs trace` or
+`GET /v1/logs/trace`, and rx-python sends the same calls for its trace,
+so one webhook target serves both backends.
 
 ## Events
 
@@ -34,20 +35,23 @@ rx serve
 
 ### Per-request (HTTP)
 
-Query parameters on `GET /v1/trace` set the URLs for that request
-alone:
+Query parameters on `GET /v1/trace` and `GET /v1/logs/trace` set the
+URLs for that request alone:
 
 ```text
 GET /v1/trace?path=/var/log/app.log&regexp=error
              &hook_on_complete=https://other.example/notify
 ```
 
+An empty value, such as `&hook_on_complete=`, counts as absent: the
+environment URL still applies.
+
 Concurrent requests do not share URLs: each request's events go to the
 URLs it resolved, and carry its `request_id`.
 
 ### Per-invocation (CLI)
 
-Flags on `rx trace`:
+Flags on `rx trace` (and on `rx logs trace`):
 
 ```bash
 rx trace "error" /var/log/app.log \
@@ -59,8 +63,10 @@ rx trace "error" /var/log/app.log \
 
 For each of the three hooks, separately:
 
-1. When `RX_DISABLE_CUSTOM_HOOKS` is set, the environment URL is used
-   and the query parameter or flag is ignored.
+1. When `RX_DISABLE_CUSTOM_HOOKS` is `true`, `yes`, `1` or `on` (in
+   any case), the environment URL is used and the query parameter or
+   flag is ignored. Any other value, `false` included, leaves the
+   overrides on.
 2. Otherwise a URL given on the request (`hook_on_*`) or on the command
    line (`--hook-on-*`) wins over the environment URL.
 3. Otherwise the environment URL is used, if there is one.
@@ -155,18 +161,21 @@ are **rejected**:
 | Address space | Example | Why |
 |---|---|---|
 | Loopback | `127.0.0.1`, `::1`, `localhost` | Local services |
-| Link-local | `169.254.169.254` | AWS/GCP IMDS (credential theft) |
+| Link-local | `169.254.169.254`, `fe80::/10` | AWS/GCP IMDS (credential theft) |
 | RFC 1918 private | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | Internal networks |
+| IPv6 unique local | `fc00::/7` | Internal networks |
 | CGNAT | `100.64.0.0/10` | Carrier-grade NAT |
 | Multicast | `224.0.0.0/4`, `ff00::/8` | Group addressing |
 | Unspecified | `0.0.0.0`, `::` | Locally-routed |
 
 A URL that carries credentials (`http://user:pass@host/`) is rejected as
 well, whatever address it points at. `RX_ALLOW_INTERNAL_HOOKS` does not
-switch that rule off.
+switch that rule off. Neither does it allow a URL whose scheme is not
+`http` or `https`, or a URL with no host: both are always rejected.
 
-A rejected URL is refused before the trace runs: `GET /v1/trace`
-answers `400`, `rx trace` exits `2`, and `rx serve` refuses to start
+A rejected URL is refused before the trace runs: `GET /v1/trace` and
+`GET /v1/logs/trace` answer `400`, `rx trace` and `rx logs trace` exit
+`2`, and `rx serve` refuses to start
 when an `RX_HOOK_ON_*_URL` is rejected.
 
 The validation runs at three points:
@@ -190,8 +199,11 @@ connect-time check still applies.
 
 | Variable | Effect |
 |---|---|
-| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks. Use only when you actually need internal destinations (e.g. an internal logging service). |
+| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass the address checks; the scheme, host and credentials rules above still apply. Use only when you actually need internal destinations (e.g. an internal logging service). |
 | `RX_HOOK_STRICT_IP_ONLY=true` | Reject **any** hostname, accept only IP literals. No name is resolved at all. Operators must maintain IP allowlists. |
+
+Each of the two is on when its value is `true`, `yes`, `1` or `on`, in
+any case; any other value leaves it off.
 
 ### Redirects are never followed
 
@@ -256,7 +268,8 @@ respond `202 Accepted` or `204 No Content` immediately.
 
 Every payload's `request_id` is the `request_id` of the trace response
 that caused it. Pass your own with the `request_id` query parameter of
-`GET /v1/trace` (or `--request-id=…` on `rx trace`) to know it before
+`GET /v1/trace` or `GET /v1/logs/trace` (or `--request-id=…` on
+`rx trace` and `rx logs trace`) to know it before
 the response arrives; otherwise `rx` generates a UUID v7. It is not the
 `X-Request-ID` header, which the HTTP layer assigns to every request
 for its logs.
@@ -290,6 +303,8 @@ histogram_quantile(0.95,
 ## See also
 
 - [`/v1/trace`](endpoints/trace.md) — the endpoint that fires webhooks
+- [`/v1/logs/trace`](endpoints/logs-trace.md) — the log chain search,
+  which fires them too
 - [Configuration](../configuration.md) — all `RX_HOOK_*` env vars
 - [concepts/security](../concepts/security.md) — full security posture
 - [Metrics](endpoints/metrics.md) — webhook metric families

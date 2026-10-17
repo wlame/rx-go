@@ -24,7 +24,8 @@ GET /v1/logs/trace?path=<dir|handle|file>[&path=...]&regexp=<pattern>[&regexp=..
 ```
 
 The parameters are those of [`GET /v1/trace`](trace.md#request), with
-the same meaning and checks: `path` and `regexp` repeat, `max_results`,
+the same meaning and checks, except that `regexp` is required here and
+`signatures` is not taken: `path` and `regexp` repeat, `max_results`,
 `context`, `before_context`, `after_context`, the matching flags
 (`ignore_case`, `word_regexp`, `line_regexp`, `fixed_strings`, `pcre2`),
 `no_cache`, `no_index`, `no_recursive`, `request_id` and the
@@ -133,8 +134,10 @@ not to the description.
 
 ## Response
 
-The body of [`GET /v1/trace`](trace.md#response-200-ok), field for field, with
-two additions: `chains`, and `chain` and `chain_line` on each match.
+The body of [`GET /v1/trace`](trace.md#response-200-ok), field for field,
+without its signature fields (`signatures`, `findings`,
+`finding_summary`), and with two additions: `chains`, and `chain` and
+`chain_line` on each match.
 
 ```json
 {
@@ -190,9 +193,10 @@ chain field reaches them.
 |---:|---|
 | `200 OK` | The answer, with an invalid chain's parts searched too |
 | `400 Bad Request` | A pattern ripgrep cannot compile; a webhook URL refused; `hook_on_match` without `max_results` |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | A path outside `--search-root`, into a hidden entry, or a file named on its own that cannot be opened |
 | `404 Not Found` | A path that is no directory, no chain's handle and no file |
-| `409 Conflict` | A part of a chain was renamed or replaced between the listing that found it and the read that described it (a rotation ran meanwhile); send the request again |
+| `409 Conflict` | A part of a chain was renamed or replaced between the listing that found it and the read that described it (a rotation ran meanwhile); send the request again. The body is the error envelope `{"detail": …}` (`ApiError`), not a chain description |
 | `422 Unprocessable Entity` | `path` or `regexp` missing, or a value out of range |
 | `500 Internal Server Error` | The search failed |
 | `503 Service Unavailable` | ripgrep is not installed |

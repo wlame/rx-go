@@ -1,6 +1,6 @@
 # CLI reference
 
-`rx` exposes nine subcommands. `trace` is the default — any invocation whose
+`rx` exposes ten subcommands. `trace` is the default — any invocation whose
 first argument isn't a subcommand name gets `trace` prepended automatically.
 
 ```text
@@ -16,6 +16,7 @@ Subcommands:
   compress   Encode files as seekable zstd
   signatures List, show and check the signatures rx can find in files
   serve      Start the HTTP API server
+  completion Generate the autocompletion script for bash, zsh, fish or powershell
 ```
 
 ## Default command dispatch
@@ -29,8 +30,9 @@ rx trace "error" /var/log/app.log
 
 If the first positional argument matches a known subcommand name
 (`trace`, `index`, `scan`, `samples`, `time-range`, `logs`, `compress`, `signatures`,
-`serve`, `help`, `completion`, `version`), it's routed to that subcommand. Otherwise, `trace` is
-assumed.
+`serve`, `help`, `completion`), it's routed to that subcommand. Otherwise, `trace` is
+assumed. `version` is not a pattern either: `rx version` exits 2 with
+`Unknown command "version"`; use `--version`.
 
 ## Global flags
 
@@ -42,17 +44,20 @@ them, and they may be written before or after the subcommand name.
 | `--hidden` | `RX_HIDDEN` or `false` | Include entries whose name starts with a dot, the way `rg --hidden` does |
 | `--search-root` | `RX_SEARCH_ROOTS` or no sandbox | Restrict file access to this directory; repeatable |
 | `--help`, `-h` | — | Print help for the current command and exit |
-| `--version` | — | Print the version string (`rx version 2.2.1-go`) and exit |
+| `--version` | — | Print the version string (`rx version <tag>`: a release prints its tag, such as `rx version v0.8.0`; `just build` prints what `git describe --tags --dirty --always` gives; a plain `go build` prints `rx version dev`) and exit |
 
 `--search-root` confines every path a command touches, including the
 destination `rx compress` writes. A path outside all roots exits 4; a
 root that does not exist is a usage error and exits 2. `rx serve`
-declares its own `--search-root`, whose default is the current directory
-rather than "no sandbox", and exports the roots it resolved in
+declares its own `--search-root`, whose default is the roots in
+`RX_SEARCH_ROOTS`, else the current directory, never "no sandbox", and
+exports the roots it resolved in
 `RX_SEARCH_ROOTS` so a child process inherits them. See
 [Security](../concepts/security.md).
 
-Every subcommand has its own set of flags documented on its page.
+Every subcommand except `rx completion` has its flags documented on its
+own page; `rx completion` is covered in
+[Installation](../installation.md#shell-completion).
 
 ## Exit codes
 
@@ -119,6 +124,10 @@ no 6 or 7.
 - **[`rx serve`](serve.md)**  
   Start the HTTP API + Swagger UI + Prometheus metrics.
 
+- **[`rx completion`](../installation.md#shell-completion)**  
+  Generate the autocompletion script for `bash`, `zsh`, `fish` or
+  `powershell`.
+
 </div>
 
 ## Reading the flag tables
@@ -135,18 +144,22 @@ Flag aliases (e.g. `--path` and `--file`) list both spellings together.
 ## Stdin handling
 
 Most commands operate on filesystem paths. `rx trace` supports two stdin
-shapes, with one caveat:
+shapes:
 
-- `rx trace "pattern"` with no path **and stdin is a pipe**: reserved for
-  stdin input. Not yet implemented in this release; the CLI returns an
-  error.
-- `-` as an explicit path argument: same — reserved, currently errors.
-
-Until stdin is supported, pipe your data into a temporary file first:
+- `rx trace "pattern"` with no path **and stdin is not a terminal** (a
+  pipe or a redirected file): that input is searched.
+- `-` as an explicit path argument: the same, for input redirected or
+  piped to stdin.
 
 ```bash
-my-producer | tee /tmp/producer.log | rx "error" /tmp/producer.log
+my-producer | rx trace "error"
+rx trace "error" - < /var/log/app.log
 ```
+
+The input is spooled to a temporary file and searched, and the output
+names that file. The file is removed when the search ends, and no
+trace-cache entry is written for it. See
+[pattern and path resolution](trace.md#pattern-and-path-resolution).
 
 ## Color output
 
@@ -156,12 +169,18 @@ By default, color is emitted when stdout is a TTY. Override with:
 - `--color=never` — never emit color codes
 - `--no-color` — alias for `--color=never`
 - `NO_COLOR=1` environment variable — respected at auto-detect time
+- `RX_NO_COLOR=1` environment variable — the same, respected at
+  auto-detect time
 
-Only `rx samples` currently emits color in non-JSON mode.
+`rx trace`, `rx logs trace` and `rx samples` emit color in non-JSON
+mode.
 
 ## JSON output
 
-Every subcommand accepts `--json`. The resulting stream is one JSON
+Every subcommand accepts `--json`, except `rx serve`,
+`rx signatures check`, `rx signatures template`, `rx completion`, and
+`rx logs` without a subcommand, which prints help.
+The resulting stream is one JSON
 object per invocation (not a stream of objects). Pipe through `jq` for
 post-processing:
 
@@ -170,8 +189,14 @@ rx index /var/log/app-2026-03.log --json | jq '.indexed[].line_count'
 ```
 
 The JSON shapes are documented on each subcommand's page and are the
-same ones the HTTP API returns. See the [HTTP API reference](../api/index.md)
-for the full schemas.
+same ones the HTTP API returns, except for the commands that build:
+`rx index --json` prints `{indexed, skipped, skip_reasons, errors,
+total_time}`, `rx logs index --json` adds `path` and `chain` to those
+members, `rx compress --json` prints `{files}`, and `rx scan --json`
+prints `{signatures, files, skipped, errors, totals, total_time}`, while
+`POST /v1/index`, `POST /v1/logs/index`, `POST /v1/compress` and
+`POST /v1/findings` answer with a background task. See the
+[HTTP API reference](../api/index.md) for the full schemas.
 
 ## See also
 

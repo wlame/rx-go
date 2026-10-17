@@ -18,13 +18,21 @@ OpenMetrics-compatible collector.
 GET /metrics
 ```
 
-No parameters. Response content type is `text/plain; version=0.0.4`
+No parameters. Response content type is
+`text/plain; version=0.0.4; charset=utf-8; escaping=underscores` for a
+request whose `Accept` header names no other format or escaping
 (Prometheus exposition format, not JSON).
 
 ## Availability
 
 Metrics are only updated when `rx` is running in **serve mode**. CLI
-invocations skip every update, so they pay nothing for them.
+invocations skip every update, so they pay nothing for them. No flag or
+environment variable turns them on or off.
+
+`/metrics` needs no token: it stays open when the server sets
+`RX_API_TOKEN`, which guards the `/v1` routes only. It answers `GET`,
+`HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `CONNECT`, `TRACE`
+and `QUERY` alike; another method answers `405`.
 
 A family with labels (`status`, `kind`, `endpoint` and so on) appears in
 a scrape only after its first update; a family without labels appears
@@ -41,14 +49,14 @@ runtime and process families listed after them.
 |---|---|---|---|
 | `rx_trace_requests_total` | counter | `status` | Once per `GET /v1/trace`: `success` when it answered, `canceled` when its client went away before the answer, `error` otherwise |
 | `rx_samples_requests_total` | counter | `status` | Once per `GET /v1/samples`, `success`, `canceled` (its client went away before the answer) or `error` |
-| `rx_trace_duration_seconds` | histogram | `path_kind` | Per answered trace; `regular`, `compressed` or `seekable` after the most expensive path the request named |
+| `rx_trace_duration_seconds` | histogram | `path_kind` | Per answered trace; `seekable` or `compressed` after the extension of the first path the request named that has one of `.zst`, `.zstd` (`seekable`) or `.gz`, `.bz2`, `.xz`, `.lz4`, `.journal` (`compressed`); `regular` when no path has one |
 | `rx_samples_duration_seconds` | histogram | — | Per answered samples request |
-| `rx_offsets_per_samples_request` | histogram | — | The offsets or lines each answered samples request asked for |
+| `rx_offsets_per_samples_request` | histogram | — | The offsets, lines and times each answered samples request asked for, counted together |
 | `rx_context_lines_before` | histogram | — | The context before each position, per answered samples request |
 | `rx_context_lines_after` | histogram | — | The context after each position, per answered samples request |
 | `rx_signature_scans_total` | counter | `status` | Once per findings task (`POST /v1/findings`) that ended: `completed`, `failed` or `cancelled` |
 | `rx_signature_scan_duration_seconds` | histogram | — | Per completed findings task that read the file, from the task's start (its wait in the scan queue included) to its answer; a task the findings cache answered whole is not observed |
-| `rx_findings_cache_hits_total` | counter | — | The signatures answered from the findings cache: each signature of the selection a `GET /v1/findings` found current, and each a findings task did not have to scan. No label carries a value from a file |
+| `rx_findings_cache_hits_total` | counter | — | The signatures answered from the findings cache: each signature of the selection a `GET /v1/findings` found current, and each a findings task of one file did not have to scan (a task over a directory adds none). No label carries a value from a file |
 | `rx_http_responses_total` | counter | `method`, `endpoint`, `status_code` | Once per HTTP response, with the status the client received; `499` for a request whose client went away before a server error was written, since nobody received it |
 | `rx_errors_total` | counter | `error_type` | Per failed trace or samples request; a canceled one is not counted |
 
@@ -130,7 +138,8 @@ client, read at scrape time:
 - `status_code` is the HTTP status as a string (`"200"`, `"404"`).
 - `method` is the uppercase HTTP method (`"GET"`, `"POST"`).
 - `status` on the request counters is `success` or `error`, as in
-  rx-python.
+  rx-python, or `canceled` for a request whose client went away before
+  the answer.
 - `path_kind` is `regular`, `compressed` or `seekable`.
 - `kind` on the webhook families is `on_file`, `on_match` or
   `on_complete`; `status` on `rx_hook_calls_total` is `success`,
@@ -142,7 +151,8 @@ client, read at scrape time:
 
 | Code | When |
 |---:|---|
-| `200 OK` | Always |
+| `200 OK` | The scrape, for each method [Availability](#availability) lists |
+| `405 Method Not Allowed` | Another method |
 
 ## Example
 

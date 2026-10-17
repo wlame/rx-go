@@ -72,9 +72,9 @@ two, `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` (see
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-b`, `--offsets` | `string` | — | Comma-separated byte offsets / ranges |
-| `-l`, `--lines` | `string` | — | Comma-separated 1-based line numbers / ranges |
-| `-t`, `--timestamps` | `string` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the flag for several, never comma-separated |
+| `-b`, `--offsets` | `string[]` | — | Comma-separated byte offsets / ranges |
+| `-l`, `--lines` | `string[]` | — | Comma-separated 1-based line numbers / ranges |
+| `-t`, `--timestamps` | `string[]` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the flag for several, never comma-separated |
 | `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100) |
 | `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context` |
 | `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context` |
@@ -289,13 +289,15 @@ nearest checkpoint.
 ### Negative line numbers
 
 ```bash
-rx samples /var/log/audit-2026-03.log --lines=-100--1 --context=0
+rx samples /var/log/audit-2026-03.log --lines=-1 --before=99 --after=0
 ```
 
-The last 100 lines of the file, like `tail -n 100`. On a plain file
-this is fast with or without an index (`--lines=-50--1` on the 465 MB
-log: 11 ms either way). On a gzip, bzip2, xz or plain zstd file it
-costs a second pass over the stream, to count the lines first.
+The last 100 lines of the file, like `tail -n 100`: `-1` is the last
+line, and `--before=99` adds the 99 lines before it. A range of negative
+numbers (`--lines=-100--1`) is not accepted and exits 2. On a plain file
+this is fast with or without an index.<!-- TODO: re-measure the last 50 lines (`--lines=-1 --before=49 --after=0`) on the 465 MB log, with and without an index --> On a gzip, bzip2, xz or plain zstd file
+without an index it costs a second pass over the stream, to count the
+lines first.
 
 ### Highlight matches within context
 

@@ -19,8 +19,8 @@ a client written for 2.0 keeps working. What it adds:
   `POST /v1/index` task, `rx index --json`): the counts and the state of
   a systemd journal, `null` for every other file. See
   [Journal files](concepts/journal-files.md#damage-and-its-report).
-- `not_text_reason` in the entries of `GET /v1/tree` and
-  `GET /v1/search-roots`: why a file that is not text is refused.
+- `not_text_reason` in the entries of `GET /v1/tree`: why a file that
+  is not text is refused.
 - `entries_overlap`, a new value of the `code` of a chain's reasons.
 - `journal`, a new value of `compression_format`.
 
@@ -87,8 +87,8 @@ all, since every excerpt is masked by it; turning masking on or off
 rescans them all too).
 
 **Secrets are shown unless masking is on.** The text of a finding is
-the file's text by default; `--mask-secrets` on `rx trace` and
-`rx serve`, or `RX_MASK_SECRETS=1`, masks what the signatures with
+the file's text by default; `--mask-secrets` on `rx trace`, `rx scan`
+and `rx serve`, or `RX_MASK_SECRETS=1`, masks what the signatures with
 `redact: true` find ([Masking](concepts/signatures.md#masking)).
 
 **Release rx-go and rx-viewer back to back.** rx-go 0.8.0 refuses the

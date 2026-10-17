@@ -37,7 +37,7 @@ configurable via [`RX_LARGE_FILE_MB`](../configuration.md) or the
 | `-d`, `--delete` | `bool` | `false` | Remove the cached index file |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `-r`, `--recursive` | `bool` | `false` | Recurse into directory paths |
-| `--threshold` | `int` | `0` (env default) | Minimum file size in MB to index |
+| `--threshold` | `int` | `RX_LARGE_FILE_MB` (50) | Minimum file size in MB to index; `0` indexes every file. Leave unset to use `RX_LARGE_FILE_MB` |
 
 Mode flags have a priority order: `--delete` > `--info` > build.
 
@@ -116,8 +116,8 @@ cached index for line-number lookups.
 Output:
 
 ```text
-index built for 1 files in 1.234s
-  /var/log/audit-2026-03.log: 3528914 lines, cache=/home/you/.cache/rx/indexes/audit-2026-03.log_a1b2c3d4....json
+Indexed 1 files in 1.2s
+  /var/log/audit-2026-03.log: 3,528,914 lines, 403.71 MB
 ```
 
 ### Inspect without rebuilding
@@ -217,7 +217,8 @@ rx index /var/log/ --recursive
 ```
 
 Recursively walks `/var/log/`, indexes any file meeting the size
-threshold, and reports a wrapped JSON envelope. The walk skips entries
+threshold, and reports each file as [Output](#output) shows; `--json`
+reports the envelope below. The walk skips entries
 whose name starts with a dot unless `--hidden`, and follows a symbolic
 link only when naming its target would be allowed: with `--search-root`,
 a link that leads outside every root, into a hidden entry, back to a
@@ -305,9 +306,11 @@ rx index /var/log/journal/system.journal --threshold=0 --json \
 
 The on-disk format is a JSON file containing:
 
-- Source path, mtime, size (for cache validation)
+- The format `version` (12) and the source's path, size, mtime, inode,
+  device, ctime and fingerprint (for cache validation)
 - File type (`text`, `compressed`, `seekable_zstd`)
-- A `line_index` slice of `{line: N, offset: byteOffset}` entries
+- A `line_index` list of `[line, offset]` entries (`[line, offset, frame]`
+  for a seekable `.zst`)
 - The time section, `time_index`: the timestamp format of the lines,
   the first and last timestamps, and the latest timestamp before each
   checkpoint (`null` when no format is recognized)
@@ -330,6 +333,8 @@ When loading a cached index, `rx` checks:
 3. The inode, its device, the ctime and a fingerprint of the file
    match `source_inode`, `source_device`, `source_ctime_ns` and
    `source_fingerprint`
+4. The index's `version` is the current format version (12); an index
+   of another format version is treated as absent
 
 Any mismatch triggers a rebuild. There is no TTL-based expiry — a
 cache entry is valid as long as the source file hasn't changed. See

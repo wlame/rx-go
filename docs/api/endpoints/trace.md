@@ -188,13 +188,24 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
       "submatches_truncated":  false
     }
   ],
-  "scanned_files": ["/var/log/app-2026-03.log"],
+  "scanned_files": [],
   "skipped_files": [],
+  "skip_reasons":  [],
   "max_results":   null,
   "file_chunks": {
     "f1": 4
   },
-  "context_lines":   {},
+  "context_lines": {
+    "p1:f1:1024581": [
+      {
+        "relative_line_number": 9812,
+        "absolute_line_number": 9812,
+        "line_text":            "2026-03-14 08:23:51 ERROR timeout 5023ms",
+        "absolute_offset":      1024581,
+        "line_text_truncated":  false
+      }
+    ]
+  },
   "before_context":  null,
   "after_context":   null,
   "cli_command":     "rx trace /var/log/app-2026-03.log --regexp=timeout"
@@ -211,7 +222,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `patterns` | `{id: pattern}` | Pattern ID → original string map |
 | `files` | `{id: path}` | File ID → absolute path map |
 | `matches` | array | Sorted by file in the order of `path` (`f1`, `f2`, …, `f10`; a directory's files in walk order), then by `offset`, then by pattern in the order given (`p1`, `p2`, …, `p10`). Under `max_results`, the first of the matches found in this order. See below |
-| `scanned_files` | `string[]` | The files found by walking a directory named in `path`; empty when every path is a file. `files` lists every file searched either way |
+| `scanned_files` | `string[]` | Every file searched, once any path in `path` is a directory; empty when every path is a file. `files` lists every file searched either way |
 | `skipped_files` | `string[]` | Paths passed over (not text, unreadable, a link the walk refuses, a subdirectory it cannot list) or not searched in full (a truncated stream, a damaged seekable frame, a damaged systemd journal: their matches are kept) |
 | `skip_reasons` | `{path, reason}[]` | Why each path of `skipped_files` is there, in the same order; the reasons are listed in [`rx trace`](../../cli/trace.md#skipped-files-and-their-reasons). Contract 1.4 |
 | `max_results` | `int \| null` | The cap that was applied, or null |
@@ -310,6 +321,7 @@ the match's offset.
 |---:|---|
 | `200 OK` | Search completed (zero or more matches) |
 | `400 Bad Request` | `max_results` missing when `hook_on_match` is set; invalid hook URL; bad regex |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Path outside `--search-root`; a file the request names that the server may not read (`Permission denied: <path>`, as the CLI exits 4). A file a directory search meets and may not read is listed in `skipped_files` instead |
 | `404 Not Found` | A requested path doesn't exist |
 | `422 Unprocessable Entity` | Missing required `path` or `regexp` param; a parameter of the wrong type; a context count above 100 or below its minimum |
@@ -344,7 +356,7 @@ curl -sG 'http://127.0.0.1:7777/v1/trace' \
     --data-urlencode 'path=/var/log/app-2026-03.log' \
     --data-urlencode 'path=/var/log/nginx/access.log' \
     --data-urlencode 'regexp=500|502|504' \
-    | jq '.scanned_files'
+    | jq '.files'
 ```
 
 ### With webhook

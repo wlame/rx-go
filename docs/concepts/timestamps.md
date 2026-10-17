@@ -30,9 +30,11 @@ and a kernel uptime (`[ 1234.567]`) are not timestamps.
 The format is decided from the first mebibyte of the file's text (the
 decompressed text of a compressed file), at most 5,000 lines. A
 timestamp at the start of a line (or right after a `[` there) is strong
-evidence: three such lines are enough when they are at least 1% of the
+evidence: three such lines are enough, whatever their share of the
 lines. A timestamp further into the line, within its first 120 bytes,
-must be on at least half of the lines. With neither, the file has no
+must be on at least half of the lines. When both qualify, the
+timestamps at the start of a line win only when they are on at least
+1% of the lines. With neither, the file has no
 timestamps, and a time query on it is refused (exit 2, HTTP 400:
 "no timestamp format recognized in the first 1 MiB").
 

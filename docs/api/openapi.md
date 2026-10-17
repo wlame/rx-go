@@ -1,10 +1,14 @@
 # OpenAPI integration
 
 `rx serve` generates a full OpenAPI 3.1 specification at runtime and
-publishes it at three URLs:
+publishes it at these URLs:
 
 - `/openapi.json` — JSON spec
 - `/openapi.yaml` — YAML spec (same content)
+- `/openapi-3.0.json`, `/openapi-3.0.yaml` — the same spec as OpenAPI
+  3.0, for tools that do not read 3.1
+- `/schemas/{schema}` — one schema of the spec as JSON Schema, such as
+  `/schemas/ApiError.json`
 - `/docs` — Swagger UI rendered from the spec
 - `/redoc` — ReDoc alternative rendering
 
@@ -52,6 +56,11 @@ The `/openapi.json` output includes:
 - `paths` — every `/health`, `/v1/*` route
 - `components.schemas` — JSON schema for every request and response
   type
+- `components.securitySchemes.bearerAuth` — the optional API token
+  (`RX_API_TOKEN`, see [authentication](index.md#authentication)).
+  Every `/v1` operation declares a `401` response and
+  `security: [{bearerAuth: []}, {}]`: the token or nothing, so a
+  generated client neither demands a token nor drops one it was given
 
 ### Tags
 
@@ -62,9 +71,10 @@ Endpoints are grouped by `tag` in the spec and UI:
 | General | `/health` |
 | Search | `/v1/trace` |
 | Context | `/v1/samples`, `/v1/time-range` |
-| Indexing | `GET /v1/index`, `POST /v1/index` |
-| Operations | `POST /v1/compress`, `GET /v1/tasks/*`, `DELETE /v1/tasks/*` |
+| Indexing | `GET /v1/index` |
+| Operations | `POST /v1/index`, `POST /v1/compress`, `GET /v1/tasks/*`, `DELETE /v1/tasks/*` |
 | FileTree | `/v1/tree` |
+| Logs | `/v1/logs/chains`, `/v1/logs/chain`, `POST /v1/logs/index`, `/v1/logs/samples`, `/v1/logs/trace` |
 | Signatures | `/v1/signatures`, `GET /v1/findings`, `POST /v1/findings` |
 | Monitoring | `/metrics` (though `/metrics` is documented outside the OpenAPI spec because it's not JSON) |
 
@@ -120,15 +130,27 @@ dredd http://127.0.0.1:7777/openapi.json http://127.0.0.1:7777
 
 ## Error envelope in the spec
 
-All error responses in the spec reference a shared `Error` schema:
+Error responses in the spec reference a shared `ApiError` schema:
 
 ```json
-{ "type": "object", "properties": { "detail": { "type": "string" } } }
+{
+  "type": "object",
+  "properties": { "detail": { "type": "string" } },
+  "required": ["detail"],
+  "additionalProperties": false
+}
 ```
 
 Generated clients will expose `.Detail` (or equivalent) as the single
-error field. The extended path-sandbox error is an additional schema
-used for `403 path_outside_search_root`. See [conventions](conventions.md).
+error field. Three more schemas appear among the errors:
+`SandboxError`, the extended path-sandbox error, used for
+`403 path_outside_search_root` (every `403` is `oneOf` `SandboxError`
+and `ApiError`); `TaskConflictError`, the `detail` envelope plus
+`task_id`, for the `409` of `POST /v1/compress`, `POST /v1/index`,
+`POST /v1/findings` and `DELETE /v1/tasks/{task_id}`; and
+`ChainResponse`, the chain's current description, for the `409` of
+`GET /v1/logs/chain`, `POST /v1/logs/index` and `GET /v1/logs/samples`.
+See [conventions](conventions.md).
 
 ## Server information
 

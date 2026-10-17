@@ -124,7 +124,7 @@ A file without a recognized format:
 | `format` | string \| null | `iso`, `clf`, `ctime`, `syslog`, `slash`, `dotted` or `epoch` ([formats](../../concepts/timestamps.md#formats)); `null` when none is recognized in the first mebibyte, and then every field below but `source` and `cli_command` is `null` |
 | `has_zone` | bool \| null | Whether most timestamps carry a zone |
 | `day_first` | bool \| null | For `slash`, whether the day comes before the month; `null` for every other format |
-| `display_zone` | string \| null | The zone to show this file's times in so they read as its lines do: `RX_LOG_TZ` as set (`UTC` by default, an IANA name or `±HH:MM`) for a file whose timestamps carry no zone, the offset of its first timestamp (`±HH:MM`) for one whose timestamps do |
+| `display_zone` | string \| null | The zone to show this file's times in so they read as its lines do: `RX_LOG_TZ` as set (`UTC` by default, an IANA name or `±HH:MM`) for a file whose timestamps carry no zone, the offset of its first timestamp (`±HH:MM`) for one whose timestamps do; `null` when that offset is unknown (no first timestamp was read). A stream read without an index (`source: none`) still gives the offset of the first timestamp of its head |
 | `example` | string \| null | The first timestamp as its line writes it (`2025-12-10 07:00:04.574`, `Dec 10 07:00:12.156`, `2025-12-10 16:18:53,741`): printable ASCII, any other byte as `\xHH`, at most 64 bytes |
 | `first_ms` | int \| null | The timestamp of the first line that has one, as a UTC instant in ms. A file whose timestamps carry no zone has its wall clock read in `RX_LOG_TZ`, as `line_timestamps` reads it. `null` with `source: none` |
 | `last_ms` | int \| null | The same for the last line that has one. `null` with `source: none`, and from a scan when no line within the last 16 MiB of the text has a timestamp or, for a seekable file, when the frames that hold it decode to more than 32 MiB |
@@ -144,6 +144,7 @@ end, or a seekable file of frames too large to decode for it).
 |---:|---|
 | `200 OK` | The answer, with timestamps or without |
 | `400 Bad Request` | The path is a directory, not a text file, or needs more than 128 MiB at once to decompress; or `file_tz` names no zone (`Invalid file_tz "Mars/Base": invalid time zone: not a zone name; give UTC, an IANA zone name or ±HH:MM`) |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Outside the search roots, a hidden entry, or a file the server may not read |
 | `404 Not Found` | The file does not exist |
 | `422 Unprocessable Entity` | `path` missing |

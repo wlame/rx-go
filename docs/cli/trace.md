@@ -493,12 +493,13 @@ a context line.
   chunk's first line, so a context line just before the chunk has 0 or
   below. When the absolute number is known, the two are equal. See
   [line number resolution](#line-number-resolution).
-- `scanned_files` lists the files found by walking a directory you
-  named; it is empty when every path is a file. `files` lists every
-  file searched.
+- `scanned_files` lists every file searched, the files you named
+  included, once any path you gave is a directory; it is empty when
+  every path is a file. `files` lists every file searched.
 - `files` and `path` keep each path as you typed it; over HTTP they are
   absolute.
-- `cli_command` is `null`; only an HTTP answer carries one.
+- `cli_command` is `null` unless `--signatures` is given (see
+  [JSON](#json) under Signatures); an HTTP answer carries one.
 
 ### Match with pre/post context
 
@@ -561,13 +562,14 @@ batch usually cost decoding the one frame before it.
 ### Cache hit path
 
 For a plain file of `RX_LARGE_FILE_MB` (50) or more, and for a
-seekable zstd file, `rx` computes a cache key from the source path, the
-pattern set and the matching flags. If an entry exists under
-`~/.cache/rx/trace_cache/` and the file still has the size, mtime,
-inode, ctime and fingerprint the entry recorded, that entry is loaded
-and reconstructed into a full response without re-scanning. Cache miss
-→ full scan. The entry records the file as it was when the scan was
-planned, so a log that grows during a scan is scanned again next time.
+seekable zstd file of 1 MiB or more, `rx` computes a cache key from the
+source path, the pattern set and the matching flags. If an entry exists
+under `~/.cache/rx/trace_cache/` and the file still has the size, mtime,
+inode, device, ctime and fingerprint the entry recorded, that entry is
+loaded and reconstructed into a full response without re-scanning. Cache
+miss → full scan. A scan with `--max-results` writes no entry. The entry
+records the file as it was when the scan was planned, so a log that
+grows during a scan is scanned again next time.
 
 ### Line number resolution
 
@@ -605,9 +607,11 @@ decompressed; without one the match keeps
 
 ### Performance characteristics
 
-- **Scales near-linearly** up to physical core count on literal-dense
-  patterns. Beyond physical cores (hyperthreads), gains plateau because
-  regex scanning is memory-bandwidth-bound.
+- **Scales sublinearly** with workers: on a 6.3 GB log a rare literal
+  ran 2.80× faster with 4 workers than with 1, 3.18× with 8 and 2.93×
+  with 16. Gains flatten past 4-8 workers, because the scan becomes
+  bound by memory bandwidth and by the work outside the scan; see
+  [Worker scaling](../performance.md#worker-scaling).
 - **Regex-heavy patterns** (look-around, nested quantifiers) don't
   benefit as much from extra workers; the compiled automaton becomes
   the bottleneck.

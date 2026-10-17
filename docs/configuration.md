@@ -1,9 +1,16 @@
 # Configuration
 
 Reference for every environment variable and global flag `rx`
-recognizes. Environment variables are read at every call (not
-memoized), so `t.Setenv(...)` in tests and `env X=Y rx ...` in shell
-both work without restarting anything.
+recognizes. A command reads the environment when it runs, so
+`t.Setenv(...)` in tests and `env X=Y rx ...` in shell both work
+without restarting anything. `rx serve` reads several variables only
+when it starts, and a change to one of them takes a restart: among
+them the settings of signature scans and findings (`RX_NO_INDEX` and
+`RX_MASK_SECRETS` for the findings routes included),
+`RX_MAX_SIGNATURE_SCANS`, `RX_SIGNATURES_PATH`, `RX_LOG_LEVEL`,
+`RX_API_TOKEN`, `RX_TREE_REFRESH_SECONDS`, `RX_SAMPLES_WAIT_SECONDS`,
+`RX_MAX_INDEX_BUILDS`, `RX_TASK_TTL_MINUTES` and the `RX_FRONTEND_*`
+variables.
 
 ## Variable precedence
 
@@ -13,6 +20,10 @@ earlier ones:
 1. **Compiled defaults** — the constants in source
 2. **Environment variables** — read lazily on each call site
 3. **Command-line flags** — supplied to the invocation
+
+One exception: `rx samples --no-index` is combined with `RX_NO_INDEX`
+rather than overriding it. Either one turns the index off, and
+`--no-index=false` cannot turn the variable off.
 
 For the cache directory:
 
@@ -66,7 +77,7 @@ cache. See [long lines](api/endpoints/trace.md#long-lines).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LARGE_FILE_MB` | `50` | The large-file size in MB. `rx index` skips a smaller plain file unless `--threshold=N` is supplied (`--threshold=0` indexes every file; omitting the flag uses this variable). `rx samples` and `GET /v1/samples` build an index before a lookup in a plain file of this size or more. A trace answer for a plain file of this size or more is cached. The index checkpoint step is a fiftieth of it (1 MB by default). |
+| `RX_LARGE_FILE_MB` | `50` | The large-file size in MB. `rx index` skips a smaller plain file unless `--threshold=N` is supplied (`--threshold=0` indexes every file; omitting the flag uses this variable). `rx samples` and `GET /v1/samples` build an index for a lookup in a plain file of this size or more, unless the lookup's lines lie in the first `RX_SAMPLES_HEAD_MB` of its text: `rx samples` then answers from that head and builds none, and `GET /v1/samples` answers from it at once and starts the build in the background. A trace answer for a plain file of this size or more is cached. The index checkpoint step is a fiftieth of it (1 MB by default). |
 
 ## Cache control
 
@@ -83,7 +94,7 @@ it:
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_NO_INDEX` | `false` | `rx samples` and `GET /v1/samples` neither build nor read a line index; the lookup streams the file (same answer). The CLI flag is `rx samples --no-index`; there is no query parameter. |
+| `RX_NO_INDEX` | `false` | `rx samples`, `rx time-range`, `GET /v1/samples`, `GET /v1/time-range`, `GET /v1/findings` and the findings of `GET /v1/trace?signatures=` neither build nor read a line index; the lookup streams the file. `rx logs samples` and `GET /v1/logs/samples` read the parts of a chain that way, but the chain's description still reads the parts' stored indexes (`rx logs samples` builds one in memory for a part without one), and the index task `GET /v1/logs/samples` starts for a pending chain still builds and stores them. A samples answer is the same; the time range of a gzip, bzip2, xz or plain zstd file then has no first and last time (`source: "none"`), and the `ticks` of `GET /v1/findings` drawn over it have `start_ms` and `end_ms` `null`. `rx trace` ignores the variable, with `--signatures` too; it takes `--no-index` per call. The CLI flag is `rx samples --no-index`, which cannot turn the variable off; there is no query parameter. |
 
 `NO_COLOR` / `RX_NO_COLOR` control color output:
 
@@ -128,8 +139,8 @@ from YAML files by the commands that use them
 | `RX_SIGNATURES_PATH` | unset | Where your signature files are: directories or files separated by `:`, in order. Every `*.yml` and `*.yaml` file of a directory loads, in name order, without subdirectories or names that start with a dot; a file named here loads whatever its name; an entry that does not exist is skipped. Unset or empty: the first of `$XDG_CONFIG_HOME/rx/signatures/` and `~/.config/rx/signatures/` that exists. |
 | `RX_SIGNATURES_LINE_BYTES` | `65536` | How many bytes of each line a signature scan matches against: the line without its ending, cut here. A longer line is still counted at its full length, and the scan never holds more of it. From 1024 to 1048576. |
 | `RX_FINDINGS_MAX_PER_SIGNATURE` | `10000` | The most findings of one signature a scan of one file keeps: the first ones by line. The count of findings stays exact past it. From 100 to 1000000. |
-| `RX_MAX_SIGNATURE_SCANS` | `1` | How many signature scans run at once in `rx serve`. A scan past it waits, in the order it was started, until a running scan ends; a scan whose findings are all in the [findings cache](concepts/caching.md#findings) reads no file and does not wait. From 1 to 64. |
-| `RX_MASK_SECRETS` | `false` | Mask secrets in the text of findings: the signatures with `redact: true` mask what they match in excerpts, `lines`, `before`, `after`, the human output and the [findings cache](concepts/caching.md#findings) ([Masking](concepts/signatures.md#masking)). Off by default: the text of a finding is the file's text. `--mask-secrets` on `rx trace` and `rx serve` overrides it, either way; for the HTTP API the mode is the one `rx serve` started with. |
+| `RX_MAX_SIGNATURE_SCANS` | `1` | How many signature scans run at once in `rx serve`, `rx scan` and `rx trace --signatures`. A scan past it waits, in the order it was started, until a running scan ends; a scan whose findings are all in the [findings cache](concepts/caching.md#findings) reads no file and does not wait. From 1 to 64. |
+| `RX_MASK_SECRETS` | `false` | Mask secrets in the text of findings: the signatures with `redact: true` mask what they match in excerpts, `lines`, `before`, `after`, the human output and the [findings cache](concepts/caching.md#findings) ([Masking](concepts/signatures.md#masking)). Off by default: the text of a finding is the file's text. `--mask-secrets` on `rx trace`, `rx scan` and `rx serve` overrides it, either way; for the HTTP API the mode is the one `rx serve` started with. |
 | `RX_FINDINGS_TEXT_MAX_BYTES` | `67108864` | The most bytes of text one answer gives for its findings: the lines of each finding, and the lines asked for around it (`rx trace --signatures -B`, `-A`, `--context`), summed over the findings in their order, each line counted with one byte more for its line break. The finding at which it runs out, and every finding after it, keep their line numbers and offsets and lose their text (`lines_truncated: true`). Each line is cut at `RX_MAX_LINE_TEXT_BYTES` as well. From 1048576 (1 MiB) to 17179869184 (16 GiB). |
 
 ## Search-root sandbox
@@ -144,7 +155,7 @@ See [concepts/security](concepts/security.md).
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag (e.g. `v0.8.0`), with no range check and no daily check. When unset, `rx serve` installs the newest published release inside the range it supports and checks for a newer one once a day (see [`rx serve`](cli/serve.md#viewer-updates)). |
+| `RX_FRONTEND_VERSION` | unset | Pin the `rx-viewer` SPA to a specific release tag of `wlame/rx-ui` (e.g. `v0.8.0`), with no range check and no daily check. When unset, `rx serve` installs the newest published release inside the range it supports and checks for a newer one once a day (see [`rx serve`](cli/serve.md#viewer-updates)). |
 | `RX_FRONTEND_URL` | unset | Direct URL to a `dist.tar.gz` of the SPA. When set, `rx serve` downloads from this URL on every start. |
 | `RX_FRONTEND_PATH` | — | A directory holding a viewer build you manage, such as a local `rx-viewer` build. `rx serve` serves it as it is: no check, no download, no write, no range check, and `RX_FRONTEND_URL` and `RX_FRONTEND_VERSION` are ignored beside it. A directory without `index.html` and `assets/` serves no viewer. Tilde expansion supported. To move the cache `rx` manages, set `RX_CACHE_DIR` (see [`rx serve`](cli/serve.md#serve-a-viewer-build-you-manage)). |
 
@@ -177,7 +188,7 @@ See [concepts/security](concepts/security.md) and
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` (alias `WARNING`), or `ERROR`, in any case. Sets slog level on `rx serve` startup. |
+| `RX_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` (alias `WARNING`), or `ERROR`, in any case. Sets only the `LOG_LEVEL` that `GET /health` reports under `constants`. It does not change what `rx` logs: `rx serve` logs at `INFO` and above whatever it is set to. |
 
 ## HTTP server
 
@@ -216,7 +227,10 @@ Per-subcommand flags are documented on each CLI page:
 
 - [`rx trace`](cli/trace.md)
 - [`rx index`](cli/line-index.md)
+- [`rx scan`](cli/scan.md)
 - [`rx samples`](cli/samples.md)
+- [`rx time-range`](cli/time-range.md)
+- [`rx logs`](cli/logs.md)
 - [`rx compress`](cli/compress.md)
 - [`rx signatures`](cli/signatures.md)
 - [`rx serve`](cli/serve.md)
@@ -363,7 +377,7 @@ export RX_ALLOW_INTERNAL_HOOKS=true
 # Lock down per-request overrides.
 export RX_DISABLE_CUSTOM_HOOKS=true
 
-# INFO logging.
+# The level /health reports; rx logs at INFO and above either way.
 export RX_LOG_LEVEL=INFO
 
 rx serve --host=0.0.0.0 --port=7777 \

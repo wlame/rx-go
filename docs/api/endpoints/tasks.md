@@ -94,11 +94,31 @@ GET /v1/tasks/{task_id}
     "created_at": "2026-04-18T14:23:48.456789Z",
     "build_time_seconds": 2.456,
     "line_index": [
-      {"line_number": 1, "byte_offset": 0},
-      {"line_number": 12500, "byte_offset": 2097152}
+      [1,     0],
+      [12500, 2097152]
     ],
+    "empty_line_count": 0,
+    "line_ending": "LF",
+    "line_length": {
+      "max": 2048, "avg": 164.2, "median": 151.0,
+      "p95": 301.0, "p99": 412.0, "stddev": 61.7
+    },
+    "longest_line": { "line_number": 1207733, "byte_offset": 198812004 },
+    "compression_format": null,
+    "decompressed_size_bytes": null,
+    "compression_ratio": null,
+    "time_summary": {
+      "format":            "iso",
+      "has_zone":          false,
+      "first_ms":          1765350004574,
+      "last_ms":           1765353604390,
+      "timestamped_lines": 3402771,
+      "backward_steps":    0,
+      "max_backward_ms":   0
+    },
+    "journal": null,
     "index_path": "/home/you/.cache/rx/indexes/audit-2026-03.log_<hash>.json",
-    "cli_command": "..."
+    "cli_command": "rx index /var/log/audit-2026-03.log"
   }
 }
 ```
@@ -163,6 +183,7 @@ GET /v1/tasks/{task_id}
 | Code | When |
 |---:|---|
 | `200 OK` | Task exists; current state returned |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `404 Not Found` | Task ID unknown or already swept |
 
 ## Status transitions
@@ -310,6 +331,7 @@ curl -s -X DELETE 'http://127.0.0.1:7777/v1/tasks/440cb10b-c583-42ca-9283-840f51
 | Code | When |
 |---:|---|
 | `200 OK` | The task is cancelled (`cancelled`), or, for a task over a directory, is stopping (`cancelling`); its status is returned |
+| `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `404 Not Found` | Task ID unknown or already swept |
 | `409 Conflict` | The task is neither a findings task nor a task over a directory (an index task over one file, a compress or a chain_index task cannot be cancelled), it has already ended (completed, failed or cancelled), or it is a findings task over one file whose scan has finished reading and whose answer is being written: from that point a cancel is refused, so such a task never ends `cancelled` with findings written. The body is `{"detail", "task_id"}` |
 
