@@ -25,7 +25,10 @@ This repo is the **flagship backend** of a product with two active repos and a p
 | `rx-viewer` | Shared Svelte SPA, published as the GitHub releases of `wlame/rx-ui`, fetched from there by `serve` (the newest release inside the supported range, checked once a day) and served from `~/.cache/rx/frontend/` |
 | `rx-python` | The original backend, on PyPI as `rx-tool`. **Paused** since 2026-10-02; it stays as it is while this repo moves on. |
 
-`rx-rust` also exists beside them. It is frozen. Do not read it for guidance.
+`rx-rust` also exists beside them: the Rust implementation in development,
+which reproduces this backend's contract and cache formats (policy in
+`../AGENTS.md`, "rx-rust policy"). This repo is its reference; do not take
+guidance from it.
 
 ## Go-first policy (binding while rx-python is paused)
 
