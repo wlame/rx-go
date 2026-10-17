@@ -13,7 +13,8 @@ benchmarked at 1.3 GB, designed for 100 GB). It wraps `ripgrep` as the regex
 engine and adds native parallel chunking, line-offset indexes, frame-parallel
 zstd decoding, an HTTP API and a static SPA.
 
-Target artifact: one statically linked binary (`CGO_ENABLED=0`, about 13 MB).
+Target artifact: one statically linked, stripped binary (`CGO_ENABLED=0`,
+about 18 MB: 17.5 MB for darwin/arm64, 18.5 MB for linux/amd64).
 Runtime dependency: `ripgrep` 13+ on `PATH`.
 
 This repo is the **flagship backend** of a product with two active repos and a paused one:
@@ -21,7 +22,7 @@ This repo is the **flagship backend** of a product with two active repos and a p
 | Repo | Role |
 |---|---|
 | `rx-go` (this repo) | The focus. Reference for the HTTP wire contract and the cache format |
-| `rx-viewer` | Shared Svelte SPA, fetched from GitHub Releases by `serve` (the newest release inside the supported range, checked once a day) and served from `~/.cache/rx/frontend/` |
+| `rx-viewer` | Shared Svelte SPA, published as the GitHub releases of `wlame/rx-ui`, fetched from there by `serve` (the newest release inside the supported range, checked once a day) and served from `~/.cache/rx/frontend/` |
 | `rx-python` | The original backend, on PyPI as `rx-tool`. **Paused** since 2026-10-02; it stays as it is while this repo moves on. |
 
 `rx-rust` also exists beside them. It is frozen. Do not read it for guidance.
@@ -84,7 +85,7 @@ the position, with a range sorting by its left-hand value
 | Where | What |
 |---|---|
 | `cmd/rx/main.go` | Entry point. `preprocessArgs` routes a bare pattern to `trace`; a new subcommand joins `knownSubcommands` there |
-| `internal/clicommand/` | One file per subcommand: `trace` (its `--signatures` part in `trace_signatures.go`), `index`, `samples`, `time-range`, `compress`, `signatures`, `serve`; `logs` and its subcommands (`list`, `show`, `time-range`, `index`, `samples`, `trace`) in `logs*.go` |
+| `internal/clicommand/` | One file per subcommand: `trace` (its `--signatures` part in `trace_signatures.go`), `index`, `samples`, `scan`, `time-range`, `compress`, `signatures`, `serve`; `logs` and its subcommands (`list`, `show`, `time-range`, `index`, `samples`, `trace`) in `logs*.go` |
 | `internal/webapi/` | HTTP layer (chi + huma v2), middleware, OpenAPI, SPA fallback, `runDetached` |
 | `internal/trace/` | Search engine: `chunker.go`, `worker.go` (rg subprocess), `seekable.go`, `compressed.go`, `cache.go` |
 | `internal/samples/` | Line and byte-offset resolver shared by CLI `samples` and `/v1/samples` |
@@ -100,8 +101,8 @@ the position, with a range sorting by its left-hand value
 | `internal/findings/` | The findings cache (`<cache>/findings/`, per file and signature), the scan queue and the scan the CLI and HTTP share (`Scan`, `Read`, `Summary`) |
 | `internal/hooks/` | Webhook dispatcher with SSRF defence |
 | `internal/paths/` | `--search-root` sandbox |
-| `internal/frontend/` | Downloads and extracts the viewer bundle |
-| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress`, the index builds `GET /v1/samples` waits for, and the index task of each log chain (`chain_index`, `internal/webapi/chain_index.go`): a lock key apart from the path it shows (`CreateKeyed`, the chain directory's device and inode with its name), part builds as subtasks whose finished entries are capped apart from other tasks (`CreateSubtask`), and a `Watch` that keeps how a task ended; a task's done channel and progress. Findings scans (`POST /v1/findings`) are the one kind a client can cancel: `CreateCancellable` hands the scan a context, `Cancel` (`DELETE /v1/tasks/{task_id}`) ends it `cancelled`, and `Settle` refuses a cancel once the scan writes its answer |
+| `internal/frontend/` | Downloads the viewer bundle from the GitHub releases of `wlame/rx-ui` (`GitHubRepo`) and extracts it |
+| `internal/tasks/` | In-memory background task manager for `POST /v1/index`, `/v1/compress`, the index builds `GET /v1/samples` waits for, and the index task of each log chain (`chain_index`, `internal/webapi/chain_index.go`): a lock key apart from the path it shows (`CreateKeyed`, the chain directory's device and inode with its name), part builds as subtasks whose finished entries are capped apart from other tasks (`CreateSubtask`), and a `Watch` that keeps how a task ended; a task's done channel and progress. Findings scans (`POST /v1/findings`) and the tasks over a directory (`POST /v1/index` or `POST /v1/findings` given a directory) are the kinds a client can cancel (`DELETE /v1/tasks/{task_id}`): `CreateCancellable` hands a scan a context, `Cancel` ends it `cancelled`, and `Settle` refuses a cancel once the scan writes its answer; `CreateStoppable` hands a directory task one, and `Cancel` marks it `cancelling` until its worker returns (`Stopped`) |
 | `internal/prometheus/` | Metrics behind an `atomic.Bool` enable gate (off in CLI, on in `serve`) |
 | `internal/output/` | Shared human-readable formatting |
 | `internal/testparity/` | Harness that runs `../rx-python` and diffs output |
@@ -135,7 +136,7 @@ just check                                       # ci + cover + build + vuln
 
 `just ci` is `fmt-check vet lint tidy-check scaffolding-check spec-check
 test-race docs-build`, in that order, and `.github/workflows/ci.yml` runs `just ci` — the two cannot
-disagree. The **coverage floor is 80%** (82.4% today), enforced by
+disagree. The **coverage floor is 80%** (87.0% on 2026-10-17), enforced by
 `just cover`; raise it as coverage improves and never lower it to make a red
 build green.
 
@@ -481,7 +482,7 @@ Data flow for `rx logs samples /var/log/syslog --lines=G`:
 
 - Table-driven tests for three or more similar cases. Golden files in
   `testdata/` for CLI output and the OpenAPI spec. Integration tests in
-  `internal/webapi/*_integration_test.go` use `httptest` and a real viewer
+  `internal/webapi/integration_test.go` use `httptest` and a real viewer
   tarball fixture (`internal/webapi/testdata/rx-viewer-v0.2.0-dist.tar.gz`).
 - `internal/webapi/openapi_conformance_test.go` calls every operation over
   the real router and validates each answer against the golden OpenAPI
@@ -543,18 +544,28 @@ Paste the output. Do not summarize it.
 ## Security notes
 
 - **Scope: internal use on a trusted network. Not for internet exposure.**
-  There is no authentication, no TLS and no multi-tenancy, by design. The
+  There is no identity system, no TLS and no multi-tenancy, by design;
+  the one credential is the opt-in shared `RX_API_TOKEN`, which every
+  `/v1` request must then carry (`internal/webapi/auth.go`). The
   operator builds the perimeter — loopback, VPN, SSH tunnel or an
   authenticating reverse proxy. Do not design identity, RBAC, sessions or
   certificate handling into rx; say it is out of scope and move on.
   What *is* in scope is hygiene inside that perimeter: sandbox
-  containment, SSRF defence, safe extraction, and an opt-in viewer token.
-- **Hidden entries are not served by default.** A path component starting
-  with a dot is refused unless `--hidden` / `RX_HIDDEN=true` is set, the
-  way ripgrep skips them. The rule lives in the path validator, not only
-  in the directory walkers: hiding an entry from a listing does nothing
-  about a caller who knows the path. Components of a `--search-root`
-  itself are exempt. The error message is part of the contract.
+  containment, SSRF defence, safe extraction, and that opt-in token.
+- **Hidden entries are not served by default.** Inside a sandbox, a path
+  component below a search root that starts with a dot is refused
+  unless `--hidden` / `RX_HIDDEN=true` is set (exit 4, HTTP 403).
+  `rx serve` always has a sandbox (its roots default to the current
+  directory); the other commands have one when `--search-root` or
+  `RX_SEARCH_ROOTS` is set. The rule lives in the path validator
+  (`checkCanonical`, shared by `ValidatePathWithinRoots`, `Pin` and the
+  walk's check of a link), not only in the directory walkers: hiding an
+  entry from a listing does nothing about a caller who knows the path.
+  Without a search root nothing is refused, so the CLI reads a dot-file
+  named on its command line; directory walks still skip dot-entries
+  (`paths.SkipEntry`) unless `--hidden`, the way ripgrep does.
+  Components of a `--search-root` itself are exempt. The error message
+  is part of the contract.
 - **A directory walk reads only what naming the path would allow.**
   Every walk of a user's directory goes through `paths.WalkDir` (or
   `paths.ListDir` for a one-level listing such as `/v1/tree`): a
@@ -588,7 +599,7 @@ Paste the output. Do not summarize it.
   (without it) to the output name. Do not add a write that opens the
   output by its path.
 - **Masking is opt-in, and when on it covers every carrier.** Off by
-  default; `--mask-secrets` (on `rx trace` and `rx serve`) or
+  default; `--mask-secrets` (on `rx trace`, `rx scan` and `rx serve`) or
   `RX_MASK_SECRETS` turns it on, and the flag wins. The mode reaches
   `internal/findings` as `ScanOptions.MaskSecrets` and nowhere else:
   `findings.redactorsOf` turns it into the redacting set (the
@@ -610,10 +621,12 @@ Paste the output. Do not summarize it.
   unmasked by design. The rules: `docs/concepts/signatures.md`,
   "Masking".
 - `serve` binds `127.0.0.1:7777` by default. Anyone who can reach the socket
-  can run any operation inside the sandbox.
+  can run any operation inside the sandbox; with `RX_API_TOKEN` set, anyone
+  who also holds the token.
 - User regex patterns are always passed to rg as `-e <pattern>` so a leading
   dash cannot become a flag. Keep it that way.
-- The viewer bundle is downloaded from GitHub Releases and verified against
+- The viewer bundle is downloaded from the GitHub releases of `wlame/rx-ui`
+  (`frontend.GitHubRepo`) and verified against
   its `.sha256` sidecar before it is unpacked (`frontend.verifyBundle`).
   Nothing is installed unverified: a missing sidecar (`404`), any other
   answer but `200`, a failed request, a body that is not a digest and a

@@ -6,7 +6,8 @@ signature scans and seekable compression of very large log files. Wraps
 chunked search, native decompression (gzip, xz, bz2, zstd), systemd
 journal files read as text, frame-level parallel zstd, line-offset
 indexes, result caching, and an HTTP API
-with an embedded SPA — all in a single static binary (~14 MB, no runtime
+with a web viewer that `rx serve` downloads from the GitHub releases of
+`wlame/rx-ui` — all in a single static binary (about 18 MB, no runtime
 deps beyond `rg`).
 
 Built for multi-GB log files; designed to scale to ~100 GB.
@@ -16,9 +17,10 @@ Built for multi-GB log files; designed to scale to ~100 GB.
 rx is built for **internal use on a trusted network. It is not intended to be
 exposed to the internet.**
 
-`rx serve` has **no authentication**. Anyone who can reach the port can read any
-file under `--search-root`, and `--search-root` defaults to the current
-directory. There is no TLS and no multi-tenancy.
+`rx serve` has **no identity system**. Unless `RX_API_TOKEN` is set, anyone
+who can reach the port can read any file under `--search-root`, and
+`--search-root` defaults to the current directory. There is no TLS and no
+multi-tenancy.
 
 This is a deliberate scope decision. Building the perimeter is the operator's
 job, and any of these is enough:
@@ -31,7 +33,10 @@ job, and any of these is enough:
 Inside that perimeter rx handles the hygiene that is cheap to get right: a path
 outside `--search-root` is refused rather than served, webhook targets are
 checked against internal address ranges before *and* at the moment of
-connecting, and the viewer bundle is verified against its checksum.
+connecting, and the viewer bundle is checked against the `.sha256` sidecar
+its release publishes. Set `RX_API_TOKEN` and every `/v1` request must send
+it as `Authorization: Bearer <token>`: one shared value, sent in clear text
+over plain HTTP, so no substitute for the perimeter.
 
 Identity providers, RBAC, session management and certificate handling are out of
 scope — they belong to the perimeter, not to rx.
@@ -49,10 +54,14 @@ RX_HIDDEN=true rx "token" ~/  # same, from the environment
 ```
 
 `--hidden` is a global flag, so it works on every subcommand and may
-appear before or after the subcommand name. The rule is enforced in the
-path sandbox as well as in directory listings, so a hidden file is not
-merely absent from `rx serve`'s tree — asking for it by name returns 403
-with a message naming the flag.
+appear before or after the subcommand name. Wherever a search root is
+set — always in `rx serve`, and on the other commands with
+`--search-root` or `RX_SEARCH_ROOTS` — the rule is enforced in the path
+sandbox as well as in directory listings, so a hidden file is not
+merely absent from `rx serve`'s tree: asking for it by name returns 403
+(exit 4 on the CLI) with a message naming the flag. Without a search
+root the CLI has no sandbox: a dot-file you name is read, and only
+directory walks skip dot-entries.
 
 A hidden component of a `--search-root` is exempt: pointing rx at
 `~/.local/share/logs` is a deliberate choice and needs no flag.
@@ -80,14 +89,14 @@ curl -LO "$base/$asset"
 curl -LO "$base/$asset.sha256"
 sha256sum -c "$asset.sha256"     # on macOS: shasum -a 256 -c "$asset.sha256"
 install -m 0755 "$asset" /usr/local/bin/rx
-rx --version                     # prints the release tag, e.g. "rx version v0.2.0"
+rx --version                     # prints the release tag, e.g. "rx version v0.8.0"
 ```
 
 ### Build from source
 
 ```bash
 just build            # → dist/rx, version stamped from git describe
-just install          # → $GOBIN/rx, plus shell completions
+just install          # → ${GOBIN:-$HOME/go/bin}/rx, plus shell completions
 just build-all        # cross-compile every release target with checksums
 ```
 
@@ -140,14 +149,14 @@ catalogue in [`docs/reference/signatures.md`](docs/reference/signatures.md).
 | GET    | `/v1/samples`    | Context around offsets / lines      |
 | GET    | `/v1/time-range` | First and last timestamp of a file  |
 | GET    | `/v1/index`      | Retrieve cached file index          |
-| POST   | `/v1/index`      | Start background indexing task      |
+| POST   | `/v1/index`      | Start background indexing of a file or a directory |
 | POST   | `/v1/compress`   | Start background compression task   |
 | GET    | `/v1/tasks/{task_id}` | Background task status         |
-| DELETE | `/v1/tasks/{task_id}` | Cancel a signature scan        |
+| DELETE | `/v1/tasks/{task_id}` | Cancel a signature scan or a task over a directory |
 | GET    | `/v1/tree`       | Browse directory tree               |
 | GET, POST | `/v1/logs/*`  | Log chains: list, describe, index, samples, search |
 | GET    | `/v1/signatures` | Signature catalogue                 |
-| GET, POST | `/v1/findings` | A file's cached findings; scan a file for signatures |
+| GET, POST | `/v1/findings` | A file's cached findings; scan a file or a directory for signatures |
 | GET    | `/metrics`       | Prometheus metrics                  |
 | GET    | `/docs`          | Swagger UI (from `/openapi.json`)   |
 
@@ -160,13 +169,14 @@ Configured via environment variables. The most common ones:
 
 | Variable              | Default         | Description                           |
 |-----------------------|-----------------|---------------------------------------|
-| `RX_CACHE_DIR`        | `~/.cache/rx`   | Indexes, cached trace results and findings |
+| `RX_CACHE_DIR`        | unset           | Cache base, with `rx` appended (`RX_CACHE_DIR=/tmp` gives `/tmp/rx`; unset: `$XDG_CACHE_HOME/rx`, else `~/.cache/rx`): indexes, cached trace results, findings and the viewer |
 | `RX_SEARCH_ROOTS`     | `serve`: the current directory; other commands: no sandbox | Path sandbox, `:`-separated; `--search-root` wins |
-| `RX_MAX_SUBPROCESSES` | `20`            | Most chunks per file, and most `rg` processes at once |
-| `RX_LARGE_FILE_MB`    | `50`            | Size from which a file is indexed and its trace answers cached |
-| `RX_NO_INDEX`         | `false`         | `samples` neither builds nor reads a line index |
+| `RX_MAX_SUBPROCESSES` | `20`            | Most chunks per file, and most `rg` processes at once unless `RX_WORKERS` is set |
+| `RX_LARGE_FILE_MB`    | `50`            | Size from which a plain file is indexed and its trace answers cached |
+| `RX_NO_INDEX`         | `false`         | `samples`, `time-range` and the findings routes neither build nor read a line index; `rx trace` ignores it |
 | `RX_HIDDEN`           | `false`         | Include dot-prefixed files and dirs   |
-| `RX_LOG_LEVEL`        | `INFO`          | `serve` log level: `DEBUG` \| `INFO` \| `WARN` \| `ERROR` |
+| `RX_API_TOKEN`        | unset           | When set, every `/v1` request must send `Authorization: Bearer <token>` |
+| `RX_LOG_LEVEL`        | `INFO`          | Only the `LOG_LEVEL` that `GET /health` reports; `rx serve` logs at `INFO` and above whatever it is set to |
 
 There is no variable that turns the trace cache off; pass `--no-cache` to
 `rx trace`.
@@ -202,7 +212,7 @@ just clean        # remove build and coverage artifacts
   findings cache.
 - `pkg/rxtypes/` — public wire types (shared JSON schemas).
 - `docs/` — architecture, CLI, API, concepts and the built-in signatures
-  (47 pages).
+  (49 pages).
 
 ## Documentation
 
