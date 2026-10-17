@@ -385,7 +385,7 @@ An update that replaces a cache whose `.metadata.json` records no version
 says `v0.8.1 (replaced a cached viewer of unrecorded version)`.
 
 The release list is one page of GitHub's
-`/repos/wlame/rx-viewer/releases`; drafts, pre-releases and tags that are
+`/repos/wlame/rx-ui/releases`; drafts, pre-releases and tags that are
 not a plain `vX.Y.Z` are skipped. When a cached viewer exists, the list
 request has a 10-second limit, so an offline host starts at most that
 much later. A failed check keeps the cached viewer, prints one warning

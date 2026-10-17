@@ -157,7 +157,7 @@ func TestEnsure_NoCacheInstallsARelease(t *testing.T) {
 	mux := http.NewServeMux()
 	var srv *httptest.Server
 
-	mux.HandleFunc("/repos/wlame/rx-viewer/releases", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/wlame/rx-ui/releases", func(w http.ResponseWriter, r *http.Request) {
 		// Need to point to the same server's /dist.tar.gz endpoint.
 		downloadURL := srv.URL + "/dist.tar.gz"
 		resp := []map[string]any{{
@@ -181,7 +181,7 @@ func TestEnsure_NoCacheInstallsARelease(t *testing.T) {
 
 	m := NewManager(Config{
 		CacheDir: dest,
-		Repo:     "wlame/rx-viewer",
+		Repo:     "wlame/rx-ui",
 		APIBase:  srv.URL,
 		Logger:   silentLog(),
 	})
@@ -216,7 +216,7 @@ func TestEnsure_EnvURLForcesDownload(t *testing.T) {
 	dest := t.TempDir()
 	m := NewManager(Config{
 		CacheDir: dest,
-		Repo:     "wlame/rx-viewer",
+		Repo:     "wlame/rx-ui",
 		APIBase:  "http://127.0.0.1:0", // should never be hit
 		Logger:   silentLog(),
 	})
@@ -326,15 +326,28 @@ func TestValidateStaticPath(t *testing.T) {
 // Direct download URL construction
 // ============================================================================
 
+// TestDirectDownloadURL_DefaultRepo pins the repository a Manager takes the
+// viewer from when the caller names none. The name is part of every
+// released binary, so a change to it is a release-note event, not a detail.
+func TestDirectDownloadURL_DefaultRepo(t *testing.T) {
+	t.Setenv("RX_FRONTEND_PATH", t.TempDir())
+	m := NewManager(Config{})
+	got := m.directDownloadURL("v1.2.3")
+	want := "https://github.com/wlame/rx-ui/releases/download/v1.2.3/dist.tar.gz"
+	if got != want {
+		t.Errorf("default download URL = %q, want %q", got, want)
+	}
+}
+
 func TestDirectDownloadURL(t *testing.T) {
-	m := &Manager{Repo: "wlame/rx-viewer"}
+	m := &Manager{Repo: "wlame/rx-ui"}
 	cases := []struct {
 		version string
 		want    string
 	}{
-		{"latest", "https://github.com/wlame/rx-viewer/releases/latest/download/dist.tar.gz"},
-		{"v1.2.3", "https://github.com/wlame/rx-viewer/releases/download/v1.2.3/dist.tar.gz"},
-		{"1.2.3", "https://github.com/wlame/rx-viewer/releases/download/v1.2.3/dist.tar.gz"},
+		{"latest", "https://github.com/wlame/rx-ui/releases/latest/download/dist.tar.gz"},
+		{"v1.2.3", "https://github.com/wlame/rx-ui/releases/download/v1.2.3/dist.tar.gz"},
+		{"1.2.3", "https://github.com/wlame/rx-ui/releases/download/v1.2.3/dist.tar.gz"},
 	}
 	for _, tc := range cases {
 		got := m.directDownloadURL(tc.version)

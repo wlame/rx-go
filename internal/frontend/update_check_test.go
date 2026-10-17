@@ -38,7 +38,7 @@ type fakeGitHub struct {
 	downloadHits atomic.Int32
 }
 
-const fakeReleasesPath = "/repos/wlame/rx-viewer/releases"
+const fakeReleasesPath = "/repos/wlame/rx-ui/releases"
 
 // newFakeGitHub starts a fake GitHub that lists releases in the given
 // order (GitHub lists the newest first).

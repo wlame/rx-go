@@ -1,10 +1,11 @@
 // Package frontend manages the rx-viewer SPA bundle — downloading,
 // caching, and validating static-file paths at request time.
 //
-// The bundle comes from the GitHub releases of rx-viewer (dist.tar.gz
-// plus its .sha256 sidecar). rx-go keeps rx-python's env vars, on-disk
-// layout and .metadata.json schema, so a cache written by one backend
-// loads in the other; when the viewer is refreshed differs (see below).
+// The bundle comes from the GitHub releases of wlame/rx-ui, the repository
+// of rx-viewer (dist.tar.gz plus its .sha256 sidecar). rx-go keeps
+// rx-python's env vars, on-disk layout and .metadata.json schema, so a
+// cache written by one backend loads in the other; when the viewer is
+// refreshed differs (see below).
 //
 // Which viewer `rx serve` serves:
 //
@@ -59,10 +60,10 @@ import (
 // Configuration
 // ============================================================================
 
-// GitHubRepo is the rx-viewer source repository. Constant because
+// GitHubRepo is the source repository of the viewer (rx-ui). Constant because
 // rx-go shouldn't be reassembled against a different viewer — the
 // API contract is pinned.
-const GitHubRepo = "wlame/rx-viewer"
+const GitHubRepo = "wlame/rx-ui"
 
 // githubAPIBase is the REST API root. Overridden in tests via Manager.APIBase.
 const githubAPIBase = "https://api.github.com"

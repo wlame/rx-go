@@ -112,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `entries_overlap`. A client of 2.0 keeps working.
 - Line index format 12, for the journal section: every index stored by
   an earlier version is treated as absent and built again once.
+- `rx serve` downloads the viewer from the releases of the GitHub
+  repository `wlame/rx-ui` (it was `wlame/rx-viewer`). An `rx` of an
+  earlier version looks for the old repository and finds no viewer; it
+  serves one only from a cache it already holds, or from
+  `RX_FRONTEND_PATH`.
 - `rx serve` installs viewer releases from 0.8.0 up to, but not
   including, 0.10.0 (the limit was 0.9.0). Contract 2.1 only adds
   members, so viewer 0.8.x keeps working, and viewer 0.9.x is the first
