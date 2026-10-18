@@ -18,7 +18,9 @@ package webapi
 // does not know.
 //
 // 2.1 added, with no other change: the journal section of the index
-// answers (journal in GET /v1/index and in an index task's result), and
-// the reason a file of a tree listing is not text (not_text_reason in
-// GET /v1/tree and GET /v1/search-roots).
+// answers (journal in GET /v1/index and in an index task's result), the
+// reason a file of a tree listing is not text (not_text_reason in
+// GET /v1/tree), and the chain check entries_overlap (a reason code of
+// GET /v1/logs/chain). Added since, without a bump, as the additive rule
+// allows: cli_command_note in GET /v1/findings.
 const ContractVersion = "2.1"

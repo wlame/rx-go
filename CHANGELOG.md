@@ -122,6 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   range: …`. The 400 bodies of `GET /v1/samples` and
   `GET /v1/logs/samples` carry the same wording.
 
+### Removed
+
+- `rxtypes.SearchRootsResponse`, the body of a `GET /v1/search-roots`
+  that no rx has ever served (the route answers 404, and the OpenAPI
+  document never had it). The search roots are in `GET /health`
+  (`search_roots`) and in `GET /v1/tree` without a path.
+
 ## [0.9.0] - 2026-10-17
 
 ### Added

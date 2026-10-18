@@ -57,9 +57,3 @@ type TreeResponse struct {
 	TotalSize      *int64      `json:"total_size"`
 	TotalSizeHuman *string     `json:"total_size_human"`
 }
-
-// SearchRootsResponse is the body for GET /v1/search-roots (informational).
-type SearchRootsResponse struct {
-	Roots      []TreeEntry `json:"roots"`
-	TotalRoots int         `json:"total_roots"`
-}
