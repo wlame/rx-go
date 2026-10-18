@@ -152,6 +152,9 @@ func logsSamplesRequestOf(p logsSamplesParams) (logchain.SamplesRequest, config.
 	}
 	if len(p.lines) > 0 {
 		parsed, parseErr := samples.ParseLines(strings.Join(p.lines, ","))
+		if errors.Is(parseErr, samples.ErrEmptySpec) {
+			return req, config.Zone{}, exitWithError(os.Stderr, ExitUsageError, "--lines needs a value: an integer or a range (e.g., --lines=100 or --lines=100-200)")
+		}
 		if parseErr != nil {
 			return req, config.Zone{}, exitWithError(os.Stderr, ExitUsageError, "%s", parseErr.Error())
 		}

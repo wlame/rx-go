@@ -1,10 +1,15 @@
 package samples
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 )
+
+// ErrEmptySpec is the error of a spec that names no position at all:
+// an empty or blank value. The CLI names the flag it was given with.
+var ErrEmptySpec = errors.New("empty spec")
 
 // OffsetOrRange represents one item in a comma-separated samples spec.
 // A single value has End == nil (negative allowed). A range has both
@@ -62,7 +67,7 @@ func ParseOffsets(spec string) ([]OffsetOrRange, error) {
 // parseSpec is the parser behind ParseLines and ParseOffsets.
 func parseSpec(spec string, g specGrammar) ([]OffsetOrRange, error) {
 	if strings.TrimSpace(spec) == "" {
-		return nil, fmt.Errorf("empty spec")
+		return nil, fmt.Errorf("%w: no %s given", ErrEmptySpec, g.noun)
 	}
 	parts := strings.Split(spec, ",")
 	out := make([]OffsetOrRange, 0, len(parts))

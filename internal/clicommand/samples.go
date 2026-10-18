@@ -190,11 +190,18 @@ func runSamples(out io.Writer, p samplesParams) error {
 		parsedOffsets []samples.OffsetOrRange
 		parsedLines   []samples.OffsetOrRange
 	)
+	flag := "--offsets"
 	switch {
 	case len(p.offsets) > 0:
 		parsedOffsets, err = samples.ParseOffsets(strings.Join(p.offsets, ","))
 	case len(p.lines) > 0:
+		flag = "--lines"
 		parsedLines, err = samples.ParseLines(strings.Join(p.lines, ","))
+	}
+	if errors.Is(err, samples.ErrEmptySpec) {
+		// The flag was given with nothing in it: name it, since the
+		// parser's own words name no flag.
+		return exitWithError(os.Stderr, ExitUsageError, "%s needs a value: an integer or a range (e.g., %s=100 or %s=100-200)", flag, flag, flag)
 	}
 	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())

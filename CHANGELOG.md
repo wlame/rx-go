@@ -96,6 +96,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples --lines=` and `--offsets=` with nothing in the value say
+  which flag needs one (`--lines needs a value: an integer or a range
+  (e.g., --lines=100 or --lines=100-200)`) instead of `Empty spec`,
+  which named no flag; `rx logs samples --lines=` the same. The 400 of
+  `GET /v1/samples?lines=` reads `Invalid lines format: empty spec: no
+  line given`.
 - `RX_HOOK_STRICT_IP_ONLY` applies whatever `RX_ALLOW_INTERNAL_HOOKS`
   says: with both set, a webhook named by a hostname is refused
   (`RX_HOOK_STRICT_IP_ONLY is set — hostname "localhost" must be an IP
