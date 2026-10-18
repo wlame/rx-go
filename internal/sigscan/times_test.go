@@ -120,9 +120,10 @@ func TestScan_TimeWithoutAFormatIsNullEverywhere(t *testing.T) {
 // A finding's time is the value the index records for the same line,
 // in the file's own frame: the first and the last stamped line of an
 // ISO file, of a syslog file whose year comes from the file's mtime,
-// and of a file whose first line starts with a byte-order mark (the
-// index reads that line with the mark). And a carried time equals the
-// line_timestamps value samples gives the same line.
+// and of a file whose first line starts with a byte-order mark (line 1
+// is stamped behind the mark, for the index and the scan alike). And a
+// carried time equals the line_timestamps value samples gives the same
+// line.
 func TestScan_TimeEqualsTheIndex(t *testing.T) {
 	every := loadSigs(t, sigFile(regexSig("line", `.`)), "line")
 	texts := map[string]string{
@@ -148,8 +149,8 @@ func TestScan_TimeEqualsTheIndex(t *testing.T) {
 			if ti == nil || ti.First == nil || ti.Last == nil {
 				t.Fatalf("the index found no timestamps: %+v", ti)
 			}
-			if name == "bom" && ti.First.Line != 2 {
-				t.Fatalf("the index reads the marked line 1 as stamped (first stamped line %d); the case tests nothing", ti.First.Line)
+			if name == "bom" && ti.First.Line != 1 {
+				t.Fatalf("the index does not read the marked line 1 as stamped (first stamped line %d); the case tests nothing", ti.First.Line)
 			}
 			res, err := Scan(context.Background(), classify(t, path), every, Options{Workers: 1, LookbackBytes: 64 << 10})
 			if err != nil {

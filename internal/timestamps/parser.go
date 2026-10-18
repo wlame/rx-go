@@ -1,6 +1,7 @@
 package timestamps
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 )
@@ -113,16 +114,40 @@ type Span struct {
 // Locate is Own that also says where the timestamp is written in line.
 // The span lies within line[:WindowBytes]. Like Own it allocates
 // nothing: a Span is two ints returned by value.
+//
+// A UTF-8 byte-order mark at the start of the line is not text: the
+// timestamp of a file's first line is read after it, at column 0 of
+// what follows, and the span counts the mark's bytes, as every offset
+// in the line does. This is the one place the mark is skipped, so an
+// index build, a samples lookup, a time range and a signature scan
+// read line 1 alike.
 func (p *Parser) Locate(line []byte) (Stamp, Span, bool) {
 	w := line
 	if len(w) > WindowBytes {
 		w = w[:WindowBytes]
 	}
-	if p.format.Anchored {
-		return p.anchored(w)
+	shift := 0
+	if bytes.HasPrefix(w, utf8BOM) {
+		w, shift = w[len(utf8BOM):], len(utf8BOM)
 	}
-	return p.windowed(w)
+	var (
+		s    Stamp
+		span Span
+		ok   bool
+	)
+	if p.format.Anchored {
+		s, span, ok = p.anchored(w)
+	} else {
+		s, span, ok = p.windowed(w)
+	}
+	span.Start += shift
+	span.End += shift
+	return s, span, ok
 }
+
+// utf8BOM is the UTF-8 byte-order mark some editors and Windows tools
+// write before a file's first line.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // anchored tries column 0 and, after a leading `[`, column 1.
 func (p *Parser) anchored(w []byte) (Stamp, Span, bool) {

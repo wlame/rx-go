@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A UTF-8 byte-order mark at the start of a file no longer hides line
+  1's timestamp: the parser reads the time right after the mark, so
+  the index, `rx samples` (`line_timestamps`), `rx time-range`
+  (`first_ms`) and the findings of a scan (`time_ms`) give line 1 its
+  time, and an anchored format is detected when line 1 is one of the
+  lines it needs. Plain, gzip and seekable copies agree, with an index
+  and without. Offsets still count the mark.
 - `rx trace` reading piped standard input (`rx trace -e X -`, or a
   pipe with no path) stops at once on Ctrl-C or SIGTERM: the spool file
   is removed, nothing is printed, and the process exits 5. Before, the

@@ -78,42 +78,15 @@ func detectTimes(r io.ReaderAt, size int64, kind filekind.Kind, mtimeNs int64, l
 //
 // The index parses each line as it is in the text, its line ending
 // stripped. The view differs from that in one place only: a byte-order
-// mark at the start of the text is not in line 1's view. So for that
-// line the mark is put back in front of the view's first bytes, and an
-// anchored format, whose timestamp must start the line, finds none
-// there, as the index does. The parser looks at the first
-// timestamps.WindowBytes bytes of a line only, so a view (at least 1 KiB)
-// always holds what it reads.
+// mark at the start of the text is not in line 1's view. The parser
+// skips such a mark itself (timestamps.Parser.Locate), so the view and
+// the line the index reads give one answer. The parser looks at the
+// first timestamps.WindowBytes bytes of a line only, so a view (at least
+// 1 KiB) always holds what it reads.
 //
-// It allocates nothing: every line but the marked one is parsed in
-// place, and that one goes through markedStamp.
+// It allocates nothing: every line is parsed in place.
 func (t *timeSource) stampOf(l *line) (int64, int, bool) {
-	if l.shift > 0 {
-		return t.markedStamp(l.view)
-	}
 	s, ok := index.LineStamp(t.parser, l.view)
-	return s.Ms, s.OffsetMinutes, ok
-}
-
-// markedStamp parses line 1 of a text that starts with a byte-order
-// mark, given its view: the mark and the view's first bytes, as the
-// index reads them.
-//
-// Go note: this is a function of its own because the array it fills
-// escapes to the heap (the compiler cannot prove the parser keeps no
-// reference to it). Kept out of stampOf, it costs one allocation per
-// marked file instead of one per line.
-func (t *timeSource) markedStamp(view []byte) (int64, int, bool) {
-	var marked [timestamps.WindowBytes]byte
-	n := copy(marked[:], utf8BOM)
-	n += copy(marked[n:], view)
-	if n < len(utf8BOM)+len(view) {
-		// The copy is a prefix of a longer line: there is no line
-		// ending in it to strip.
-		s, ok := t.parser.Own(marked[:n])
-		return s.Ms, s.OffsetMinutes, ok
-	}
-	s, ok := index.LineStamp(t.parser, marked[:n])
 	return s.Ms, s.OffsetMinutes, ok
 }
 

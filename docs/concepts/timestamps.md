@@ -38,6 +38,12 @@ timestamps at the start of a line win only when they are on at least
 timestamps, and a time query on it is refused (exit 2, HTTP 400:
 "no timestamp format recognized in the first 1 MiB").
 
+A UTF-8 byte-order mark at the start of the file is not part of line
+1: its timestamp is read right after the mark, by detection and by
+every reader of a line's time (the index, `samples`, `time-range`, a
+signature scan), so line 1 carries its time and a file's range starts
+with it. Byte offsets still count the mark's three bytes.
+
 Detection reads the same bytes whether or not the file has a line
 index, so the two always agree. A line index stores the format; without
 one, every `samples` answer reads the head to report it as
