@@ -39,12 +39,15 @@ var appVersion = "dev"
 
 // knownSubcommands is the flat list of top-level subcommand names
 // preprocessArgs recognizes. "help" and "completion" are the commands
-// cobra generates; the others are registered in newRootCmd. "version"
-// is no command (cobra makes only the --version flag, and `rx version`
-// exits 2 with "unknown command"), but it stays in the list so that a
-// bare `rx version` is not a trace of the pattern "version" waiting on
-// standard input. Any first positional argument not in this set falls
-// through to the default, trace.
+// cobra generates, and the two completion request words are the hidden
+// command the shell completion scripts call (`rx __complete ARGS…`): a
+// word not in this list would be a trace of the pattern "__complete",
+// and every script `rx completion` writes would complete nothing.
+// "version" is no command (cobra makes only the --version flag, and
+// `rx version` exits 2 with "unknown command"), but it stays in the
+// list so that a bare `rx version` is not a trace of the pattern
+// "version" waiting on standard input. Any first positional argument
+// not in this set falls through to the default, trace.
 //
 // A []string + slices.Contains is used instead of map[string]bool
 // because the list is tiny (~8 entries) and the slice form reads more
@@ -61,6 +64,8 @@ var knownSubcommands = []string{
 	"serve",
 	"help",
 	"completion",
+	cobra.ShellCompRequestCmd,
+	cobra.ShellCompNoDescRequestCmd,
 	"version",
 }
 

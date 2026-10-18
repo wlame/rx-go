@@ -131,6 +131,11 @@ func TestPreprocessArgs_TruthTable(t *testing.T) {
 		{"version long", []string{"--version"}, []string{"--version"}},
 		{"cobra help subcommand", []string{"help"}, []string{"help"}},
 		{"cobra completion subcommand", []string{"completion", "zsh"}, []string{"completion", "zsh"}},
+		// The words the completion scripts call are cobra's; a word that
+		// only starts like them is a pattern.
+		{"completion request", []string{"__complete", ""}, []string{"__complete", ""}},
+		{"completion request without descriptions", []string{"__completeNoDesc", "sam"}, []string{"__completeNoDesc", "sam"}},
+		{"a pattern that starts like a completion request", []string{"__completeX", "a.log"}, []string{"trace", "__completeX", "a.log"}},
 		{"flag then pattern", []string{"--json", "error", "/var/log"}, []string{"trace", "--json", "error", "/var/log"}},
 		{"flag then subcommand", []string{"--json", "index", "/var/log"}, []string{"--json", "index", "/var/log"}},
 		{"subcommand then flag", []string{"index", "--json"}, []string{"index", "--json"}},

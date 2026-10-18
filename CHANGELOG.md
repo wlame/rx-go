@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Shell completions work: the scripts `rx completion bash|zsh|fish`
+  writes (and `just install` places) call `rx __complete …`, which the
+  command routing took for a trace of the pattern `__complete`, so every
+  script completed nothing. The two completion request words are
+  cobra's own now; a word that only starts like them is still a
+  pattern.
 - `rx --hidden --version`, `rx --search-root=DIR --version` and
   `rx --search-root DIR --version` print the version (exit 0); before,
   a meta flag after another root flag was handed to `trace`, which
