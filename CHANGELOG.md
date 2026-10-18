@@ -119,6 +119,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Findings cache format 2 (`findings/meta.json` `version: 2`): an
+  entry's key no longer hashes the keyword clauses rx derives from a
+  signature's anchor, only the clauses its author declared with
+  `keywords:`. The derived clauses come from the anchor, which the key
+  carries already, and never change a finding; they depend on how a
+  regex engine simplifies the anchor, so another implementation of rx
+  could never share the cache with this one. Every cached entry is
+  scanned again once; `rx signatures show ID` prints the new key.
 - The viewer bundle `rx serve` downloads is bounded before it is
   verified: a release asset larger than 64 MiB is refused and its
   temporary file removed, and a bundle of more than 10,000 entries or

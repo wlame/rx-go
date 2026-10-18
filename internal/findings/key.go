@@ -156,7 +156,13 @@ func redactorsHash(redactors []*signatures.Signature) string {
 // equal definitions give equal bytes.
 type matchingPart struct {
 	Kind signatures.Kind `json:"kind"`
-	// Keywords are the keyword clauses of the gate (nil: no gate).
+	// Keywords are the keyword clauses the author declared (keywords:),
+	// nil when none were (null in the hash). Clauses derived from the
+	// anchor are left out on purpose: they come from the regex, which
+	// Regex carries already, they never change a finding (the gate is
+	// sound), and they depend on how a regex engine simplifies the
+	// anchor, so another implementation of rx would derive other
+	// clauses for the same signature and could never share the cache.
 	Keywords [][]string   `json:"keywords"`
 	Redact   bool         `json:"redact"`
 	Regex    *regexPart   `json:"regex"`
@@ -207,7 +213,10 @@ type measurePart struct {
 // matchingPartOf reads sig's matching part. The measure's version is
 // left 0; keyScope.key fills it.
 func matchingPartOf(sig *signatures.Signature) matchingPart {
-	part := matchingPart{Kind: sig.Kind, Keywords: sig.Clauses, Redact: sig.Redact}
+	part := matchingPart{Kind: sig.Kind, Redact: sig.Redact}
+	if sig.KeywordsDeclared {
+		part.Keywords = sig.Clauses
+	}
 	switch {
 	case sig.Regex != nil:
 		r := sig.Regex

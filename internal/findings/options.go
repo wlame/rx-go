@@ -9,7 +9,12 @@ import (
 
 // CacheVersion is the format version of the findings cache. A
 // directory whose meta.json carries another version counts as absent.
-const CacheVersion = 1
+//
+// 2: the entry key no longer hashes the keyword clauses derived from a
+// signature's anchor, only the ones its author declared, so two
+// implementations of rx that factor a regex differently share the
+// cache. Every entry of version 1 is scanned again once.
+const CacheVersion = 2
 
 // State says how much of the default set of signatures a file has
 // current entries for.

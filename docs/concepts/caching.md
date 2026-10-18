@@ -219,7 +219,7 @@ it.
 | Change | Effect |
 |---|---|
 | the file (its size, mtime, inode, device, ctime or fingerprint) | every entry of the file is stale |
-| a signature's matching part: kind, anchor and every regex, keywords, `not`, `capture`, `entropy`, `validate`, the block, run or measure parameters, `redact` | its entry is stale in every file |
+| a signature's matching part: kind, anchor and every regex, declared `keywords` (the clauses rx derives from the anchor are not in the key: the anchor is), `not`, `capture`, `entropy`, `validate`, the block, run or measure parameters, `redact` | its entry is stale in every file |
 | masking turned on or off (`--mask-secrets`, `RX_MASK_SECRETS`) | every entry is stale: the key holds the redacting signatures, and with masking off there are none, so a masked answer never comes from an unmasked entry, nor the reverse |
 | with masking on, any redacting signature (one with `redact: true`, selected or not) added, removed or changed | every entry is stale (excerpts are masked by all of them) |
 | the engine's version, or a measure's version | the affected entries are stale |
