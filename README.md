@@ -176,7 +176,7 @@ Configured via environment variables. The most common ones:
 | `RX_NO_INDEX`         | `false`         | `samples`, `time-range` and the findings routes neither build nor read a line index; `rx trace` ignores it |
 | `RX_HIDDEN`           | `false`         | Include dot-prefixed files and dirs   |
 | `RX_API_TOKEN`        | unset           | When set, every `/v1` request must send `Authorization: Bearer <token>` |
-| `RX_LOG_LEVEL`        | `INFO`          | Only the `LOG_LEVEL` that `GET /health` reports; `rx serve` logs at `INFO` and above whatever it is set to |
+| `RX_LOG_LEVEL`        | `INFO`          | The level every command logs at (`DEBUG`, `INFO`, `WARN`, `ERROR`); `GET /health` reports it |
 
 There is no variable that turns the trace cache off; pass `--no-cache` to
 `rx trace`.

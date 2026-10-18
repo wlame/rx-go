@@ -207,26 +207,11 @@ func getGoPackages() map[string]string {
 // /health never presents a tunable that does nothing as one in force.
 func getConstants() map[string]any {
 	return map[string]any{
-		"LOG_LEVEL":         getLogLevelName(),
+		"LOG_LEVEL":         config.LogLevelInForce(),
 		"MAX_SUBPROCESSES":  config.MaxSubprocesses(),
 		"MIN_CHUNK_SIZE_MB": config.MinChunkSizeMB(),
 		"CACHE_DIR":         config.GetCacheBase(),
 	}
-}
-
-// getLogLevelName returns the slog level /health exposes. Prefers the
-// value programmatically wired via SetRequestedLogLevel (set by serve
-// startup based on flags/env at the time it configured slog). Falls
-// back to the RX_LOG_LEVEL env var for callers that haven't adopted
-// SetRequestedLogLevel — this preserves legacy behavior while fixing
-// the divergence flagged in //
-// slog doesn't expose the effective level on its default handler, so
-// the package-level requested-level pointer is the single source of
-// truth. If a future version exposes slog.Handler.Enabled probing
-// that can inspect the default handler directly, this helper can
-// be simplified.
-func getLogLevelName() string {
-	return requestedLogLevelName(os.Getenv("RX_LOG_LEVEL"))
 }
 
 // getAppEnvVariables returns every environment variable whose name

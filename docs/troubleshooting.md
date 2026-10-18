@@ -518,9 +518,10 @@ looks ([where rx finds signature files](concepts/signatures.md#where-rx-finds-si
 accepted so old scripts keep working, but it does nothing and prints a
 deprecation note on stderr. For a trace answer you doubt, capture
 `rx trace … --json` and run the same search with `--no-cache` and
-`--no-index`: the answers must be equal. `rx serve` has no log-level
-switch: `RX_LOG_LEVEL` only sets the `LOG_LEVEL` that `/health`
-reports.
+`--no-index`: the answers must be equal. `RX_LOG_LEVEL=DEBUG` makes
+`rx serve` (and every command) write the records kept at that level,
+such as `hook_fired` for every webhook call; `ERROR` quiets the
+per-request lines of a busy server.
 
 ## Capturing logs from `rx serve`
 

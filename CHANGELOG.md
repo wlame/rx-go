@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `RX_LOG_LEVEL` sets the level rx logs at, for every command. Before,
+  it set only the `LOG_LEVEL` that `GET /health` reports, and rx logged
+  at INFO whatever it said: an operator who set `ERROR` to quiet a busy
+  server still got one `http_request` line per request, and one who
+  set `DEBUG` to see why a webhook did not arrive saw nothing, although
+  the dispatcher writes a `hook_fired` record at that level. Now the
+  level is applied to the default logger before any command runs
+  (`DEBUG`, `INFO`, `WARN` or `WARNING`, `ERROR`, in any case; unset is
+  `INFO`), `/health` reports the level in force, and a value that is
+  not a level is reported once (`invalid_setting`) and read as `INFO`
+  instead of being echoed by `/health`.
 - The `journal` section of a systemd journal's index describes one
   state of the file: the header the reader read when it opened the
   text, which the walk followed. Before, the header was read a second

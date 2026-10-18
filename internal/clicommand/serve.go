@@ -212,12 +212,6 @@ func runServe(out io.Writer, p serveParams) error {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	// Read the level from RX_LOG_LEVEL and publish it to webapi, so
-	// /health reports the configured level. slog.Default() stays the
-	// handler, so callers that set their own handler are not disturbed;
-	// only the level-reporting side channel changes.
-	configureLogLevelFromEnv()
-
 	// The manager only reads the environment here; it touches the disk
 	// and the network later, in prepareViewer.
 	fm := frontend.NewManager(frontend.Config{})
@@ -413,39 +407,4 @@ func loadServeSignatures(logger *slog.Logger) *signatures.Catalogue {
 		logger.Warn("signature_load_error", "file", e.File, "line", e.Line, "id", e.ID, "message", e.Message)
 	}
 	return cat
-}
-
-// configureLogLevelFromEnv reads RX_LOG_LEVEL and publishes the resolved
-// slog.Level to webapi.SetRequestedLogLevel so /health reports the
-// actual configured level instead of a stale env echo. Called once at
-// server startup; silent no-op if RX_LOG_LEVEL is empty.
-//
-// The recognized values match Python's logging levels: DEBUG, INFO,
-// WARNING (alias for WARN), ERROR. Unknown values leave the reported
-// level unset (webapi falls back to the env-string behavior).
-func configureLogLevelFromEnv() {
-	raw := strings.ToUpper(os.Getenv("RX_LOG_LEVEL"))
-	if raw == "" {
-		// Unset → default INFO. Publish explicitly so /health doesn't
-		// need to branch on nil.
-		lvl := slog.LevelInfo
-		webapi.SetRequestedLogLevel(&lvl)
-		return
-	}
-	var lvl slog.Level
-	switch raw {
-	case "DEBUG":
-		lvl = slog.LevelDebug
-	case "INFO":
-		lvl = slog.LevelInfo
-	case "WARN", "WARNING":
-		lvl = slog.LevelWarn
-	case "ERROR":
-		lvl = slog.LevelError
-	default:
-		// Unknown level string — leave unset, webapi will fall back to
-		// echoing the env var verbatim (preserves legacy surface).
-		return
-	}
-	webapi.SetRequestedLogLevel(&lvl)
 }

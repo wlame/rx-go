@@ -188,7 +188,7 @@ See [concepts/security](concepts/security.md) and
 
 | Variable | Default | Description |
 |---|---|---|
-| `RX_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` (alias `WARNING`), or `ERROR`, in any case. Sets only the `LOG_LEVEL` that `GET /health` reports under `constants`. It does not change what `rx` logs: `rx serve` logs at `INFO` and above whatever it is set to. |
+| `RX_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN` (alias `WARNING`), or `ERROR`, in any case. The level every `rx` command logs at: under `ERROR`, `rx serve` writes no `http_request` line per request; under `DEBUG`, the records the webhook dispatcher keeps at that level (`hook_fired`, `hook_redirect_refused`) appear. `GET /health` reports it under `constants.LOG_LEVEL`. A value that is not a level is reported once (`WARN invalid_setting name=RX_LOG_LEVEL …`) and `INFO` is used. |
 
 ## HTTP server
 

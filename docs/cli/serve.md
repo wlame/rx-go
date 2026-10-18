@@ -217,8 +217,8 @@ set. See [api/webhooks](../api/webhooks.md).
 
 ### Startup sequence
 
-1. Read `RX_LOG_LEVEL` for the `LOG_LEVEL` that `/health` reports; it
-   does not change what the server logs
+1. Apply `RX_LOG_LEVEL` to the server's logger (every `rx` command does,
+   before it runs); `/health` reports the level in force
 2. Check the `RX_HOOK_ON_FILE_URL`, `RX_HOOK_ON_MATCH_URL` and
    `RX_HOOK_ON_COMPLETE_URL` webhooks with the
    [SSRF guard](../concepts/security.md#webhook-ssrf-protection); abort

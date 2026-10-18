@@ -187,6 +187,9 @@ func newRootCmd() *cobra.Command {
 		"Restrict file access to this directory (repeatable; default: no sandbox)")
 
 	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		// RX_LOG_LEVEL is applied first, so even the warnings the other
+		// settings write obey it.
+		config.ApplyLogLevel()
 		paths.SetIncludeHidden(includeHidden)
 		return installSearchRoots(searchRoots)
 	}
