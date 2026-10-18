@@ -177,13 +177,54 @@ func (s *Server) getFindings(ctx context.Context, in *findingsInput) (*findingsO
 	if err != nil {
 		return nil, findingsFailure(validated, err)
 	}
-	params := s.findingsCLIParams(validated, in.Signatures)
+	selection, note := effectiveSelection(in.Signatures, sel, view.filter)
+	params := s.findingsCLIParams(validated, selection)
 	if in.Text && in.Before > 0 {
 		before := in.Before
 		params["before_context"] = &before
 	}
 	resp.CLICommand = BuildCLICommand("trace", params)
+	resp.CLICommandNote = note
 	return &findingsOutput{Body: *resp}, nil
+}
+
+// effectiveSelection is the selection cli_command names for a findings
+// answer, and the note that goes with it (nil when there is nothing to
+// say). The selection is the request's own (selection, as sent) when
+// no signature or group filter narrows it, and otherwise the ids of
+// the selected signatures the filters keep, in catalogue order, so the
+// command lists exactly the signatures the answer's findings come
+// from. Filters a command line cannot express (q, lines, after_line,
+// before_line) and filters that keep no signature of the selection are
+// named in the note: the command then lists more than the answer.
+func effectiveSelection(selection string, sel []*signatures.Signature, filter findingsFilter) (string, *string) {
+	text := selectionText(selection)
+	var notes []string
+	if len(filter.signatures) > 0 || len(filter.groups) > 0 {
+		var ids []string
+		for _, sig := range sel {
+			if filter.keepsSignature(sig) {
+				ids = append(ids, sig.ID)
+			}
+		}
+		if len(ids) > 0 {
+			text = strings.Join(ids, ",")
+		} else {
+			notes = append(notes, filter.narrowingWords()+" keeps no signature of the selection: the command lists the whole selection")
+		}
+	}
+	if flagless := filter.flaglessWords(); flagless != "" {
+		verb := "has"
+		if strings.Contains(flagless, ",") {
+			verb = "have"
+		}
+		notes = append(notes, flagless+" "+verb+" no command-line flag: the command lists more findings than this answer")
+	}
+	if len(notes) == 0 {
+		return text, nil
+	}
+	note := strings.Join(notes, "; ")
+	return text, &note
 }
 
 // startFindingsScan answers POST /v1/findings: it checks the path and

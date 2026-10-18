@@ -135,7 +135,10 @@ type FindingsResponse struct {
 	Total      int                      `json:"total" doc:"How many stored findings of the checked signatures pass the filters: the length of the list the page is cut from."`
 	Findings   []Finding                `json:"findings" nullable:"false" doc:"One page of the stored findings that pass the filters: from offset, at most limit. In the one order (first line, last line, signature id), or the reverse with before_line."`
 	Ticks      *FindingsTicks           `json:"ticks" doc:"The filtered findings placed on a timeline, with ticks=W; null without it."`
-	CLICommand string                   `json:"cli_command" doc:"The rx command that gives the same findings."`
+	CLICommand string                   `json:"cli_command" doc:"The rx command that lists the findings of this answer: rx trace PATH --signatures=SELECTION, where SELECTION is the request's selection narrowed by its signature and group filters (as ids when a filter narrows it), with --before=N when text is set and before is above 0, and --mask-secrets on a server that masks."`
+	// CLICommandNote is a *string so a schema-documented field is null
+	// rather than absent when there is nothing to say.
+	CLICommandNote *string `json:"cli_command_note" doc:"Why cli_command lists more findings than this answer, when it does: a filter the command line has no flag for (q, lines, after_line, before_line), or signature and group filters that keep no signature of the selection, in which case the command names the whole selection. null when the command gives exactly this answer's findings."`
 }
 
 // FindingsTicks places the filtered findings of a file on a timeline of

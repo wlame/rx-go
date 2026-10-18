@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `cli_command` of `GET /v1/findings` carries the request's
+  filters: its `--signatures=` names the selection narrowed by
+  `signature=` and `group=`, as ids when a filter narrows it, so the
+  command lists exactly the findings of the answer. A filter the
+  command line has no flag for (`q`, `lines`, `after_line`,
+  `before_line`), or one that keeps no signature of the selection, is
+  named in the new `cli_command_note` (string or null) of the answer,
+  which says the command lists more findings than the answer does.
+  Contract 2.1 gains the member; nothing else changes.
 - `rx samples --lines`, `rx logs samples --lines` and the `lines`
   parameter of `GET /v1/samples` and `GET /v1/logs/samples` accept a
   range counted from the end: `--lines=-100--1` returns the last hundred

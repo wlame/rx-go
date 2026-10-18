@@ -99,6 +99,48 @@ func (f findingsFilter) keeps(finding rxtypes.Finding, cat *signatures.Catalogue
 		(known && strings.Contains(strings.ToLower(sig.Name), f.query))
 }
 
+// keepsSignature reports whether the signature and group filters keep
+// the findings of sig: the two tests keeps applies to a finding's
+// signature, on the signature itself.
+func (f findingsFilter) keepsSignature(sig *signatures.Signature) bool {
+	if len(f.signatures) > 0 && !slices.Contains(f.signatures, sig.ID) {
+		return false
+	}
+	return len(f.groups) == 0 || slices.Contains(f.groups, sig.Group)
+}
+
+// narrowingWords names the signature and group filters as the request
+// sent them ("signature=opt-sql", "group=sql, group=pii"), for a note.
+func (f findingsFilter) narrowingWords() string {
+	var words []string
+	for _, id := range f.signatures {
+		words = append(words, "signature="+id)
+	}
+	for _, group := range f.groups {
+		words = append(words, "group="+group)
+	}
+	return strings.Join(words, ", ")
+}
+
+// flaglessWords names the filters of f that rx trace has no flag for,
+// in the order of the parameters ("q, lines"); "" when f has none.
+func (f findingsFilter) flaglessWords() string {
+	var words []string
+	if f.query != "" {
+		words = append(words, "q")
+	}
+	if f.lines != nil {
+		words = append(words, "lines")
+	}
+	if f.afterLine > 0 {
+		words = append(words, "after_line")
+	}
+	if f.beforeLine > 0 {
+		words = append(words, "before_line")
+	}
+	return strings.Join(words, ", ")
+}
+
 // pageOf is the page of filtered: from offset, at most limit findings,
 // in a slice of its own.
 func pageOf(filtered []rxtypes.Finding, offset, limit int) []rxtypes.Finding {

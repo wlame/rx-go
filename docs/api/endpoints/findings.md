@@ -127,7 +127,8 @@ set is not.
       {"column": 9, "signatures": {"error-line": {"count": 1, "first_line": 11}}}
     ]
   },
-  "cli_command": "rx trace /var/log/app/app.log --before=1 --signatures=python-traceback,aws-access-key,private-key,error-line,blank-run --mask-secrets"
+  "cli_command": "rx trace /var/log/app/app.log --before=1 --signatures=python-traceback,aws-access-key,private-key,error-line,blank-run --mask-secrets",
+  "cli_command_note": null
 }
 ```
 
@@ -141,7 +142,8 @@ set is not.
 | `total` | int | The stored findings of the checked signatures that pass the filters |
 | `findings` | array | The page, in the one order (first line, last line, signature id), or the reverse with `before_line`. The finding shape of [`GET /v1/trace`](trace.md) without `file` |
 | `ticks` | object \| null | With `ticks=W`; `null` without |
-| `cli_command` | string | The rx command that gives the same findings: `rx trace PATH --signatures=SELECTION`, with `--before=N` when `text` is set and `before` is above 0, and `--mask-secrets` on a server that masks |
+| `cli_command` | string | The rx command that lists this answer's findings: `rx trace PATH --signatures=SELECTION`, where `SELECTION` is the request's selection narrowed by its `signature` and `group` filters — as ids (`err-line,py-trace`) when a filter narrows it, the selection as sent otherwise — with `--before=N` when `text` is set and `before` is above 0, and `--mask-secrets` on a server that masks |
+| `cli_command_note` | string \| null | Why `cli_command` lists more findings than this answer, when it does: a filter the command line has no flag for (`q`, `lines`, `after_line`, `before_line`: `q has no command-line flag: the command lists more findings than this answer`), or `signature`/`group` filters that keep no signature of the selection (the command then names the whole selection). `null` when the command gives exactly this answer's findings |
 
 ### Text
 
