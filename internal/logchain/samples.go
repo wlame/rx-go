@@ -321,11 +321,11 @@ func (s *sampler) knownCount(k int) int64 {
 // lineWindows turns line positions in space into windows: a single line
 // with the request's context around it, line 0 (no line), a range as
 // asked, and a position counted from the space's end (-N, -N--M)
-// resolved and keyed as one file resolves it (samples.OffsetOrRange.
-// LinesFromStart).
+// resolved and keyed as one file resolves it (resolveFromEnd).
 func (s *sampler) lineWindows(ctx context.Context, space lineSpace, positions []samples.OffsetOrRange) ([]window, error) {
 	windows := make([]window, 0, len(positions))
 	for _, v := range positions {
+		key, emptyList := v.Key(), v.IsRange() && *v.End == 0
 		if v.Start < 0 {
 			// spaceEnd reads the last part's count at most once per call
 			// (countOf), however many positions count back.
@@ -333,15 +333,30 @@ func (s *sampler) lineWindows(ctx context.Context, space lineSpace, positions []
 			if err != nil {
 				return nil, err
 			}
-			v = v.LinesFromStart(total)
+			key, v = resolveFromEnd(v, total)
 		}
 		if v.IsRange() {
-			windows = append(windows, window{key: v.Key(), first: v.Start, last: *v.End, isRange: true, emptyList: *v.End == 0})
+			windows = append(windows, window{key: key, first: max(1, v.Start), last: *v.End, isRange: true, emptyList: emptyList})
 			continue
 		}
-		windows = append(windows, s.around(v.Key(), v.Start))
+		windows = append(windows, s.around(key, v.Start))
 	}
 	return windows, nil
+}
+
+// resolveFromEnd resolves a position counted from the end against a
+// text of total lines, as one file does (samples.OffsetOrRange.
+// LinesFromStart), and returns the key it is answered under: the lines
+// it resolves to when the text has them, else the key as asked. A
+// position before the first line resolves to one the windows hold no
+// line of (a single at or below 0, a range ending at or below 0), and a
+// range that starts before the first line keeps the lines it has.
+func resolveFromEnd(v samples.OffsetOrRange, total int64) (string, samples.OffsetOrRange) {
+	resolved := v.LinesFromStart(total)
+	if resolved.NamesALine() {
+		return resolved.Key(), resolved
+	}
+	return v.Key(), resolved
 }
 
 // around is the window of a single line with the request's context.
@@ -445,16 +460,17 @@ func (s *sampler) partWindows(ctx context.Context, space lineSpace, k int) ([]wi
 	globalOf := func(n int64) int64 { return addWithin(start-1, n) }
 	windows := make([]window, 0, len(s.req.Lines))
 	for _, v := range s.req.Lines {
+		key, emptyList := v.Key(), v.IsRange() && *v.End == 0
 		if v.Start < 0 {
 			n, err := s.countOf(ctx, k)
 			if err != nil {
 				return nil, err
 			}
-			v = v.LinesFromStart(n)
+			key, v = resolveFromEnd(v, n)
 		}
 		if v.IsRange() {
-			w := window{key: v.Key(), first: globalOf(max(1, v.Start)), last: globalOf(*v.End), isRange: true, emptyList: *v.End == 0}
-			if *v.End == 0 {
+			w := window{key: key, first: globalOf(max(1, v.Start)), last: globalOf(*v.End), isRange: true, emptyList: emptyList}
+			if *v.End < 1 {
 				w.last = w.first - 1
 			}
 			if count >= 0 {
@@ -464,9 +480,8 @@ func (s *sampler) partWindows(ctx context.Context, space lineSpace, k int) ([]wi
 			continue
 		}
 		line := v.Start
-		key := v.Key()
 		switch {
-		case line == 0:
+		case line <= 0:
 			windows = append(windows, window{key: key, first: 1, last: 0})
 		case count >= 0 && line > count:
 			// No such line in the part: like a line past the end of one

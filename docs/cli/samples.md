@@ -75,9 +75,9 @@ two, `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` (see
 | `-b`, `--offsets` | `string[]` | — | Comma-separated byte offsets / ranges |
 | `-l`, `--lines` | `string[]` | — | Comma-separated 1-based line numbers / ranges |
 | `-t`, `--timestamps` | `string[]` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the flag for several, never comma-separated |
-| `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100) |
-| `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context` |
-| `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context` |
+| `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100). `-1` means the default, as over HTTP |
+| `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context`; `-1` leaves this side to `--context` |
+| `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context`; `-1` leaves this side to `--context` |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
@@ -139,10 +139,15 @@ than the echo suggests: `--lines=1 --context=3` reports
 
 ### A position the file does not have
 
-A line past the last one, line 0, or a byte offset past the last byte is
-answered rather than refused: `-1` in `lines`/`offsets`, `null` in
-`samples`, and the reason on stderr (`Warning: line 99 is not in the
-file.`). The command exits 0 and every other
+A line past the last one, line 0, a byte offset past the last byte, or
+a position counted from the end that reaches before the start of the
+file (`--lines=-31` on a 30-line file, `--offsets=-9999` on a shorter
+text) is answered rather than refused: `-1` in `lines`/`offsets`, `null`
+in `samples`, under the key the position was asked by (`"-31"`), and
+the reason on stderr (`Warning: line 99 is not in the file.`). A range
+counted from the end that starts before the first line keeps its key
+and holds the lines the file has (`--lines=-35--28` on 30 lines gives
+lines 1-3 under `"-35--28"`), as `--lines=0-5` gives lines 1-5. The command exits 0 and every other
 position in the same request is still answered — one bad number in
 `--lines=1000,1500000` must not throw away the good one, and `--json`
 would otherwise have nothing to return.
@@ -299,7 +304,9 @@ rx samples /var/log/audit-2026-03.log --lines=-100--1 --context=0
 The last 100 lines of the file, like `tail -n 100`: both ends of the
 range count back from the end, `-1` being the last line. The answer is
 keyed by the lines the range resolves to (`"901-1000"` on a 1,000-line
-file), as a single negative line is keyed by the line it names. The
+file), as a single negative line is keyed by the line it names; a
+position that reaches before the first line keeps its own key (see
+[a position the file does not have](#a-position-the-file-does-not-have)). The
 same lines come from `--lines=-1 --before=99 --after=0`, keyed `"1000"`.
 A range that mixes the two directions (`5--1`) or runs backwards
 (`-1--100`) is refused with exit 2. On a plain file a position counted

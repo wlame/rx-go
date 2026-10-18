@@ -21,6 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A position counted from the end that reaches before the start of
+  the file is answered as missing, as a position past its end is:
+  `rx samples --lines=-31` on a 30-line file, `--lines=-40--35`, and
+  `--offsets=-9999` on a shorter text answer `-1` and a `null` sample
+  under the key they were asked by (`"-31"`), with `Warning: line -31
+  is not in the file.` on stderr and exit 0, on every format, over
+  HTTP and on a log chain. Before, they were clamped to line 1 (or
+  byte 0) and answered under that key, so a caller looking up its own
+  key found nothing and the file's first line passed for the answer. A
+  range counted from the end that starts before the first line keeps
+  its key and holds the lines the file has.
 - A file reached twice in one search — the same path given twice, a
   directory and a file in it, a directory and its subdirectory, a path
   and a symbolic link to it, or two spellings of one path — is
@@ -34,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples --context=-1`, `--before=-1` and `--after=-1` mean the
+  default, as `context=-1`, `before_context=-1` and `after_context=-1`
+  do on `GET /v1/samples`: `--context=-1` is 3, and `--before=-1`
+  leaves that side to `--context`. Before, a negative context made the
+  window end before it started and the target line was reported as
+  missing.
 - A bad `--lines` value is reported as a line, not an offset:
   `rx samples a.log --lines=abc` says `Invalid line: abc. Must be an
   integer or range (e.g., 100-200)`, a bad range `Invalid line range:

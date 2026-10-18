@@ -192,8 +192,10 @@ const (
 //	Range:    key = the query, sample = the lines of the range,
 //	          timestamps[key] = its first line.
 //
-// Negative single values are resolved against file size (byte mode) or
-// total line count (lines mode). Ranges must have both ends >= 0.
+// Negative values are resolved against the text's size (byte mode) or
+// its line count (lines mode, where a range may be negative too); one
+// that reaches before the start of the text is missing (-1, null),
+// keyed as asked.
 //
 // Every answer carries time_format, the file's timestamp format: from
 // the index when there is one, else from the head of the text (at most
@@ -386,8 +388,10 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 	for _, v := range req.Offsets {
 		start := v.Start
 		if start < 0 {
-			// Python parity: a negative offset counts back from the end
-			// and the response reports the resolved positive value.
+			// A negative offset counts back from the end of the text and
+			// is keyed by the offset it resolves to. One that reaches
+			// before the first byte is missing, like an offset past the
+			// end: keyed as asked, -1 and a null sample.
 			if textSize < 0 {
 				size, err := text.size()
 				if err != nil {
@@ -397,7 +401,9 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 			}
 			start = textSize + start
 			if start < 0 {
-				start = 0
+				resp.Offsets[v.Key()] = -1
+				resp.Samples[v.Key()] = nil
+				continue
 			}
 		}
 		w := &window{key: strconv.FormatInt(start, 10), start: start, end: -1}
@@ -406,6 +412,10 @@ func resolveOffsets(req Request, resp *collected, text textSource) error {
 		}
 		windows = append(windows, w)
 		resp.Samples[w.key] = []string{}
+	}
+	if len(windows) == 0 {
+		// Every offset was before the first byte: nothing to read.
+		return nil
 	}
 	sort.SliceStable(windows, func(i, j int) bool { return windows[i].start < windows[j].start })
 

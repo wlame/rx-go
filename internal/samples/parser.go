@@ -153,26 +153,44 @@ func (o OffsetOrRange) Key() string {
 func (o OffsetOrRange) IsRange() bool { return o.End != nil }
 
 // LinesFromStart returns o with a line counted from the end resolved to
-// the line it names in a text of total lines: -1 is the last line,
-// -total the first, and a position before the first line is line 1 (the
-// text has no line before it). A single and both ends of a range follow
-// the one rule, so -3--1 on 300 lines is 298-300, and a position
-// counted from the start is returned as it is. The answer's key for a
-// position counted from the end is the Key of what this returns.
+// the line it names in a text of total lines: -1 is the last line and
+// -total the first. A single and both ends of a range follow the one
+// rule, so -3--1 on 300 lines is 298-300, and a position counted from
+// the start is returned as it is. A position before the first line
+// resolves to 0 or less: the text has no such line (NamesALine,
+// ReachesALine say what of the position the text has). The answer's
+// key for a position counted from the end is the Key of what this
+// returns when the text has it, and the key asked by otherwise.
 func (o OffsetOrRange) LinesFromStart(total int64) OffsetOrRange {
 	if o.Start >= 0 {
 		return o
 	}
-	resolved := OffsetOrRange{Start: lineFromEnd(o.Start, total)}
+	resolved := OffsetOrRange{Start: total + o.Start + 1}
 	if o.End != nil {
-		end := lineFromEnd(*o.End, total)
+		end := total + *o.End + 1
 		resolved.End = &end
 	}
 	return resolved
 }
 
-// lineFromEnd is the line a position counted from the end names: -1 is
-// line total, and a position before line 1 is line 1.
-func lineFromEnd(position, total int64) int64 {
-	return max(1, total+position+1)
+// NamesALine reports whether o, counted from the start, is a position
+// the text's numbering has: a line at or after line 1, or a range whose
+// first line is. Line 0 and a position resolved to before the first
+// line are not.
+func (o OffsetOrRange) NamesALine() bool { return o.Start >= 1 }
+
+// ReachesALine reports whether o, counted from the start, has at least
+// one line in the text's numbering: a single at or after line 1, or a
+// range whose last line is, whatever its first (a range that starts
+// before the first line holds the lines from line 1 on).
+func (o OffsetOrRange) ReachesALine() bool {
+	if o.End == nil {
+		return o.Start >= 1
+	}
+	return *o.End >= 1
 }
+
+// IsRangeKey reports whether key, a key of a samples answer, names a
+// range ("100-200", "-3--1") rather than a single position ("100",
+// "-31"): it has the separator of a range after a digit.
+func IsRangeKey(key string) bool { return rangeSeparator(key) >= 0 }

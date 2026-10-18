@@ -329,10 +329,10 @@ curl -sG -H 'Prefer: respond-async' 'http://127.0.0.1:7777/v1/samples' \
 | Field | Type | Description |
 |---|---|---|
 | `path` | string | The validated absolute file path |
-| `offsets` | `{key: lineNumber}` | Byte-offset mode: key is the request spec, except that a negative single offset is keyed by the offset it resolves to (`-10` on a text of 11984 bytes is `"11974"`; 0 when it reaches past the start), value is the 1-based number of the line holding that byte (for a range, its first byte); `-1` past the end of the file |
-| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, except that a negative line is keyed by the line it resolves to (`-1` on a text of 200 lines is `"200"`, `-3--1` is `"198-200"`; 1 when it reaches past the first line), value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
+| `offsets` | `{key: lineNumber}` | Byte-offset mode: key is the request spec, except that a negative offset is keyed by the offset it resolves to (`-10` on a text of 11984 bytes is `"11974"`); one that reaches before the start keeps its key and answers `-1`; value is the 1-based number of the line holding that byte (for a range, its first byte); `-1` past the end of the file |
+| `lines` | `{key: byteOffset}` | Line-offset mode: key is the request spec, except that a negative line is keyed by the line it resolves to (`-1` on a text of 200 lines is `"200"`, `-3--1` is `"198-200"`); one that reaches before the first line keeps its key and answers `-1` (a range that starts before it keeps its key and holds the lines the file has); value is the byte offset where that line starts (for a compressed file, a position in the decompressed text); `-1` for a range key and for a line past the end |
 | `before_context`, `after_context` | int | The context the request asked for (or the default 3), echoed; see [context defaults](#context-defaults) |
-| `samples` | `{key: lines[] \| null}` | Retrieved content, keyed identically to `offsets` / `lines`; `null` for a position the file does not have |
+| `samples` | `{key: lines[] \| null}` | Retrieved content, keyed identically to `offsets` / `lines`; `null` for a position the file does not have (past its end, or before its start) |
 | `is_compressed` | bool | Whether the file was compressed |
 | `compression_format` | `string \| null` | `"gzip"`, `"bz2"`, `"xz"`, `"zstd"` (a seekable zstd file reports `"zstd"`), `"journal"` (a systemd journal: the lines are its text, see [Journal files](../../concepts/journal-files.md)), or `null` |
 | `cli_command` | string | Equivalent CLI invocation |

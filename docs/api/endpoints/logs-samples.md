@@ -202,7 +202,7 @@ what the answer has room for still. Over them, `400`.
 |---|---|---|
 | `path`, `name`, `state`, `fingerprint`, `parts` | | As `GET /v1/logs/chain` gives them |
 | `before_context`, `after_context` | int | The context of each single line or time |
-| `lines` | object | Each key of a lines request (`-N` keyed by the line it names, `-N--M` by the lines) to its global target: the line itself, a range's first line; `-1` when the chain has no such line, and before the chain is ready |
+| `lines` | object | Each key of a lines request (`-N` keyed by the line it names, `-N--M` by the lines; a position before the chain's first line keeps its key) to its global target: the line itself, a range's first line; `-1` when the chain has no such line, and before the chain is ready |
 | `timestamps` | object | Each time query to the global line it found (a range's first); `-1` when none |
 | `samples` | object | Each key to its pieces; `null` when the chain has no line of it, `[]` for a range that ends at 0 |
 | `index_build` | object \| null | The background index build this answer started or joined: the chain's index task for a pending chain; for a ready chain the build of a part read from its head; `null` otherwise |

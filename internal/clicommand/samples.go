@@ -119,9 +119,9 @@ func NewSamplesCommand(out io.Writer) *cobra.Command {
 	cmd.Flags().StringArrayVar(&lines, "line-offset", nil, "Alias for --lines (rx-python spelling)")
 	_ = cmd.Flags().MarkHidden("byte-offset")
 	_ = cmd.Flags().MarkHidden("line-offset")
-	cmd.Flags().IntVarP(&ctxLines, "context", "c", 3, "Context lines before AND after")
-	cmd.Flags().IntVarP(&beforeCtx, "before", "B", 0, "Override lines before")
-	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Override lines after")
+	cmd.Flags().IntVarP(&ctxLines, "context", "c", 3, "Context lines before AND after (-1: the default)")
+	cmd.Flags().IntVarP(&beforeCtx, "before", "B", 0, "Override lines before (-1: as --context)")
+	cmd.Flags().IntVarP(&afterCtx, "after", "A", 0, "Override lines after (-1: as --context)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	cmd.Flags().StringVar(&colorFlag, "color", "auto",
 		"Colorize output: 'always', 'never', or 'auto' (color only on a terminal)")
@@ -201,13 +201,18 @@ func runSamples(out io.Writer, p samplesParams) error {
 	}
 
 	// Context precedence: a given --before/--after overrides --context,
-	// as before_context/after_context do over HTTP.
-	before := p.ctxLines
-	if p.beforeSet {
+	// as before_context/after_context do over HTTP, and -1 means the
+	// default on each of the three, as it does there: --context=-1 is
+	// the default window, --before=-1 leaves that side to --context.
+	ctxLines := p.ctxLines
+	if ctxLines == -1 {
+		ctxLines = defaultSamplesContext
+	}
+	before, after := ctxLines, ctxLines
+	if p.beforeSet && p.beforeCtx != -1 {
 		before = p.beforeCtx
 	}
-	after := p.ctxLines
-	if p.afterSet {
+	if p.afterSet && p.afterCtx != -1 {
 		after = p.afterCtx
 	}
 
@@ -362,8 +367,9 @@ func shouldColorize(flag string, out io.Writer) (bool, error) {
 }
 
 // warnAboutMissingPositions names every requested position the file does
-// not have — a line past the last one, line 0, or a byte offset past the
-// last byte.
+// not have — a line past the last one, line 0, a byte offset past the
+// last byte, or a position counted from the end that reaches before the
+// start of the file.
 //
 // The answer already says so — -1 in the number map, null in samples —
 // but a person reading the terminal should not have to know that
@@ -371,12 +377,12 @@ func shouldColorize(flag string, out io.Writer) (bool, error) {
 // the same sentence.
 func warnAboutMissingPositions(w io.Writer, resp *rxtypes.SamplesResponse) {
 	for _, key := range sortedPositionKeys(resp.Lines) {
-		if resp.Lines[key] == -1 && !strings.Contains(key, "-") {
+		if resp.Lines[key] == -1 && !samples.IsRangeKey(key) {
 			_, _ = fmt.Fprintf(w, "Warning: line %s is not in the file.\n", key)
 		}
 	}
 	for _, key := range sortedPositionKeys(resp.Offsets) {
-		if resp.Offsets[key] == -1 && !strings.Contains(key, "-") {
+		if resp.Offsets[key] == -1 && !samples.IsRangeKey(key) {
 			_, _ = fmt.Fprintf(w, "Warning: offset %s is not in the file.\n", key)
 		}
 	}

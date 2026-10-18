@@ -80,6 +80,11 @@ func TestSamples_FromTheEnd(t *testing.T) {
 		SamplesRequest{Lines: lines(t, "-310,-311")},
 		SamplesRequest{Lines: lines(t, "-3--1")},
 		SamplesRequest{Lines: lines(t, "-311--300,-1--1")},
+		// Positions before the chain's first line are missing, as one
+		// file answers them; a range that starts before it holds the
+		// lines the chain has.
+		SamplesRequest{Lines: lines(t, "-400,-9999"), BeforeContext: 2, AfterContext: 2},
+		SamplesRequest{Lines: lines(t, "-400--350,-320--305")},
 	)
 	requireLikeConcatenation(t, windowChain(t, false),
 		SamplesRequest{Lines: lines(t, "-1"), BeforeContext: 4, AfterContext: 4},

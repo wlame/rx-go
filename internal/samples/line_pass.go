@@ -128,14 +128,19 @@ func resolveLineWindows(req Request, kind filekind.Kind, resp *collected) error 
 // the source's empty range).
 //
 // A position counted from the end (-N, or the range -N--M) is resolved
-// against the file's line count and keyed by the lines it resolves to
-// (OffsetOrRange.LinesFromStart); line 0 is not a line. Two positions
+// against the file's line count (OffsetOrRange.LinesFromStart) and
+// keyed by the lines it resolves to when the file has them. One that
+// reaches before the first line is missing, like line 0 or a line past
+// the end: keyed as asked, -1 and a null sample. A range that starts
+// before the first line and ends in the file keeps its key and holds
+// the lines the file has, as a range from line 0 does. Two positions
 // with the same key ask for the same window, which is read once.
 func wantedLinesOf(req Request, source lineSource, resp *collected) ([]*wantedLines, error) {
 	wants := make([]*wantedLines, 0, len(req.Lines))
 	seen := make(map[string]bool, len(req.Lines))
 	totalLines := int64(-1)
 	for _, v := range req.Lines {
+		key := v.Key()
 		if v.Start < 0 {
 			if totalLines < 0 {
 				n, err := source.lineCount(req.context())
@@ -144,9 +149,18 @@ func wantedLinesOf(req Request, source lineSource, resp *collected) ([]*wantedLi
 				}
 				totalLines = n
 			}
-			v = v.LinesFromStart(totalLines)
+			resolved := v.LinesFromStart(totalLines)
+			if !resolved.ReachesALine() {
+				resp.Samples[key] = nil
+				resp.Lines[key] = -1
+				continue
+			}
+			if resolved.NamesALine() {
+				key = resolved.Key()
+			}
+			v = resolved
 		}
-		w := &wantedLines{key: v.Key(), targetOffset: -1}
+		w := &wantedLines{key: key, targetOffset: -1}
 		switch {
 		case v.IsRange():
 			w.first, w.last = v.Start, *v.End
