@@ -42,8 +42,8 @@ In addition, these routes serve the auto-generated docs and the SPA:
 
 | Path | Content |
 |---|---|
-| `/docs` | Swagger UI |
-| `/redoc` | ReDoc UI |
+| `/docs` | Swagger UI, served from the binary (it works offline) |
+| `/redoc` | ReDoc UI, served from the binary (it works offline) |
 | `/openapi.json` | OpenAPI 3.1 spec (JSON) |
 | `/openapi.yaml` | OpenAPI 3.1 spec (YAML) |
 | `/openapi-3.0.json`, `/openapi-3.0.yaml` | The same spec as OpenAPI 3.0, for tools that do not read 3.1 |
@@ -111,7 +111,9 @@ the primary defense.
 
 `rx` generates a complete OpenAPI 3.1 specification at runtime and serves
 it at `/openapi.json`. The spec drives the Swagger UI at `/docs` and
-the ReDoc page at `/redoc`. It's also suitable for:
+the ReDoc page at `/redoc`; both pages and their scripts and styles are
+embedded in the binary, so they render on a network with no route to
+the internet. It's also suitable for:
 
 - Code generation (`openapi-generator`, `oapi-codegen`, etc.)
 - API contract tests

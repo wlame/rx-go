@@ -265,7 +265,9 @@ func TestIntegration_ReservedPrefixes(t *testing.T) {
 		"health",
 		"metrics",
 		"docs",
+		"docs/swagger-ui.css",
 		"redoc",
+		"redoc/redoc.standalone.js",
 		"openapi.json",
 	}
 	for _, p := range reserved {

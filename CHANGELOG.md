@@ -123,6 +123,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `/docs` and `/redoc` work offline: the Swagger UI files
+  (swagger-ui-dist 5.31.1, `swagger-ui.css` and `swagger-ui-bundle.js`,
+  from unpkg.com) and the ReDoc bundle (ReDoc v2.5.0,
+  `redoc.standalone.js`, from cdn.redoc.ly) are embedded in the binary
+  with their SHA-256 digests pinned by a test, and both pages reference
+  only this origin, under a Content-Security-Policy that names no
+  external host. Before, both pages loaded their files from CDNs (ReDoc
+  unpinned, at `latest`) and rendered blank without a route to the
+  internet. The Google Fonts link of `/redoc` is gone; ReDoc uses the
+  system fonts. The binary grows by about 2.6 MiB (24.1 to 26.6 MiB for the macOS arm64 build).
 - Under `/v1/`, an unmatched path answers JSON like every other rx
   error: 404 `{"detail": "Not found: /v1/nope"}` (it was text/plain `404
   page not found`), and a method the path does not serve 405 `{"detail":

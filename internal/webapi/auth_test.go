@@ -103,7 +103,7 @@ func TestAPIToken_SetGuardsTheV1Routes(t *testing.T) {
 func TestAPIToken_SetLeavesProbesAndDocsOpen(t *testing.T) {
 	ts := newTokenServer(t, testToken)
 
-	for _, path := range []string{"/health", "/metrics", "/openapi.json", "/docs"} {
+	for _, path := range []string{"/health", "/metrics", "/openapi.json", "/docs", "/docs/swagger-ui-bundle.js", "/redoc", "/redoc/redoc.standalone.js"} {
 		t.Run(path, func(t *testing.T) {
 			status, _, body := get(t, ts.URL+path, "")
 

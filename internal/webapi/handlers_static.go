@@ -62,12 +62,13 @@ func isReservedAPIPath(p string) bool {
 //	GET /           → frontend/index.html or 307 → /docs
 //	GET /{rest:*}   → static file from frontend, or SPA index.html fallback
 //
-// ReDoc is also registered here because it's a static-style HTML page.
+// The documentation pages (/docs, /redoc) and their embedded assets
+// are registered here too, as static-style pages (docs_pages.go).
 //
 // This function MUST be called last in the router setup so the catch-all
 // does not shadow API routes.
 func registerStaticHandlers(r chi.Router, fm *frontend.Manager) {
-	registerRedocRoute(r)
+	registerDocsPages(r)
 
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
 		// If there's no frontend at all → 307 redirect to /docs.

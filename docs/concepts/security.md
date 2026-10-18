@@ -99,8 +99,13 @@ displays are attacker-influenced in many deployments — and a browser
 The header CSP carries **only** `frame-ancestors`. The full policy stays
 in the SPA's meta tag, which is the artifact that knows what Monaco
 needs; the two intersect, so a stricter header would break the editor.
-The `/docs` page huma serves sets a fuller policy of its own, which also
-denies framing.
+The documentation pages `/docs` and `/redoc` set a fuller policy of
+their own, which also denies framing: scripts and styles only from the
+same origin (plus, on `/docs`, one inline bootstrap script allowed by its
+hash), `connect-src 'self'` for the spec, and no external host at all.
+Their Swagger UI and ReDoc files are embedded in the binary with their
+digests pinned by a test, so the pages load nothing from a CDN and render
+offline.
 
 `serve` binds loopback by default, which limits exposure but does not
 remove it: users run it behind a reverse proxy, and a browser tab on any

@@ -17,8 +17,8 @@ rx serve [flags]
 - All `/v1/*` endpoints (trace, samples, time range, index, compress, tree, tasks, log chains, signatures, findings)
 - `/health` — readiness probe with system info
 - `/metrics` — Prometheus exposition format
-- `/docs` — Swagger UI generated from OpenAPI 3.1
-- `/redoc` — ReDoc alternative
+- `/docs` — Swagger UI generated from OpenAPI 3.1, served from the binary (works offline)
+- `/redoc` — ReDoc alternative, served from the binary too
 - `/openapi.json` and `/openapi.yaml` — raw OpenAPI spec
 - `/` and `/assets/*` — static file serving for the `rx-viewer` SPA
 
