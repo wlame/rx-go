@@ -2932,7 +2932,7 @@
         "additionalProperties": false,
         "properties": {
           "cli_command": {
-            "description": "The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --hidden when the server serves hidden entries, --force when the request forced, and --mask-secrets when the server masks secrets. Empty for a compress task. A request that joined a running task gets that task's command.",
+            "description": "The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --hidden when the server serves hidden entries, --force when the request forced, and --mask-secrets when the server masks secrets; rx compress for a task of POST /v1/compress; rx logs index for a task of POST /v1/logs/index. A request that joined a running task gets that task's command.",
             "type": "string"
           },
           "message": {
@@ -6588,6 +6588,10 @@
     {
       "description": "Log chains: the files of a rotated log read as one",
       "name": "Logs"
+    },
+    {
+      "description": "Signatures and their findings",
+      "name": "Signatures"
     }
   ]
 }

@@ -462,12 +462,12 @@ func (s *Server) runTrace(ctx context.Context, prepared *preparedTrace, in *sign
 	})
 }
 
-// hookOverridesFromQuery converts empty strings to nil pointers so the
-// "not supplied" case stays distinct from "explicitly disable" (the
-// latter being an empty string arriving via &hook_on_file=, which is
-// rare but supported).
-//
-// Huma gives us `""` for "absent", so we must treat empty as nil.
+// hookOverridesFromQuery turns the hook_on_* query values into
+// overrides: a value given names the hook's URL for this request, and an
+// empty value (huma gives "" for an absent parameter and for
+// `&hook_on_file=` alike) is no override, so the environment's URL, if
+// any, stays. There is no way to switch an environment hook off per
+// request; docs/api/webhooks.md says so.
 func hookOverridesFromQuery(onFile, onMatch, onComplete string) hooks.HookOverrides {
 	var (
 		of *string

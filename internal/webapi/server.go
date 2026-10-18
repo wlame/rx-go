@@ -184,6 +184,10 @@ func NewServer(cfg Config) *Server {
 	router.Use(recoverMiddleware(cfg.Logger))
 	router.Use(metricsMiddleware)
 	router.Use(apiTokenMiddleware(cfg.APIToken))
+	// A request no route takes answers in the API's own error shape
+	// under the API paths, as every error rx produces does.
+	router.NotFound(apiNotFound)
+	router.MethodNotAllowed(apiMethodNotAllowed(router))
 
 	// Build the huma API with the custom OpenAPI config (title, servers,
 	// info, error envelope override).

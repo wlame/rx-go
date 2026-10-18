@@ -155,17 +155,21 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 		Overwrite:        req.Force,
 		CLICommand:       compressCLICommand(validated, output, req),
 	}
+	// The task knows its command from the start, so GET /v1/tasks/{id}
+	// carries it while the task runs, as it does for an index task.
+	mgr.SetCLICommand(taskID, job.CLICommand)
 	go runDetached(mgr, taskID, "compress", logger, func() {
 		runCompressTask(mgr, taskID, job)
 	})
 
 	started := formatTaskTime(taskStarted)
 	return &postCompressOutput{Body: rxtypes.TaskResponse{
-		TaskID:    taskID,
-		Status:    taskStatus,
-		Message:   fmt.Sprintf("Compression task started for %s", req.InputPath),
-		Path:      validated,
-		StartedAt: &started,
+		TaskID:     taskID,
+		Status:     taskStatus,
+		Message:    fmt.Sprintf("Compression task started for %s", req.InputPath),
+		Path:       validated,
+		StartedAt:  &started,
+		CLICommand: job.CLICommand,
 	}}, nil
 }
 

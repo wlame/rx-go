@@ -123,6 +123,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Under `/v1/`, an unmatched path answers JSON like every other rx
+  error: 404 `{"detail": "Not found: /v1/nope"}` (it was text/plain `404
+  page not found`), and a method the path does not serve 405 `{"detail":
+  "Method POST not allowed: /v1/nope"}` with an `Allow` header (it was
+  an empty body). The viewer's paths keep their answers.
+- A 422 of the request schema names the property and its place and never
+  echoes the value sent: `validation failed; unexpected property
+  (body.analyze)`, where the whole body followed in Go map syntax.
+- `POST /v1/compress` and `POST /v1/logs/index` answer `cli_command` in
+  their task response (`rx compress PATH`, `rx logs index HANDLE`), and
+  `GET /v1/tasks/{id}` carries it while the task runs; both were `""`
+  until the task ended. The OpenAPI document declares the `Signatures`
+  tag its operations carry.
 - `rx signatures` and `GET /v1/signatures` keep the row of a built-in
   whose id a refused user definition took, marked `replaced by a refused
   definition (file:line)` (the new member `replaced_by`, `{"file", "line"}`

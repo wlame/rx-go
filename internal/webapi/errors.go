@@ -47,12 +47,28 @@ func humaNewError(status int, message string, errs ...error) huma.StatusError {
 		}
 		for _, e := range errs {
 			if e != nil {
-				parts = append(parts, e.Error())
+				parts = append(parts, errorText(e))
 			}
 		}
 		detail = strings.Join(parts, "; ")
 	}
 	return &apiError{Status: status, Detail: detail}
+}
+
+// errorText is one error of a validation failure as the detail words
+// it: a huma.ErrorDetail as "message (location)", so the answer names
+// the property and where it is and never echoes the value sent (its
+// own Error method writes the whole value in Go syntax, a request body
+// included); any other error as its text.
+func errorText(e error) string {
+	var detail *huma.ErrorDetail
+	if errors.As(e, &detail) {
+		if detail.Location == "" {
+			return detail.Message
+		}
+		return detail.Message + " (" + detail.Location + ")"
+	}
+	return e.Error()
 }
 
 // apiError is our local huma.StatusError + error implementation.

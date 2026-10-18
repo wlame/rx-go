@@ -63,6 +63,14 @@ and `/v1/logs/samples`, whose body is the chain's current description
 }
 ```
 
+An unmatched path under `/v1/` answers the same envelope: 404
+`{"detail": "Not found: /v1/nope"}`, or 405 `{"detail": "Method POST not
+allowed: /v1/nope"}` with an `Allow` header listing the methods the path
+serves. A request that fails the schema answers 422 with
+`validation failed; MESSAGE (LOCATION)`, such as `unexpected property
+(body.analyze)`: the property and its place are named, the value sent is
+never echoed.
+
 The `detail` field stays present for backward compatibility; the
 extra fields let UIs build a structured "you've hit the sandbox"
 message without parsing the string.

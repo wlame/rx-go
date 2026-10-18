@@ -278,9 +278,18 @@ func registerLogIndexHandler(s *Server, api huma.API) {
 			message = fmt.Sprintf("Joined the index task already running for the log chain %s, which builds "+
 				"what it was started for; follow GET /v1/tasks/%s", d.Response.Path, task.TaskID)
 		}
+		// A new task records its command from the start, so GET
+		// /v1/tasks/{id} carries it while the task runs; a joined task
+		// keeps the command it was started with.
+		cli := task.CLICommand
+		if isNew {
+			cli = BuildCLICommand("logs_index", map[string]any{"path": d.Response.Path, "force": in.Force})
+			s.cfg.TaskManager.SetCLICommand(task.TaskID, cli)
+		}
 		started := formatTaskTime(task.StartedAt)
 		return &logChainOutput{Status: http.StatusOK, Body: rxtypes.TaskResponse{
 			TaskID: task.TaskID, Status: string(task.Status), Path: task.Path, StartedAt: &started, Message: message,
+			CLICommand: cli,
 		}}, nil
 	})
 }

@@ -181,8 +181,10 @@ func EffectiveHooks(env HookEnv, override HookOverrides) HookConfig {
 	}
 }
 
-// chooseString picks the override if non-nil, else the default. An
-// empty-string override DOES win (that's how callers say "disable").
+// chooseString picks the override if non-nil, else the default. No
+// caller passes a pointer to an empty string: the CLI and the HTTP
+// layer both read an empty value as "no override", so the default
+// stays.
 func chooseString(override *string, def string) string {
 	if override == nil {
 		return def

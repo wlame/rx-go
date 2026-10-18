@@ -51,7 +51,7 @@ In addition, these routes serve the auto-generated docs and the SPA:
 | `/` | `rx-viewer` SPA (or 307 → `/docs` if unavailable) |
 | `/assets/*` | Static SPA assets |
 | `/favicon.ico` | Embedded favicon (SVG) |
-| Any other path | A file of the viewer bundle (such as `/favicon.svg`), or the SPA's `index.html` so the viewer's router handles the URL; 307 → `/docs` without a viewer. An unknown path under `/v1/`, `/health`, `/metrics`, `/docs`, `/redoc`, `/openapi` or `/schemas/` answers 404 instead |
+| Any other path | A file of the viewer bundle (such as `/favicon.svg`), or the SPA's `index.html` so the viewer's router handles the URL; 307 → `/docs` without a viewer. An unknown path under `/v1/`, `/health`, `/metrics`, `/docs`, `/redoc`, `/openapi` or `/schemas/` answers 404 instead: under `/v1/` as JSON (`{"detail": "Not found: /v1/nope"}`), and a method the path does not serve as a JSON 405 with an `Allow` header |
 
 ## Request & response conventions
 

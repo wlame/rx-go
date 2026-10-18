@@ -120,12 +120,12 @@ The task, as `POST /v1/index` gives one:
   "message": "Indexing 3 parts of the log chain /var/log/syslog; follow GET /v1/tasks/8f6c1a52-3e0a-4c1e-9a67-2d6c3f1b9e10",
   "path": "/var/log/syslog",
   "started_at": "2026-10-08T09:12:44.103254Z",
-  "cli_command": ""
+  "cli_command": "rx logs index /var/log/syslog"
 }
 ```
 
-A request that joins a running task says so in `message`.
-`cli_command` is empty here; the task's `result` gives the
+A request that joins a running task says so in `message`, and gets
+that task's `cli_command`; the task's `result` gives the same
 `rx logs index` command.
 
 ## Status codes

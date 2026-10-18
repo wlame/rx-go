@@ -4,16 +4,16 @@ package rxtypes
 // POST /v1/findings when a background task is accepted. The client polls GET /v1/tasks/{id}
 // with the returned TaskID until completion.
 //
-// CLICommand is the rx command that does what the task does, for an
-// index or findings task (TaskStatusResponse.CLICommand); "" for a
-// compress task.
+// CLICommand is the rx command that does what the task does
+// (TaskStatusResponse.CLICommand): rx index, rx scan, rx compress or
+// rx logs index.
 type TaskResponse struct {
 	TaskID     string  `json:"task_id"`
 	Status     string  `json:"status"`
 	Message    string  `json:"message"`
 	Path       string  `json:"path"`
 	StartedAt  *string `json:"started_at"`
-	CLICommand string  `json:"cli_command" doc:"The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --hidden when the server serves hidden entries, --force when the request forced, and --mask-secrets when the server masks secrets. Empty for a compress task. A request that joined a running task gets that task's command."`
+	CLICommand string  `json:"cli_command" doc:"The rx command that does what the task does: rx index for a task of POST /v1/index, rx scan for a task of POST /v1/findings, with --recursive for a directory (rx index DIR --recursive, rx scan DIR --recursive --signatures=SEL), --hidden when the server serves hidden entries, --force when the request forced, and --mask-secrets when the server masks secrets; rx compress for a task of POST /v1/compress; rx logs index for a task of POST /v1/logs/index. A request that joined a running task gets that task's command."`
 }
 
 // TaskStatusResponse is returned by GET /v1/tasks/{task_id} and by

@@ -91,8 +91,11 @@ func TestIndexPost_AnalysisFieldsAreUnknownProperties(t *testing.T) {
 			if resp.StatusCode != http.StatusUnprocessableEntity {
 				t.Fatalf("status %d, want 422: %s", resp.StatusCode, answer)
 			}
-			if want := "unexpected property (body." + tc.field + ":"; !strings.Contains(string(answer), want) {
+			if want := "unexpected property (body." + tc.field + ")"; !strings.Contains(string(answer), want) {
 				t.Errorf("answer %s does not name the property (want %q)", answer, want)
+			}
+			if strings.Contains(string(answer), "map[") {
+				t.Errorf("answer %s echoes the request body", answer)
 			}
 		})
 	}
@@ -108,8 +111,9 @@ func TestDetectorsRoute_AnswersAsAnUnknownRoute(t *testing.T) {
 	if status != http.StatusNotFound || status != wantStatus {
 		t.Errorf("status %d, want %d as for an unknown route", status, wantStatus)
 	}
-	if contentType != wantType || body != wantBody {
-		t.Errorf("answer %q (%s), want %q (%s) as for an unknown route", body, contentType, wantBody, wantType)
+	// Both answer the API's error shape, each naming its own path.
+	if contentType != wantType || !strings.HasPrefix(body, `{"detail":"Not found: /v1/detectors"}`) || !strings.HasPrefix(wantBody, `{"detail":"Not found: /v1/no-such-route"}`) {
+		t.Errorf("answer %q (%s), want the shape of %q (%s) as for an unknown route", body, contentType, wantBody, wantType)
 	}
 }
 

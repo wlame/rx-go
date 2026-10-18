@@ -1,6 +1,8 @@
 package webapi
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	pathpkg "path" // aliased: handlers name their URL path variable `path`
 	"path/filepath"
@@ -80,9 +82,10 @@ func registerStaticHandlers(r chi.Router, fm *frontend.Manager) {
 	r.Get("/*", func(w http.ResponseWriter, req *http.Request) {
 		path := chi.URLParam(req, "*")
 
-		// Reserved API prefix → hard 404. Never fall through.
+		// Reserved API prefix → hard 404, in the API's error shape. Never
+		// fall through to the viewer.
 		if isReservedAPIPath(path) {
-			http.NotFound(w, req)
+			apiNotFound(w, req)
 			return
 		}
 
@@ -177,4 +180,47 @@ func serveStaticFile(w http.ResponseWriter, req *http.Request, resolved string) 
 	// match). gosec's taint analysis cannot follow that across the call.
 	//nolint:gosec // G703: the path is validated by ValidateStaticPath.
 	http.ServeFile(w, req, resolved)
+}
+
+// apiNotFound answers a path no route serves: {"detail": "Not found:
+// PATH"} under the API paths (/v1/, /health, /metrics, /docs, /redoc,
+// /openapi*, /schemas/), where a client parses every error as the
+// ApiError shape, and the plain text of http.NotFound elsewhere.
+func apiNotFound(w http.ResponseWriter, req *http.Request) {
+	if !isReservedAPIPath(strings.TrimPrefix(req.URL.Path, "/")) {
+		http.NotFound(w, req)
+		return
+	}
+	writeAPIError(w, http.StatusNotFound, "Not found: "+req.URL.Path)
+}
+
+// apiMethodNotAllowed answers a request whose path a route serves with
+// another method: 405 with the Allow header listing the methods the
+// router takes for the path (chi computes none for a custom handler,
+// so the handler asks the router), and the ApiError shape under the API
+// paths.
+func apiMethodNotAllowed(router chi.Router) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		var allowed []string
+		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+			if router.Match(chi.NewRouteContext(), method, req.URL.Path) {
+				allowed = append(allowed, method)
+			}
+		}
+		if len(allowed) > 0 {
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+		}
+		if !isReservedAPIPath(strings.TrimPrefix(req.URL.Path, "/")) {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		writeAPIError(w, http.StatusMethodNotAllowed, fmt.Sprintf("Method %s not allowed: %s", req.Method, req.URL.Path))
+	}
+}
+
+// writeAPIError writes status and the ApiError body {"detail": detail}.
+func writeAPIError(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(apiError{Status: status, Detail: detail})
 }

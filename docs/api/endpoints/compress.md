@@ -81,7 +81,7 @@ for measured sizes and times.
   "message":    "Compression task started for /var/log/audit-2026-03.log",
   "path":       "/var/log/audit-2026-03.log",
   "started_at": "2026-04-18T14:25:11.872345Z",
-  "cli_command": ""
+  "cli_command": "rx compress /var/log/audit-2026-03.log"
 }
 ```
 
