@@ -4867,12 +4867,12 @@
             }
           },
           {
-            "description": "Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part).",
+            "description": "Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part); a range may too (-100--1).",
             "explode": false,
             "in": "query",
             "name": "lines",
             "schema": {
-              "description": "Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part).",
+              "description": "Comma-separated 1-based line numbers or ranges: the chain's global numbers, or with part the part's own numbers. -N counts back from the end (of the chain, or of the part); a range may too (-100--1).",
               "examples": [
                 "123456,100-200,-1"
               ],
@@ -5529,12 +5529,12 @@
             }
           },
           {
-            "description": "Comma-separated 1-based line numbers or ranges",
+            "description": "Comma-separated 1-based line numbers or ranges. A negative value counts back from the end: -1 is the last line, -100--1 the last hundred",
             "explode": false,
             "in": "query",
             "name": "lines",
             "schema": {
-              "description": "Comma-separated 1-based line numbers or ranges",
+              "description": "Comma-separated 1-based line numbers or ranges. A negative value counts back from the end: -1 is the last line, -100--1 the last hundred",
               "examples": [
                 "100,200-205,-1"
               ],
