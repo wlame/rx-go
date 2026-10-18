@@ -18,6 +18,7 @@ import (
 	"github.com/wlame/rx-go/internal/findings"
 	"github.com/wlame/rx-go/internal/output"
 	"github.com/wlame/rx-go/internal/paths"
+	"github.com/wlame/rx-go/internal/signatures"
 	"github.com/wlame/rx-go/pkg/rxtypes"
 )
 
@@ -216,7 +217,7 @@ func runScan(ctx context.Context, out io.Writer, p scanParams) error {
 	result := &scanResult{
 		Signatures: sel.expr, Files: []scannedFile{}, Skipped: []rxtypes.SkippedFile{}, Errors: []indexErrorItem{},
 	}
-	entries := scanEntries(p, result)
+	entries := scanEntries(p, sel.catalog, result)
 
 	findings.SetMaxScans(config.MaxSignatureScans())
 	opts := findingsScanOptions()
@@ -248,12 +249,18 @@ func runScan(ctx context.Context, out io.Writer, p scanParams) error {
 // tree's rules (listDirectory): the files directly inside it, or with
 // --recursive every file below it, as `rx index` lists a directory. A
 // path that cannot be stated, or a directory that cannot be listed, is
-// recorded in result as a failure.
-func scanEntries(p scanParams, result *scanResult) []cachefill.Entry {
+// recorded in result as a failure; a missing path that reads as a
+// selection of cat gets the hint of selectionHint on stderr.
+func scanEntries(p scanParams, cat *signatures.Catalogue, result *scanResult) []cachefill.Entry {
 	var entries []cachefill.Entry
 	for _, path := range p.paths {
 		info, err := os.Stat(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				if hint := selectionHint(cat, path); hint != "" {
+					_, _ = fmt.Fprintln(os.Stderr, output.PrintableMessage(hint))
+				}
+			}
 			result.fail(path, err)
 			continue
 		}

@@ -3,6 +3,7 @@ package clicommand
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 
@@ -182,4 +183,21 @@ func signatureCLIParams(run signatureTrace) map[string]any {
 		"signatures":       run.selection.expr,
 		"mask_secrets":     p.maskSecrets,
 	}
+}
+
+// selectionHint is the line printed under a path-not-found error when
+// the missing path is a word the catalogue would take as a selection
+// (an id, a group, a tag, all, default, or a comma list of them): the
+// user most likely wrote `--signatures WORD`, which reads as a bare
+// --signatures (the default set) followed by the path WORD, since the
+// flag needs its value joined with "=". "" when the word is no
+// selection, so a misspelled path gets no hint.
+func selectionHint(cat *signatures.Catalogue, word string) string {
+	if cat == nil || word == "" {
+		return ""
+	}
+	if _, err := cat.Resolve(word); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("Hint: %s is a signature selection, not a path; write --signatures=%s", word, word)
 }

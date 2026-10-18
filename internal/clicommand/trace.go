@@ -335,6 +335,11 @@ func runTrace(ctx context.Context, out io.Writer, p traceParams) error {
 		info, statErr := os.Stat(f)
 		if statErr != nil {
 			if os.IsNotExist(statErr) {
+				if selection != nil {
+					if hint := selectionHint(selection.catalog, f); hint != "" {
+						_, _ = fmt.Fprintln(os.Stderr, output.PrintableMessage(hint))
+					}
+				}
 				return exitWithError(os.Stderr, ExitFileNotFound, "path not found: %s", f)
 			}
 			if os.IsPermission(statErr) {

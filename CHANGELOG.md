@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A hint when `--signatures` is written with a space before its value:
+  `rx scan --signatures traceback a.log` reads as the default set and
+  the paths `traceback` and `a.log`, so it fails on the missing path;
+  when that path is a word the catalogue takes as a selection (an id, a
+  group, a tag, `all`, `default`, or a comma list of them), stderr adds
+  `Hint: traceback is a signature selection, not a path; write
+  --signatures=traceback`. `rx trace --signatures traceback -e X a.log`
+  the same. The exit code and the JSON are unchanged.
 - The `cli_command` of `GET /v1/findings` carries the request's
   filters: its `--signatures=` names the selection narrowed by
   `signature=` and `group=`, as ids when a filter narrows it, so the

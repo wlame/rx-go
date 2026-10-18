@@ -68,18 +68,24 @@ import (
 // caches as absent.
 const TraceCacheVersion = 6
 
-// matchingFlags are the subset of ripgrep flags that change WHICH
-// lines match. Any flag not in this set doesn't affect cache validity.
-//
-// Parity list — rx-python/src/rx/trace_cache.py::MATCHING_FLAGS.
-var matchingFlags = map[string]struct{}{
-	"-i":               {},
-	"-w":               {},
-	"-x":               {},
-	"-F":               {},
-	"-P":               {},
-	"--case-sensitive": {},
-	"--ignore-case":    {},
+// matchingFlags are the ripgrep flags that change WHICH lines match,
+// as the short spellings RipgrepArgs emits (-i, -w, -x, -F, -P): the
+// only spellings that reach a search's rg flags, since the surfaces
+// build them from the MatchingFlags table and nothing else. Any flag
+// not in this set does not affect cache validity. Built from that
+// table, so the two cannot drift apart. rx-python's
+// trace_cache.py::MATCHING_FLAGS lists the same short flags (and two
+// long spellings no rx-go input ever holds).
+var matchingFlags = matchingFlagSet()
+
+// matchingFlagSet is the set of "-" + the short name of each row of
+// MatchingFlags.
+func matchingFlagSet() map[string]struct{} {
+	set := make(map[string]struct{}, len(MatchingFlags))
+	for _, flag := range MatchingFlags {
+		set["-"+flag.Short] = struct{}{}
+	}
+	return set
 }
 
 // ErrCacheMiss is returned when no valid cache exists for the given
