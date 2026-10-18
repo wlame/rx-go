@@ -311,7 +311,7 @@ func buildText(
 	// journal is indexed all the same, since its text is a fixed
 	// function of its bytes; the section says what that text lacks.
 	if src.kind.IsJournal() {
-		section, err := journalSection(src, text)
+		section, err := journalSection(text)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", sourcePath, err)
 		}

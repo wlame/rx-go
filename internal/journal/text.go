@@ -93,7 +93,10 @@ var errClosed = errors.New("read of a closed journal text reader")
 // It reads the file only through ReadAt and never closes it. A TextReader
 // is used by one goroutine at a time.
 type TextReader struct {
-	walk   *walker
+	walk *walker
+	// header is the journal's header as it was read when the reader
+	// was opened: the one the walk follows.
+	header Header
 	report Report
 	// buf holds the text of the last entry rendered; off is how much of
 	// it Read has handed out.
@@ -121,7 +124,7 @@ func NewTextReader(r io.ReaderAt, size int64, opts Options) (*TextReader, error)
 		return nil, err
 	}
 	w := newWalker(r, h, uint64(size), opts.cacheBytes()) // #nosec G115 -- ReadHeader accepted size, so it is at least 208
-	return &TextReader{walk: w, report: Report{Entries: w.total}}, nil
+	return &TextReader{walk: w, header: h, report: Report{Entries: w.total}}, nil
 }
 
 // Read copies the next bytes of the text into p. It returns io.EOF after
@@ -220,6 +223,12 @@ func (t *TextReader) firstDamage(entry int64, reason string) {
 		t.report.FirstDamaged, t.report.DamageReason = entry, reason
 	}
 }
+
+// Header returns the journal's header as it was read when the reader
+// was opened. The walk takes the entries that header counts, so a
+// description of the journal built from the text read goes with this
+// header, not with a later read of a file that may have moved on.
+func (t *TextReader) Header() Header { return t.header }
 
 // Report returns the counts of the read so far; they are complete once
 // Read returned io.EOF.

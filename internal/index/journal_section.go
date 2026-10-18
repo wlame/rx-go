@@ -3,7 +3,6 @@ package index
 import (
 	"encoding/hex"
 	"errors"
-	"fmt"
 
 	"github.com/wlame/rx-go/internal/filetext"
 	"github.com/wlame/rx-go/internal/journal"
@@ -15,25 +14,22 @@ import (
 // bug.
 var errNoJournalReport = errors.New("the text read is not a journal's, so it has no journal report")
 
-// journalSection returns the journal section of the index of src, a
-// systemd journal whose text the build has read to its end through text:
-// the reader's report of that read, and the facts of the journal's
-// header.
+// journalSection returns the journal section of the index of a systemd
+// journal whose text the build has read to its end through text: the
+// reader's report of that read, and the facts of the journal's header.
 //
 // The report is complete only once the text's Read returned io.EOF,
 // which the walk of the text does before the build gets here. The header
-// is read again, through the handle the pin opened: the reader read it
-// when the text was opened, and keeps it to itself. It is one read of at
-// most 272 bytes, outside the build's progress, which has ended.
-func journalSection(src openedSource, text *filetext.Text) (*rxtypes.JournalInfo, error) {
+// is the one the reader read when the text was opened, which the walk
+// followed: a live journal's header moves while it is read (its state,
+// its tail sequence number), and the section describes one state of
+// the file, the one the counts come from.
+func journalSection(text *filetext.Text) (*rxtypes.JournalInfo, error) {
 	report, ok := text.JournalReport()
 	if !ok {
 		return nil, errNoJournalReport
 	}
-	header, err := journal.ReadHeader(src.file, src.info.Size())
-	if err != nil {
-		return nil, fmt.Errorf("read the journal's header: %w", err)
-	}
+	header, _ := text.JournalHeader()
 	return journalInfoOf(report, header), nil
 }
 

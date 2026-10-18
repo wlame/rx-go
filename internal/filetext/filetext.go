@@ -131,6 +131,15 @@ func (t *Text) Close() error {
 	return t.decoder.Close()
 }
 
+// JournalHeader is the header of a journal, as the reader read it when
+// the text was opened; ok is false for every other format.
+func (t *Text) JournalHeader() (h journal.Header, ok bool) {
+	if t.journal == nil {
+		return journal.Header{}, false
+	}
+	return t.journal.Header(), true
+}
+
 // JournalReport is the reader's report for a journal, complete once Read
 // returned io.EOF; ok is false for every other format.
 func (t *Text) JournalReport() (r journal.Report, ok bool) {

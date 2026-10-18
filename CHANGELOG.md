@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The `journal` section of a systemd journal's index describes one
+  state of the file: the header the reader read when it opened the
+  text, which the walk followed. Before, the header was read a second
+  time after the walk, so one `rx index --json` of a live journal
+  could report the entry count of one header and the `state`,
+  `head_seqnum` and `tail_seqnum` of a later one.
 - A UTF-8 byte-order mark at the start of a file no longer hides line
   1's timestamp: the parser reads the time right after the mark, so
   the index, `rx samples` (`line_timestamps`), `rx time-range`
