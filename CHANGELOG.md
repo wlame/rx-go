@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Nested search roots: with `--search-root=/a --search-root=/a/.b`, a
+  path under `/a/.b` was refused as hidden (exit 4, HTTP 403) because
+  it was checked against `/a`, the first root that holds it, and
+  accepted with the roots in the other order. The hidden rule now
+  applies below the nearest root that holds the path, so a hidden
+  directory named as a root serves its files whatever the order of the
+  roots, and a walk follows a link into it. `/a/.b/.c/y.log` and
+  `/a/.other/z.log` stay refused.
 - `rx compress … --output-dir=DIR` with a bad `--level`, `--frame-size`
   or `--workers` no longer creates `DIR` before it refuses the flag: the
   flags are checked first, so a usage error (exit 2) leaves no directory

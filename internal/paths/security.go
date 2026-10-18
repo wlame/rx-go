@@ -171,8 +171,15 @@ func ValidatePathWithinRoots(path string) (string, error) {
 
 // checkCanonical applies the sandbox rules to canonical, the location
 // path names with every symlink already resolved: it must lie inside
-// one of roots (which are canonical too), and no component below that
-// root may be hidden unless hidden entries are on.
+// one of roots (which are canonical too), and no component below the
+// nearest of those roots may be hidden unless hidden entries are on.
+//
+// The nearest root is the longest one that holds the path. Roots may
+// nest (`--search-root=/srv --search-root=/srv/.archive`), and a hidden
+// root is a deliberate choice of the operator: a file under
+// /srv/.archive is served because that root holds it, whatever the
+// order the two roots were given in, while /srv/.other/x.log, below no
+// root but /srv, is refused as hidden.
 //
 // path is only used in the error, so the caller's own spelling of the
 // path is what a user reads back.
@@ -183,20 +190,34 @@ func ValidatePathWithinRoots(path string) (string, error) {
 // directory leads; sharing it is what makes a walk refuse exactly what
 // naming the same entry would.
 func checkCanonical(path, canonical string, roots []string) error {
-	sep := string(filepath.Separator)
-	for _, root := range roots {
-		if canonical == root || strings.HasPrefix(canonical, root+sep) {
-			// Inside the sandbox. One more rule: hidden entries below
-			// the root are not served unless asked for. See hidden.go.
-			if !IncludeHidden() {
-				if component := hiddenComponentBelow(root, canonical); component != "" {
-					return &ErrHiddenPath{Path: path, Component: component}
-				}
-			}
-			return nil
+	root, inside := nearestRoot(canonical, roots)
+	if !inside {
+		return &ErrPathOutsideRoots{Path: path, Roots: roots}
+	}
+	// Inside the sandbox. One more rule: hidden entries below the
+	// nearest root are not served unless asked for. See hidden.go.
+	if !IncludeHidden() {
+		if component := hiddenComponentBelow(root, canonical); component != "" {
+			return &ErrHiddenPath{Path: path, Component: component}
 		}
 	}
-	return &ErrPathOutsideRoots{Path: path, Roots: roots}
+	return nil
+}
+
+// nearestRoot returns the root of roots that holds canonical and lies
+// nearest to it (the longest one), and false when none holds it. The
+// stored order of roots is left as it is: the error messages list the
+// roots as the operator gave them.
+func nearestRoot(canonical string, roots []string) (string, bool) {
+	sep := string(filepath.Separator)
+	nearest, found := "", false
+	for _, root := range roots {
+		holds := canonical == root || strings.HasPrefix(canonical, root+sep)
+		if holds && (!found || len(root) > len(nearest)) {
+			nearest, found = root, true
+		}
+	}
+	return nearest, found
 }
 
 // IsPathWithinRoots is a bool-returning wrapper — useful for UI checks

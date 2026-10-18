@@ -120,7 +120,12 @@ rx serve --search-root=/var/log --search-root=/var/data/exports
 ```
 
 Any path that resolves outside all configured roots is rejected with
-`403 path_outside_search_root` (HTTP) or exit code 4 (CLI).
+`403 path_outside_search_root` (HTTP) or exit code 4 (CLI). Roots may
+nest (`--search-root=/srv --search-root=/srv/.archive`): a path is
+checked against the nearest root that holds it, whatever the order the
+roots were given in, so a hidden directory named as a root serves its
+files although a parent directory is a root too (see
+[hidden entries](#hidden-files-and-directories)).
 
 The HTTP body is the `SandboxError` shape, published in the OpenAPI
 document and identical in both backends:
@@ -296,9 +301,13 @@ reported as skipped.
 
 The target is checked the way a named path is: its symlinks are
 resolved, the result must lie inside a root, and no component below
-that root may be hidden. So a link that would answer 403 (HTTP) or exit
-code 4 (CLI) when named directly is never searched as part of a
-directory either.
+the nearest root that holds it may be hidden. So a link that would
+answer 403 (HTTP) or exit code 4 (CLI) when named directly is never
+searched as part of a directory either; and a link into a hidden
+directory that is itself a root is followed, since naming a file in
+that root is allowed. The listing of the parent still leaves the
+hidden entry itself out (entries are skipped by name): the root is
+reached as its own tree, or through such a link.
 
 A skipped link appears in `skipped_files` of a trace answer, and in
 `skipped` and `skip_reasons` of `rx index --json`, so you can see that
