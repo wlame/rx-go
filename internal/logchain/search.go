@@ -1250,10 +1250,7 @@ func (r *searchResolver) addOwnFile(src paths.Pinned, entry entryID) {
 // path and through a link to its directory, and different for two hard
 // links, which are two names a person can mean apart.
 func fileKey(src paths.Pinned) string {
-	if canonical := src.Canonical(); canonical != "" {
-		return canonical
-	}
-	return absPath(src.Path())
+	return trace.FileKey(src)
 }
 
 // planFile classifies a file and adds it to the plan, or skips it with

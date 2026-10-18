@@ -104,16 +104,15 @@ func TestTraceCommand_DirectoryWalkStaysInsideTheSearchRoot(t *testing.T) {
 
 	resp := traceDirJSON(t, tree.Root)
 
-	wantFiles := sorted(tree.In, tree.InLink, tree.Deep)
+	// in.log is searched once, under its own path: inlink.log leads to
+	// the same file, which the walk met first by its name. sub is
+	// searched once too: subdirlink is a second way into it and is
+	// reported as skipped.
+	wantFiles := sorted(tree.In, tree.Deep)
 	if got := searchedFiles(resp); !slices.Equal(got, wantFiles) {
 		t.Errorf("searched %v, want %v", got, wantFiles)
 	}
-	// sub is searched once, under its own path: subdirlink is a second
-	// way into it and is reported as skipped.
-	wantTexts := []string{
-		"LINE 1 deep NEEDLE",
-		"LINE 1 inside NEEDLE", "LINE 1 inside NEEDLE",
-	}
+	wantTexts := []string{"LINE 1 deep NEEDLE", "LINE 1 inside NEEDLE"}
 	if got := matchedTexts(resp); !slices.Equal(got, wantTexts) {
 		t.Errorf("matched %v, want %v", got, wantTexts)
 	}
@@ -132,11 +131,11 @@ func TestTraceCommand_NoRecursiveWalkStaysInsideTheSearchRoot(t *testing.T) {
 
 	resp := traceDirJSON(t, tree.Root, "--no-recursive")
 
-	wantFiles := sorted(tree.In, tree.InLink)
+	wantFiles := sorted(tree.In)
 	if got := searchedFiles(resp); !slices.Equal(got, wantFiles) {
 		t.Errorf("searched %v, want %v", got, wantFiles)
 	}
-	wantTexts := []string{"LINE 1 inside NEEDLE", "LINE 1 inside NEEDLE"}
+	wantTexts := []string{"LINE 1 inside NEEDLE"}
 	if got := matchedTexts(resp); !slices.Equal(got, wantTexts) {
 		t.Errorf("matched %v, want %v", got, wantTexts)
 	}

@@ -55,18 +55,20 @@ func TestTrace_DirectoryWalkStaysInsideTheSearchRoot(t *testing.T) {
 		wantMatches int
 	}{
 		{
-			name:        "recursive",
-			query:       url.Values{"path": {tree.Root}, "regexp": {"NEEDLE"}},
-			wantFiles:   sortedStrings(tree.In, tree.InLink, tree.Deep),
+			name:  "recursive",
+			query: url.Values{"path": {tree.Root}, "regexp": {"NEEDLE"}},
+			// inlink.log leads to in.log, which the walk met first by
+			// its name: one file, searched once.
+			wantFiles:   sortedStrings(tree.In, tree.Deep),
 			wantSkipped: sortedStrings(tree.Out, tree.OutDir, tree.Visible, tree.Loop, tree.Self, tree.Dangling, tree.SubDirLink),
-			wantMatches: 3,
+			wantMatches: 2,
 		},
 		{
 			name:        "no_recursive",
 			query:       url.Values{"path": {tree.Root}, "regexp": {"NEEDLE"}, "no_recursive": {"true"}},
-			wantFiles:   sortedStrings(tree.In, tree.InLink),
+			wantFiles:   sortedStrings(tree.In),
 			wantSkipped: sortedStrings(tree.Out, tree.Visible, tree.Self, tree.Dangling),
-			wantMatches: 2,
+			wantMatches: 1,
 		},
 	}
 	for _, tc := range cases {

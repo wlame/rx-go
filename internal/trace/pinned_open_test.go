@@ -180,7 +180,13 @@ func TestTrace_LinkRetargetedBeforeTheReadIsNotRead(t *testing.T) {
 	}
 }
 
-// A link met in a directory walk and retargeted before the read.
+// A link met in a directory walk and retargeted before the read. The
+// walk meets the link (app.log) before the file it leads to (real.log),
+// so the file is planned once, under the link's spelling; the retarget
+// makes that read refuse, and nothing of the file is read under the
+// other name either: a file changed between the check and the read is
+// skipped, never read through a second spelling that was checked
+// against the old target.
 func TestTrace_WalkedLinkRetargetedBeforeTheReadIsNotRead(t *testing.T) {
 	requireRipgrep(t)
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
@@ -190,8 +196,11 @@ func TestTrace_WalkedLinkRetargetedBeforeTheReadIsNotRead(t *testing.T) {
 	resp := traceOnce(t, f.root, []string{"NEEDLE"}, opts)
 
 	requireOnlyCheckedText(t, resp, f.link)
-	if !slices.Contains(mapValues(resp.Files), f.real) {
-		t.Errorf("searched %v, want %s among them", resp.Files, f.real)
+	if files := mapValues(resp.Files); len(files) != 1 || files[0] != f.link {
+		t.Errorf("searched %v, want the one file under the link's spelling %s", resp.Files, f.link)
+	}
+	if len(resp.Matches) != 0 {
+		t.Errorf("got %d matches, want none: the only way to the file was retargeted", len(resp.Matches))
 	}
 }
 

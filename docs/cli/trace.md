@@ -106,6 +106,14 @@ rather than help it.
   and no trace-cache entry is written for it.
   A `-` whose input is empty searches nothing and reports no matches,
   rather than falling back to the current directory.
+- A file reached twice is searched once, under one id, so each of its
+  matches comes once: the same path given twice, a directory and a
+  file in it, a directory and its subdirectory, a path and a symbolic
+  link to it, or two spellings of one path (`./a.log` and its absolute
+  path). The file keeps the first spelling it was reached under. Two
+  hard links are two files, and so are two spellings of a directory
+  that differ only in case on a case-insensitive disk: where `rx`
+  cannot tell that two paths are one file, it searches both.
 - ripgrep's matching flags `-i`, `-w`, `-x`, `-F` and `-P` are `rx`
   flags, accepted anywhere on the line, and reach ripgrep on every path:
   plain files, compressed streams, seekable frames and the trace cache.

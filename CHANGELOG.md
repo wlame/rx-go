@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   negative line is keyed by the line it names. The docs had shown the
   form for a long time; the parser refused it.
 
+### Fixed
+
+- A file reached twice in one search — the same path given twice, a
+  directory and a file in it, a directory and its subdirectory, a path
+  and a symbolic link to it, or two spellings of one path — is
+  searched once, under one file id, and each of its matches is
+  reported once. Before, `rx trace -e X a.log a.log` listed `f1` and
+  `f2` for the file, reported every match twice under `f2`, and left
+  `f1` without matches; a directory given with a file inside it did
+  the same. The file keeps the first spelling it was reached under.
+  `rx logs trace` already searched each file once; it now shares the
+  one rule.
+
 ### Changed
 
 - A bad `--lines` value is reported as a line, not an offset:

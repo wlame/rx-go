@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -247,28 +248,26 @@ func (e *Engine) RunResolved(
 	// Phase 1: assign file IDs
 	// -------------------------------------------------------------------
 	// Each file is reported under the caller's spelling of its path, and
-	// read only through its pin (sources), which refuses a path that no
-	// longer leads to the file ExpandPaths checked.
-	filePaths := make([]string, len(files))
+	// read only through its pin, which refuses a path that no longer
+	// leads to the file ExpandPaths checked. The id travels with the
+	// file into its bucket: nothing looks a file up by its path, so two
+	// files that share a spelling could never share an id.
 	fileIDs := make(map[string]string, len(files))
-	filePathToID := make(map[string]string, len(files))
+	filePaths := make([]string, len(files))
 	sources := make(map[string]sandbox.Pinned, len(files))
-	// What each file is (filekind), decided once by ExpandPaths from
-	// the file's own bytes.
-	kinds := make(map[string]filekind.Kind, len(files))
 	for i, file := range files {
 		id := "f" + strconv.Itoa(i+1)
-		filePaths[i] = file.src.Path()
 		fileIDs[id] = file.src.Path()
-		filePathToID[file.src.Path()] = id
+		filePaths[i] = file.src.Path()
 		sources[id] = file.src
-		kinds[id] = file.kind
 	}
 
 	// -------------------------------------------------------------------
 	// Phase 2: classify each file
 	// -------------------------------------------------------------------
 	type fileBucket struct {
+		// id is the file's id in the answer (f1, f2, …).
+		id   string
 		kind string // "regular" | "compressed" | "seekable" | "cached-regular" | "cached-seekable"
 		path string
 		// src is the file as ExpandPaths checked it. Every read of the
@@ -296,8 +295,9 @@ func (e *Engine) RunResolved(
 	var buckets []fileBucket
 	fileChunkCounts := make(map[string]int)
 
-	for _, fp := range filePaths {
-		src := sources[filePathToID[fp]]
+	for i, file := range files {
+		id := "f" + strconv.Itoa(i+1)
+		fp, src := file.src.Path(), file.src
 		// The current stat, for the size the scan plans from; Stat
 		// refuses it when the path no longer leads to the checked file.
 		fi, err := src.Stat()
@@ -313,7 +313,9 @@ func (e *Engine) RunResolved(
 			fi = nil
 		}
 
-		kind := kinds[filePathToID[fp]]
+		// What the file is (filekind), decided once by ExpandPaths from
+		// the file's own bytes.
+		kind := file.kind
 		if kind.TableMismatch != nil {
 			slog.Default().Warn("seek_table_mismatch", "path", fp, "error", kind.TableMismatch.Error(),
 				"read_as", "plain zstd")
@@ -332,37 +334,37 @@ func (e *Engine) RunResolved(
 			if opts.usesTraceCache(fp) {
 				if info, cerr := GetCompressedCacheInfo(fp, patterns, opts.RgExtraArgs); cerr == nil {
 					buckets = append(buckets, fileBucket{
-						kind: "cached-seekable", path: fp, src: src, size: sz, info: fi, cacheInfo: info,
+						id: id, kind: "cached-seekable", path: fp, src: src, size: sz, info: fi, cacheInfo: info,
 					})
-					fileChunkCounts[filePathToID[fp]] = info.ChunkCount
+					fileChunkCounts[id] = info.ChunkCount
 					continue
 				}
 			}
-			buckets = append(buckets, fileBucket{kind: "seekable", path: fp, src: src, size: sz, info: fi, table: tbl})
+			buckets = append(buckets, fileBucket{id: id, kind: "seekable", path: fp, src: src, size: sz, info: fi, table: tbl})
 			// Chunk count for seekable = frame count.
-			fileChunkCounts[filePathToID[fp]] = tbl.NumFrames
+			fileChunkCounts[id] = tbl.NumFrames
 			continue
 		}
 		if kind.IsCompressed() {
 			buckets = append(buckets, fileBucket{
-				kind: "compressed", path: fp, src: src, size: sz, info: fi, format: kind.Format,
+				id: id, kind: "compressed", path: fp, src: src, size: sz, info: fi, format: kind.Format,
 			})
-			fileChunkCounts[filePathToID[fp]] = 1
+			fileChunkCounts[id] = 1
 			continue
 		}
 		// Regular files — try cache if large enough.
 		if opts.usesTraceCache(fp) && sz >= largeFileThresholdBytes() {
 			if cached, cerr := GetCachedScan(fp, patterns, opts.RgExtraArgs); cerr == nil {
 				buckets = append(buckets, fileBucket{
-					kind: "cached-regular", path: fp, src: src, size: sz, info: fi, cachedMatch: cached.Matches,
+					id: id, kind: "cached-regular", path: fp, src: src, size: sz, info: fi, cachedMatch: cached.Matches,
 				})
 				// The chunk count of the scan that wrote the cache, so a
 				// cache hit answers exactly what that scan answered.
-				fileChunkCounts[filePathToID[fp]] = cached.ChunkCount
+				fileChunkCounts[id] = cached.ChunkCount
 				continue
 			}
 		}
-		buckets = append(buckets, fileBucket{kind: "regular", path: fp, src: src, size: sz, info: fi, statErr: statErr})
+		buckets = append(buckets, fileBucket{id: id, kind: "regular", path: fp, src: src, size: sz, info: fi, statErr: statErr})
 	}
 
 	// -------------------------------------------------------------------
@@ -413,7 +415,7 @@ func (e *Engine) RunResolved(
 		if opts.MaxResults != nil && found >= *opts.MaxResults {
 			break
 		}
-		fileID := filePathToID[b.path]
+		fileID := b.id
 		fileStart := time.Now()
 		if b.info != nil {
 			// gated helper — no-op in CLI mode.
@@ -875,10 +877,27 @@ func ClassifyForSearch(src sandbox.Pinned) (SearchFile, error) {
 // file is read. The plan's skips name, each with its reason, every path
 // refused, every file that cannot be opened, every file whose text is
 // not text (a binary file, a .tar.gz, UTF-16) and every subdirectory
-// that cannot be listed; the rest of a tree is still searched.
+// that cannot be listed; the rest of a tree is still searched. A file
+// reached twice, however spelled (FileKey), is planned once: searched
+// under the first spelling, or skipped once.
 func ExpandPaths(paths []string, recursive bool) *SearchPlan {
 	plan := &SearchPlan{Paths: paths}
 	skips := &skipList{}
+	// planned holds the key (FileKey) of every file the plan has met,
+	// searched or skipped, so a file reached twice is planned once.
+	planned := map[string]bool{}
+	addFile := func(src sandbox.Pinned) {
+		key := FileKey(src)
+		if planned[key] {
+			return
+		}
+		planned[key] = true
+		if file, reason := classifyForSearch(src); reason == "" {
+			plan.Files = append(plan.Files, file)
+		} else {
+			skips.add(src.Path(), reason)
+		}
+	}
 	for _, p := range paths {
 		src, err := sandbox.Pin(p)
 		if err != nil {
@@ -886,11 +905,7 @@ func ExpandPaths(paths []string, recursive bool) *SearchPlan {
 			continue
 		}
 		if !src.Info().IsDir() {
-			if file, reason := classifyForSearch(src); reason == "" {
-				plan.Files = append(plan.Files, file)
-			} else {
-				skips.add(p, reason)
-			}
+			addFile(src)
 			continue
 		}
 
@@ -912,16 +927,33 @@ func ExpandPaths(paths []string, recursive bool) *SearchPlan {
 			case entry.Refused != "":
 				skips.add(entry.Path, entry.Refused)
 			default:
-				if file, reason := classifyForSearch(entry.File); reason == "" {
-					plan.Files = append(plan.Files, file)
-				} else {
-					skips.add(entry.Path, reason)
-				}
+				addFile(entry.File)
 			}
 		}
 	}
 	plan.Skipped = skips.reasons()
 	return plan
+}
+
+// FileKey is the key under which a search knows a file, so that a file
+// reached twice — the same path twice, a directory and a file in it, a
+// path and a symbolic link to it, a cleaned and an uncleaned spelling —
+// is searched once, under the first spelling, and each of its matches
+// comes once: the path the pin led to with every symbolic link
+// resolved (Pinned.Canonical), or the path cleaned and made absolute
+// when the pin resolved none. Two hard links are two keys and so two
+// files, and so are two spellings of a directory that differ only in
+// case on a case-insensitive disk: where the search cannot tell that
+// two paths are one file, it searches both, so a line may come twice
+// but always comes.
+func FileKey(src sandbox.Pinned) string {
+	if canonical := src.Canonical(); canonical != "" {
+		return canonical
+	}
+	if abs, err := filepath.Abs(src.Path()); err == nil {
+		return abs
+	}
+	return filepath.Clean(src.Path())
 }
 
 // classifyForSearch decides what src is through its pin. reason is

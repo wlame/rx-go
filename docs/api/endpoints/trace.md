@@ -220,7 +220,7 @@ link-local, or CGNAT addresses). See [webhooks](../webhooks.md).
 | `path` | `string[]` | The requested paths (validated & absolute) |
 | `time` | number | Wall-clock elapsed seconds for the scan |
 | `patterns` | `{id: pattern}` | Pattern ID → original string map |
-| `files` | `{id: path}` | File ID → absolute path map |
+| `files` | `{id: path}` | File ID → path map, in the order the files were given or walked. A file reached twice (one `path` twice, a directory and a file in it, a path and a link to it, two spellings of one path) is listed once, under the first spelling, and searched once |
 | `matches` | array | Sorted by file in the order of `path` (`f1`, `f2`, …, `f10`; a directory's files in walk order), then by `offset`, then by pattern in the order given (`p1`, `p2`, …, `p10`). Under `max_results`, the first of the matches found in this order. See below |
 | `scanned_files` | `string[]` | Every file searched, once any path in `path` is a directory; empty when every path is a file. `files` lists every file searched either way |
 | `skipped_files` | `string[]` | Paths passed over (not text, unreadable, a link the walk refuses, a subdirectory it cannot list) or not searched in full (a truncated stream, a damaged seekable frame, a damaged systemd journal: their matches are kept) |
