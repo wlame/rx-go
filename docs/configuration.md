@@ -255,6 +255,11 @@ curl -s http://127.0.0.1:7777/health | jq '.search_roots'
 
 ## Boolean parsing
 
+This is the grammar of the environment variables. Query parameters of
+the HTTP API follow another one (`true`/`false`, `1`/`0`, `t`/`f`;
+`yes` and `on` are a 422): see
+[query parameter conventions](api/conventions.md#query-parameter-conventions).
+
 Every boolean variable (`RX_HIDDEN`, `RX_NO_INDEX`, `RX_MASK_SECRETS`,
 `RX_ALLOW_INTERNAL_HOOKS`, `RX_HOOK_STRICT_IP_ONLY`,
 `RX_DISABLE_CUSTOM_HOOKS`) follows one rule. These values are true:

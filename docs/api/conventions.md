@@ -114,7 +114,9 @@ recovered panic.
   are in a single string: `?lines=100,200-300,500`
 - **Booleans**: `true` / `false`, `True` / `False`, `TRUE` / `FALSE`,
   `t` / `f`, `T` / `F`, `1` / `0`; anything else, such as `yes` or
-  `on`, is a `422`
+  `on`, is a `422`. The `RX_*` environment variables follow another
+  grammar (`yes` and `on` are true there): see
+  [boolean parsing](../configuration.md#boolean-parsing)
 - **Integers**: decimal, non-negative unless documented otherwise
 - **Sentinel `-1`**: on `/v1/samples`, `context`, `before_context`, and
   `after_context` accept `-1` to mean "not provided, use default"; on

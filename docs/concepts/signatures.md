@@ -100,7 +100,7 @@ Every signature has exactly one of the four kind keys: `regex`,
 | `regex` | regex | the anchor: a line matches when the regex finds a match in it |
 | `not` | regex | the line must not match it (the RE2 way to say "not followed by") |
 | `capture` | whole number, at least 0 | which group of the regex is the value; `0` (the default) is the whole match; the first match on the line is used |
-| `entropy` | number, 0 to 8 | the least Shannon entropy, in bits per byte, the value must have |
+| `entropy` | number, 0 to 8 | the least Shannon entropy, in bits per byte, the value must have. No built-in uses it: a threshold on a captured value is for a signature whose regex already finds the value; to find high-entropy tokens without a regex for them, use the [`entropy` measure](#measure-go-code-with-parameters) |
 | `validate` | `luhn`, `iban`, `ipv4`, `ipv6` | a check on the value after the regex |
 
 These fields sit at the top of the signature, beside `regex`; on a
@@ -159,8 +159,8 @@ Every block also takes:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `max_lines` | `200` | 1 to 10,000: the block closes after this many lines, the start line included |
-| `min_lines` | `1` | a block shorter than this is not a finding |
+| `max_lines` | `200` | 1 to 10,000: the block closes after this many lines, the start line included; every joined line counts, blank ones included |
+| `min_lines` | `1` | a block shorter than this is not a finding; the count runs from the start line to the last non-blank line, so trailing blank lines do not count (a start line plus one blank line is one line) |
 | `not` | — | a regex the start line must not match |
 
 ### `run`: consecutive lines
@@ -189,7 +189,11 @@ measure: {name: long-line, factor: 50, min_bytes: 4096}
 parameters. A parameter left out takes its default. A duration is a
 number and a unit: `500ms`, `60s`, `5m`, `2h` or `1d`, at most `3650d`,
 in whole milliseconds; a negative, longer or finer one refuses the
-signature.
+signature. The YAML may spell a value as it likes; rx prints the
+parameters in one canonical form — a duration in the largest unit that
+divides it, so `60s` prints as `1m` and `90s` stays `90s` — in
+`rx signatures show`, `rx signatures --json`, `GET /v1/signatures`
+(`measure.params`) and the findings cache key.
 
 | Measure | Parameter | Default | Range |
 |---|---|---|---|

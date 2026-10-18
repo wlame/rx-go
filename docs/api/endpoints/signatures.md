@@ -114,7 +114,7 @@ Shortened to one signature and four of the groups:
 | `overrides` | bool | A user signature that replaced the built-in of the same id |
 | `disabled_by` | object \| null | `{"file", "line"}` of the `disable` entry that switched a built-in off |
 | `examples` | object | `match` and `no_match` texts |
-| `regex`, `block`, `run`, `measure` | object \| null | The definition of the signature's kind, defaults applied, as [`rx signatures show`](../../cli/signatures.md) prints it |
+| `regex`, `block`, `run`, `measure` | object \| null | The definition of the signature's kind, defaults applied, as [`rx signatures show`](../../cli/signatures.md) prints it. A measure's `params` are in canonical form: a duration in the largest unit that divides it, so a YAML `60s` reads `1m` and `90s` stays `90s` |
 
 ## Status codes
 
