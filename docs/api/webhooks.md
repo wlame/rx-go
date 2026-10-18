@@ -199,8 +199,8 @@ connect-time check still applies.
 
 | Variable | Effect |
 |---|---|
-| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass the address checks; the scheme, host and credentials rules above still apply. Use only when you actually need internal destinations (e.g. an internal logging service). |
-| `RX_HOOK_STRICT_IP_ONLY=true` | Reject **any** hostname, accept only IP literals. No name is resolved at all. Operators must maintain IP allowlists. |
+| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass the address checks; the scheme, host and credentials rules above still apply, and so does `RX_HOOK_STRICT_IP_ONLY`. Use only when you actually need internal destinations (e.g. an internal logging service). |
+| `RX_HOOK_STRICT_IP_ONLY=true` | Reject **any** hostname, accept only IP literals. No name is resolved at all. Operators must maintain IP allowlists. With `RX_ALLOW_INTERNAL_HOOKS=true` as well, an internal IP literal is accepted and a hostname still refused. |
 
 Each of the two is on when its value is `true`, `yes`, `1` or `on`, in
 any case; any other value leaves it off.

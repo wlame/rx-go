@@ -167,8 +167,8 @@ See [concepts/security](concepts/security.md).
 | `RX_HOOK_ON_MATCH_URL` | — | URL fired per match (requires `max_results`) |
 | `RX_HOOK_ON_COMPLETE_URL` | — | URL fired once per trace |
 | `RX_DISABLE_CUSTOM_HOOKS` | `false` | When truthy, per-request hook URLs (query params / flags) are silently ignored; only env-configured URLs fire. |
-| `RX_ALLOW_INTERNAL_HOOKS` | `false` | When truthy, bypass all SSRF checks. Loopback / private / link-local URLs become valid. |
-| `RX_HOOK_STRICT_IP_ONLY` | `false` | When truthy, reject every hostname; only IP-literal URLs are allowed. Strongest defense against DNS rebinding. |
+| `RX_ALLOW_INTERNAL_HOOKS` | `false` | When truthy, bypass the address checks of the SSRF guard: loopback, private and link-local URLs become valid. The scheme, host and credentials rules and `RX_HOOK_STRICT_IP_ONLY` still apply. |
+| `RX_HOOK_STRICT_IP_ONLY` | `false` | When truthy, reject every hostname; only IP-literal URLs are allowed. Strongest defense against DNS rebinding. Independent of `RX_ALLOW_INTERNAL_HOOKS`: with both set, an internal IP literal is accepted and a hostname refused. |
 
 See [concepts/security](concepts/security.md) and
 [api/webhooks](api/webhooks.md).

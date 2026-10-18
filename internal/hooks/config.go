@@ -234,15 +234,16 @@ func defaultResolveHost(ctx context.Context, host string) ([]net.IP, error) {
 // catches static DNS poisoning (attacker controls DNS, points
 // evil.example.com → 127.0.0.1).
 //
-// Option Z (R2M5): when RX_HOOK_STRICT_IP_ONLY=true, hostname URLs
-// are rejected UNCONDITIONALLY. Operators must supply IP literals.
-// This is the strongest defense against DNS rebinding (where DNS
-// flips AFTER validation, between validation and call time). Opt-in
-// because it forces operators to maintain IP allowlists.
-//
-// Operators who need to hit internal endpoints (e.g. a sidecar
-// logging collector) can still opt in with RX_ALLOW_INTERNAL_HOOKS=true.
-// That bypasses ALL of the above guards — use with care.
+// The two operator switches answer different questions and are
+// independent of each other. RX_HOOK_STRICT_IP_ONLY=true says how a
+// destination may be named: only as an IP literal, so no name is ever
+// resolved and no DNS answer can steer a call (the strongest defense
+// against DNS rebinding, where DNS flips after validation, between
+// validation and call time; opt-in because operators then maintain IP
+// allowlists). RX_ALLOW_INTERNAL_HOOKS=true says which addresses a
+// webhook may reach: internal ones too (a sidecar logging collector),
+// so it switches off the address checks and nothing else. With both
+// set, a hostname is refused and an internal IP literal is accepted.
 func ValidateURL(raw string) error {
 	if raw == "" {
 		return nil
@@ -269,23 +270,29 @@ func ValidateURL(raw string) error {
 	if u.User != nil {
 		return fmt.Errorf("%w: %s (URL must not contain credentials)", ErrInvalidHookURL, raw)
 	}
-	// Short-circuit: operator opt-in bypasses ALL further guards.
-	if parseBoolEnv(os.Getenv("RX_ALLOW_INTERNAL_HOOKS")) {
-		return nil
-	}
 	host := u.Hostname()
 
-	// Option Z: strict-IP-only mode. Reject any hostname that isn't a
-	// literal IP. We run this BEFORE the static internalHostReason
-	// check so the strict-IP policy applies uniformly regardless of
-	// what the hostname might resolve to.
+	// Strict-IP-only mode: reject any hostname that is not a literal
+	// IP. It is a rule about how the destination is named, not about
+	// its address, so it is checked before RX_ALLOW_INTERNAL_HOOKS and
+	// before the static internalHostReason check: the policy applies
+	// whatever the hostname might resolve to, and whatever addresses
+	// the operator allows.
 	if parseBoolEnv(os.Getenv("RX_HOOK_STRICT_IP_ONLY")) {
 		if net.ParseIP(host) == nil {
 			return fmt.Errorf("%w: %s (RX_HOOK_STRICT_IP_ONLY is set — hostname %q must be an IP literal)",
 				ErrInvalidHookURL, raw, host)
 		}
 		// Fall through: IP literal — still needs to clear the
-		// internal-host guard below.
+		// internal-host guard below, unless the operator allows
+		// internal addresses.
+	}
+
+	// Operator opt-in: internal addresses are allowed, so the address
+	// checks below are skipped. The naming rule above is not an
+	// address check and has been applied already.
+	if parseBoolEnv(os.Getenv("RX_ALLOW_INTERNAL_HOOKS")) {
+		return nil
 	}
 
 	// Static guard: covers IP literals and the 'localhost' string.

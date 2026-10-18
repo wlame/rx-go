@@ -652,8 +652,8 @@ shouldn't false-positive-reject every validation.
 
 | Variable | Effect |
 |---|---|
-| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass all SSRF checks, `RX_HOOK_STRICT_IP_ONLY` included: with both set, a hostname is accepted. The rule against credentials in the URL still applies. Use only when you explicitly need an internal destination. |
-| `RX_HOOK_STRICT_IP_ONLY=true` | Reject every hostname; accept only IP literals. Strongest mitigation against DNS rebinding. |
+| `RX_ALLOW_INTERNAL_HOOKS=true` | Bypass the address checks (the static table, the DNS-resolution check and the dial-time check). The rules on the scheme, the host and credentials in the URL still apply, and so does `RX_HOOK_STRICT_IP_ONLY`. Use only when you explicitly need an internal destination. |
+| `RX_HOOK_STRICT_IP_ONLY=true` | Reject every hostname; accept only IP literals. Strongest mitigation against DNS rebinding. Independent of `RX_ALLOW_INTERNAL_HOOKS`: with both set, a hostname is refused and an internal IP literal (`http://10.0.0.5/collect`) is accepted — "internal destinations, named by address only". |
 
 ### Redirects are refused
 

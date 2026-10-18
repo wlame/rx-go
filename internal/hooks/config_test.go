@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -386,6 +387,33 @@ func TestValidateURL_R2M5_InternalIPLiteralStillRejectedUnderStrictIP(t *testing
 				t.Errorf("strict-IP mode ALLOWED internal IP %q — guard broke", u)
 			}
 		})
+	}
+}
+
+// The two switches are independent: with RX_ALLOW_INTERNAL_HOOKS and
+// RX_HOOK_STRICT_IP_ONLY both set, a hostname is still refused (the
+// strict-IP rule is about naming, not about addresses) and an internal
+// IP literal is accepted (the operator allowed internal addresses).
+func TestValidateURL_StrictIPAppliesWhenInternalHooksAreAllowed(t *testing.T) {
+	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "true")
+	t.Setenv("RX_HOOK_STRICT_IP_ONLY", "true")
+	prev := resolveHostFunc
+	resolveHostFunc = func(_ context.Context, host string) ([]net.IP, error) {
+		t.Errorf("resolver called for %q under strict-IP; no name is resolved", host)
+		return nil, errors.New("should not be called")
+	}
+	t.Cleanup(func() { resolveHostFunc = prev })
+
+	for _, u := range []string{"http://localhost:9/x", "http://api.honestcorp.io/hook"} {
+		err := ValidateURL(u)
+		if !errors.Is(err, ErrInvalidHookURL) || !strings.Contains(err.Error(), "RX_HOOK_STRICT_IP_ONLY") {
+			t.Errorf("ValidateURL(%q) = %v, want the strict-IP refusal", u, err)
+		}
+	}
+	for _, u := range []string{"http://127.0.0.1:9/x", "http://10.0.0.5/collect", "http://8.8.8.8/hook"} {
+		if err := ValidateURL(u); err != nil {
+			t.Errorf("ValidateURL(%q) = %v, want an IP literal accepted", u, err)
+		}
 	}
 }
 

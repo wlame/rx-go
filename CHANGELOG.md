@@ -96,6 +96,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `RX_HOOK_STRICT_IP_ONLY` applies whatever `RX_ALLOW_INTERNAL_HOOKS`
+  says: with both set, a webhook named by a hostname is refused
+  (`RX_HOOK_STRICT_IP_ONLY is set — hostname "localhost" must be an IP
+  literal`, exit 2 / 400) and an internal IP literal is accepted. The
+  two switches answer different questions, how a destination may be
+  named and which addresses it may have; before, allowing internal
+  addresses silently switched the naming rule off.
 - `rx samples --context=-1`, `--before=-1` and `--after=-1` mean the
   default, as `context=-1`, `before_context=-1` and `after_context=-1`
   do on `GET /v1/samples`: `--context=-1` is 3, and `--before=-1`
