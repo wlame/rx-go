@@ -45,7 +45,7 @@ func TestServe_AcceptsPublicHookURLFromEnv(t *testing.T) {
 	t.Setenv("RX_HOOK_ON_COMPLETE_URL", "https://example.com/hook")
 	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "")
 
-	if err := validateEnvHooks(); err != nil {
+	if _, err := validateEnvHooks(); err != nil {
 		t.Errorf("validateEnvHooks: %v", err)
 	}
 }

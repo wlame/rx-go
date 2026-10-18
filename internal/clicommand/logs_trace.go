@@ -78,7 +78,7 @@ func runLogsTrace(out io.Writer, p traceParams) error {
 	if len(patterns) == 0 {
 		return exitWithError(os.Stderr, ExitUsageError, "at least one regex pattern is required")
 	}
-	hookConfig, err := traceHookConfig(p)
+	hookConfig, hookPolicy, err := traceHookConfig(p)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func runLogsTrace(out io.Writer, p traceParams) error {
 
 	requestID := requestIDOrNew(p.requestID)
 	var resp *rxtypes.TraceResponse
-	webhooks := startTraceHooks(hookConfig, requestID)
+	webhooks := startTraceHooks(hookConfig, hookPolicy, requestID)
 	// Go note: the deferred closure reads resp when it runs, after the
 	// search below has set it.
 	defer func() { webhooks.finish(resp) }()

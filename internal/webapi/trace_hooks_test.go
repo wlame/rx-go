@@ -81,6 +81,15 @@ type hookedTrace struct {
 // a local collector uses; the RX_HOOK_* variables start empty.
 func newHookedTrace(t *testing.T) *hookedTrace {
 	t.Helper()
+	return newHookedTraceWithEnv(t, nil)
+}
+
+// newHookedTraceWithEnv is newHookedTrace with env set on top of the
+// fixture's defaults before the server is built: the server reads the
+// hook environment once, when it is built, as `rx serve` does when it
+// starts.
+func newHookedTraceWithEnv(t *testing.T, env map[string]string) *hookedTrace {
+	t.Helper()
 	rgPath, err := exec.LookPath("rg")
 	if err != nil {
 		t.Skipf("ripgrep not installed: %v", err)
@@ -91,6 +100,9 @@ func newHookedTrace(t *testing.T) *hookedTrace {
 	t.Setenv("RX_HOOK_ON_COMPLETE_URL", "")
 	t.Setenv("RX_DISABLE_CUSTOM_HOOKS", "")
 	t.Setenv("RX_CACHE_DIR", t.TempDir())
+	for name, value := range env {
+		t.Setenv(name, value)
+	}
 
 	dir := t.TempDir()
 	var files []string
@@ -251,10 +263,9 @@ func TestTraceHooks_HTTP_OnMatchFiresPerMatchUpToTheCap(t *testing.T) {
 // The request URL wins over RX_HOOK_ON_COMPLETE_URL, the precedence the
 // CLI applies to --hook-on-complete.
 func TestTraceHooks_HTTP_RequestURLWinsOverTheEnvironment(t *testing.T) {
-	h := newHookedTrace(t)
 	fromEnv := newWebhookReceiver(t)
 	fromRequest := newWebhookReceiver(t)
-	t.Setenv("RX_HOOK_ON_COMPLETE_URL", fromEnv.server.URL)
+	h := newHookedTraceWithEnv(t, map[string]string{"RX_HOOK_ON_COMPLETE_URL": fromEnv.server.URL})
 
 	requestID := h.mustTrace(t, url.Values{"hook_on_complete": {fromRequest.server.URL}})
 	h.drain()
@@ -272,9 +283,8 @@ func TestTraceHooks_HTTP_RequestURLWinsOverTheEnvironment(t *testing.T) {
 // Without hook parameters the environment URL fires, with the request_id
 // of the request that caused it.
 func TestTraceHooks_HTTP_EnvironmentURLCarriesTheRequestID(t *testing.T) {
-	h := newHookedTrace(t)
 	fromEnv := newWebhookReceiver(t)
-	t.Setenv("RX_HOOK_ON_COMPLETE_URL", fromEnv.server.URL)
+	h := newHookedTraceWithEnv(t, map[string]string{"RX_HOOK_ON_COMPLETE_URL": fromEnv.server.URL})
 
 	requestID := h.mustTrace(t, nil)
 	h.drain()
@@ -329,9 +339,8 @@ func TestTraceHooks_HTTP_ConcurrentRequestsKeepTheirOwnEvents(t *testing.T) {
 // The SSRF guard applies to a URL given on the request: a loopback
 // target without the operator opt-in is a 400, and nothing is called.
 func TestTraceHooks_HTTP_RequestURLStillPassesTheSSRFGuard(t *testing.T) {
-	h := newHookedTrace(t)
+	h := newHookedTraceWithEnv(t, map[string]string{"RX_ALLOW_INTERNAL_HOOKS": "false"})
 	rec := newWebhookReceiver(t)
-	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "false")
 
 	for _, param := range []string{"hook_on_file", "hook_on_complete"} {
 		status, _ := h.trace(t, url.Values{param: {rec.server.URL}})

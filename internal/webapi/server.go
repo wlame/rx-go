@@ -53,6 +53,13 @@ type Config struct {
 	Hooks       *hooks.Dispatcher
 	Frontend    *frontend.Manager
 
+	// HookEnv is the hook environment the server runs with: the URLs of
+	// RX_HOOK_ON_*_URL, RX_DISABLE_CUSTOM_HOOKS and the address policy,
+	// read once by `rx serve` before it binds and used by every trace
+	// request and /health answer. nil reads the environment once, at
+	// NewServer.
+	HookEnv *hooks.HookEnv
+
 	// Logger used by middleware. Defaults to slog.Default().
 	Logger *slog.Logger
 
@@ -252,6 +259,10 @@ func applyConfigDefaults(cfg *Config) {
 	cfg.TaskManager.Start()
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.HookEnv == nil {
+		env := hooks.HookEnvFromEnv()
+		cfg.HookEnv = &env
 	}
 	if cfg.ShutdownTimeout == 0 {
 		cfg.ShutdownTimeout = 10 * time.Second

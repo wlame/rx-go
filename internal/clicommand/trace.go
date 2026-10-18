@@ -306,7 +306,7 @@ func runTrace(ctx context.Context, out io.Writer, p traceParams) error {
 		}
 	}
 
-	hookConfig, err := traceHookConfig(p)
+	hookConfig, hookPolicy, err := traceHookConfig(p)
 	if err != nil {
 		return err
 	}
@@ -366,7 +366,7 @@ func runTrace(ctx context.Context, out io.Writer, p traceParams) error {
 	// Declared before the webhooks start so the deferred on_complete
 	// can read the response the engine is about to produce.
 	var resp *rxtypes.TraceResponse
-	webhooks := startTraceHooks(hookConfig, requestID)
+	webhooks := startTraceHooks(hookConfig, hookPolicy, requestID)
 	// Go note: the deferred closure reads resp when it runs, after the
 	// engine below has set it.
 	defer func() { webhooks.finish(resp) }()
@@ -411,31 +411,32 @@ func hookOverride(flagValue string) *string {
 // RX_DISABLE_CUSTOM_HOOKS switches the flags off here too. A URL the
 // guard refuses, or a match webhook without --max-results, is a usage
 // error (exit 2).
-func traceHookConfig(p traceParams) (hooks.HookConfig, error) {
+func traceHookConfig(p traceParams) (hooks.HookConfig, hooks.Policy, error) {
 	hookOverrides := hooks.HookOverrides{
 		OnFileURL:     hookOverride(p.hookOnFile),
 		OnMatchURL:    hookOverride(p.hookOnMatch),
 		OnCompleteURL: hookOverride(p.hookOnComplete),
 	}
-	hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), hookOverrides)
+	env := hooks.HookEnvFromEnv()
+	hookConfig := hooks.EffectiveHooks(env, hookOverrides)
 
 	// SECURITY: hook URLs from the command line get the same guard the
 	// HTTP layer applies to hook_on_* query parameters — scheme
 	// allowlist, no credentials, and no loopback / link-local /
 	// private / CGNAT target.
-	if hookErr := hooks.ValidateConfig(hookConfig); hookErr != nil {
-		return hookConfig, exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
+	if hookErr := hooks.ValidateConfig(hookConfig, env.Policy); hookErr != nil {
+		return hookConfig, env.Policy, exitWithError(os.Stderr, ExitUsageError, "%s", hookErr.Error())
 	}
 
 	// A match hook without a cap is a request for one HTTP call per
 	// matching line, which on a log file is millions. The HTTP layer
 	// refuses the same combination.
 	if hookConfig.HasMatchHook() && p.maxResults <= 0 {
-		return hookConfig, exitWithError(os.Stderr, ExitUsageError,
+		return hookConfig, env.Policy, exitWithError(os.Stderr, ExitUsageError,
 			"--max-results is required when --hook-on-match is configured.\n"+
 				"This prevents accidentally triggering millions of HTTP calls.")
 	}
-	return hookConfig, nil
+	return hookConfig, env.Policy, nil
 }
 
 // validateTracePaths checks every path against the search roots, when
@@ -496,11 +497,12 @@ type traceWebhooks struct {
 // startTraceHooks starts the webhooks of a run. The dispatcher owns a
 // worker pool and a queue, so it exists only when something is actually
 // configured; otherwise the engine keeps its no-hook fast path.
-func startTraceHooks(hookConfig hooks.HookConfig, requestID string) *traceWebhooks {
+func startTraceHooks(hookConfig hooks.HookConfig, policy hooks.Policy, requestID string) *traceWebhooks {
 	if !hookConfig.HasAny() {
 		return &traceWebhooks{firer: trace.NoopHookFirer{}}
 	}
-	dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{})
+	// The dialer applies the policy the URLs were validated under.
+	dispatcher := hooks.NewDispatcher(hooks.DispatcherConfig{Policy: &policy})
 	// The same per-request view the HTTP handler uses: the URLs
 	// resolved above, and this run's request_id in every payload.
 	request := dispatcher.ForRequest(hookConfig, requestID)

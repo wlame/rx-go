@@ -42,6 +42,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/wlame/rx-go/internal/config"
 )
 
 // ============================================================================
@@ -82,9 +84,13 @@ type HookOverrides struct {
 // Environment-driven defaults
 // ============================================================================
 
-// HookEnv captures the process-wide hook configuration. Created once
-// at startup (or per-test via HookEnvFromEnv) and reused across every
-// trace request.
+// HookEnv captures the process-wide hook configuration: the URLs of
+// the environment hooks, whether per-request hooks are allowed, and the
+// address policy (Policy). It is read once, when the process starts
+// (`rx serve` reads it before it binds; a CLI trace reads it before it
+// searches), and every validation, dial and /health answer of that
+// process uses the one snapshot, so a policy an operator set never
+// disagrees with itself between the check of a URL and its call.
 type HookEnv struct {
 	OnFileURL     string
 	OnMatchURL    string
@@ -92,6 +98,30 @@ type HookEnv struct {
 	// DisableCustom mirrors RX_DISABLE_CUSTOM_HOOKS — when true,
 	// per-request overrides are ignored and only env values fire.
 	DisableCustom bool
+	// Policy is the address policy of RX_ALLOW_INTERNAL_HOOKS and
+	// RX_HOOK_STRICT_IP_ONLY, read with the rest.
+	Policy Policy
+}
+
+// Policy is the two operator switches of the webhook SSRF guard, as one
+// value: how a destination may be named (StrictIPOnly: only as an IP
+// literal) and which addresses it may have (AllowInternal: internal
+// ones too). ValidateURL applies it when a URL is checked and the
+// dispatcher's dialer when a call goes out; both take the same value.
+type Policy struct {
+	AllowInternal bool
+	StrictIPOnly  bool
+}
+
+// PolicyFromEnv reads RX_ALLOW_INTERNAL_HOOKS and RX_HOOK_STRICT_IP_ONLY
+// with the one boolean grammar every RX_* switch follows
+// (config.GetBoolEnv: true, yes, 1, on; false, no, 0, off; the
+// default, off, for anything else).
+func PolicyFromEnv() Policy {
+	return Policy{
+		AllowInternal: config.GetBoolEnv("RX_ALLOW_INTERNAL_HOOKS", false),
+		StrictIPOnly:  config.GetBoolEnv("RX_HOOK_STRICT_IP_ONLY", false),
+	}
 }
 
 // HookEnvFromEnv reads the current process environment and returns a
@@ -104,23 +134,21 @@ type HookEnv struct {
 //   - RX_HOOK_ON_MATCH_URL
 //   - RX_HOOK_ON_COMPLETE_URL
 //   - RX_DISABLE_CUSTOM_HOOKS (truthy = disable per-request overrides)
+//   - RX_ALLOW_INTERNAL_HOOKS, RX_HOOK_STRICT_IP_ONLY (Policy)
 func HookEnvFromEnv() HookEnv {
 	return HookEnv{
 		OnFileURL:     os.Getenv("RX_HOOK_ON_FILE_URL"),
 		OnMatchURL:    os.Getenv("RX_HOOK_ON_MATCH_URL"),
 		OnCompleteURL: os.Getenv("RX_HOOK_ON_COMPLETE_URL"),
-		DisableCustom: parseBoolEnv(os.Getenv("RX_DISABLE_CUSTOM_HOOKS")),
+		DisableCustom: config.GetBoolEnv("RX_DISABLE_CUSTOM_HOOKS", false),
+		Policy:        PolicyFromEnv(),
 	}
 }
 
-// parseBoolEnv recognizes the set of truthy strings Python does:
-// "true", "yes", "1" (case-insensitive). Anything else is false.
-func parseBoolEnv(v string) bool {
-	switch strings.ToLower(v) {
-	case "true", "yes", "1", "on":
-		return true
-	}
-	return false
+// EnvConfig is the hooks of env alone, as HookConfig: what fires when a
+// request names none, and what `rx serve` validates at startup.
+func (env HookEnv) EnvConfig() HookConfig {
+	return HookConfig{OnFileURL: env.OnFileURL, OnMatchURL: env.OnMatchURL, OnCompleteURL: env.OnCompleteURL}
 }
 
 // ============================================================================
@@ -244,7 +272,7 @@ func defaultResolveHost(ctx context.Context, host string) ([]net.IP, error) {
 // webhook may reach: internal ones too (a sidecar logging collector),
 // so it switches off the address checks and nothing else. With both
 // set, a hostname is refused and an internal IP literal is accepted.
-func ValidateURL(raw string) error {
+func ValidateURL(raw string, policy Policy) error {
 	if raw == "" {
 		return nil
 	}
@@ -278,7 +306,7 @@ func ValidateURL(raw string) error {
 	// before the static internalHostReason check: the policy applies
 	// whatever the hostname might resolve to, and whatever addresses
 	// the operator allows.
-	if parseBoolEnv(os.Getenv("RX_HOOK_STRICT_IP_ONLY")) {
+	if policy.StrictIPOnly {
 		if net.ParseIP(host) == nil {
 			return fmt.Errorf("%w: %s (RX_HOOK_STRICT_IP_ONLY is set — hostname %q must be an IP literal)",
 				ErrInvalidHookURL, raw, host)
@@ -291,7 +319,7 @@ func ValidateURL(raw string) error {
 	// Operator opt-in: internal addresses are allowed, so the address
 	// checks below are skipped. The naming rule above is not an
 	// address check and has been applied already.
-	if parseBoolEnv(os.Getenv("RX_ALLOW_INTERNAL_HOOKS")) {
+	if policy.AllowInternal {
 		return nil
 	}
 
@@ -421,11 +449,11 @@ func internalIPReason(ip net.IP) string {
 	return ""
 }
 
-// ValidateConfig runs ValidateURL over all three fields and returns
-// the first error, or nil.
-func ValidateConfig(c HookConfig) error {
+// ValidateConfig runs ValidateURL over all three fields under policy
+// and returns the first error, or nil.
+func ValidateConfig(c HookConfig, policy Policy) error {
 	for _, u := range []string{c.OnFileURL, c.OnMatchURL, c.OnCompleteURL} {
-		if err := ValidateURL(u); err != nil {
+		if err := ValidateURL(u, policy); err != nil {
 			return err
 		}
 	}

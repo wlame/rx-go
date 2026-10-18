@@ -234,14 +234,14 @@ func prepareTrace(s *Server, requested []string, in *TraceSwitches) (*preparedTr
 
 	// Effective hook config.
 	overrides := hookOverridesFromQuery(in.HookOnFile, in.HookOnMatch, in.HookOnComplete)
-	hookConfig := hooks.EffectiveHooks(hooks.HookEnvFromEnv(), overrides)
+	hookConfig := hooks.EffectiveHooks(*s.cfg.HookEnv, overrides)
 
 	// SSRF validation: reject hook URLs pointing at loopback / link-
 	// local / private addresses unless the operator has explicitly
 	// opted in via RX_ALLOW_INTERNAL_HOOKS. Prevents a malicious
 	// user from targeting internal infrastructure (e.g. cloud IMDS)
 	// via the request-scoped hook_on_* query params.
-	if err := hooks.ValidateConfig(hookConfig); err != nil {
+	if err := hooks.ValidateConfig(hookConfig, s.cfg.HookEnv.Policy); err != nil {
 		return nil, ErrBadRequest(err.Error())
 	}
 

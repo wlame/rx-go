@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -77,6 +76,10 @@ type DispatcherConfig struct {
 	Timeout time.Duration
 	// Logger receives structured output. nil uses slog.Default().
 	Logger *slog.Logger
+	// Policy is the address policy the dialer applies to every call:
+	// the snapshot the URLs were validated under (HookEnv.Policy). nil
+	// reads the environment once, when the dispatcher is built.
+	Policy *Policy
 }
 
 // hookEvent is a single unit of work on the queue. Which URL to hit
@@ -106,6 +109,10 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.Policy == nil {
+		policy := PolicyFromEnv()
+		cfg.Policy = &policy
+	}
 	d := &Dispatcher{
 		cfg: cfg,
 		// SECURITY: refuse every redirect. ValidateURL only ever sees
@@ -127,7 +134,7 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 			// time. guardedDialer checks the literal IP being connected
 			// to, which is the only point with no window left.
 			Transport: &http.Transport{
-				DialContext:         guardedDialer(nil, parseBoolEnv(os.Getenv("RX_ALLOW_INTERNAL_HOOKS"))),
+				DialContext:         guardedDialer(nil, cfg.Policy.AllowInternal),
 				TLSHandshakeTimeout: cfg.Timeout,
 			},
 		},

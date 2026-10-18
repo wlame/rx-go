@@ -106,6 +106,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- One boolean grammar for every `RX_*` switch: the webhook variables
+  (`RX_ALLOW_INTERNAL_HOOKS`, `RX_HOOK_STRICT_IP_ONLY`,
+  `RX_DISABLE_CUSTOM_HOOKS`) are read with the parser of `RX_HIDDEN`,
+  `RX_NO_INDEX` and `RX_MASK_SECRETS` (`true`, `yes`, `1`, `on`;
+  `false`, `no`, `0`, `off`; the default otherwise). No value changes
+  meaning: their default is off, which anything but a true word gave
+  before. The hook environment (the three URLs, the custom-hook switch
+  and the address policy) is read once, when `rx serve` starts or a
+  trace starts, and that one reading is what a hook URL is checked
+  against, what its call is dialed under and what `/health` reports;
+  before, the URL check read the environment on every request while
+  the dialer had read it once.
 - `rx samples --context`, `--before` and `--after` below -1 exit 2
   (`--context must be -1 or more, got -2`); -1 stays the default. Such
   a value used to be read as a window that missed the target line,

@@ -114,10 +114,10 @@ func TestDispatcher_OnComplete_NilResponseNoOp(t *testing.T) {
 }
 
 func TestValidateConfig_RejectsBadEntry(t *testing.T) {
-	if err := ValidateConfig(HookConfig{OnFileURL: "ftp://bad"}); err == nil {
+	if err := ValidateConfig(HookConfig{OnFileURL: "ftp://bad"}, PolicyFromEnv()); err == nil {
 		t.Error("want validation error")
 	}
-	if err := ValidateConfig(HookConfig{}); err != nil {
+	if err := ValidateConfig(HookConfig{}, PolicyFromEnv()); err != nil {
 		t.Errorf("empty config should validate; got %v", err)
 	}
 }

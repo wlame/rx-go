@@ -94,7 +94,7 @@ func TestValidateURL(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateURL(tc.in)
+			err := ValidateURL(tc.in, PolicyFromEnv())
 			gotErr := err != nil
 			if gotErr != tc.wantErr {
 				t.Errorf("ValidateURL(%q): err=%v, wantErr=%v", tc.in, err, tc.wantErr)
@@ -137,7 +137,7 @@ func TestValidateURL_RejectsInternalTargetsWithoutOptIn(t *testing.T) {
 	for _, tc := range internal {
 		tc := tc
 		t.Run("reject_"+tc.name, func(t *testing.T) {
-			err := ValidateURL(tc.url)
+			err := ValidateURL(tc.url, PolicyFromEnv())
 			if err == nil {
 				t.Errorf("ValidateURL(%q) accepted an internal URL — SSRF risk. Want rejection.", tc.url)
 			}
@@ -152,7 +152,7 @@ func TestValidateURL_RejectsInternalTargetsWithoutOptIn(t *testing.T) {
 	for _, tc := range internal {
 		tc := tc
 		t.Run("accept_with_optin_"+tc.name, func(t *testing.T) {
-			if err := ValidateURL(tc.url); err != nil {
+			if err := ValidateURL(tc.url, PolicyFromEnv()); err != nil {
 				t.Errorf("ValidateURL(%q) with RX_ALLOW_INTERNAL_HOOKS=true still rejected: %v",
 					tc.url, err)
 			}
@@ -171,19 +171,6 @@ func TestHookEnvFromEnv(t *testing.T) {
 	}
 	if !env.DisableCustom {
 		t.Errorf("DisableCustom = false, want true")
-	}
-}
-
-func TestParseBoolEnv(t *testing.T) {
-	for _, v := range []string{"true", "YES", "1", "on", "True"} {
-		if !parseBoolEnv(v) {
-			t.Errorf("parseBoolEnv(%q) = false, want true", v)
-		}
-	}
-	for _, v := range []string{"", "0", "false", "no", "bogus"} {
-		if parseBoolEnv(v) {
-			t.Errorf("parseBoolEnv(%q) = true, want false", v)
-		}
 	}
 }
 
@@ -208,7 +195,7 @@ func TestValidateURL_R2M4_RejectsCGNAT(t *testing.T) {
 	for _, u := range cgnat {
 		u := u
 		t.Run("reject_"+u, func(t *testing.T) {
-			err := ValidateURL(u)
+			err := ValidateURL(u, PolicyFromEnv())
 			if err == nil {
 				t.Errorf("ValidateURL(%q) accepted a CGNAT URL — SSRF risk.", u)
 			}
@@ -227,7 +214,7 @@ func TestValidateURL_R2M4_RejectsCGNAT(t *testing.T) {
 	for _, u := range public {
 		u := u
 		t.Run("accept_"+u, func(t *testing.T) {
-			if err := ValidateURL(u); err != nil {
+			if err := ValidateURL(u, PolicyFromEnv()); err != nil {
 				t.Errorf("ValidateURL(%q) rejected a public address as CGNAT: %v", u, err)
 			}
 		})
@@ -293,7 +280,7 @@ func TestValidateURL_R2M5_OptionX_DNSResolvesToInternal(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateURL(tc.url)
+			err := ValidateURL(tc.url, PolicyFromEnv())
 			gotErr := err != nil
 			if gotErr != tc.wantErr {
 				t.Errorf("ValidateURL(%q): err=%v, wantErr=%v", tc.url, err, tc.wantErr)
@@ -338,7 +325,7 @@ func TestValidateURL_R2M5_OptionZ_StrictIPOnly(t *testing.T) {
 	for _, u := range reject {
 		u := u
 		t.Run("reject_hostname_"+u, func(t *testing.T) {
-			err := ValidateURL(u)
+			err := ValidateURL(u, PolicyFromEnv())
 			if err == nil {
 				t.Errorf("strict-IP mode accepted hostname URL %q", u)
 			}
@@ -357,7 +344,7 @@ func TestValidateURL_R2M5_OptionZ_StrictIPOnly(t *testing.T) {
 	for _, u := range accept {
 		u := u
 		t.Run("accept_ip_literal_"+u, func(t *testing.T) {
-			if err := ValidateURL(u); err != nil {
+			if err := ValidateURL(u, PolicyFromEnv()); err != nil {
 				t.Errorf("strict-IP mode rejected IP literal %q: %v", u, err)
 			}
 		})
@@ -382,7 +369,7 @@ func TestValidateURL_R2M5_InternalIPLiteralStillRejectedUnderStrictIP(t *testing
 	for _, u := range internal {
 		u := u
 		t.Run(u, func(t *testing.T) {
-			err := ValidateURL(u)
+			err := ValidateURL(u, PolicyFromEnv())
 			if err == nil {
 				t.Errorf("strict-IP mode ALLOWED internal IP %q — guard broke", u)
 			}
@@ -405,13 +392,13 @@ func TestValidateURL_StrictIPAppliesWhenInternalHooksAreAllowed(t *testing.T) {
 	t.Cleanup(func() { resolveHostFunc = prev })
 
 	for _, u := range []string{"http://localhost:9/x", "http://api.honestcorp.io/hook"} {
-		err := ValidateURL(u)
+		err := ValidateURL(u, PolicyFromEnv())
 		if !errors.Is(err, ErrInvalidHookURL) || !strings.Contains(err.Error(), "RX_HOOK_STRICT_IP_ONLY") {
 			t.Errorf("ValidateURL(%q) = %v, want the strict-IP refusal", u, err)
 		}
 	}
 	for _, u := range []string{"http://127.0.0.1:9/x", "http://10.0.0.5/collect", "http://8.8.8.8/hook"} {
-		if err := ValidateURL(u); err != nil {
+		if err := ValidateURL(u, PolicyFromEnv()); err != nil {
 			t.Errorf("ValidateURL(%q) = %v, want an IP literal accepted", u, err)
 		}
 	}
@@ -437,7 +424,7 @@ func TestValidateURL_RejectsCredentials(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateURL(tc.url)
+			err := ValidateURL(tc.url, PolicyFromEnv())
 			if (err != nil) != tc.wantErr {
 				t.Errorf("ValidateURL(%q): err=%v, wantErr=%v", tc.url, err, tc.wantErr)
 			}
@@ -450,7 +437,7 @@ func TestValidateURL_RejectsCredentials(t *testing.T) {
 // guard, so the operator opt-in does not switch it off.
 func TestValidateURL_CredentialsRejectedEvenWhenInternalHooksAllowed(t *testing.T) {
 	t.Setenv("RX_ALLOW_INTERNAL_HOOKS", "true")
-	if err := ValidateURL("http://user:secret@example.com/hook"); err == nil {
+	if err := ValidateURL("http://user:secret@example.com/hook", PolicyFromEnv()); err == nil {
 		t.Errorf("ValidateURL: got nil, want an error")
 	}
 }

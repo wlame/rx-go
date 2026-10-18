@@ -109,15 +109,14 @@ func treeRefreshSeconds(cmd *cobra.Command) (int, error) {
 	return seconds, nil
 }
 
-// validateEnvHooks runs the hook-URL guard over RX_HOOK_ON_*_URL.
-// Returns the first failure, or nil when no env hook is configured.
-func validateEnvHooks() error {
+// validateEnvHooks reads the hook environment once (the URLs and the
+// address policy) and runs the hook-URL guard over RX_HOOK_ON_*_URL
+// under that policy. Returns the snapshot and the first failure, or
+// nil when every env hook passes. The server is built from the same
+// snapshot, so what it validates, dials and reports is one reading.
+func validateEnvHooks() (hooks.HookEnv, error) {
 	env := hooks.HookEnvFromEnv()
-	return hooks.ValidateConfig(hooks.HookConfig{
-		OnFileURL:     env.OnFileURL,
-		OnMatchURL:    env.OnMatchURL,
-		OnCompleteURL: env.OnCompleteURL,
-	})
+	return env, hooks.ValidateConfig(env.EnvConfig(), env.Policy)
 }
 
 type serveParams struct {
@@ -227,7 +226,8 @@ func runServe(out io.Writer, p serveParams) error {
 	// trace request instead of once at startup;
 	// RX_ALLOW_INTERNAL_HOOKS is the documented opt-in for a genuinely
 	// internal collector.
-	if err := validateEnvHooks(); err != nil {
+	hookEnv, err := validateEnvHooks()
+	if err != nil {
 		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
 	}
 
@@ -295,7 +295,7 @@ func runServe(out io.Writer, p serveParams) error {
 	// server. It holds no URLs: each /v1/trace request resolves its own
 	// from RX_HOOK_ON_*_URL and its hook_on_* parameters and passes them
 	// in through Dispatcher.ForRequest.
-	hookDisp := hooks.NewDispatcher(hooks.DispatcherConfig{})
+	hookDisp := hooks.NewDispatcher(hooks.DispatcherConfig{Policy: &hookEnv.Policy})
 
 	// Build server.
 	srv := webapi.NewServer(webapi.Config{
@@ -305,6 +305,7 @@ func runServe(out io.Writer, p serveParams) error {
 		RipgrepPath: rgPath,
 		Frontend:    fm,
 		Hooks:       hookDisp,
+		HookEnv:     &hookEnv,
 		Logger:      slog.Default(),
 		APIToken:    apiToken,
 		Signatures:  catalogue,

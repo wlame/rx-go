@@ -274,9 +274,10 @@ var (
 // ============================================================================
 
 var (
-	// HookCallsTotal counts webhook POSTs with kind (on_file|on_match|on_complete)
-	// and status (success|failure) labels. // rx-go dispatches webhooks fire-and-forget; a single failed HTTP
-	// call bumps status="failure".
+	// HookCallsTotal counts webhook calls (a GET with the payload as query
+	// parameters) with kind (on_file|on_match|on_complete) and status
+	// (success|failure) labels. rx-go dispatches webhooks fire-and-forget;
+	// a single failed HTTP call bumps status="failure".
 	HookCallsTotal = factory.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "rx_hook_calls_total",
@@ -284,8 +285,8 @@ var (
 		},
 		[]string{"kind", "status"},
 	)
-	// HookCallDurationSeconds measures how long a webhook POST took,
-	// labeled by event type as rx-python labels its equivalent.
+	// HookCallDurationSeconds measures how long a webhook call (a GET)
+	// took, labeled by event type as rx-python labels its equivalent.
 	HookCallDurationSeconds = factory.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "rx_hook_call_duration_seconds",

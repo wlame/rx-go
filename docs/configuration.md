@@ -255,27 +255,28 @@ curl -s http://127.0.0.1:7777/health | jq '.search_roots'
 
 ## Boolean parsing
 
-The boolean variables (`RX_HIDDEN`, `RX_NO_INDEX`, `RX_MASK_SECRETS`,
+Every boolean variable (`RX_HIDDEN`, `RX_NO_INDEX`, `RX_MASK_SECRETS`,
 `RX_ALLOW_INTERNAL_HOOKS`, `RX_HOOK_STRICT_IP_ONLY`,
-`RX_DISABLE_CUSTOM_HOOKS`) recognize these truthy values:
+`RX_DISABLE_CUSTOM_HOOKS`) follows one rule. These values are true:
 
 ```text
 true, yes, 1, on
 ```
 
-`RX_HIDDEN`, `RX_NO_INDEX` and `RX_MASK_SECRETS` also recognize these
-falsy values, and fall back to their default (`false`) for anything
-else:
+These are false:
 
 ```text
 false, no, 0, off
 ```
 
-The three hook variables are on only for a truthy value; anything else
-is off. Matching is case-insensitive.
+The comparison ignores case. Anything else, an empty value included,
+leaves the variable at its default, which is `false` for every one of
+them.
 
-`NO_COLOR` and `RX_NO_COLOR` are different: any non-empty value turns
-colour off.
+The webhook variables are read once, when `rx serve` starts (before it
+binds) or when a trace starts, together with the `RX_HOOK_ON_*_URL`
+hooks: the policy a request's hook URL is checked against is the one
+its call is dialed under, and the one `/health` reports.
 
 ## Integer settings
 

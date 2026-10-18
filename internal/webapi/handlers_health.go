@@ -64,7 +64,7 @@ func buildHealthResponse(s *Server) rxtypes.HealthResponse {
 		GoPackages:       getGoPackages(),
 		Constants:        getConstants(),
 		Environment:      getAppEnvVariables(),
-		Hooks:            getHookConfigMap(),
+		Hooks:            getHookConfigMap(*s.cfg.HookEnv),
 		DocsURL:          "https://github.com/wlame/rx-tool",
 		// NewServer filled it in (applyConfigDefaults), so it is never nil.
 		TreeRefreshSeconds: *s.cfg.TreeRefreshSeconds,
@@ -256,10 +256,10 @@ func envValueForHealth(name, value string) string {
 	return value
 }
 
-// getHookConfigMap returns a JSON-friendly view of the effective hook
-// env config. Same keys as Python's get_hook_env_config().
-func getHookConfigMap() map[string]any {
-	env := hooks.HookEnvFromEnv()
+// getHookConfigMap returns a JSON-friendly view of the hook environment
+// the server runs with (the snapshot its trace route validates against).
+// Same keys as Python's get_hook_env_config().
+func getHookConfigMap(env hooks.HookEnv) map[string]any {
 	return map[string]any{
 		"RX_HOOK_ON_FILE_URL":     env.OnFileURL,
 		"RX_HOOK_ON_MATCH_URL":    env.OnMatchURL,
