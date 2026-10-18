@@ -67,10 +67,18 @@ func main() {
 	root.SetArgs(args)
 
 	// SIGINT / SIGTERM cancel the command's context so the engine winds
-	// down its rg subprocesses, then the process exits 5. signal.NotifyContext
-	// restores the default handler when stop() runs, so a second Ctrl-C
-	// during shutdown still kills the process immediately.
+	// down its rg subprocesses (and a trace reading standard input drops
+	// its spool), then the process exits 5. signal.NotifyContext keeps
+	// catching the two signals until stop() runs, so the goroutine calls
+	// it as soon as the first signal lands: the default handling is back
+	// during the shutdown, and a second Ctrl-C kills the process at once
+	// instead of being swallowed until the command returns. stop is safe
+	// to call more than once; main calls it again below.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
 
 	err := root.ExecuteContext(ctx)
 	// Read the context before stop(): stop() is NotifyContext's cancel

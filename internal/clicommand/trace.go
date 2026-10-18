@@ -267,7 +267,12 @@ func runTrace(ctx context.Context, out io.Writer, p traceParams) error {
 	// spoolPath is the temporary file it was copied to, "" when there
 	// was none.
 	spoolPath := ""
-	if spooled, spoolFile, cleanup, sErr := spoolStdinFor(filePaths); sErr != nil {
+	if spooled, spoolFile, cleanup, sErr := spoolStdinFor(ctx, filePaths); sErr != nil {
+		if ctx.Err() != nil {
+			// An interrupt while standard input was read: the process
+			// exits 5 and prints nothing, as for an interrupted search.
+			return ctx.Err()
+		}
 		return exitWithError(os.Stderr, ExitGenericError, "%s", sErr.Error())
 	} else if cleanup != nil {
 		defer cleanup()
@@ -565,8 +570,10 @@ func resolveTracePositionals(p traceParams) ([]string, []string, error) {
 //
 // "-" anywhere in the list means "read stdin here"; an empty list with a
 // pipe on stdin means the same. Stdin that carries nothing falls back to
-// the current directory, which is what rx-python does.
-func spoolStdinFor(filePaths []string) ([]string, string, func(), error) {
+// the current directory, which is what rx-python does. ctx ends the
+// read: an interrupt while stdin is copied returns ctx's error with the
+// spool file removed.
+func spoolStdinFor(ctx context.Context, filePaths []string) ([]string, string, func(), error) {
 	named := false
 	for _, p := range filePaths {
 		if p == "-" {
@@ -579,7 +586,7 @@ func spoolStdinFor(filePaths []string) ([]string, string, func(), error) {
 		return filePaths, "", nil, nil
 	}
 
-	spooled, cleanup, err := spoolStdin()
+	spooled, cleanup, err := spoolStdin(ctx)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -613,28 +620,52 @@ func spoolStdinFor(filePaths []string) ([]string, string, func(), error) {
 //
 // Returns an empty path when stdin carried nothing, which the caller
 // reads as "no input, fall back to the current directory".
-func spoolStdin() (path string, cleanup func(), err error) {
+//
+// The copy runs on a goroutine of its own, because a read of a pipe
+// cannot be interrupted: when ctx ends first (SIGINT or SIGTERM), the
+// spool file is removed and ctx's error returned at once, and the
+// goroutine is left to end when stdin does or the process exits, whose
+// exit is what the interrupt asks for. The goroutine owns the file
+// handle: it closes it after the copy, so the removal never races a
+// write.
+func spoolStdin(ctx context.Context) (path string, cleanup func(), err error) {
 	tmp, err := os.CreateTemp("", "rx_stdin_*.txt")
 	if err != nil {
 		return "", nil, fmt.Errorf("reading stdin: %w", err)
 	}
 	remove := func() { _ = os.Remove(tmp.Name()) }
 
-	written, copyErr := io.Copy(tmp, os.Stdin)
-	closeErr := tmp.Close()
-	if copyErr != nil {
-		remove()
-		return "", nil, fmt.Errorf("reading stdin: %w", copyErr)
+	type copied struct {
+		written int64
+		err     error
 	}
-	if closeErr != nil {
+	// Buffered, so the goroutine's send never blocks once the result is
+	// abandoned.
+	done := make(chan copied, 1)
+	go func() {
+		written, copyErr := io.Copy(tmp, os.Stdin)
+		closeErr := tmp.Close()
+		if copyErr == nil {
+			copyErr = closeErr
+		}
+		done <- copied{written, copyErr}
+	}()
+
+	select {
+	case <-ctx.Done():
 		remove()
-		return "", nil, fmt.Errorf("reading stdin: %w", closeErr)
+		return "", nil, ctx.Err()
+	case c := <-done:
+		if c.err != nil {
+			remove()
+			return "", nil, fmt.Errorf("reading stdin: %w", c.err)
+		}
+		if c.written == 0 {
+			remove()
+			return "", func() {}, nil
+		}
+		return tmp.Name(), remove, nil
 	}
-	if written == 0 {
-		remove()
-		return "", func() {}, nil
-	}
-	return tmp.Name(), remove, nil
 }
 
 // defaultSamplesContext is the window --samples asks for when no explicit

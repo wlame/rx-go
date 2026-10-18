@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx trace` reading piped standard input (`rx trace -e X -`, or a
+  pipe with no path) stops at once on Ctrl-C or SIGTERM: the spool file
+  is removed, nothing is printed, and the process exits 5. Before, the
+  signal was noticed only after the input ended, the search then ran
+  and printed a complete answer, and a second Ctrl-C did nothing until
+  the command returned; now the default signal handling is back as soon
+  as the first signal lands, so a second Ctrl-C kills the process.
 - A position counted from the end that reaches before the start of
   the file is answered as missing, as a position past its end is:
   `rx samples --lines=-31` on a 30-line file, `--lines=-40--35`, and

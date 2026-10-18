@@ -103,7 +103,9 @@ rather than help it.
 - With **`-` as a path**, or with no paths and a pipe on stdin: the
   piped input is spooled to a temporary file and searched, and the
   output names that file. The file is removed when the search ends,
-  and no trace-cache entry is written for it.
+  and no trace-cache entry is written for it. Ctrl-C or SIGTERM while
+  the input is still being read stops `rx` at once: the file is
+  removed, nothing is printed, and the exit code is 5.
   A `-` whose input is empty searches nothing and reports no matches,
   rather than falling back to the current directory.
 - A file reached twice is searched once, under one id, so each of its
