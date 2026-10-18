@@ -70,9 +70,10 @@ func runDetached(mgr *tasks.Manager, taskID, operation string, logger *slog.Logg
 		// client's poll response.
 		errMsg := fmt.Sprintf("panic during %s task: %v", operation, r)
 
-		// Mark the task as failed. If the task is already terminal for
-		// some reason (shouldn't happen — work() usually panics before
-		// calling Complete) the manager silently ignores the update.
+		// Mark the task as failed. A task that has ended already (work
+		// completed it, then panicked) keeps its end: the manager
+		// ignores a Fail after any terminal status, so the task stays
+		// completed and only the log says a panic followed.
 		mgr.Fail(taskID, errMsg)
 
 		// Log everything — operators rely on structured logs to diagnose

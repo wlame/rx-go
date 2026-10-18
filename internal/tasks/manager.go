@@ -743,11 +743,17 @@ func (m *Manager) dropOldestFinishedLocked(subtask bool) {
 // values leave the field untouched. A helper variant Update*() could
 // be added per-field if this becomes unwieldy.
 //
-// A cancelled task is not changed: Cancel ended it, and its worker's
-// own Fail or Complete, which comes once the work has stopped, is
-// ignored, so the task stays cancelled with no error and no result. A
-// cancelling task (CreateStoppable) ignores every update but an end,
-// which ends it cancelled, with no error and no result.
+// INVARIANT: a task that has ended is not changed; the first end wins.
+// A completed or failed task ignores a later Fail, Complete or
+// MarkRunning, so Get, Watch.End and the wire all show the one end,
+// its time is set once and its path keys are released once (a key
+// released twice would free a lock another task of the same path
+// already holds). A cancelled task is not changed either: Cancel ended
+// it, and its worker's own Fail or Complete, which comes once the work
+// has stopped, is ignored, so the task stays cancelled with no error
+// and no result. A cancelling task (CreateStoppable) ignores every
+// update but an end, which ends it cancelled, with no error and no
+// result. Every ignored update returns true: the task exists.
 func (m *Manager) Update(taskID string, status Status, errMsg string, result any) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -755,22 +761,19 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 	if !ok {
 		return false
 	}
-	if task.Status == StatusCancelled {
-		return true
-	}
 	// A cancelling task stays cancelling until its worker's end, which
 	// ends it cancelled whatever the worker reports: the cancel was
-	// asked first.
+	// asked first. (Cancelling is not terminal, so it comes before the
+	// check below.)
 	if task.Status == StatusCancelling {
 		if status.isEnd() {
 			m.endLocked(task, StatusCancelled)
 		}
 		return true
 	}
-	// Whether the task had already ended before this update: only the
-	// first transition to a terminal status closes done, since closing
-	// a closed channel panics.
-	wasTerminal := task.IsTerminal()
+	if task.IsTerminal() {
+		return true
+	}
 	if status != "" {
 		task.Status = status
 	}
@@ -780,10 +783,10 @@ func (m *Manager) Update(taskID string, status Status, errMsg string, result any
 	if result != nil {
 		task.Result = result
 	}
-	if task.IsTerminal() && !wasTerminal {
-		m.closeEndLocked(task)
-	}
 	if task.IsTerminal() {
+		// The first and only transition to a terminal status: done is
+		// closed here once (closing a closed channel panics).
+		m.closeEndLocked(task)
 		now := time.Now().UTC()
 		task.CompletedAt = &now
 		m.releasePathsLocked(task)

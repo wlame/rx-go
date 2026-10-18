@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A task that has ended keeps its end: a later `Fail`, `Complete` or
+  `MarkRunning` on a completed or failed task is ignored, as it was for
+  a cancelled one, so `GET /v1/tasks/{id}` and the task's watchers show
+  the one end and the task's path lock is released once. Nothing in rx
+  ended a task twice; the guard the comments described is now there.
 - Nested search roots: with `--search-root=/a --search-root=/a/.b`, a
   path under `/a/.b` was refused as hidden (exit 4, HTTP 403) because
   it was checked against `/a`, the first root that holds it, and
