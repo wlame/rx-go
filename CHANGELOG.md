@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx --hidden --version`, `rx --search-root=DIR --version` and
+  `rx --search-root DIR --version` print the version (exit 0); before,
+  a meta flag after another root flag was handed to `trace`, which
+  exited 2 with `Unknown flag: --version`. The separate value of a root
+  flag is no longer taken for the word that decides the command:
+  `rx --search-root DIR serve` runs the server and
+  `rx --search-root DIR index a.log` builds an index, where both ran a
+  search for the pattern `serve` or `index`. The root help lists
+  `--version` only: cobra's `-v` shorthand is no longer offered, since
+  `rx -v` was never routed to it (it is a usage error, as before, and
+  in ripgrep `-v` inverts a match).
 - `RX_LOG_LEVEL` sets the level rx logs at, for every command. Before,
   it set only the `LOG_LEVEL` that `GET /health` reports, and rx logged
   at INFO whatever it said: an operator who set `ERROR` to quiet a busy

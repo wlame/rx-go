@@ -38,10 +38,13 @@ import (
 var appVersion = "dev"
 
 // knownSubcommands is the flat list of top-level subcommand names
-// preprocessArgs recognizes. "help", "completion", and "version" are
-// cobra-generated; the others are explicitly registered in newRootCmd.
-// Any first-positional arg not in this set falls through to the
-// default (trace).
+// preprocessArgs recognizes. "help" and "completion" are the commands
+// cobra generates; the others are registered in newRootCmd. "version"
+// is no command (cobra makes only the --version flag, and `rx version`
+// exits 2 with "unknown command"), but it stays in the list so that a
+// bare `rx version` is not a trace of the pattern "version" waiting on
+// standard input. Any first positional argument not in this set falls
+// through to the default, trace.
 //
 // A []string + slices.Contains is used instead of map[string]bool
 // because the list is tiny (~8 entries) and the slice form reads more
@@ -168,6 +171,11 @@ func newRootCmd() *cobra.Command {
 		Version:       appVersion,
 	}
 	root.SetVersionTemplate("rx version {{.Version}}\n")
+	// The version flag is defined here, without a shorthand: cobra's
+	// own would add -v, which the routing never leaves to cobra and
+	// which, in ripgrep, inverts a match. The help lists --version only,
+	// and `rx -v` stays a usage error.
+	root.Flags().Bool("version", false, "version for rx")
 
 	// Hidden entries — names starting with a dot — are skipped by
 	// default, as ripgrep skips them. This is persistent rather than
@@ -252,17 +260,30 @@ func preprocessArgs(args []string) []string {
 	return args
 }
 
+// metaFlags are the root flags cobra answers by itself, wherever they
+// stand among the leading flags: `rx --hidden --version` prints the
+// version as `rx --version` does.
+var metaFlags = []string{"--help", "-h", "--version"}
+
+// rootFlagsWithValue are the root flags that take a separate value when
+// written without "=": the walk steps over the value, so that in
+// `rx --search-root DIR serve` the word after the flag is its value and
+// `serve` is the subcommand.
+var rootFlagsWithValue = []string{"--search-root"}
+
 // shouldRouteToTrace decides whether the argument list should have "trace"
 // prepended. Four cases:
 //
 //  1. len(args) == 0 → false (bare `rx` prints help).
 //  2. args[0] is a known subcommand → false (cobra dispatches directly).
-//  3. args[0] is --help / -h / --version → false (cobra handles meta flags).
+//  3. A meta flag (--help, -h, --version) among the leading flags →
+//     false (cobra handles it).
 //  4. Otherwise → route iff the first non-flag arg is not a subcommand
 //     (meaning it's a pattern for `rx trace`).
 //
 // Case 4 handles leading-flag forms like `rx --json "error" file.log` by
-// walking forward past the leading flags to find the first positional.
+// walking forward past the leading flags, and past the value of a root
+// flag that takes one, to find the first positional.
 func shouldRouteToTrace(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -276,17 +297,21 @@ func shouldRouteToTrace(args []string) bool {
 	if !isFlag(args[0]) {
 		return true
 	}
-	// Case 3: top-level meta flags — leave cobra to print help/version.
-	if args[0] == "--help" || args[0] == "-h" || args[0] == "--version" {
-		return false
-	}
-	// Case 4b: first arg is some other flag (e.g. --json). Walk forward:
-	// the first non-flag arg decides. If it's a subcommand, leave argv
-	// alone (the flags belong to that subcommand via cobra's parser). If
-	// it's a pattern, route to trace.
-	for _, a := range args {
+	// Cases 3 and 4b: leading flags. A meta flag among them is cobra's;
+	// otherwise the first non-flag arg decides. If it's a subcommand,
+	// leave argv alone (the flags belong to that subcommand via cobra's
+	// parser). If it's a pattern, route to trace.
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		if !isFlag(a) {
 			return !slices.Contains(knownSubcommands, a)
+		}
+		if slices.Contains(metaFlags, a) {
+			return false
+		}
+		if slices.Contains(rootFlagsWithValue, a) {
+			// The next word is the flag's value, not a positional.
+			i++
 		}
 	}
 	// All args are flags with no positional (e.g. bare `rx --json`). We

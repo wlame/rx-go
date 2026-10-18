@@ -138,6 +138,21 @@ func TestPreprocessArgs_TruthTable(t *testing.T) {
 		// default-command group had to be taught the same thing.
 		{"hidden then subcommand", []string{"--hidden", "trace", "pat"}, []string{"--hidden", "trace", "pat"}},
 		{"hidden then bare pattern", []string{"--hidden", "error", "/var/log"}, []string{"trace", "--hidden", "error", "/var/log"}},
+		// A meta flag after a root flag is still cobra's; -v is no meta
+		// flag (rx offers no -v), so it goes to trace and fails there.
+		{"hidden then version", []string{"--hidden", "--version"}, []string{"--hidden", "--version"}},
+		{"search-root then version", []string{"--search-root=/logs", "--version"}, []string{"--search-root=/logs", "--version"}},
+		{"search-root value then version", []string{"--search-root", "/logs", "--version"}, []string{"--search-root", "/logs", "--version"}},
+		{"hidden then help", []string{"--hidden", "-h"}, []string{"--hidden", "-h"}},
+		{"short v", []string{"-v"}, []string{"trace", "-v"}},
+		{"short v then pattern", []string{"-v", "error", "a.log"}, []string{"trace", "-v", "error", "a.log"}},
+		{"version word", []string{"version"}, []string{"version"}},
+		// The separate value of a root flag is not the positional that
+		// decides the route.
+		{"search-root value then subcommand", []string{"--search-root", "box", "serve"}, []string{"--search-root", "box", "serve"}},
+		{"search-root value then pattern", []string{"--search-root", "box", "error", "a.log"}, []string{"trace", "--search-root", "box", "error", "a.log"}},
+		{"search-root value alone", []string{"--search-root", "box"}, []string{"trace", "--search-root", "box"}},
+		{"search-root equals then subcommand", []string{"--search-root=box", "serve"}, []string{"--search-root=box", "serve"}},
 		{"only flag", []string{"--json"}, []string{"trace", "--json"}},
 		{"signatures then path", []string{"--signatures=traceback", "app.log"}, []string{"trace", "--signatures=traceback", "app.log"}},
 		{"bare signatures then path", []string{"--signatures", "app.log"}, []string{"trace", "--signatures", "app.log"}},

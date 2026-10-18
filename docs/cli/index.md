@@ -44,7 +44,7 @@ them, and they may be written before or after the subcommand name.
 | `--hidden` | `RX_HIDDEN` or `false` | Include entries whose name starts with a dot, the way `rg --hidden` does |
 | `--search-root` | `RX_SEARCH_ROOTS` or no sandbox | Restrict file access to this directory; repeatable |
 | `--help`, `-h` | — | Print help for the current command and exit |
-| `--version` | — | Print the version string (`rx version <tag>`: a release prints its tag, such as `rx version v0.8.0`; `just build` prints what `git describe --tags --dirty --always` gives; a plain `go build` prints `rx version dev`) and exit |
+| `--version` | — | Print the version string (`rx version <tag>`: a release prints its tag, such as `rx version v0.8.0`; `just build` prints what `git describe --tags --dirty --always` gives; a plain `go build` prints `rx version dev`) and exit. It works wherever it stands among the global flags (`rx --hidden --version`, `rx --search-root=/logs --version`). There is no `-v`: in ripgrep `-v` inverts a match, and `rx -v …` is a usage error (exit 2) rather than a version printed in its place |
 
 `--search-root` confines every path a command touches, including the
 destination `rx compress` writes. A path outside all roots exits 4; a
