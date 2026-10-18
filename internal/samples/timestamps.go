@@ -40,10 +40,12 @@ const MaxTimestampValues = 1000
 
 // IsUsageError reports whether err, from Resolve, is a mistake in the
 // request rather than a failure to read the file: an invalid time
-// query, too many of them, or a time query on a file without
-// timestamps. The CLI exits 2 on it and the HTTP API answers 400.
+// query, too many of them, a time query on a file without timestamps,
+// or a negative context. The CLI exits 2 on it and the HTTP API answers
+// 400.
 func IsUsageError(err error) bool {
 	return errors.Is(err, timestamps.ErrInvalidQuery) ||
+		errors.Is(err, ErrNegativeContext) ||
 		errors.Is(err, ErrNoTimeFormat) ||
 		errors.Is(err, ErrTooManyTimestamps) ||
 		errors.Is(err, ErrTooManyLines) ||

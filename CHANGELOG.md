@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx samples --context`, `--before` and `--after` below -1 exit 2
+  (`--context must be -1 or more, got -2`); -1 stays the default. Such
+  a value used to be read as a window that missed the target line,
+  which the answer then reported missing. `samples.Resolve` refuses a
+  negative context from any caller; `GET /v1/samples` already answered
+  422 below -1.
 - `rx trace` refuses a count below 0 with exit 2: `--context=-1`,
   `--before=-1` and `--after=-1` (`--context must be 0 or more, got -1`),
   which used to run with an empty context window, and

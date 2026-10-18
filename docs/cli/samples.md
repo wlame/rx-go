@@ -75,9 +75,9 @@ two, `RX_SAMPLES_MAX_LINES` and `RX_SAMPLES_MAX_BYTES` (see
 | `-b`, `--offsets` | `string[]` | — | Comma-separated byte offsets / ranges |
 | `-l`, `--lines` | `string[]` | — | Comma-separated 1-based line numbers / ranges |
 | `-t`, `--timestamps` | `string[]` | — | A time or time range (`T`, `T1..T2`, `..T2`, `T1..`); repeat the flag for several, never comma-separated |
-| `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100). `-1` means the default, as over HTTP |
-| `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context`; `-1` leaves this side to `--context` |
-| `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context`; `-1` leaves this side to `--context` |
+| `-c`, `--context` | `int` | `3` | Lines before AND after each target (no cap here; `GET /v1/samples` stops at 100). `-1` means the default, as over HTTP; below `-1` exits 2 |
+| `-B`, `--before` | `int` | `--context` | Lines before; when given, 0 included, it overrides `--context`; `-1` leaves this side to `--context`; below `-1` exits 2 |
+| `-A`, `--after` | `int` | `--context` | Lines after; when given, 0 included, it overrides `--context`; `-1` leaves this side to `--context`; below `-1` exits 2 |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |

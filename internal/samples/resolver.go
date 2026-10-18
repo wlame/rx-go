@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -208,6 +209,9 @@ const (
 func Resolve(ctx context.Context, req Request) (*rxtypes.SamplesResponse, error) {
 	if req.modeCount() > 1 {
 		return nil, ErrInvalidRequest
+	}
+	if req.BeforeContext < 0 || req.AfterContext < 0 {
+		return nil, fmt.Errorf("%w: before %d, after %d", ErrNegativeContext, req.BeforeContext, req.AfterContext)
 	}
 	req, kind, err := prepare(ctx, req)
 	if err != nil {
@@ -737,3 +741,12 @@ func FormatInt64(n int64) string { return strconv.FormatInt(n, 10) }
 // ErrInvalidRequest is returned when a Request holds more than one of
 // Offsets, Lines and Timestamps.
 var ErrInvalidRequest = fmt.Errorf("samples.Resolve: at most one of Offsets, Lines and Timestamps may be set")
+
+// ErrNegativeContext is returned when a Request asks for a negative
+// context on either side. The callers resolve their own sentinels (the
+// -1 of the CLI flags and of the HTTP parameters means the default)
+// before they get here, so a negative count reaching Resolve is a
+// mistake in the request, not a value with a meaning: IsUsageError
+// recognizes it, and a window that misses the target line is never
+// answered for it, as it was.
+var ErrNegativeContext = errors.New("a context is 0 lines or more")

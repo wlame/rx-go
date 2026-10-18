@@ -155,6 +155,30 @@ type samplesParams struct {
 	fileTZ string
 }
 
+// checkSamplesContext refuses a context below -1 with a usage error
+// (exit 2). The three flags are listed with the value given: -1 means
+// the default (--context) or "as --context" (--before, --after), 0 or
+// more is a window, and a count below -1 has no meaning; it used to be
+// read as a window that missed the target line, which the answer then
+// reported missing. A flag not given holds its default (3, 0, 0), so
+// it never trips the check.
+func checkSamplesContext(p samplesParams) error {
+	counts := []struct {
+		flag  string
+		value int
+	}{
+		{"--context", p.ctxLines},
+		{"--before", p.beforeCtx},
+		{"--after", p.afterCtx},
+	}
+	for _, c := range counts {
+		if c.value < -1 {
+			return exitWithError(os.Stderr, ExitUsageError, "%s must be -1 or more, got %d", c.flag, c.value)
+		}
+	}
+	return nil
+}
+
 // runSamples dispatches the CLI request to the shared samples.Resolve
 // implementation. replaces the divergent
 // in-line implementation with the shared resolver.
@@ -163,6 +187,9 @@ func runSamples(out io.Writer, p samplesParams) error {
 	if modesGiven(p) != 1 {
 		return exitWithError(os.Stderr, ExitUsageError,
 			"must provide exactly one of --offsets, --lines or --timestamps")
+	}
+	if err := checkSamplesContext(p); err != nil {
+		return err
 	}
 	fileZone, zoneErr := parseFileTZ(p.fileTZ)
 	if zoneErr != nil {
