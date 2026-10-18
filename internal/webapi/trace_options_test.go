@@ -354,3 +354,26 @@ func TestTrace_NoRecursiveSearchesOnlyTheTopLevelOfADirectory(t *testing.T) {
 		t.Errorf("no_recursive=true searched %v, want top.log alone", got)
 	}
 }
+
+// The lower bounds of the count parameters stay as they are: context
+// and max_results start at 0, before_context and after_context at -1
+// (the sentinel for "take context"), and one less is a 422.
+func TestTrace_CountParametersBelowTheirMinimumAreRefused(t *testing.T) {
+	file := sandboxedFile(t, numberedLines(20, 10))
+	ts := newServerWithRipgrep(t)
+
+	for param, minimum := range map[string]int{"context": 0, "max_results": 0, "before_context": -1, "after_context": -1} {
+		t.Run(param, func(t *testing.T) {
+			query := url.Values{"path": {file}, "regexp": {"NEEDLE"}}
+
+			query.Set(param, strconv.Itoa(minimum))
+			if status := statusOf(t, ts, query); status != http.StatusOK {
+				t.Errorf("%s=%d: status %d, want 200", param, minimum, status)
+			}
+			query.Set(param, strconv.Itoa(minimum-1))
+			if status := statusOf(t, ts, query); status != http.StatusUnprocessableEntity {
+				t.Errorf("%s=%d: status %d, want 422", param, minimum-1, status)
+			}
+		})
+	}
+}

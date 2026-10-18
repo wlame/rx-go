@@ -138,10 +138,29 @@ func runCompress(ctx context.Context, out io.Writer, p compressParams) error {
 		return err
 	}
 
-	// Auto-create --output-dir (Python's os.makedirs(exist_ok=True)).
-	// We do this up-front so the first file's compressOneFile call doesn't
-	// race with the others trying to MkdirAll concurrently (future-proofing
-	// for when/if multi-file compress runs in parallel).
+	// Level validation — zstd is 1..22.
+	if p.level < 1 || p.level > 22 {
+		return exitWithError(os.Stderr, ExitUsageError, "--level must be 1..22, got %d", p.level)
+	}
+
+	// Frame size parse (rejects bad input once, up front): a value that
+	// cannot be read, or one below a byte.
+	frameBytes, err := ParseFrameSize(p.frameSize)
+	if err != nil {
+		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
+	}
+
+	// The help says 1-N; a count below 1 has no meaning and is refused
+	// rather than read as 1, as it was.
+	if p.workers < 1 {
+		return exitWithError(os.Stderr, ExitUsageError, "--workers must be 1 or more, got %d", p.workers)
+	}
+
+	// Auto-create --output-dir (Python's os.makedirs(exist_ok=True)),
+	// once every flag has been checked: a usage error must leave no
+	// directory behind, since --output-dir may name a path the user
+	// mistyped. Up front, so the first file's compressOneFile call does
+	// not race with the others trying to MkdirAll concurrently.
 	if p.outputDir != "" {
 		if _, err := sandboxCheck(p.outputDir); err != nil {
 			return exitWithError(os.Stderr, ExitAccessDenied, "%s", err.Error())
@@ -158,22 +177,6 @@ func runCompress(ctx context.Context, out io.Writer, p compressParams) error {
 		}
 	}
 
-	// Level validation — zstd is 1..22.
-	if p.level < 1 || p.level > 22 {
-		return exitWithError(os.Stderr, ExitUsageError, "--level must be 1..22, got %d", p.level)
-	}
-
-	// Frame size parse (rejects bad input once, up front).
-	frameBytes, err := ParseFrameSize(p.frameSize)
-	if err != nil {
-		return exitWithError(os.Stderr, ExitUsageError, "%s", err.Error())
-	}
-
-	workers := p.workers
-	if workers < 1 {
-		workers = 1
-	}
-
 	result := compressResult{Files: []map[string]any{}}
 	var failureCodes []int
 
@@ -183,7 +186,7 @@ func runCompress(ctx context.Context, out io.Writer, p compressParams) error {
 		if ctx.Err() != nil {
 			break
 		}
-		entry, failureCode := compressOneFile(ctx, inputPath, p, frameBytes, workers)
+		entry, failureCode := compressOneFile(ctx, inputPath, p, frameBytes, p.workers)
 		result.Files = append(result.Files, entry)
 		if ok, _ := entry["success"].(bool); !ok {
 			failureCodes = append(failureCodes, failureCode)
@@ -440,7 +443,7 @@ func ParseFrameSize(s string) (int64, error) {
 			if err != nil {
 				return 0, fmt.Errorf("frame-size %q: %w", s, err)
 			}
-			return int64(v * float64(sf.mult)), nil
+			return checkedFrameSize(s, int64(v*float64(sf.mult)))
 		}
 	}
 	// Bare integer = bytes.
@@ -448,7 +451,19 @@ func ParseFrameSize(s string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("frame-size %q: %w", s, err)
 	}
-	return v, nil
+	return checkedFrameSize(s, v)
+}
+
+// checkedFrameSize applies the lower bound every frame size shares
+// (compressfile.CheckFrameSize) to the bytes parsed from s, naming the
+// flag in the error: a size below one byte would otherwise reach the
+// encoder, which replaces a non-positive size with its default without
+// a word. 0.1B parses to 0 bytes and is refused the same way.
+func checkedFrameSize(s string, bytes int64) (int64, error) {
+	if err := compressfile.CheckFrameSize(bytes); err != nil {
+		return 0, fmt.Errorf("--frame-size %w, got %s", err, strings.TrimSpace(s))
+	}
+	return bytes, nil
 }
 
 // derefInt is derefInt64 for the frame count, which the schema types as

@@ -109,7 +109,12 @@ func createCompressTask(s *Server, req rxtypes.CompressRequest) (*postCompressOu
 	level := req.CompressionLevel
 	frameSize := req.FrameSize
 	frameSizeBytes, err := parseFrameSizeHTTP(frameSize)
+	if errors.Is(err, compressfile.ErrFrameSizeBelowMinimum) {
+		// Out of range, like a compression level outside 1..22: 422.
+		return nil, &apiError{Status: http.StatusUnprocessableEntity, Detail: err.Error()}
+	}
 	if err != nil {
+		// A value that cannot be read at all: 400.
 		return nil, ErrBadRequest(err.Error())
 	}
 
@@ -323,6 +328,7 @@ func indexCompressedOutput(path string) (*int64, error) {
 // frame-size parser. Duplicated here (instead of importing from
 // internal/clicommand) to avoid a cyclic dep — the CLI imports webapi
 // to reuse the cli_command builder, so webapi must not import clicommand.
+// The lower bound is the one both share, compressfile.CheckFrameSize.
 //
 // Accepts: bare numbers (bytes), B, K/KB, M/MB, G/GB — case-insensitive.
 func parseFrameSizeHTTP(s string) (int64, error) {
@@ -355,7 +361,7 @@ func parseFrameSizeHTTP(s string) (int64, error) {
 			if err != nil {
 				return 0, fmt.Errorf("frame_size %q: %w", s, err)
 			}
-			return int64(v * float64(sf.mult)), nil
+			return checkedFrameSizeHTTP(s, int64(v*float64(sf.mult)))
 		}
 	}
 	// No suffix: interpret as raw bytes.
@@ -363,5 +369,15 @@ func parseFrameSizeHTTP(s string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("frame_size %q: %w", s, err)
 	}
-	return v, nil
+	return checkedFrameSizeHTTP(s, v)
+}
+
+// checkedFrameSizeHTTP applies the shared lower bound to the bytes
+// parsed from s, naming the field; the handler answers the wrapped
+// compressfile.ErrFrameSizeBelowMinimum with 422.
+func checkedFrameSizeHTTP(s string, bytes int64) (int64, error) {
+	if err := compressfile.CheckFrameSize(bytes); err != nil {
+		return 0, fmt.Errorf("frame_size %w, got %s", err, strings.TrimSpace(s))
+	}
+	return bytes, nil
 }

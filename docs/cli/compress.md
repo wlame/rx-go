@@ -99,12 +99,12 @@ its hidden temporary file and nothing under the output name.
 |------|------|---------|-------------|
 | `-o`, `--output` | `string` | the default output name, beside `PATH` | Output file path (single-file only). The default name is `PATH`'s base name with a compression suffix replaced by `.zst`, or with `.zst` appended (see [compressed input](#compressed-input)) |
 | `--output-dir` | `string` | — | Output directory; uses the default output name inside |
-| `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB` |
+| `--frame-size` | `string` | `4M` | Target frame size: `B`, `K`/`KB`, `M`/`MB`, `G`/`GB`; at least 1 byte |
 | `-l`, `--level` | `int` | `3` | zstd level `1`-`22`; the encoder has four settings: `1`, `2`-`5`, `6`-`9`, `10`-`22` |
 | `-f`, `--force` | `bool` | `false` | Overwrite existing output; re-encode an input that is already seekable zstd |
 | `--build-index` | `bool` | `true` | Build the frame index for the `.zst` that was written |
 | `--no-index` | `bool` | `false` | Turns `--build-index` off |
-| `--workers` | `int` | `1` | Parallel encoder goroutines (1..N) |
+| `--workers` | `int` | `1` | Parallel encoder goroutines; `1` or more |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 
 `--output` and `--output-dir` are mutually exclusive. `--output` is
@@ -138,6 +138,12 @@ equivalent to 4 MiB:
 
 A bare integer is interpreted as bytes. Fractional values are accepted:
 `1.5M` = 1572864 bytes.
+
+A frame holds at least one byte: `--frame-size=0`, `-1`, `0B` and `0.1B`
+(which rounds to 0 bytes) exit 2 with `--frame-size must be at least 1
+byte`. `--workers=0` or a negative count exits 2 with `--workers must be
+1 or more`. Every flag is checked before `--output-dir` is created, so a
+usage error leaves no directory behind.
 
 ### Global flags
 

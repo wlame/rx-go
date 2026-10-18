@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `rx compress … --output-dir=DIR` with a bad `--level`, `--frame-size`
+  or `--workers` no longer creates `DIR` before it refuses the flag: the
+  flags are checked first, so a usage error (exit 2) leaves no directory
+  behind.
 - Shell completions work: the scripts `rx completion bash|zsh|fish`
   writes (and `just install` places) call `rx __complete …`, which the
   command routing took for a trace of the pattern `__complete`, so every
@@ -102,6 +106,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx trace` refuses a count below 0 with exit 2: `--context=-1`,
+  `--before=-1` and `--after=-1` (`--context must be 0 or more, got -1`),
+  which used to run with an empty context window, and
+  `--max-results=-5` (`--max-results must be 0 or more, got -5`), which
+  used to mean unlimited. `0` keeps its meanings. The HTTP bounds are
+  unchanged (`context` 0..100, `before_context` and `after_context`
+  -1..100, `max_results` 0 or more).
+- `rx compress` refuses `--workers=0` and a negative count with exit 2
+  (`--workers must be 1 or more, got 0`) instead of clamping it to 1,
+  and a `--frame-size` below one byte (`0`, `-1`, `0B`, `0.1B`) with
+  exit 2 (`--frame-size must be at least 1 byte, got 0`) instead of
+  letting the encoder use its 4M default. `POST /v1/compress` answers
+  422 for a `frame_size` below one byte (`frame_size must be at least 1
+  byte, got 0`); a `frame_size` that cannot be read stays 400.
 - `rx samples --lines=` and `--offsets=` with nothing in the value say
   which flag needs one (`--lines needs a value: an integer or a range
   (e.g., --lines=100 or --lines=100-200)`) instead of `Empty spec`,

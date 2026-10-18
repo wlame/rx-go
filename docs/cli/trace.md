@@ -40,11 +40,11 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 |------|------|---------|-------------|
 | `-e`, `--regexp`, `--regex` | `string[]` | — | Regex pattern (repeatable) |
 | `--path`, `--file` | `string[]` | — | Path to search (repeatable; alias of positional) |
-| `--max-results` | `int` | `0` | Maximum matches to return; `0` = unlimited |
+| `--max-results` | `int` | `0` | Maximum matches to return; `0` = unlimited. A negative value is refused (exit 2) |
 | `--samples` | `bool` | `false` | Show context lines using the default window (3) |
-| `--context` | `int` | `0` | Context lines before and after each match |
-| `-B`, `--before` | `int` | `0` | Lines before each match (overrides `--context`) |
-| `-A`, `--after` | `int` | `0` | Lines after each match (overrides `--context`) |
+| `--context` | `int` | `0` | Context lines before and after each match; `0` or more |
+| `-B`, `--before` | `int` | `0` | Lines before each match (overrides `--context`); `0` or more |
+| `-A`, `--after` | `int` | `0` | Lines after each match (overrides `--context`); `0` or more |
 | `--json` | `bool` | `false` | Emit machine-readable JSON |
 | `--color` | `string` | `auto` | Colorize output: `always`, `never`, or `auto` |
 | `--no-color` | `bool` | `false` | Alias for `--color=never`; wins over `--color` |
@@ -63,6 +63,10 @@ is Rust's `regex` crate with `ripgrep`'s flag extensions.
 | `-P`, `--pcre2` | `bool` | `false` | Use the PCRE2 engine, for look-around and backreferences (ripgrep `-P`) |
 | `--signatures` | `string` | — | Scan the files for [signatures](../concepts/signatures.md) too: a selection such as `--signatures=traceback,sql`; a bare `--signatures` is the default set. Every positional is then a path. See [Signatures](#signatures) |
 | `--mask-secrets` | `bool` | `RX_MASK_SECRETS`, else `false` | With `--signatures`: mask what the signatures with `redact: true` match in the text of every finding and in the findings cache ([Masking](../concepts/signatures.md#masking)). Off by default; `--mask-secrets=false` turns it off when `RX_MASK_SECRETS` is on |
+
+A count below `0` in `--context`, `--before`, `--after` or
+`--max-results` has no meaning and exits 2 (`--context must be 0 or
+more, got -1`); `0` keeps its meaning, no context or no cap.
 
 `--debug` is still accepted so that old scripts keep working, but it
 does nothing, is not listed in `--help`, and prints a deprecation note on

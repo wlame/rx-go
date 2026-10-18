@@ -22,7 +22,7 @@ Content-Type: application/json
 |---|---|:-:|---|---|
 | `input_path` | string | yes | — | Source file path |
 | `output_path` | string | no | beside the input, the default name of `rx compress` | Output file path. Validated against `--search-root` like the input. The default name replaces a compression suffix by `.zst` (`app.log.gz` gives `app.log.zst`) and otherwise appends `.zst` (`app.log` gives `app.log.zst`) |
-| `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`) |
+| `frame_size` | string | no | `"4M"` | Target frame size (e.g. `4M`, `16MB`, `1048576`); at least 1 byte |
 | `compression_level` | int | no | `3` | zstd level: 1-22 |
 | `build_index` | bool | no | `true` | Build the line index of the compressed file after compressing it |
 | `force` | bool | no | `false` | Overwrite existing output, and re-encode an input that is already seekable zstd |
@@ -101,12 +101,12 @@ for measured sizes and times.
 | Code | When |
 |---:|---|
 | `200 OK` | Task queued |
-| `400 Bad Request` | Output file exists and `force=false`; the input is not text, or seekable zstd and `force=false`; `output_path` is the input file; bad `frame_size`; body is not valid JSON |
+| `400 Bad Request` | Output file exists and `force=false`; the input is not text, or seekable zstd and `force=false`; `output_path` is the input file; a `frame_size` that cannot be read; body is not valid JSON |
 | `401 Unauthorized` | The server sets `RX_API_TOKEN` and the request has no valid `Authorization: Bearer` header ([Authentication](../index.md#authentication)) |
 | `403 Forbidden` | Input path or output path outside `--search-root` |
 | `404 Not Found` | Input file doesn't exist |
 | `409 Conflict` | A task that holds the input path or the output path is already running: a compress or an index task of the input, or a compress task writing the same output |
-| `422 Unprocessable Entity` | Body fails the schema: `input_path` missing, a field of the wrong type, an unknown field, or `compression_level` outside 1-22 |
+| `422 Unprocessable Entity` | Body fails the schema: `input_path` missing, a field of the wrong type, an unknown field, or `compression_level` outside 1-22; a `frame_size` below 1 byte |
 
 ## Path sandbox
 
@@ -254,6 +254,15 @@ Status: `422`. Use a valid zstd level.
 ```
 
 Status: `400`. See [frame size syntax](#frame-size-syntax).
+
+### Frame size below one byte
+
+```json
+{ "detail": "frame_size must be at least 1 byte, got 0" }
+```
+
+Status: `422`. `0`, a negative size and `0.1B` (which rounds to 0 bytes)
+are all below the bound.
 
 ### Duplicate task
 

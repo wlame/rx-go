@@ -258,6 +258,11 @@ type traceParams struct {
 // ctx is canceled by an interrupt; the search with signatures stops on
 // it. The search without them runs as it always has.
 func runTrace(ctx context.Context, out io.Writer, p traceParams) error {
+	// The counts first, before standard input is read or ripgrep looked
+	// up: a flag with no meaning is the whole answer.
+	if err := checkTraceCounts(p); err != nil {
+		return err
+	}
 	patterns, filePaths, err := resolveTracePositionals(p)
 	if err != nil {
 		return err
@@ -666,6 +671,30 @@ func spoolStdin(ctx context.Context) (path string, cleanup func(), err error) {
 		}
 		return tmp.Name(), remove, nil
 	}
+}
+
+// checkTraceCounts refuses a count below 0 with a usage error (exit 2).
+// The flags that take a count of lines or matches are listed with the
+// value given; each is 0 or more: 0 means no context, or no cap for
+// --max-results. A negative count has no meaning, and used to be read
+// as an empty context window or as "no cap" without a word. The flags
+// not given hold their default, 0, so they never trip the check.
+func checkTraceCounts(p traceParams) error {
+	counts := []struct {
+		flag  string
+		value int
+	}{
+		{"--context", p.ctxLines},
+		{"--before", p.beforeCtx},
+		{"--after", p.afterCtx},
+		{"--max-results", p.maxResults},
+	}
+	for _, c := range counts {
+		if c.value < 0 {
+			return exitWithError(os.Stderr, ExitUsageError, "%s must be 0 or more, got %d", c.flag, c.value)
+		}
+	}
+	return nil
 }
 
 // defaultSamplesContext is the window --samples asks for when no explicit
