@@ -38,6 +38,14 @@ var ErrTarballUnsupportedEntry = errors.New("unsupported tarball entry type")
 // Maximum entry size is capped at 512 MB per file — more than enough
 // for any reasonable SPA bundle but a safety valve against a
 // pathological tarball that would otherwise exhaust disk.
+// The caps on a bundle as a whole: how many entries it may hold and how
+// many bytes they may total unpacked. The real bundle has a few hundred
+// entries and tens of mebibytes.
+const (
+	maxBundleEntries    = 10_000
+	maxBundleTotalBytes = 256 << 20
+)
+
 func extractTarGz(tarPath, destDir string) error {
 	f, err := os.Open(tarPath)
 	if err != nil {
@@ -59,6 +67,7 @@ func extractTarGz(tarPath, destDir string) error {
 	const maxFileBytes = 512 * 1024 * 1024 // 512 MB per entry
 
 	tr := tar.NewReader(gz)
+	entries, totalBytes := 0, int64(0)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -66,6 +75,14 @@ func extractTarGz(tarPath, destDir string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("tar read: %w", err)
+		}
+		// The whole is bounded as each entry is: a tarball of a million
+		// one-byte files, or of two hundred large ones, is refused.
+		if entries++; entries > maxBundleEntries {
+			return fmt.Errorf("tarball has more than %d entries", maxBundleEntries)
+		}
+		if totalBytes += max(hdr.Size, 0); totalBytes > maxBundleTotalBytes {
+			return fmt.Errorf("tarball entries total more than %d bytes", maxBundleTotalBytes)
 		}
 
 		// Validate the path: no absolute, no ".." traversal, must

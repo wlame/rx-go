@@ -542,7 +542,7 @@ func TestReadDistVersion_Valid(t *testing.T) {
 func TestStreamToFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "out.bin")
-	if err := streamToFile(bytes.NewReader([]byte("hello")), p); err != nil {
+	if err := streamToFile(bytes.NewReader([]byte("hello")), p, maxBundleBytes); err != nil {
 		t.Fatalf("streamToFile: %v", err)
 	}
 	got, _ := os.ReadFile(p)

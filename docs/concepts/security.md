@@ -588,6 +588,16 @@ The tarball streams to a temp file, is verified, and is unpacked into a
 bundle replaced. A truncated download, a bad digest or a malformed archive
 leaves the last good bundle exactly where it was.
 
+The bytes a release host may send are bounded before they are
+verified: a bundle larger than 64 MiB is refused (`bundle larger than
+67108864 bytes refused`), and the archive is refused past 10,000
+entries or 256 MiB unpacked, as each entry already was past 512 MiB.
+The real bundle is a few mebibytes compressed and a few hundred files.
+The cache's own files — `.metadata.json`, the `.staging` directory, the
+download in flight — are never served: a request for a path with a
+component that starts with a dot answers what any unknown path answers,
+the viewer's index page.
+
 ### "Latest" is bounded
 
 `rx serve` installs the newest published viewer release whose version

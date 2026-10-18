@@ -95,6 +95,13 @@ const sha256HexLen = 64
 // maxSidecarBytes caps the sidecar read; it holds one line.
 const maxSidecarBytes = 4096
 
+// maxBundleBytes caps the viewer bundle a release host may send: the
+// download is refused past it, before the checksum is read, so a host
+// that answers with gigabytes fills no disk. The real bundle is a few
+// mebibytes compressed (about 13 MiB unpacked without its source maps,
+// 53 MiB with them).
+const maxBundleBytes = 64 << 20
+
 // stagingDirName is where a bundle is unpacked before it replaces the
 // cached one. Hidden so the SPA file server never serves it.
 const stagingDirName = ".staging"
@@ -412,7 +419,7 @@ func (m *Manager) Download(ctx context.Context, downloadURL, releaseTag string) 
 	// Stream the tarball to a temp file first so a partial download
 	// never overwrites a working cache. Clean up on any failure path.
 	tmpPath := filepath.Join(m.CacheDir, tempFileName)
-	if err := streamToFile(resp.Body, tmpPath); err != nil {
+	if err := streamToFile(resp.Body, tmpPath, maxBundleBytes); err != nil {
 		_ = os.Remove(tmpPath)
 		return err
 	}
@@ -564,15 +571,23 @@ func moveDirContents(src, dst string) error {
 	return nil
 }
 
-// streamToFile copies r to path. Used for the temp tarball download.
-func streamToFile(r io.Reader, path string) error {
+// streamToFile copies r to path, at most limit bytes: a body longer
+// than the limit is refused with an error that names the cap, and the
+// caller removes the file. Used for the temp tarball download.
+func streamToFile(r io.Reader, path string, limit int64) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("open temp: %w", err)
 	}
 	defer func() { _ = f.Close() }()
-	if _, err := io.Copy(f, r); err != nil {
+	// One byte past the limit tells a body that is too long from one
+	// that is exactly the limit.
+	n, err := io.Copy(f, io.LimitReader(r, limit+1))
+	if err != nil {
 		return fmt.Errorf("copy: %w", err)
+	}
+	if n > limit {
+		return fmt.Errorf("bundle larger than %d bytes refused", limit)
 	}
 	return nil
 }
@@ -638,6 +653,19 @@ func (m *Manager) ValidateStaticPath(requested string) string {
 	clean := filepath.Clean(requested)
 	if strings.HasPrefix(clean, string(filepath.Separator)) {
 		return "" // absolute paths not allowed in a request
+	}
+	// SECURITY: a component that starts with a dot is never served. The
+	// cache's own files live under such names (.metadata.json, the
+	// .staging directory) and the bundle holds no such entry, so a
+	// request for one gets what any unknown path gets: the viewer's
+	// index page.
+	for _, component := range strings.Split(clean, string(filepath.Separator)) {
+		if strings.HasPrefix(component, ".") {
+			return ""
+		}
+	}
+	if clean == tempFileName {
+		return "" // a download in flight is not part of the viewer
 	}
 	full := filepath.Join(rootAbs, clean)
 	fullAbs, err := filepath.Abs(full)

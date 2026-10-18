@@ -114,6 +114,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The viewer bundle `rx serve` downloads is bounded before it is
+  verified: a release asset larger than 64 MiB is refused and its
+  temporary file removed, and a bundle of more than 10,000 entries or
+  more than 256 MiB unpacked is refused as a whole, as each entry past
+  512 MiB already was. The cached viewer stays. The cache's own files
+  (`.metadata.json`, `dist.tar.gz.tmp`, `.staging/…`) are no longer
+  served: a request for them, or for any path with a component that
+  starts with a dot, answers the viewer's index page like any unknown
+  path.
 - One boolean grammar for every `RX_*` switch: the webhook variables
   (`RX_ALLOW_INTERNAL_HOOKS`, `RX_HOOK_STRICT_IP_ONLY`,
   `RX_DISABLE_CUSTOM_HOOKS`) are read with the parser of `RX_HIDDEN`,
