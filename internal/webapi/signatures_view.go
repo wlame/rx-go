@@ -49,13 +49,14 @@ func SignaturesView(cat *signatures.Catalogue, listed []*signatures.Signature, o
 	return view
 }
 
-// ListedSignatures are the active and the disabled signatures of cat
-// that the filters keep (a group, a tag; "" keeps every one), in
-// catalogue order: group by group, the disabled ones of a group after
-// its active ones.
+// ListedSignatures are the active, the disabled and the replaced
+// signatures of cat that the filters keep (a group, a tag; "" keeps
+// every one), in catalogue order: group by group, the disabled ones of
+// a group after its active ones, then the built-ins a refused
+// definition replaced.
 func ListedSignatures(cat *signatures.Catalogue, group, tag string) []*signatures.Signature {
 	var out []*signatures.Signature
-	lists := [][]*signatures.Signature{cat.Signatures(), cat.Disabled()}
+	lists := [][]*signatures.Signature{cat.Signatures(), cat.Disabled(), cat.Replaced()}
 	for _, g := range cat.Groups() {
 		if group != "" && g.Name != group {
 			continue
@@ -91,6 +92,9 @@ func SignatureView(s *signatures.Signature) rxtypes.SignatureInfo {
 	}
 	if s.DisabledBy != nil {
 		view.DisabledBy = &rxtypes.DisabledBy{File: s.DisabledBy.File, Line: s.DisabledBy.Line}
+	}
+	if s.ReplacedBy != nil {
+		view.ReplacedBy = &rxtypes.DisabledBy{File: s.ReplacedBy.File, Line: s.ReplacedBy.Line}
 	}
 	switch s.Kind {
 	case signatures.KindRegex:

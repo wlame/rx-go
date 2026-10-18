@@ -21,6 +21,11 @@ type Catalogue struct {
 	// errors that refused its definitions: a selection that names it
 	// repeats them.
 	refused map[string][]LoadError
+	// replaced are the built-ins a refused user definition removed
+	// (ReplacedBy set), in group order, then load order: listed, never
+	// selected or run, and not in the disabled set, so a selection that
+	// names one answers with the load errors.
+	replaced []*Signature
 	// paths is the search path the catalogue was loaded from; files are
 	// the user files found on it, in load order.
 	paths, files []string
@@ -90,6 +95,12 @@ func (c *Catalogue) Disabled() []*Signature {
 func (c *Catalogue) LookupDisabled(id string) (*Signature, bool) {
 	s, ok := c.disabledByID[id]
 	return s, ok
+}
+
+// Replaced returns the built-ins a refused user definition removed from
+// the active set, in group order, then load order.
+func (c *Catalogue) Replaced() []*Signature {
+	return slices.Clone(c.replaced)
 }
 
 // Refused returns the errors that refused every definition of id, when

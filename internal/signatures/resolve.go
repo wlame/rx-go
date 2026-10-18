@@ -105,12 +105,15 @@ func (c *Catalogue) Resolve(expr string) ([]*Signature, error) {
 	return out, nil
 }
 
-// selectionWords splits a selection at commas, trims and lowers each
-// word, and drops empty words.
+// selectionWords splits a selection at commas, trims each word, lowers
+// its ASCII letters (asciiLower: the one rule the keyword gate and the
+// declared keywords follow; ids, groups and tags are kebab-case ASCII,
+// so a word with another letter matches nothing either way and is
+// echoed as the user wrote it) and drops empty words.
 func selectionWords(expr string) []string {
 	var words []string
 	for _, w := range strings.Split(expr, ",") {
-		if w = strings.ToLower(strings.TrimSpace(w)); w != "" {
+		if w = asciiLower(strings.TrimSpace(w)); w != "" {
 			words = append(words, w)
 		}
 	}

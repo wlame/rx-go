@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `disable:` of a built-in a user signature replaced was accepted and
+  did nothing; it is now an error of the file (`disable: ID is replaced
+  by file:line; disable switches built-ins off`), and the rest of the
+  file loads.
 - A task that has ended keeps its end: a later `Fail`, `Complete` or
   `MarkRunning` on a completed or failed task is ignored, as it was for
   a cancelled one, so `GET /v1/tasks/{id}` and the task's watchers show
@@ -119,6 +123,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `rx signatures` and `GET /v1/signatures` keep the row of a built-in
+  whose id a refused user definition took, marked `replaced by a refused
+  definition (file:line)` (the new member `replaced_by`, `{"file", "line"}`
+  or null, an additive member of contract 2.1); before, the row was gone
+  and only the errors said why the group was one signature short. A
+  group's header counts its active signatures and adds how many of the
+  rows under it are disabled or replaced (`structure  8 signatures, 1
+  disabled`). Selection words lower their ASCII letters only, as the
+  keyword gate does; a word with another letter is refused as written.
 - Findings cache format 2 (`findings/meta.json` `version: 2`): an
   entry's key no longer hashes the keyword clauses rx derives from a
   signature's anchor, only the clauses its author declared with

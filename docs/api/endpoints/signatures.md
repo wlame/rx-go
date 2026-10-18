@@ -89,7 +89,7 @@ Shortened to one signature and four of the groups:
 
 | Field | Type | Description |
 |---|---|---|
-| `signatures` | array | Every loaded signature, group by group in group order, then in load order; a built-in a user file switched off is listed too, with `disabled_by` set, and is never selected or run |
+| `signatures` | array | Every loaded signature, group by group in group order, then in load order; a built-in a user file switched off is listed too, with `disabled_by` set, and a built-in whose id a refused user definition took, with `replaced_by` set (`{"file": …, "line": …}`, the definition's place): neither is selected or run |
 | `groups` | array | The groups in their order: `name`, `description`, `order` (1-based; it sets a group's color), `count` (active signatures), `builtin` |
 | `levels` | string[] | `info`, `low`, `medium`, `high`, `critical`, lowest first |
 | `errors` | array | Every load problem, by file then line: `file`, `line`, `id` (empty for a problem of the whole file), `message`. A refused signature is not in `signatures` |

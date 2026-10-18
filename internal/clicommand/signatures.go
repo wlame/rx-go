@@ -144,10 +144,11 @@ func maskingLine(maskSecrets bool) string {
 }
 
 // groupHeader is a group's line in the list: its name, how many active
-// signatures it has, and "opt-in" when none of them is in the default
-// set.
+// signatures it has, "opt-in" when none of them is in the default set,
+// and how many of the rows under it are disabled or replaced built-ins,
+// so the number reads with the rows below it.
 func groupHeader(cat *signatures.Catalogue, g signatures.Group) string {
-	active, optIn := 0, 0
+	active, optIn, disabled, replaced := 0, 0, 0, 0
 	for _, s := range cat.Signatures() {
 		if s.Group == g.Name {
 			active++
@@ -156,9 +157,25 @@ func groupHeader(cat *signatures.Catalogue, g signatures.Group) string {
 			}
 		}
 	}
+	for _, s := range cat.Disabled() {
+		if s.Group == g.Name {
+			disabled++
+		}
+	}
+	for _, s := range cat.Replaced() {
+		if s.Group == g.Name {
+			replaced++
+		}
+	}
 	header := g.Name + "  " + countNoun(active, "signature")
 	if active > 0 && optIn == active {
 		header += ", opt-in"
+	}
+	if disabled > 0 {
+		header += fmt.Sprintf(", %d disabled", disabled)
+	}
+	if replaced > 0 {
+		header += fmt.Sprintf(", %d replaced", replaced)
 	}
 	return header
 }
@@ -187,6 +204,9 @@ func signatureMarks(s *signatures.Signature) []string {
 	}
 	if s.DisabledBy != nil {
 		marks = append(marks, "disabled by "+output.Printable(s.DisabledBy.String()))
+	}
+	if s.ReplacedBy != nil {
+		marks = append(marks, "replaced by a refused definition ("+output.Printable(s.ReplacedBy.String())+")")
 	}
 	return marks
 }

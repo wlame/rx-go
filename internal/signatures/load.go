@@ -325,8 +325,11 @@ type assembly struct {
 	// definitions that loaded.
 	builtins, userDefined map[string]*Signature
 	disabled              []*Signature
-	refused               map[string][]LoadError
-	seq                   int
+	// replaced are the built-ins a refused user definition removed from
+	// the active set, each marked with that definition's place.
+	replaced []*Signature
+	refused  map[string][]LoadError
+	seq      int
 }
 
 // assemble puts the parsed files together into a catalogue.
@@ -444,8 +447,12 @@ func (a *assembly) addUserSignatures(def *fileDef) {
 				errs = []LoadError{*problem}
 			}
 			a.refuse(e.id, errs...)
-			if a.builtins[e.id] != nil && a.userDefined[e.id] == nil {
+			if builtin := a.builtins[e.id]; builtin != nil && a.userDefined[e.id] == nil && a.active[e.id] == builtin {
+				// The refused definition meant to replace the built-in:
+				// neither runs, and the list says so.
 				delete(a.active, e.id)
+				builtin.ReplacedBy = &Source{File: def.name, Line: e.line}
+				a.replaced = append(a.replaced, builtin)
 			}
 			continue
 		}
@@ -469,8 +476,9 @@ func duplicateID(file string, e entry, first *Signature) LoadError {
 }
 
 // applyDisables switches off the built-ins a user file's `disable:`
-// names. An id that is not a built-in's is an error of the file; a
-// built-in a user signature replaced has nothing left to switch off.
+// names. An id that is not a built-in's is an error of the file, and so
+// is the id of a built-in a user signature replaced: disable switches
+// built-ins off, and the user signature would keep running.
 func (a *assembly) applyDisables(def *fileDef) {
 	for _, ref := range def.disable {
 		builtin := a.builtins[ref.id]
@@ -481,6 +489,9 @@ func (a *assembly) applyDisables(def *fileDef) {
 		case builtin == nil:
 			a.fail(LoadError{File: def.name, Line: ref.line, Message: fmt.Sprintf(
 				"disable: no built-in signature has the id %q", ref.id)})
+		case a.active[ref.id] != nil && a.active[ref.id].Overrides:
+			a.fail(LoadError{File: def.name, Line: ref.line, Message: fmt.Sprintf(
+				"disable: %s is replaced by %s; disable switches built-ins off", ref.id, a.active[ref.id].Source)})
 		case a.active[ref.id] == builtin:
 			builtin.DisabledBy = &Source{File: def.name, Line: ref.line}
 			delete(a.active, ref.id)
@@ -528,6 +539,7 @@ func (a *assembly) catalogue(examplesChecked bool) *Catalogue {
 	cat := &Catalogue{
 		signatures:      a.sorted(mapValues(a.active)),
 		disabled:        a.sorted(slices.Clone(a.disabled)),
+		replaced:        a.sorted(slices.Clone(a.replaced)),
 		groups:          a.groups,
 		byID:            map[string]*Signature{},
 		disabledByID:    map[string]*Signature{},

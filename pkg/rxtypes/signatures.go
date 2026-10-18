@@ -7,7 +7,7 @@ package rxtypes
 // switched off (DisabledBy set), group by group in group order; a
 // disabled built-in is listed, never selected or run.
 type SignaturesResponse struct {
-	Signatures []SignatureInfo `json:"signatures" nullable:"false" doc:"Every loaded signature, group by group in group order, then in load order; the built-ins a user file disabled are listed too, with disabled_by set."`
+	Signatures []SignatureInfo `json:"signatures" nullable:"false" doc:"Every loaded signature, group by group in group order, then in load order; the built-ins a user file disabled are listed too, with disabled_by set, and the built-ins a refused user definition replaced, with replaced_by set."`
 	Groups     []GroupInfo     `json:"groups" nullable:"false" doc:"The groups in their order: the built-in ones, then those user files declare."`
 	Levels     []string        `json:"levels" nullable:"false" doc:"The levels from the lowest to the highest: info, low, medium, high, critical."`
 	Errors     []LoadErrorInfo `json:"errors" nullable:"false" doc:"Every problem the load found, by file, then line. A refused signature is not in signatures; a selection that names it is refused with its errors."`
@@ -37,6 +37,7 @@ type SignatureInfo struct {
 	Source           SignatureSource    `json:"source" doc:"Where the signature was defined: {\"builtin\": true}, or the user file and the line."`
 	Overrides        bool               `json:"overrides" doc:"A user signature that replaced the built-in of the same id."`
 	DisabledBy       *DisabledBy        `json:"disabled_by" doc:"For a built-in a user file switched off: where. Null otherwise."`
+	ReplacedBy       *DisabledBy        `json:"replaced_by" doc:"For a built-in whose id a refused user definition took: the file and line of that definition. Neither runs; a selection that names the id is refused with the load errors. Null otherwise."`
 	Examples         SignatureExamples  `json:"examples" doc:"Texts the signature must find and must not find."`
 	Regex            *RegexDefinition   `json:"regex" doc:"The definition of a regex signature; null for another kind."`
 	Block            *BlockDefinition   `json:"block" doc:"The definition of a block signature; null for another kind."`

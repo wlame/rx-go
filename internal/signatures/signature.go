@@ -98,6 +98,12 @@ type Signature struct {
 	// with `disable`: the place of that entry. A disabled built-in is
 	// listed (Catalogue.Disabled) but never selected or run.
 	DisabledBy *Source
+	// ReplacedBy is set on a built-in whose id a refused user
+	// definition took: the place of that definition. Neither runs; the
+	// built-in is listed (Catalogue.Replaced) so a reader sees why its
+	// group is one signature short, and a selection that names the id
+	// answers with the load errors (Catalogue.Refused).
+	ReplacedBy *Source
 	Kind       Kind
 	Regex      *RegexSpec // exactly one of these four is set
 	Block      *BlockSpec

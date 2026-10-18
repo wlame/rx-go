@@ -40,7 +40,11 @@ marks:
 | `masked` | `redact: true`: with masking on (`--mask-secrets` on `rx trace` and `rx serve`, or `RX_MASK_SECRETS=1`), what it matches is masked in the text of every finding and in the findings cache ([Masking](../concepts/signatures.md#masking)); masking is off by default |
 | `opt-in` | `default: false`: it runs only when a selection names it |
 | `disabled by file:line` | a built-in a user file switched off with `disable` |
+| `replaced by a refused definition (file:line)` | a built-in whose id a user definition took and was refused: neither runs |
 
+A group's line counts its active signatures and, after them, how many
+of the rows under it are disabled or replaced built-ins (`structure  8
+signatures, 1 disabled`), so the number reads with the rows below it.
 Then come the errors, the search path with the number of files found
 on it, and a `Secrets:` line: whether `RX_MASK_SECRETS` turns masking
 on for `rx trace` and `rx serve` run without `--mask-secrets`.
@@ -57,7 +61,7 @@ traceback  8 signatures
 secret  16 signatures
   aws-access-key           high      regex    built-in                                    masked
   …
-structure  8 signatures
+structure  8 signatures, 1 disabled
   long-line                low       measure  built-in
   …
   blank-run                info      run      built-in                                    disabled by /home/me/.config/rx/signatures/team.yml:1

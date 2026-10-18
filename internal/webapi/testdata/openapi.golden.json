@@ -2691,6 +2691,10 @@
             "$ref": "#/components/schemas/RegexDefinition",
             "description": "The definition of a regex signature; null for another kind."
           },
+          "replaced_by": {
+            "$ref": "#/components/schemas/DisabledBy",
+            "description": "For a built-in whose id a refused user definition took: the file and line of that definition. Neither runs; a selection that names the id is refused with the load errors. Null otherwise."
+          },
           "run": {
             "$ref": "#/components/schemas/RunDefinition",
             "description": "The definition of a run signature; null for another kind."
@@ -2725,6 +2729,7 @@
           "source",
           "overrides",
           "disabled_by",
+          "replaced_by",
           "examples",
           "regex",
           "block",
@@ -2819,7 +2824,7 @@
             "type": "array"
           },
           "signatures": {
-            "description": "Every loaded signature, group by group in group order, then in load order; the built-ins a user file disabled are listed too, with disabled_by set.",
+            "description": "Every loaded signature, group by group in group order, then in load order; the built-ins a user file disabled are listed too, with disabled_by set, and the built-ins a refused user definition replaced, with replaced_by set.",
             "items": {
               "$ref": "#/components/schemas/SignatureInfo"
             },

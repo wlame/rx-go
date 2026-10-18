@@ -674,12 +674,17 @@ only.
 - A user signature with the `id` of a built-in **replaces** it; the
   list marks it `overrides`. A user signature that would replace a
   built-in and is refused leaves neither: the built-in does not run in
-  its place.
+  its place, and its row stays in the list, marked `replaced by a
+  refused definition (file:line)` (`replaced_by` in the JSON), so the
+  group is not one signature short without a word.
 - The same `id` in two user files is an error of the later one; the
   first loads.
 - `disable: [id, …]` switches built-ins off. A disabled built-in is
   listed (`disabled by file:line`) and never runs. An id that is not a
-  built-in's is an error of the file; the rest of the file loads.
+  built-in's is an error of the file, and so is the id of a built-in a
+  user signature replaced (`disable: ID is replaced by file:line;
+  disable switches built-ins off`: the user signature keeps running);
+  the rest of the file loads.
 - `groups:` declares groups (`name`, `description`). They come after
   the built-in groups, in load order, and any user file may use them. A
   group declared twice is an error.
@@ -715,7 +720,9 @@ is one). `rx signatures` lists them under "Errors", and
 ## Selection
 
 A command that runs signatures takes a **selection**: comma-separated
-words, compared without case, applied left to right:
+words, compared without case (the ASCII letters are lowered, as the
+keyword gate lowers them; ids, groups and tags hold no other letters),
+applied left to right:
 
 - a word names an `id` first, then a group, then a tag; `group:x` and
   `tag:x` name only a group or only a tag;

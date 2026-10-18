@@ -59,7 +59,7 @@ func TestSignaturesList_Human(t *testing.T) {
 	want := []string{
 		"traceback 8 signatures",
 		"  python-traceback high block built-in",
-		"secret 15 signatures",
+		"secret 15 signatures, 1 disabled",
 		"  aws-access-key high regex built-in masked, disabled by testdata/signatures/team.yml:1",
 		"pii 5 signatures, opt-in",
 		"  email-address low regex built-in opt-in",
